@@ -1,0 +1,1216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StockGuard - WhatsApp Dead Stock Alert for Indian Kiranas</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Hind+Siliguri:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --saffron: #FF9933;
+            --white: #FFFFFF;
+            --green: #138808;
+            --navy: #000080;
+            --light-saffron: #fff3e6;
+            --light-green: #e6f7e6;
+            --dark-green: #0a5a03;
+            --text-dark: #333333;
+            --text-medium: #555555;
+            --text-light: #777777;
+            --shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Poppins', sans-serif;
+            line-height: 1.6;
+            color: var(--text-medium);
+            background: linear-gradient(135deg, #f9f9f9 0%, #f0f8ff 100%);
+            overflow-x: hidden;
+        }
+        
+        h1, h2, h3, h4 {
+            font-family: 'Hind Siliguri', sans-serif;
+            font-weight: 700;
+            color: var(--navy);
+        }
+        
+        /* Header with Indian flag colors */
+        .header-ribbon {
+            background: linear-gradient(to right, var(--saffron), var(--white), var(--green));
+            height: 6px;
+            width: 100%;
+            position: fixed;
+            top: 0;
+            z-index: 1000;
+        }
+        
+        header {
+            background-color: rgba(255, 255, 255, 0.95);
+            box-shadow: var(--shadow);
+            position: sticky;
+            top: 6px;
+            z-index: 999;
+            padding: 0 5%;
+        }
+        
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 0;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .logo-icon {
+            background: linear-gradient(135deg, var(--saffron), var(--green));
+            color: white;
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+        
+        .logo-text {
+            font-weight: 700;
+            font-size: 26px;
+            color: var(--navy);
+            letter-spacing: -0.5px;
+        }
+        
+        .logo-text span {
+            color: var(--green);
+        }
+        
+        .nav-links {
+            display: flex;
+            list-style: none;
+            gap: 30px;
+        }
+        
+        .nav-links a {
+            text-decoration: none;
+            color: var(--text-dark);
+            font-weight: 600;
+            font-size: 16px;
+            transition: all 0.3s;
+            position: relative;
+        }
+        
+        .nav-links a:after {
+            content: '';
+            position: absolute;
+            bottom: -5px;
+            left: 0;
+            width: 0;
+            height: 3px;
+            background: linear-gradient(to right, var(--saffron), var(--green));
+            border-radius: 2px;
+            transition: width 0.3s;
+        }
+        
+        .nav-links a:hover:after {
+            width: 100%;
+        }
+        
+        .nav-links a:hover {
+            color: var(--saffron);
+        }
+        
+        .mobile-menu-btn {
+            display: none;
+            background: transparent;
+            border: none;
+            font-size: 24px;
+            color: var(--navy);
+            cursor: pointer;
+        }
+        
+        /* Hero Section */
+        .hero {
+            padding: 100px 5% 80px;
+            background: linear-gradient(120deg, rgba(255,255,255,0.9) 0%, rgba(255,249,230,0.8) 100%), url('https://images.unsplash.com/photo-1592921870789-04563d55041c?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2074&q=80') no-repeat center center/cover;
+        }
+        
+        .hero-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 50px;
+        }
+        
+        .hero-text {
+            flex: 1;
+        }
+        
+        .hero-image {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+        }
+        
+        .hero-image img {
+            max-width: 100%;
+            border-radius: 20px;
+            box-shadow: var(--shadow);
+            transform: rotate(3deg);
+            border: 8px solid white;
+        }
+        
+        .hero h1 {
+            font-size: 3.2rem;
+            line-height: 1.2;
+            margin-bottom: 20px;
+        }
+        
+        .hero h1 span {
+            color: var(--green);
+            position: relative;
+            display: inline-block;
+        }
+        
+        .hero h1 span:after {
+            content: '';
+            position: absolute;
+            bottom: 5px;
+            left: 0;
+            width: 100%;
+            height: 12px;
+            background: rgba(19, 136, 8, 0.2);
+            z-index: -1;
+            border-radius: 3px;
+        }
+        
+        .hero p {
+            font-size: 1.2rem;
+            max-width: 600px;
+            margin-bottom: 30px;
+            color: var(--text-medium);
+        }
+        
+        .cta-buttons {
+            display: flex;
+            gap: 20px;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 16px 36px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            box-shadow: var(--shadow);
+            gap: 10px;
+        }
+        
+        .btn-whatsapp {
+            background: linear-gradient(135deg, #25D366, #128C7E);
+            color: white;
+        }
+        
+        .btn-whatsapp:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(37, 211, 102, 0.3);
+        }
+        
+        .btn-enroll {
+            background: linear-gradient(135deg, var(--saffron), #e67300);
+            color: white;
+        }
+        
+        .btn-enroll:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(255, 153, 51, 0.3);
+        }
+        
+        .btn i {
+            font-size: 1.3rem;
+        }
+        
+        /* Features Section */
+        .features {
+            padding: 100px 5%;
+            background-color: white;
+        }
+        
+        .section-title {
+            text-align: center;
+            margin-bottom: 60px;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .section-title h2 {
+            font-size: 2.6rem;
+            position: relative;
+            display: inline-block;
+            margin-bottom: 20px;
+        }
+        
+        .section-title h2:after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100px;
+            height: 5px;
+            background: linear-gradient(to right, var(--saffron), var(--green));
+            border-radius: 3px;
+        }
+        
+        .section-title p {
+            font-size: 1.1rem;
+            color: var(--text-medium);
+            margin-top: 20px;
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .feature-card {
+            background: white;
+            border-radius: 16px;
+            padding: 35px 30px;
+            box-shadow: var(--shadow);
+            transition: all 0.4s ease;
+            border-top: 5px solid var(--saffron);
+            text-align: center;
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 15px 30px rgba(0,0,0,0.12);
+        }
+        
+        .feature-card:nth-child(2) {
+            border-top-color: var(--green);
+        }
+        
+        .feature-card:nth-child(3) {
+            border-top-color: var(--navy);
+        }
+        
+        .feature-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, var(--light-saffron), white);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 25px;
+            font-size: 2.2rem;
+            color: var(--saffron);
+        }
+        
+        .feature-card:nth-child(2) .feature-icon {
+            background: linear-gradient(135deg, var(--light-green), white);
+            color: var(--green);
+        }
+        
+        .feature-card:nth-child(3) .feature-icon {
+            background: linear-gradient(135deg, #e6e6ff, white);
+            color: var(--navy);
+        }
+        
+        .feature-card h3 {
+            font-size: 1.6rem;
+            margin-bottom: 15px;
+        }
+        
+        /* How It Works */
+        .how-it-works {
+            padding: 100px 5%;
+            background: linear-gradient(135deg, var(--light-saffron) 0%, #fff9e6 100%);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .how-it-works:before {
+            content: '';
+            position: absolute;
+            top: -200px;
+            right: -100px;
+            width: 500px;
+            height: 500px;
+            border-radius: 50%;
+            background: rgba(19, 136, 8, 0.05);
+            z-index: 0;
+        }
+        
+        .steps-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .steps {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 30px;
+            margin-top: 50px;
+        }
+        
+        .step {
+            background: white;
+            border-radius: 20px;
+            padding: 35px 25px;
+            width: 270px;
+            text-align: center;
+            position: relative;
+            box-shadow: var(--shadow);
+            z-index: 2;
+        }
+        
+        .step-number {
+            position: absolute;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, var(--saffron), var(--green));
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.4rem;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+        }
+        
+        .step-icon {
+            font-size: 2.8rem;
+            margin: 25px 0;
+            color: var(--saffron);
+            background: linear-gradient(135deg, var(--saffron), var(--green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .step:nth-child(2) .step-icon {
+            background: linear-gradient(135deg, var(--green), var(--dark-green));
+            -webkit-background-clip: text;
+        }
+        
+        .step:nth-child(3) .step-icon {
+            background: linear-gradient(135deg, var(--navy), #000033);
+            -webkit-background-clip: text;
+        }
+        
+        .step:nth-child(4) .step-icon {
+            background: linear-gradient(135deg, #e67300, #b35900);
+            -webkit-background-clip: text;
+        }
+        
+        .step h3 {
+            margin-bottom: 15px;
+            font-size: 1.4rem;
+        }
+        
+        /* Pricing */
+        .pricing {
+            padding: 100px 5%;
+            background-color: white;
+        }
+        
+        .pricing-cards {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 30px;
+            max-width: 1400px;
+            margin: 50px auto 0;
+        }
+        
+        .pricing-card {
+            background: white;
+            border-radius: 20px;
+            padding: 40px 30px;
+            text-align: center;
+            width: 350px;
+            box-shadow: var(--shadow);
+            border: 2px solid #f0f0f0;
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .pricing-card:before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 5px;
+            background: linear-gradient(to right, var(--saffron), var(--green));
+        }
+        
+        .pricing-card.popular {
+            border: 2px solid var(--green);
+            transform: scale(1.03);
+        }
+        
+        .popular-tag {
+            position: absolute;
+            top: 20px;
+            right: -30px;
+            background: var(--green);
+            color: white;
+            padding: 8px 35px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            transform: rotate(45deg);
+            width: 150px;
+            text-align: center;
+        }
+        
+        .pricing-card h3 {
+            font-size: 1.8rem;
+            margin-bottom: 20px;
+        }
+        
+        .price {
+            font-size: 3rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--saffron), var(--green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 20px;
+            display: block;
+        }
+        
+        .price span {
+            font-size: 1.1rem;
+            color: var(--text-medium);
+            display: block;
+            margin-top: 5px;
+        }
+        
+        .pricing-features {
+            list-style: none;
+            margin: 30px 0;
+            text-align: left;
+            padding: 0 20px;
+        }
+        
+        .pricing-features li {
+            margin-bottom: 15px;
+            position: relative;
+            padding-left: 35px;
+            font-size: 1.05rem;
+        }
+        
+        .pricing-features li:before {
+            content: '\f00c';
+            font-family: 'Font Awesome 5 Free';
+            font-weight: 900;
+            position: absolute;
+            left: 0;
+            top: 2px;
+            width: 25px;
+            height: 25px;
+            background: var(--light-green);
+            color: var(--green);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+        }
+        
+        /* Testimonials */
+        .testimonials {
+            padding: 100px 5%;
+            background: linear-gradient(135deg, var(--light-green) 0%, #e6f7e6 100%);
+        }
+        
+        .testimonial-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 30px;
+            max-width: 1400px;
+            margin: 50px auto 0;
+        }
+        
+        .testimonial {
+            background: white;
+            border-radius: 20px;
+            padding: 35px 30px;
+            box-shadow: var(--shadow);
+            position: relative;
+        }
+        
+        .testimonial:before {
+            content: '\f10d';
+            font-family: 'Font Awesome 5 Free';
+            font-weight: 900;
+            position: absolute;
+            top: 25px;
+            left: 25px;
+            font-size: 3rem;
+            color: rgba(19, 136, 8, 0.1);
+            line-height: 1;
+        }
+        
+        .testimonial p {
+            margin-bottom: 25px;
+            font-style: italic;
+            color: var(--text-medium);
+            font-size: 1.05rem;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .client {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .client-avatar {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--saffron), var(--green));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.5rem;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+        
+        .client-info h4 {
+            margin-bottom: 5px;
+            font-size: 1.2rem;
+        }
+        
+        .client-info p {
+            color: var(--saffron);
+            margin: 0;
+            font-style: normal;
+            font-size: 0.95rem;
+        }
+        
+        /* CTA Section */
+        .cta-section {
+            padding: 100px 5%;
+            background: linear-gradient(135deg, var(--navy) 0%, #000033 100%);
+            text-align: center;
+            color: white;
+        }
+        
+        .cta-section h2 {
+            color: white;
+            font-size: 2.8rem;
+            max-width: 800px;
+            margin: 0 auto 25px;
+        }
+        
+        .cta-section p {
+            font-size: 1.2rem;
+            max-width: 700px;
+            margin: 0 auto 40px;
+            color: rgba(255,255,255,0.9);
+        }
+        
+        .cta-section .btn {
+            font-size: 1.2rem;
+            padding: 18px 45px;
+        }
+        
+        /* Footer */
+        footer {
+            background: linear-gradient(to right, #000022, var(--navy));
+            color: white;
+            padding: 80px 5% 30px;
+        }
+        
+        .footer-content {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 40px;
+            max-width: 1400px;
+            margin: 0 auto 50px;
+        }
+        
+        .footer-column h3 {
+            font-size: 1.5rem;
+            margin-bottom: 25px;
+            position: relative;
+            padding-bottom: 15px;
+            color: white;
+        }
+        
+        .footer-column h3:after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 50px;
+            height: 3px;
+            background: var(--saffron);
+        }
+        
+        .footer-links {
+            list-style: none;
+        }
+        
+        .footer-links li {
+            margin-bottom: 15px;
+        }
+        
+        .footer-links a {
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            transition: color 0.3s;
+            display: inline-block;
+            padding: 5px 0;
+        }
+        
+        .footer-links a:hover {
+            color: var(--saffron);
+            transform: translateX(5px);
+        }
+        
+        .contact-info p {
+            margin-bottom: 18px;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        
+        .contact-info i {
+            color: var(--saffron);
+            font-size: 1.2rem;
+            margin-top: 3px;
+        }
+        
+        .social-links {
+            display: flex;
+            gap: 15px;
+            margin-top: 25px;
+        }
+        
+        .social-links a {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 45px;
+            height: 45px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 12px;
+            color: white;
+            transition: all 0.3s;
+            font-size: 1.2rem;
+        }
+        
+        .social-links a:hover {
+            background: var(--saffron);
+            transform: translateY(-5px);
+        }
+        
+        .footer-bottom {
+            text-align: center;
+            padding-top: 30px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            font-size: 0.95rem;
+            color: rgba(255,255,255,0.6);
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 1100px) {
+            .hero h1 {
+                font-size: 2.8rem;
+            }
+            
+            .hero-content {
+                flex-direction: column;
+                text-align: center;
+            }
+            
+            .hero-text {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .hero p {
+                max-width: 100%;
+            }
+        }
+        
+        @media (max-width: 900px) {
+            .nav-links {
+                display: none;
+            }
+            
+            .mobile-menu-btn {
+                display: block;
+            }
+            
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+            
+            .section-title h2 {
+                font-size: 2.2rem;
+            }
+            
+            .pricing-card.popular {
+                transform: scale(1);
+            }
+        }
+        
+        @media (max-width: 600px) {
+            .header-content {
+                padding: 12px 0;
+            }
+            
+            .logo-icon {
+                width: 45px;
+                height: 45px;
+                font-size: 22px;
+            }
+            
+            .logo-text {
+                font-size: 22px;
+            }
+            
+            .hero {
+                padding: 90px 5% 60px;
+            }
+            
+            .hero h1 {
+                font-size: 2.2rem;
+            }
+            
+            .cta-buttons {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .btn {
+                width: 100%;
+                padding: 16px 24px;
+            }
+            
+            .features, .how-it-works, .pricing, .testimonials, .cta-section {
+                padding: 70px 5%;
+            }
+            
+            .section-title h2 {
+                font-size: 2rem;
+            }
+            
+            .step {
+                width: 100%;
+                max-width: 350px;
+            }
+            
+            .pricing-card {
+                width: 100%;
+                max-width: 400px;
+            }
+            
+            .cta-section h2 {
+                font-size: 2.2rem;
+            }
+        }
+        
+        @media (max-width: 400px) {
+            .hero h1 {
+                font-size: 1.9rem;
+            }
+            
+            .section-title h2 {
+                font-size: 1.8rem;
+            }
+            
+            .price {
+                font-size: 2.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header Ribbon with Indian Colors -->
+    <div class="header-ribbon"></div>
+    
+    <!-- Header -->
+    <header>
+        <div class="header-content">
+            <div class="logo">
+                <div class="logo-icon">
+                    <i class="fas fa-box"></i>
+                </div>
+                <div class="logo-text">Stock<span>Guard</span></div>
+            </div>
+            
+            <ul class="nav-links">
+                <li><a href="#features">Features</a></li>
+                <li><a href="#how-it-works">How It Works</a></li>
+                <li><a href="#pricing">Pricing</a></li>
+                <li><a href="#testimonials">Testimonials</a></li>
+                <li><a href="#contact">Contact</a></li>
+            </ul>
+            
+            <button class="mobile-menu-btn">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero" id="hero">
+        <div class="hero-content">
+            <div class="hero-text">
+                <h1>Reduce Dead Stock with <span>WhatsApp Voice Notes</span></h1>
+                <p>StockGuard helps Indian shopkeepers manage inventory, reduce waste, and increase profits using WhatsApp - no apps to install, no complex software to learn!</p>
+                
+                <div class="cta-buttons">
+                    <a href="#" class="btn btn-whatsapp">
+                        <i class="fab fa-whatsapp"></i> Chat on WhatsApp
+                    </a>
+                    <a href="#pricing" class="btn btn-enroll">
+                        <i class="fas fa-rupee-sign"></i> Enroll Now
+                    </a>
+                </div>
+            </div>
+            
+            <div class="hero-image">
+                <img src="https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?q=80&w=2070" alt="Indian Kirana Store">
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features" id="features">
+        <div class="section-title">
+            <h2>Powerful Features for Kirana Stores</h2>
+            <p>Designed specifically for Indian shopkeepers to save time and reduce inventory waste</p>
+        </div>
+        
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-microphone-alt"></i>
+                </div>
+                <h3>Voice Note Updates</h3>
+                <p>Update inventory with simple voice notes in Hindi or your local language. Just say "Bought 10 Maggi packets" or "Sold 5 Parle-G biscuits".</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-robot"></i>
+                </div>
+                <h3>Instant Confirmation</h3>
+                <p>Get immediate confirmation of your inventory update with current stock levels. No more manual tracking or guesswork.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-bell"></i>
+                </div>
+                <h3>Dead Stock Alerts</h3>
+                <p>Receive automatic alerts for slow-moving items before they expire. Get smart suggestions for bundled offers to clear stock.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works -->
+    <section class="how-it-works" id="how-it-works">
+        <div class="steps-container">
+            <div class="section-title">
+                <h2>Simple 4-Step Process</h2>
+                <p>Manage your inventory efficiently with StockGuard</p>
+            </div>
+            
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-icon">
+                        <i class="fas fa-microphone"></i>
+                    </div>
+                    <h3>Send Voice Note</h3>
+                    <p>Update purchases or sales via WhatsApp voice message in your language.</p>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-icon">
+                        <i class="fas fa-sync-alt"></i>
+                    </div>
+                    <h3>Instant Update</h3>
+                    <p>Inventory updates automatically in real-time.</p>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-icon">
+                        <i class="fas fa-check-circle"></i>
+                    </div>
+                    <h3>Receive Confirmation</h3>
+                    <p>Get immediate confirmation with current stock levels.</p>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-icon">
+                        <i class="fas fa-lightbulb"></i>
+                    </div>
+                    <h3>Get Smart Alerts</h3>
+                    <p>Receive dead stock alerts and bundled offer suggestions.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing Section -->
+    <section class="pricing" id="pricing">
+        <div class="section-title">
+            <h2>Affordable Pricing Plans</h2>
+            <p>Choose the plan that works best for your shop. No hidden charges!</p>
+        </div>
+        
+        <div class="pricing-cards">
+            <div class="pricing-card">
+                <h3>Basic Plan</h3>
+                <div class="price">₹199<span>per month</span></div>
+                <ul class="pricing-features">
+                    <li>Unlimited voice updates</li>
+                    <li>Real-time inventory tracking</li>
+                    <li>Daily summary (opt-in)</li>
+                    <li>Dead stock alerts</li>
+                    <li>WhatsApp support</li>
+                </ul>
+                <a href="#" class="btn btn-enroll">Enroll Now</a>
+            </div>
+            
+            <div class="pricing-card popular">
+                <div class="popular-tag">MOST POPULAR</div>
+                <h3>Pro Plan</h3>
+                <div class="price">₹499<span>per month</span></div>
+                <ul class="pricing-features">
+                    <li>All Basic features</li>
+                    <li>Smart bundled offers</li>
+                    <li>Expiry prediction alerts</li>
+                    <li>Sales analytics reports</li>
+                    <li>Priority support</li>
+                    <li>Multi-user access</li>
+                </ul>
+                <a href="#" class="btn btn-whatsapp">Enroll Now</a>
+            </div>
+            
+            <div class="pricing-card">
+                <h3>Business Plan</h3>
+                <div class="price">₹999<span>per month</span></div>
+                <ul class="pricing-features">
+                    <li>All Pro features</li>
+                    <li>Multiple store management</li>
+                    <li>Supplier management</li>
+                    <li>Custom reporting</li>
+                    <li>Dedicated account manager</li>
+                    <li>24/7 support</li>
+                </ul>
+                <a href="#" class="btn btn-enroll">Enroll Now</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section class="testimonials" id="testimonials">
+        <div class="section-title">
+            <h2>What Shopkeepers Say</h2>
+            <p>Hear from Indian Kirana owners using StockGuard</p>
+        </div>
+        
+        <div class="testimonial-grid">
+            <div class="testimonial">
+                <p>"StockGuard reduced my expired goods by 40%! The voice note system is perfect for busy shopkeepers like me who don't have time for complex software."</p>
+                <div class="client">
+                    <div class="client-avatar">RK</div>
+                    <div class="client-info">
+                        <h4>Rajesh Kumar</h4>
+                        <p>Grocery Store, Delhi</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="testimonial">
+                <p>"The bundled offer suggestions helped me clear old stock quickly. I made ₹8,000 extra in a month that would have been dead loss!"</p>
+                <div class="client">
+                    <div class="client-avatar">PS</div>
+                    <div class="client-info">
+                        <h4>Priya Sharma</h4>
+                        <p>General Store, Mumbai</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="testimonial">
+                <p>"As a 55-year-old shopkeeper, I was worried about technology. But WhatsApp I know! StockGuard made inventory management so simple."</p>
+                <div class="client">
+                    <div class="client-avatar">VP</div>
+                    <div class="client-info">
+                        <h4>Vijay Patel</h4>
+                        <p>Kirana Store, Ahmedabad</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta-section">
+        <h2>Ready to Reduce Your Dead Stock?</h2>
+        <p>Join thousands of Indian shopkeepers who are saving money and reducing waste with StockGuard</p>
+        <a href="#" class="btn btn-whatsapp">
+            <i class="fab fa-whatsapp"></i> Start Free Trial on WhatsApp
+        </a>
+    </section>
+
+    <!-- Footer -->
+    <footer id="contact">
+        <div class="footer-content">
+            <div class="footer-column">
+                <h3>About StockGuard</h3>
+                <p>StockGuard helps Indian shopkeepers reduce dead stock and increase profits through simple WhatsApp-based inventory management.</p>
+                <div class="social-links">
+                    <a href="#"><i class="fab fa-facebook-f"></i></a>
+                    <a href="#"><i class="fab fa-twitter"></i></a>
+                    <a href="#"><i class="fab fa-instagram"></i></a>
+                    <a href="#"><i class="fab fa-linkedin-in"></i></a>
+                </div>
+            </div>
+            
+            <div class="footer-column">
+                <h3>Quick Links</h3>
+                <ul class="footer-links">
+                    <li><a href="#features">Features</a></li>
+                    <li><a href="#how-it-works">How It Works</a></li>
+                    <li><a href="#pricing">Pricing</a></li>
+                    <li><a href="#testimonials">Testimonials</a></li>
+                    <li><a href="#">FAQ</a></li>
+                </ul>
+            </div>
+            
+            <div class="footer-column">
+                <h3>Contact Us</h3>
+                <div class="contact-info">
+                    <p><i class="fas fa-map-marker-alt"></i> 123 Business Street, Mumbai, India</p>
+                    <p><i class="fas fa-phone"></i> +91 98765 43210</p>
+                    <p><i class="fas fa-envelope"></i> info@stockguard.in</p>
+                    <p><i class="fab fa-whatsapp"></i> +91 98765 43210</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer-bottom">
+            <p>&copy; 2023 StockGuard. All Rights Reserved. | Designed with ❤️ for Indian Shopkeepers</p>
+        </div>
+    </footer>
+
+    <script>
+        // Smooth scrolling for navigation links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                
+                document.querySelector(this.getAttribute('href')).scrollIntoView({
+                    behavior: 'smooth'
+                });
+            });
+        });
+        
+        // WhatsApp button functionality
+        document.querySelectorAll('.btn-whatsapp').forEach(button => {
+            button.addEventListener('click', function(e) {
+                e.preventDefault();
+                alert('In the live version, this would open WhatsApp with our business number. Currently configured to: +919876543210');
+            });
+        });
+        
+        // Enrollment button functionality
+        document.querySelectorAll('.btn-enroll').forEach(button => {
+            button.addEventListener('click', function(e) {
+                e.preventDefault();
+                // Scroll to pricing section
+                document.querySelector('#pricing').scrollIntoView({
+                    behavior: 'smooth'
+                });
+                
+                // In a real implementation, this would open a signup form
+                setTimeout(() => {
+                    alert('In the live version, this would open an enrollment form with payment options.');
+                }, 800);
+            });
+        });
+        
+        // Mobile menu toggle
+        const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
+        const navLinks = document.querySelector('.nav-links');
+        
+        mobileMenuBtn.addEventListener('click', () => {
+            navLinks.style.display = navLinks.style.display === 'flex' ? 'none' : 'flex';
+        });
+        
+        // Close mobile menu when clicking a link
+        document.querySelectorAll('.nav-links a').forEach(link => {
+            link.addEventListener('click', () => {
+                if (window.innerWidth <= 900) {
+                    navLinks.style.display = 'none';
+                }
+            });
+        });
+        
+        // Adjust mobile menu on window resize
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 900) {
+                navLinks.style.display = 'flex';
+            } else {
+                navLinks.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
