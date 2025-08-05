@@ -1,0 +1,10 @@
+{
+  "name": "dead-stock-alert",
+  "version": "1.0.0",
+  "dependencies": {
+    "twilio": "^4.23.0"
+  },
+  "engines": {
+    "node": ">=18.x"
+  }
+}
