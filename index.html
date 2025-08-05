@@ -1,0 +1,1658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StockGuard - WhatsApp Dead Stock Alert for Indian Kiranas</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Hind+Siliguri:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --saffron: #FF9933;
+            --white: #FFFFFF;
+            --green: #138808;
+            --navy: #000080;
+            --light-saffron: #fff3e6;
+            --light-green: #e6f7e6;
+            --dark-green: #0a5a03;
+            --text-dark: #333333;
+            --text-medium: #555555;
+            --text-light: #777777;
+            --shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Poppins', sans-serif;
+            line-height: 1.6;
+            color: var(--text-medium);
+            background: linear-gradient(135deg, #f9f9f9 0%, #f0f8ff 100%);
+            overflow-x: hidden;
+        }
+        
+        h1, h2, h3, h4 {
+            font-family: 'Hind Siliguri', sans-serif;
+            font-weight: 700;
+            color: var(--navy);
+        }
+        
+        /* Header with Indian flag colors */
+        .header-ribbon {
+            background: linear-gradient(to right, var(--saffron), var(--white), var(--green));
+            height: 6px;
+            width: 100%;
+            position: fixed;
+            top: 0;
+            z-index: 1000;
+        }
+        
+        header {
+            background-color: rgba(255, 255, 255, 0.95);
+            box-shadow: var(--shadow);
+            position: sticky;
+            top: 6px;
+            z-index: 999;
+            padding: 0 5%;
+        }
+        
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 0;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .logo-icon {
+            background: linear-gradient(135deg, var(--saffron), var(--green));
+            color: white;
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+        
+        .logo-text {
+            font-weight: 700;
+            font-size: 26px;
+            color: var(--navy);
+            letter-spacing: -0.5px;
+        }
+        
+        .logo-text span {
+            color: var(--green);
+        }
+        
+        .nav-links {
+            display: flex;
+            list-style: none;
+            gap: 30px;
+        }
+        
+        .nav-links a {
+            text-decoration: none;
+            color: var(--text-dark);
+            font-weight: 600;
+            font-size: 16px;
+            transition: all 0.3s;
+            position: relative;
+        }
+        
+        .nav-links a:after {
+            content: '';
+            position: absolute;
+            bottom: -5px;
+            left: 0;
+            width: 0;
+            height: 3px;
+            background: linear-gradient(to right, var(--saffron), var(--green));
+            border-radius: 2px;
+            transition: width 0.3s;
+        }
+        
+        .nav-links a:hover:after {
+            width: 100%;
+        }
+        
+        .nav-links a:hover {
+            color: var(--saffron);
+        }
+        
+        .mobile-menu-btn {
+            display: none;
+            background: transparent;
+            border: none;
+            font-size: 24px;
+            color: var(--navy);
+            cursor: pointer;
+        }
+        
+        /* Language selector */
+        .language-selector {
+            position: relative;
+            margin-left: 20px;
+        }
+        
+        .language-btn {
+            background: transparent;
+            border: 2px solid var(--navy);
+            border-radius: 8px;
+            padding: 8px 15px;
+            color: var(--navy);
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s;
+        }
+        
+        .language-btn:hover {
+            background: rgba(0, 0, 128, 0.05);
+        }
+        
+        .language-options {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: white;
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+            width: 140px;
+            z-index: 100;
+            display: none;
+            overflow: hidden;
+        }
+        
+        .language-option {
+            padding: 12px 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: left;
+            font-weight: 500;
+        }
+        
+        .language-option:hover {
+            background: rgba(19, 136, 8, 0.1);
+        }
+        
+        .language-option.active {
+            background: var(--light-green);
+            color: var(--green);
+        }
+        
+        .show-language {
+            display: block;
+        }
+        
+        /* Hero Section */
+        .hero {
+            padding: 100px 5% 80px;
+            background: linear-gradient(120deg, rgba(255,255,255,0.9) 0%, rgba(255,249,230,0.8) 100%), url('https://images.unsplash.com/photo-1592921870789-04563d55041c?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2074&q=80') no-repeat center center/cover;
+        }
+        
+        .hero-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 50px;
+        }
+        
+        .hero-text {
+            flex: 1;
+        }
+        
+        .hero-image {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+        }
+        
+        .hero-image img {
+            max-width: 100%;
+            border-radius: 20px;
+            box-shadow: var(--shadow);
+            transform: rotate(3deg);
+            border: 8px solid white;
+        }
+        
+        .hero h1 {
+            font-size: 3.2rem;
+            line-height: 1.2;
+            margin-bottom: 20px;
+        }
+        
+        .hero h1 span {
+            color: var(--green);
+            position: relative;
+            display: inline-block;
+        }
+        
+        .hero h1 span:after {
+            content: '';
+            position: absolute;
+            bottom: 5px;
+            left: 0;
+            width: 100%;
+            height: 12px;
+            background: rgba(19, 136, 8, 0.2);
+            z-index: -1;
+            border-radius: 3px;
+        }
+        
+        .hero p {
+            font-size: 1.2rem;
+            max-width: 600px;
+            margin-bottom: 30px;
+            color: var(--text-medium);
+        }
+        
+        .cta-buttons {
+            display: flex;
+            gap: 20px;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 16px 36px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+            box-shadow: var(--shadow);
+            gap: 10px;
+        }
+        
+        .btn-whatsapp {
+            background: linear-gradient(135deg, #25D366, #128C7E);
+            color: white;
+        }
+        
+        .btn-whatsapp:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(37, 211, 102, 0.3);
+        }
+        
+        .btn-enroll {
+            background: linear-gradient(135deg, var(--saffron), #e67300);
+            color: white;
+        }
+        
+        .btn-enroll:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(255, 153, 51, 0.3);
+        }
+        
+        .btn i {
+            font-size: 1.3rem;
+        }
+        
+        /* Features Section */
+        .features {
+            padding: 100px 5%;
+            background-color: white;
+        }
+        
+        .section-title {
+            text-align: center;
+            margin-bottom: 60px;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .section-title h2 {
+            font-size: 2.6rem;
+            position: relative;
+            display: inline-block;
+            margin-bottom: 20px;
+        }
+        
+        .section-title h2:after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100px;
+            height: 5px;
+            background: linear-gradient(to right, var(--saffron), var(--green));
+            border-radius: 3px;
+        }
+        
+        .section-title p {
+            font-size: 1.1rem;
+            color: var(--text-medium);
+            margin-top: 20px;
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .feature-card {
+            background: white;
+            border-radius: 16px;
+            padding: 35px 30px;
+            box-shadow: var(--shadow);
+            transition: all 0.4s ease;
+            border-top: 5px solid var(--saffron);
+            text-align: center;
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 15px 30px rgba(0,0,0,0.12);
+        }
+        
+        .feature-card:nth-child(2) {
+            border-top-color: var(--green);
+        }
+        
+        .feature-card:nth-child(3) {
+            border-top-color: var(--navy);
+        }
+        
+        .feature-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, var(--light-saffron), white);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 25px;
+            font-size: 2.2rem;
+            color: var(--saffron);
+        }
+        
+        .feature-card:nth-child(2) .feature-icon {
+            background: linear-gradient(135deg, var(--light-green), white);
+            color: var(--green);
+        }
+        
+        .feature-card:nth-child(3) .feature-icon {
+            background: linear-gradient(135deg, #e6e6ff, white);
+            color: var(--navy);
+        }
+        
+        .feature-card h3 {
+            font-size: 1.6rem;
+            margin-bottom: 15px;
+        }
+        
+        /* How It Works */
+        .how-it-works {
+            padding: 100px 5%;
+            background: linear-gradient(135deg, var(--light-saffron) 0%, #fff9e6 100%);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .how-it-works:before {
+            content: '';
+            position: absolute;
+            top: -200px;
+            right: -100px;
+            width: 500px;
+            height: 500px;
+            border-radius: 50%;
+            background: rgba(19, 136, 8, 0.05);
+            z-index: 0;
+        }
+        
+        .steps-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .steps {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 30px;
+            margin-top: 50px;
+        }
+        
+        .step {
+            background: white;
+            border-radius: 20px;
+            padding: 35px 25px;
+            width: 270px;
+            text-align: center;
+            position: relative;
+            box-shadow: var(--shadow);
+            z-index: 2;
+        }
+        
+        .step-number {
+            position: absolute;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(135deg, var(--saffron), var(--green));
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 1.4rem;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+        }
+        
+        .step-icon {
+            font-size: 2.8rem;
+            margin: 25px 0;
+            color: var(--saffron);
+            background: linear-gradient(135deg, var(--saffron), var(--green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .step:nth-child(2) .step-icon {
+            background: linear-gradient(135deg, var(--green), var(--dark-green));
+            -webkit-background-clip: text;
+        }
+        
+        .step:nth-child(3) .step-icon {
+            background: linear-gradient(135deg, var(--navy), #000033);
+            -webkit-background-clip: text;
+        }
+        
+        .step:nth-child(4) .step-icon {
+            background: linear-gradient(135deg, #e67300, #b35900);
+            -webkit-background-clip: text;
+        }
+        
+        .step h3 {
+            margin-bottom: 15px;
+            font-size: 1.4rem;
+        }
+        
+        /* Pricing */
+        .pricing {
+            padding: 100px 5%;
+            background-color: white;
+        }
+        
+        .pricing-cards {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 30px;
+            max-width: 1400px;
+            margin: 50px auto 0;
+        }
+        
+        .pricing-card {
+            background: white;
+            border-radius: 20px;
+            padding: 40px 30px;
+            text-align: center;
+            width: 350px;
+            box-shadow: var(--shadow);
+            border: 2px solid #f0f0f0;
+            transition: all 0.4s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .pricing-card:before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 5px;
+            background: linear-gradient(to right, var(--saffron), var(--green));
+        }
+        
+        .pricing-card.popular {
+            border: 2px solid var(--green);
+            transform: scale(1.03);
+        }
+        
+        .popular-tag {
+            position: absolute;
+            top: 20px;
+            right: -30px;
+            background: var(--green);
+            color: white;
+            padding: 8px 35px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            transform: rotate(45deg);
+            width: 150px;
+            text-align: center;
+        }
+        
+        .pricing-card h3 {
+            font-size: 1.8rem;
+            margin-bottom: 20px;
+        }
+        
+        .price {
+            font-size: 3rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--saffron), var(--green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 20px;
+            display: block;
+        }
+        
+        .price span {
+            font-size: 1.1rem;
+            color: var(--text-medium);
+            display: block;
+            margin-top: 5px;
+        }
+        
+        .pricing-features {
+            list-style: none;
+            margin: 30px 0;
+            text-align: left;
+            padding: 0 20px;
+        }
+        
+        .pricing-features li {
+            margin-bottom: 15px;
+            position: relative;
+            padding-left: 35px;
+            font-size: 1.05rem;
+        }
+        
+        .pricing-features li:before {
+            content: '\f00c';
+            font-family: 'Font Awesome 5 Free';
+            font-weight: 900;
+            position: absolute;
+            left: 0;
+            top: 2px;
+            width: 25px;
+            height: 25px;
+            background: var(--light-green);
+            color: var(--green);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+        }
+        
+        /* Testimonials */
+        .testimonials {
+            padding: 100px 5%;
+            background: linear-gradient(135deg, var(--light-green) 0%, #e6f7e6 100%);
+        }
+        
+        .testimonial-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 30px;
+            max-width: 1400px;
+            margin: 50px auto 0;
+        }
+        
+        .testimonial {
+            background: white;
+            border-radius: 20px;
+            padding: 35px 30px;
+            box-shadow: var(--shadow);
+            position: relative;
+        }
+        
+        .testimonial:before {
+            content: '\f10d';
+            font-family: 'Font Awesome 5 Free';
+            font-weight: 900;
+            position: absolute;
+            top: 25px;
+            left: 25px;
+            font-size: 3rem;
+            color: rgba(19, 136, 8, 0.1);
+            line-height: 1;
+        }
+        
+        .testimonial p {
+            margin-bottom: 25px;
+            font-style: italic;
+            color: var(--text-medium);
+            font-size: 1.05rem;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .client {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .client-avatar {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--saffron), var(--green));
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.5rem;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+        
+        .client-info h4 {
+            margin-bottom: 5px;
+            font-size: 1.2rem;
+        }
+        
+        .client-info p {
+            color: var(--saffron);
+            margin: 0;
+            font-style: normal;
+            font-size: 0.95rem;
+        }
+        
+        /* CTA Section */
+        .cta-section {
+            padding: 100px 5%;
+            background: linear-gradient(135deg, var(--navy) 0%, #000033 100%);
+            text-align: center;
+            color: white;
+        }
+        
+        .cta-section h2 {
+            color: white;
+            font-size: 2.8rem;
+            max-width: 800px;
+            margin: 0 auto 25px;
+        }
+        
+        .cta-section p {
+            font-size: 1.2rem;
+            max-width: 700px;
+            margin: 0 auto 40px;
+            color: rgba(255,255,255,0.9);
+        }
+        
+        .cta-section .btn {
+            font-size: 1.2rem;
+            padding: 18px 45px;
+        }
+        
+        /* Footer */
+        footer {
+            background: linear-gradient(to right, #000022, var(--navy));
+            color: white;
+            padding: 80px 5% 30px;
+        }
+        
+        .footer-content {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 40px;
+            max-width: 1400px;
+            margin: 0 auto 50px;
+        }
+        
+        .footer-column h3 {
+            font-size: 1.5rem;
+            margin-bottom: 25px;
+            position: relative;
+            padding-bottom: 15px;
+            color: white;
+        }
+        
+        .footer-column h3:after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 50px;
+            height: 3px;
+            background: var(--saffron);
+        }
+        
+        .footer-links {
+            list-style: none;
+        }
+        
+        .footer-links li {
+            margin-bottom: 15px;
+        }
+        
+        .footer-links a {
+            color: rgba(255,255,255,0.8);
+            text-decoration: none;
+            transition: color 0.3s;
+            display: inline-block;
+            padding: 5px 0;
+        }
+        
+        .footer-links a:hover {
+            color: var(--saffron);
+            transform: translateX(5px);
+        }
+        
+        .contact-info p {
+            margin-bottom: 18px;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        
+        .contact-info i {
+            color: var(--saffron);
+            font-size: 1.2rem;
+            margin-top: 3px;
+        }
+        
+        .social-links {
+            display: flex;
+            gap: 15px;
+            margin-top: 25px;
+        }
+        
+        .social-links a {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 45px;
+            height: 45px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 12px;
+            color: white;
+            transition: all 0.3s;
+            font-size: 1.2rem;
+        }
+        
+        .social-links a:hover {
+            background: var(--saffron);
+            transform: translateY(-5px);
+        }
+        
+        .footer-bottom {
+            text-align: center;
+            padding-top: 30px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            font-size: 0.95rem;
+            color: rgba(255,255,255,0.6);
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 1100px) {
+            .hero h1 {
+                font-size: 2.8rem;
+            }
+            
+            .hero-content {
+                flex-direction: column;
+                text-align: center;
+            }
+            
+            .hero-text {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .hero p {
+                max-width: 100%;
+            }
+        }
+        
+        @media (max-width: 900px) {
+            .nav-links {
+                display: none;
+            }
+            
+            .mobile-menu-btn {
+                display: block;
+            }
+            
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+            
+            .section-title h2 {
+                font-size: 2.2rem;
+            }
+            
+            .pricing-card.popular {
+                transform: scale(1);
+            }
+        }
+        
+        @media (max-width: 600px) {
+            .header-content {
+                padding: 12px 0;
+            }
+            
+            .logo-icon {
+                width: 45px;
+                height: 45px;
+                font-size: 22px;
+            }
+            
+            .logo-text {
+                font-size: 22px;
+            }
+            
+            .hero {
+                padding: 90px 5% 60px;
+            }
+            
+            .hero h1 {
+                font-size: 2.2rem;
+            }
+            
+            .cta-buttons {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .btn {
+                width: 100%;
+                padding: 16px 24px;
+            }
+            
+            .features, .how-it-works, .pricing, .testimonials, .cta-section {
+                padding: 70px 5%;
+            }
+            
+            .section-title h2 {
+                font-size: 2rem;
+            }
+            
+            .step {
+                width: 100%;
+                max-width: 350px;
+            }
+            
+            .pricing-card {
+                width: 100%;
+                max-width: 400px;
+            }
+            
+            .cta-section h2 {
+                font-size: 2.2rem;
+            }
+        }
+        
+        @media (max-width: 400px) {
+            .hero h1 {
+                font-size: 1.9rem;
+            }
+            
+            .section-title h2 {
+                font-size: 1.8rem;
+            }
+            
+            .price {
+                font-size: 2.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header Ribbon with Indian Colors -->
+    <div class="header-ribbon"></div>
+    
+    <!-- Header -->
+    <header>
+        <div class="header-content">
+            <div class="logo">
+                <div class="logo-icon">
+                    <i class="fas fa-box"></i>
+                </div>
+                <div class="logo-text">Stock<span>Guard</span></div>
+            </div>
+            
+            <ul class="nav-links">
+                <li><a href="#features" data-translate="navFeatures">Features</a></li>
+                <li><a href="#how-it-works" data-translate="navHowItWorks">How It Works</a></li>
+                <li><a href="#pricing" data-translate="navPricing">Pricing</a></li>
+                <li><a href="#testimonials" data-translate="navTestimonials">Testimonials</a></li>
+                <li><a href="#contact" data-translate="navContact">Contact</a></li>
+            </ul>
+            
+            <!-- Language Selector -->
+            <div class="language-selector">
+                <button class="language-btn">
+                    <i class="fas fa-globe"></i>
+                    <span class="current-language">Hindi</span>
+                    <i class="fas fa-chevron-down"></i>
+                </button>
+                <div class="language-options">
+                    <div class="language-option active" data-lang="hi">हिंदी (Hindi)</div>
+                    <div class="language-option" data-lang="en">English</div>
+                    <div class="language-option" data-lang="ta">தமிழ் (Tamil)</div>
+                    <div class="language-option" data-lang="mr">मराठी (Marathi)</div>
+                </div>
+            </div>
+            
+            <button class="mobile-menu-btn">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero" id="hero">
+        <div class="hero-content">
+            <div class="hero-text">
+                <h1 data-translate="heroTitle">Reduce Dead Stock with <span>WhatsApp Voice Notes</span></h1>
+                <p data-translate="heroText">StockGuard helps Indian shopkeepers manage inventory, reduce waste, and increase profits using WhatsApp - no apps to install, no complex software to learn!</p>
+                
+                <div class="cta-buttons">
+                    <a href="#" class="btn btn-whatsapp">
+                        <i class="fab fa-whatsapp"></i> <span data-translate="whatsappBtn">Test on WhatsApp</span>
+                    </a>
+                    <a href="#pricing" class="btn btn-enroll">
+                        <span class="rupee-symbol">₹</span> <span data-translate="enrollBtn">Enroll Now</span>
+                    </a>
+                </div>
+            </div>
+            
+            <div class="hero-image">
+                <img src="https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?q=80&w=2070" alt="Indian Kirana Store">
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="features" id="features">
+        <div class="section-title">
+            <h2 data-translate="featuresTitle">Powerful Features for Kirana Stores</h2>
+            <p data-translate="featuresSubtitle">Designed specifically for Indian shopkeepers to save time and reduce inventory waste</p>
+        </div>
+        
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-microphone-alt"></i>
+                </div>
+                <h3 data-translate="feature1Title">Voice Note Updates</h3>
+                <p data-translate="feature1Text">Update inventory with simple voice notes in Hindi or your local language. Just say "Bought 10 Maggi packets" or "Sold 5 Parle-G biscuits".</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-robot"></i>
+                </div>
+                <h3 data-translate="feature2Title">Instant Confirmation</h3>
+                <p data-translate="feature2Text">Get immediate confirmation of your inventory update with current stock levels. No more manual tracking or guesswork.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-bell"></i>
+                </div>
+                <h3 data-translate="feature3Title">Dead Stock Alerts</h3>
+                <p data-translate="feature3Text">Receive automatic alerts for slow-moving items before they expire. Get smart suggestions for bundled offers to clear stock.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works -->
+    <section class="how-it-works" id="how-it-works">
+        <div class="steps-container">
+            <div class="section-title">
+                <h2 data-translate="howItWorksTitle">Simple 4-Step Process</h2>
+                <p data-translate="howItWorksSubtitle">Manage your inventory efficiently with StockGuard</p>
+            </div>
+            
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-icon">
+                        <i class="fas fa-microphone"></i>
+                    </div>
+                    <h3 data-translate="step1Title">Send Voice Note</h3>
+                    <p data-translate="step1Text">Update purchases or sales via WhatsApp voice message in your language.</p>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-icon">
+                        <i class="fas fa-sync-alt"></i>
+                    </div>
+                    <h3 data-translate="step2Title">Instant Update</h3>
+                    <p data-translate="step2Text">Inventory updates automatically in real-time.</p>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-icon">
+                        <i class="fas fa-check-circle"></i>
+                    </div>
+                    <h3 data-translate="step3Title">Receive Confirmation</h3>
+                    <p data-translate="step3Text">Get immediate confirmation with current stock levels.</p>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-icon">
+                        <i class="fas fa-lightbulb"></i>
+                    </div>
+                    <h3 data-translate="step4Title">Get Smart Alerts</h3>
+                    <p data-translate="step4Text">Receive dead stock alerts and bundled offer suggestions.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing Section -->
+    <section class="pricing" id="pricing">
+        <div class="section-title">
+            <h2 data-translate="pricingTitle">Affordable Pricing Plans</h2>
+            <p data-translate="pricingSubtitle">Choose the plan that works best for your shop. No hidden charges!</p>
+        </div>
+        
+        <div class="pricing-cards">
+            <div class="pricing-card">
+                <h3 data-translate="basicPlan">Basic Plan</h3>
+                <div class="price">₹199<span data-translate="perMonth">per month</span></div>
+                <ul class="pricing-features">
+                    <li data-translate="feature1">Unlimited voice updates</li>
+                    <li data-translate="feature2">Real-time inventory tracking</li>
+                    <li data-translate="feature3">Daily summary (opt-in)</li>
+                    <li data-translate="feature4">Dead stock alerts</li>
+                    <li data-translate="feature5">WhatsApp support</li>
+                </ul>
+                <a href="#" class="btn btn-enroll">
+                    <span class="rupee-symbol">₹</span> <span data-translate="pricingEnroll">Enroll Now</span>
+                </a>
+            </div>
+            
+            <div class="pricing-card popular">
+                <div class="popular-tag" data-translate="popularTag">MOST POPULAR</div>
+                <h3 data-translate="proPlan">Pro Plan</h3>
+                <div class="price">₹499<span data-translate="perMonth">per month</span></div>
+                <ul class="pricing-features">
+                    <li data-translate="feature6">All Basic features</li>
+                    <li data-translate="feature7">Smart bundled offers</li>
+                    <li data-translate="feature8">Expiry prediction alerts</li>
+                    <li data-translate="feature9">Sales analytics reports</li>
+                    <li data-translate="feature10">Priority support</li>
+                    <li data-translate="feature11">Multi-user access</li>
+                </ul>
+                <a href="#" class="btn btn-whatsapp">
+                    <i class="fab fa-whatsapp"></i> <span data-translate="pricingEnroll">Enroll Now</span>
+                </a>
+            </div>
+            
+            <div class="pricing-card">
+                <h3 data-translate="businessPlan">Business Plan</h3>
+                <div class="price">₹999<span data-translate="perMonth">per month</span></div>
+                <ul class="pricing-features">
+                    <li data-translate="feature12">All Pro features</li>
+                    <li data-translate="feature13">Multiple store management</li>
+                    <li data-translate="feature14">Supplier management</li>
+                    <li data-translate="feature15">Custom reporting</li>
+                    <li data-translate="feature16">Dedicated account manager</li>
+                    <li data-translate="feature17">24/7 support</li>
+                </ul>
+                <a href="#" class="btn btn-enroll">
+                    <span class="rupee-symbol">₹</span> <span data-translate="pricingEnroll">Enroll Now</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section class="testimonials" id="testimonials">
+        <div class="section-title">
+            <h2 data-translate="testimonialsTitle">What Shopkeepers Say</h2>
+            <p data-translate="testimonialsSubtitle">Hear from Indian Kirana owners using StockGuard</p>
+        </div>
+        
+        <div class="testimonial-grid">
+            <div class="testimonial">
+                <p data-translate="testimonial1">"StockGuard reduced my expired goods by 40%! The voice note system is perfect for busy shopkeepers like me who don't have time for complex software."</p>
+                <div class="client">
+                    <div class="client-avatar">RK</div>
+                    <div class="client-info">
+                        <h4 data-translate="client1Name">Rajesh Kumar</h4>
+                        <p data-translate="client1Store">Grocery Store, Delhi</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="testimonial">
+                <p data-translate="testimonial2">"The bundled offer suggestions helped me clear old stock quickly. I made ₹8,000 extra in a month that would have been dead loss!"</p>
+                <div class="client">
+                    <div class="client-avatar">PS</div>
+                    <div class="client-info">
+                        <h4 data-translate="client2Name">Priya Sharma</h4>
+                        <p data-translate="client2Store">General Store, Mumbai</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="testimonial">
+                <p data-translate="testimonial3">"As a 55-year-old shopkeeper, I was worried about technology. But WhatsApp I know! StockGuard made inventory management so simple."</p>
+                <div class="client">
+                    <div class="client-avatar">VP</div>
+                    <div class="client-info">
+                        <h4 data-translate="client3Name">Vijay Patel</h4>
+                        <p data-translate="client3Store">Kirana Store, Ahmedabad</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="cta-section">
+        <h2 data-translate="ctaTitle">Ready to Reduce Your Dead Stock?</h2>
+        <p data-translate="ctaSubtitle">Join thousands of Indian shopkeepers who are saving money and reducing waste with StockGuard</p>
+        <a href="#" class="btn btn-whatsapp">
+            <i class="fab fa-whatsapp"></i> <span data-translate="ctaBtn">Start Free Trial on WhatsApp</span>
+        </a>
+    </section>
+
+    <!-- Footer -->
+    <footer id="contact">
+        <div class="footer-content">
+            <div class="footer-column">
+                <h3 data-translate="footerAbout">About StockGuard</h3>
+                <p data-translate="footerAboutText">StockGuard helps Indian shopkeepers reduce dead stock and increase profits through simple WhatsApp-based inventory management.</p>
+                <div class="social-links">
+                    <a href="#"><i class="fab fa-facebook-f"></i></a>
+                    <a href="#"><i class="fab fa-twitter"></i></a>
+                    <a href="#"><i class="fab fa-instagram"></i></a>
+                    <a href="#"><i class="fab fa-linkedin-in"></i></a>
+                </div>
+            </div>
+            
+            <div class="footer-column">
+                <h3 data-translate="footerLinks">Quick Links</h3>
+                <ul class="footer-links">
+                    <li><a href="#features" data-translate="navFeatures">Features</a></li>
+                    <li><a href="#how-it-works" data-translate="navHowItWorks">How It Works</a></li>
+                    <li><a href="#pricing" data-translate="navPricing">Pricing</a></li>
+                    <li><a href="#testimonials" data-translate="navTestimonials">Testimonials</a></li>
+                    <li><a href="#" data-translate="footerFaq">FAQ</a></li>
+                </ul>
+            </div>
+            
+            <div class="footer-column">
+                <h3 data-translate="footerContact">Contact Us</h3>
+                <div class="contact-info">
+                    <p><i class="fas fa-map-marker-alt"></i> <span data-translate="footerAddress">123 Business Street, Mumbai, India</span></p>
+                    <p><i class="fas fa-phone"></i> +91 98765 43210</p>
+                    <p><i class="fas fa-envelope"></i> info@stockguard.in</p>
+                    <p><i class="fab fa-whatsapp"></i> +91 98765 43210</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer-bottom">
+            <p data-translate="footerCopyright">&copy; 2023 StockGuard. All Rights Reserved. | Designed with ❤️ for Indian Shopkeepers</p>
+        </div>
+    </footer>
+
+    <script>
+        // Translation dictionary
+        const translations = {
+            en: {
+                navFeatures: "Features",
+                navHowItWorks: "How It Works",
+                navPricing: "Pricing",
+                navTestimonials: "Testimonials",
+                navContact: "Contact",
+                heroTitle: "Reduce Dead Stock with <span>WhatsApp Voice Notes</span>",
+                heroText: "StockGuard helps Indian shopkeepers manage inventory, reduce waste, and increase profits using WhatsApp - no apps to install, no complex software to learn!",
+                whatsappBtn: "Test on WhatsApp",
+                enrollBtn: "Enroll Now",
+                featuresTitle: "Powerful Features for Kirana Stores",
+                featuresSubtitle: "Designed specifically for Indian shopkeepers to save time and reduce inventory waste",
+                feature1Title: "Voice Note Updates",
+                feature1Text: "Update inventory with simple voice notes in Hindi or your local language. Just say \"Bought 10 Maggi packets\" or \"Sold 5 Parle-G biscuits\".",
+                feature2Title: "Instant Confirmation",
+                feature2Text: "Get immediate confirmation of your inventory update with current stock levels. No more manual tracking or guesswork.",
+                feature3Title: "Dead Stock Alerts",
+                feature3Text: "Receive automatic alerts for slow-moving items before they expire. Get smart suggestions for bundled offers to clear stock.",
+                howItWorksTitle: "Simple 4-Step Process",
+                howItWorksSubtitle: "Manage your inventory efficiently with StockGuard",
+                step1Title: "Send Voice Note",
+                step1Text: "Update purchases or sales via WhatsApp voice message in your language.",
+                step2Title: "Instant Update",
+                step2Text: "Inventory updates automatically in real-time.",
+                step3Title: "Receive Confirmation",
+                step3Text: "Get immediate confirmation with current stock levels.",
+                step4Title: "Get Smart Alerts",
+                step4Text: "Receive dead stock alerts and bundled offer suggestions.",
+                pricingTitle: "Affordable Pricing Plans",
+                pricingSubtitle: "Choose the plan that works best for your shop. No hidden charges!",
+                basicPlan: "Basic Plan",
+                proPlan: "Pro Plan",
+                businessPlan: "Business Plan",
+                perMonth: "per month",
+                popularTag: "MOST POPULAR",
+                pricingEnroll: "Enroll Now",
+                feature1: "Unlimited voice updates",
+                feature2: "Real-time inventory tracking",
+                feature3: "Daily summary (opt-in)",
+                feature4: "Dead stock alerts",
+                feature5: "WhatsApp support",
+                feature6: "All Basic features",
+                feature7: "Smart bundled offers",
+                feature8: "Expiry prediction alerts",
+                feature9: "Sales analytics reports",
+                feature10: "Priority support",
+                feature11: "Multi-user access",
+                feature12: "All Pro features",
+                feature13: "Multiple store management",
+                feature14: "Supplier management",
+                feature15: "Custom reporting",
+                feature16: "Dedicated account manager",
+                feature17: "24/7 support",
+                testimonialsTitle: "What Shopkeepers Say",
+                testimonialsSubtitle: "Hear from Indian Kirana owners using StockGuard",
+                testimonial1: "\"StockGuard reduced my expired goods by 40%! The voice note system is perfect for busy shopkeepers like me who don't have time for complex software.\"",
+                client1Name: "Rajesh Kumar",
+                client1Store: "Grocery Store, Delhi",
+                testimonial2: "\"The bundled offer suggestions helped me clear old stock quickly. I made ₹8,000 extra in a month that would have been dead loss!\"",
+                client2Name: "Priya Sharma",
+                client2Store: "General Store, Mumbai",
+                testimonial3: "\"As a 55-year-old shopkeeper, I was worried about technology. But WhatsApp I know! StockGuard made inventory management so simple.\"",
+                client3Name: "Vijay Patel",
+                client3Store: "Kirana Store, Ahmedabad",
+                ctaTitle: "Ready to Reduce Your Dead Stock?",
+                ctaSubtitle: "Join thousands of Indian shopkeepers who are saving money and reducing waste with StockGuard",
+                ctaBtn: "Start Free Trial on WhatsApp",
+                footerAbout: "About StockGuard",
+                footerAboutText: "StockGuard helps Indian shopkeepers reduce dead stock and increase profits through simple WhatsApp-based inventory management.",
+                footerLinks: "Quick Links",
+                footerFaq: "FAQ",
+                footerContact: "Contact Us",
+                footerAddress: "123 Business Street, Mumbai, India",
+                footerCopyright: "&copy; 2023 StockGuard. All Rights Reserved. | Designed with ❤️ for Indian Shopkeepers"
+            },
+            hi: {
+                navFeatures: "विशेषताएँ",
+                navHowItWorks: "कैसे काम करता है",
+                navPricing: "मूल्य निर्धारण",
+                navTestimonials: "प्रशंसापत्र",
+                navContact: "संपर्क करें",
+                heroTitle: "व्हाट्सएप वॉइस नोट्स के साथ मृत स्टॉक कम करें <span>व्हाट्सएप वॉइस नोट्स</span>",
+                heroText: "स्टॉकगार्ड भारतीय दुकानदारों को व्हाट्सएप का उपयोग करके इन्वेंट्री प्रबंधित करने, कचरे को कम करने और मुनाफा बढ़ाने में मदद करता है - कोई ऐप इंस्टॉल करने की आवश्यकता नहीं, कोई जटिल सॉफ्टवेयर सीखने की आवश्यकता नहीं!",
+                whatsappBtn: "व्हाट्सएप पर परीक्षण करें",
+                enrollBtn: "अभी नामांकन करें",
+                featuresTitle: "किराना स्टोर के लिए शक्तिशाली सुविधाएँ",
+                featuresSubtitle: "भारतीय दुकानदारों के लिए विशेष रूप से डिज़ाइन किया गया ताकि समय बचाया जा सके और इन्वेंट्री कचरा कम किया जा सके",
+                feature1Title: "वॉइस नोट अपडेट",
+                feature1Text: "हिंदी या आपकी स्थानीय भाषा में सरल वॉइस नोट के साथ इन्वेंट्री अपडेट करें। बस कहें \"10 मैगी पैकेट खरीदे\" या \"5 पार्ले-जी बिस्कुट बेचे\"।",
+                feature2Title: "तुरंत पुष्टि",
+                feature2Text: "वर्तमान स्टॉक स्तरों के साथ अपने इन्वेंट्री अपडेट की तुरंत पुष्टि प्राप्त करें। अब कोई मैन्युअल ट्रैकिंग या अनुमान नहीं।",
+                feature3Title: "मृत स्टॉक अलर्ट",
+                feature3Text: "धीमी गति से बिकने वाली वस्तुओं के लिए उनके एक्सपायर होने से पहले स्वचालित अलर्ट प्राप्त करें। स्टॉक साफ़ करने के लिए बंडल ऑफर के स्मार्ट सुझाव प्राप्त करें।",
+                howItWorksTitle: "सरल 4-चरण प्रक्रिया",
+                howItWorksSubtitle: "स्टॉकगार्ड के साथ अपनी इन्वेंट्री को कुशलता से प्रबंधित करें",
+                step1Title: "वॉइस नोट भेजें",
+                step1Text: "व्हाट्सएप वॉइस संदेश के माध्यम से अपनी भाषा में खरीद या बिक्री अपडेट करें।",
+                step2Title: "तुरंत अपडेट",
+                step2Text: "इन्वेंट्री रियल-टाइम में स्वचालित रूप से अपडेट हो जाती है।",
+                step3Title: "पुष्टि प्राप्त करें",
+                step3Text: "वर्तमान स्टॉक स्तरों के साथ तुरंत पुष्टि प्राप्त करें।",
+                step4Title: "स्मार्ट अलर्ट प्राप्त करें",
+                step4Text: "मृत स्टॉक अलर्ट और बंडल ऑफर सुझाव प्राप्त करें।",
+                pricingTitle: "सस्ती मूल्य निर्धारण योजनाएँ",
+                pricingSubtitle: "अपनी दुकान के लिए सबसे अच्छी योजना चुनें। कोई छिपे हुए शुल्क नहीं!",
+                basicPlan: "बेसिक योजना",
+                proPlan: "प्रो योजना",
+                businessPlan: "बिजनेस योजना",
+                perMonth: "प्रति महीने",
+                popularTag: "सबसे लोकप्रिय",
+                pricingEnroll: "अभी नामांकन करें",
+                feature1: "असीमित वॉइस अपडेट",
+                feature2: "रियल-टाइम इन्वेंट्री ट्रैकिंग",
+                feature3: "दैनिक सारांश (ऑप्ट-इन)",
+                feature4: "मृत स्टॉक अलर्ट",
+                feature5: "व्हाट्सएप समर्थन",
+                feature6: "सभी बेसिक सुविधाएँ",
+                feature7: "स्मार्ट बंडल ऑफर",
+                feature8: "एक्सपायरी भविष्यवाणी अलर्ट",
+                feature9: "बिक्री विश्लेषण रिपोर्ट",
+                feature10: "प्राथमिकता समर्थन",
+                feature11: "बहु-उपयोगकर्ता पहुंच",
+                feature12: "सभी प्रो सुविधाएँ",
+                feature13: "एकाधिक स्टोर प्रबंधन",
+                feature14: "आपूर्तिकर्ता प्रबंधन",
+                feature15: "कस्टम रिपोर्टिंग",
+                feature16: "समर्पित खाता प्रबंधक",
+                feature17: "24/7 समर्थन",
+                testimonialsTitle: "दुकानदार क्या कहते हैं",
+                testimonialsSubtitle: "स्टॉकगार्ड का उपयोग करने वाले भारतीय किराना मालिकों से सुनें",
+                testimonial1: "\"स्टॉकगार्ड ने मेरे एक्सपायर्ड सामान को 40% तक कम कर दिया! वॉइस नोट सिस्टम व्यस्त दुकानदारों जैसे मेरे लिए बिल्कुल सही है जिनके पास जटिल सॉफ्टवेयर के लिए समय नहीं है।\"",
+                client1Name: "राजेश कुमार",
+                client1Store: "किराना स्टोर, दिल्ली",
+                testimonial2: "\"बंडल ऑफर सुझावों ने मुझे पुराना स्टॉक जल्दी साफ करने में मदद की। मैंने एक महीने में ₹8,000 अतिरिक्त कमाए जो मृत हानि होती।\"",
+                client2Name: "प्रिया शर्मा",
+                client2Store: "जनरल स्टोर, मुंबई",
+                testimonial3: "\"55 वर्षीय दुकानदार के रूप में, मुझे तकनीक की चिंता थी। लेकिन व्हाट्सएप मैं जानता हूँ! स्टॉकगार्ड ने इन्वेंट्री प्रबंधन को इतना सरल बना दिया।\"",
+                client3Name: "विजय पटेल",
+                client3Store: "किराना स्टोर, अहमदाबाद",
+                ctaTitle: "अपना मृत स्टॉक कम करने के लिए तैयार हैं?",
+                ctaSubtitle: "हजारों भारतीय दुकानदारों में शामिल हों जो स्टॉकगार्ड के साथ पैसा बचा रहे हैं और कचरा कम कर रहे हैं",
+                ctaBtn: "व्हाट्सएप पर निःशुल्क परीक्षण शुरू करें",
+                footerAbout: "स्टॉकगार्ड के बारे में",
+                footerAboutText: "स्टॉकगार्ड सरल व्हाट्सएप-आधारित इन्वेंट्री प्रबंधन के माध्यम से भारतीय दुकानदारों को मृत स्टॉक कम करने और मुनाफा बढ़ाने में मदद करता है।",
+                footerLinks: "त्वरित लिंक",
+                footerFaq: "सामान्य प्रश्न",
+                footerContact: "हमसे संपर्क करें",
+                footerAddress: "123 बिजनेस स्ट्रीट, मुंबई, भारत",
+                footerCopyright: "&copy; 2023 स्टॉकगार्ड। सर्वाधिकार सुरक्षित। | भारतीय दुकानदारों के लिए ❤️ के साथ डिज़ाइन किया गया"
+            },
+            ta: {
+                navFeatures: "அம்சங்கள்",
+                navHowItWorks: "இது எவ்வாறு செயல்படுகிறது",
+                navPricing: "விலை நிர்ணயம்",
+                navTestimonials: "வாடிக்கையாளர் கருத்துகள்",
+                navContact: "தொடர்பு கொள்ள",
+                heroTitle: "வாட்ஸ்அப்பு குரல் குறிப்புகள் மூலம் இறந்த பங்கு குறைக்க <span>வாட்ஸ்அப்பு குரல் குறிப்புகள்</span>",
+                heroText: "ஸ்டாக்குகார்ட் இந்திய கடைக்காரர்களுக்கு வாட்ஸ்அப்பைப் பயன்படுத்தி சரக்கு மேலாண்மை செய்ய, கழிவுகளைக் குறைக்க, மற்றும் லாபத்தை அதிகரிக்க உதவுகிறது - நிறுவ வேண்டிய பயன்பாடுகள் இல்லை, கற்றுக்கொள்ள சிக்கலான மென்பொருள் தேவையில்லை!",
+                whatsappBtn: "வாட்ஸ்அப்பில் சோதிக்கவும்",
+                enrollBtn: "இப்போதே பதிவு செய்யவும்",
+                featuresTitle: "கிரானா கடைகளுக்கான சக்திவாய்ந்த அம்சங்கள்",
+                featuresSubtitle: "இந்திய கடைக்காரர்களுக்காக குறிப்பாக வடிவமைக்கப்பட்டுள்ளது, நேரத்தைச் சேமிக்கவும் சரக்கு கழிவுகளைக் குறைக்கவும்",
+                feature1Title: "குரல் குறிப்பு புதுப்பிப்புகள்",
+                feature1Text: "ஹிந்தி அல்லது உங்கள் உள்ளூர் மொழியில் எளிய குரல் குறிப்புகளுடன் சரக்குகளைப் புதுப்பிக்கவும். \"10 மெக்கி பாக்கெட்டுகள் வாங்கப்பட்டது\" அல்லது \"5 பார்லே-ஜி பிஸ்கட்கள் விற்கப்பட்டது\" என்று கூறுங்கள்.",
+                feature2Title: "உடனடி உறுதிப்பாடு",
+                feature2Text: "தற்போதைய பங்கு நிலைகளுடன் உங்கள் சரக்கு புதுப்பிப்பின் உடனடி உறுதிப்பாட்டைப் பெறவும். இனி கைமுறை கண்காணிப்பு அல்லது யூகம் இல்லை.",
+                feature3Title: "இறந்த பங்கு எச்சரிக்கைகள்",
+                feature3Text: "மெதுவாக நகரும் பொருட்களுக்கு அவை காலாவதியாகும் முன் தானியங்கி எச்சரிக்கைகளைப் பெறவும். பங்கை அழிக்க பிணைக்கப்பட்ட சலுகைகளுக்கான ஸ்மார்ட் பரிந்துரைகளைப் பெறவும்.",
+                howItWorksTitle: "எளிய 4-படி செயல்முறை",
+                howItWorksSubtitle: "ஸ்டாக்குகார்டுடன் உங்கள் சரக்குகளை திறமையாக நிர்வகிக்கவும்",
+                step1Title: "குரல் குறிப்பை அனுப்பவும்",
+                step1Text: "வாட்ஸ்அப் குரல் செய்தி மூலம் உங்கள் மொழியில் கொள்முதல் அல்லது விற்பனையைப் புதுப்பிக்கவும்.",
+                step2Title: "உடனடி புதுப்பிப்பு",
+                step2Text: "சரக்கு உண்மையான நேரத்தில் தானாகவே புதுப்பிக்கப்படும்.",
+                step3Title: "உறுதிப்பாட்டைப் பெறவும்",
+                step3Text: "தற்போதைய பங்கு நிலைகளுடன் உடனடி உறுதிப்பாட்டைப் பெறவும்.",
+                step4Title: "ஸ்மார்ட் எச்சரிக்கைகளைப் பெறவும்",
+                step4Text: "இறந்த பங்கு எச்சரிக்கைகள் மற்றும் பிணைக்கப்பட்ட சலுகை பரிந்துரைகளைப் பெறவும்.",
+                pricingTitle: "மலிவு விலை திட்டங்கள்",
+                pricingSubtitle: "உங்கள் கடைக்கு சிறந்ததாக வேலை செய்யும் திட்டத்தைத் தேர்ந்தெடுக்கவும். மறைக்கப்பட்ட கட்டணங்கள் இல்லை!",
+                basicPlan: "அடிப்படை திட்டம்",
+                proPlan: "ப்ரோ திட்டம்",
+                businessPlan: "வணிக திட்டம்",
+                perMonth: "மாதத்திற்கு",
+                popularTag: "மிகவும் பிரபலமானது",
+                pricingEnroll: "இப்போதே பதிவு செய்யவும்",
+                feature1: "வரம்பற்ற குரல் புதுப்பிப்புகள்",
+                feature2: "உண்மையான நேர சரக்கு கண்காணிப்பு",
+                feature3: "தினசரி சுருக்கம் (விருப்பம்)",
+                feature4: "இறந்த பங்கு எச்சரிக்கைகள்",
+                feature5: "வாட்ஸ்அப்பு ஆதரவு",
+                feature6: "அனைத்து அடிப்படை அம்சங்களும்",
+                feature7: "ஸ்மார்ட் பிணைக்கப்பட்ட சலுகைகள்",
+                feature8: "காலாவதி கணிப்பு எச்சரிக்கைகள்",
+                feature9: "விற்பனை பகுப்பாய்வு அறிக்கைகள்",
+                feature10: "முன்னுரிமை ஆதரவு",
+                feature11: "பல பயனர் அணுகல்",
+                feature12: "அனைத்து ப்ரோ அம்சங்களும்",
+                feature13: "பல கடை மேலாண்மை",
+                feature14: "சப்ளையர் மேலாண்மை",
+                feature15: "தனிப்பயன் அறிக்கையிடல்",
+                feature16: "அர்ப்பணிக்கப்பட்ட கணக்கு மேலாளர்",
+                feature17: "24/7 ஆதரவு",
+                testimonialsTitle: "கடைக்காரர்கள் என்ன சொல்கிறார்கள்",
+                testimonialsSubtitle: "ஸ்டாக்குகார்டைப் பயன்படுத்தும் இந்திய கிரானா உரிமையாளர்களிடமிருந்து கேளுங்கள்",
+                testimonial1: "\"ஸ்டாக்குகார்ட் எனது காலாவதியான பொருட்களை 40% குறைத்தது! குரல் குறிப்பு முறை என்னைப் போன்ற பிஸியான கடைக்காரர்களுக்கு சிக்கலான மென்பொருளுக்கு நேரம் இல்லாதவர்களுக்கு சரியானது.\"",
+                client1Name: "ராஜேஷ் குமார்",
+                client1Store: "கிராகரி ஸ்டோர், டெல்லி",
+                testimonial2: "\"பிணைக்கப்பட்ட சலுகை பரிந்துரைகள் பழைய பங்கை விரைவாக அழிக்க எனக்கு உதவியது. மாதத்தில் ₹8,000 கூடுதல் சம்பாதித்தேன், இது இறந்த இழப்பாக இருந்திருக்கும்!\"",
+                client2Name: "பிரியா சர்மா",
+                client2Store: "ஜெனரல் ஸ்டோர், மும்பை",
+                testimonial3: "\"55 வயது கடைக்காரராக, நான் தொழில்நுட்பத்தைப் பற்றி கவலைப்பட்டேன். ஆனால் வாட்ஸ்அப் எனக்குத் தெரியும்! ஸ்டாக்குகார்ட் சரக்கு மேலாண்மையை மிகவும் எளிதாக்கியது.\"",
+                client3Name: "விஜய் படேல்",
+                client3Store: "கிரானா ஸ்டோர், அகமதாபாத்",
+                ctaTitle: "உங்கள் இறந்த பங்கைக் குறைக்க தயாரா?",
+                ctaSubtitle: "ஸ்டாக்குகார்டுடன் பணத்தைச் சேமித்து கழிவுகளைக் குறைக்கும் ஆயிரக்கணக்கான இந்திய கடைக்காரர்களுடன் சேரவும்",
+                ctaBtn: "வாட்ஸ்அப்பில் இலவச சோதனையைத் தொடங்கவும்",
+                footerAbout: "ஸ்டாக்குகார்ட் பற்றி",
+                footerAboutText: "ஸ்டாக்குகார்ட் எளிய வாட்ஸ்அப்-சார்ந்த சரக்கு மேலாண்மை மூலம் இந்திய கடைக்காரர்களுக்கு இறந்த பங்கைக் குறைத்து லாபத்தை அதிகரிக்க உதவுகிறது.",
+                footerLinks: "விரைவு இணைப்புகள்",
+                footerFaq: "அடிக்கடி கேட்கப்படும் கேள்விகள்",
+                footerContact: "எங்களை தொடர்பு கொள்ள",
+                footerAddress: "123 பிஸினஸ் தெரு, மும்பை, இந்தியா",
+                footerCopyright: "&copy; 2023 ஸ்டாக்குகார்ட். அனைத்து உரிமைகளும் பாதுகாக்கப்பட்டவை. | இந்திய கடைக்காரர்களுக்காக ❤️ உடன் வடிவமைக்கப்பட்டது"
+            },
+            mr: {
+                navFeatures: "वैशिष्ट्ये",
+                navHowItWorks: "हे कसे काम करते",
+                navPricing: "किंमत",
+                navTestimonials: "प्रतिक्रिया",
+                navContact: "संपर्क साधा",
+                heroTitle: "व्हाट्सअॅप व्हॉईस नोट्ससह डेड स्टॉक कमी करा <span>व्हाट्सअॅप व्हॉईस नोट्स</span>",
+                heroText: "स्टॉकगार्ड भारतीय दुकानदारांना व्हाट्सअॅप वापरून इन्व्हेंटरी व्यवस्थापित करण्यास, कचरा कमी करण्यास आणि नफा वाढवण्यास मदत करते - इंस्टॉल करण्यासाठी कोणतेही अॅप्स नाहीत, शिकण्यासाठी कोणतेही क्लिष्ट सॉफ्टवेअर नाही!",
+                whatsappBtn: "व्हाट्सअॅपवर चाचणी घ्या",
+                enrollBtn: "आत्ताच नोंदणी करा",
+                featuresTitle: "किराणा स्टोअर्ससाठी शक्तिशाली वैशिष्ट्ये",
+                featuresSubtitle: "भारतीय दुकानदारांसाठी विशेषतः डिझाइन केलेले, वेळ वाचवण्यासाठी आणि इन्व्हेंटरी कचरा कमी करण्यासाठी",
+                feature1Title: "व्हॉईस नोट अद्यतने",
+                feature1Text: "हिंदी किंवा आपल्या स्थानिक भाषेत साध्या व्हॉईस नोट्ससह इन्व्हेंटरी अद्यतनित करा. फक्त \"10 मॅगी पॅकेट्स खरेदी केले\" किंवा \"5 पार्ले-जी बिस्किट्स विकले\" म्हणा.",
+                feature2Title: "तात्काळ पुष्टीकरण",
+                feature2Text: "वर्तमान स्टॉक पातळीसह आपल्या इन्व्हेंटरी अद्यतनाची त्वरित पुष्टी मिळवा. यापुढे कोणतेही मॅन्युअल ट्रॅकिंग किंवा अंदाज नाही.",
+                feature3Title: "डेड स्टॉक अलर्ट",
+                feature3Text: "हळूहळू हलणाऱ्या वस्तूंसाठी त्या कालबाह्य होण्यापूर्वी स्वयंचलित अलर्ट मिळवा. स्टॉक साफ करण्यासाठी स्मार्ट बंडल ऑफर सूचना मिळवा.",
+                howItWorksTitle: "सोपी 4-चरण प्रक्रिया",
+                howItWorksSubtitle: "स्टॉकगार्डसह आपली इन्व्हेंटरी कार्यक्षमतेने व्यवस्थापित करा",
+                step1Title: "व्हॉईस नोट पाठवा",
+                step1Text: "व्हाट्सअॅप व्हॉईस मेसेजद्वारे आपल्या भाषेत खरेदी किंवा विक्री अद्यतनित करा.",
+                step2Title: "तात्काळ अद्यतन",
+                step2Text: "इन्व्हेंटरी रिअल-टाइममध्ये स्वयंचलितपणे अद्यतनित होते.",
+                step3Title: "पुष्टीकरण मिळवा",
+                step3Text: "वर्तमान स्टॉक पातळीसह त्वरित पुष्टीकरण मिळवा.",
+                step4Title: "स्मार्ट अलर्ट मिळवा",
+                step4Text: "डेड स्टॉक अलर्ट आणि बंडल ऑफर सूचना मिळवा.",
+                pricingTitle: "स्वस्त किंमतीचे प्लॅन",
+                pricingSubtitle: "आपल्या दुकानासाठी सर्वोत्तम कार्य करणारी योजना निवडा. लपवलेले शुल्क नाही!",
+                basicPlan: "मूलभूत योजना",
+                proPlan: "प्रो योजना",
+                businessPlan: "व्यवसाय योजना",
+                perMonth: "दर महिन्याला",
+                popularTag: "सर्वात लोकप्रिय",
+                pricingEnroll: "आत्ताच नोंदणी करा",
+                feature1: "अमर्यादित व्हॉईस अद्यतने",
+                feature2: "रिअल-टाइम इन्व्हेंटरी ट्रॅकिंग",
+                feature3: "दैनिक सारांश (ऑप्ट-इन)",
+                feature4: "डेड स्टॉक अलर्ट",
+                feature5: "व्हाट्सअॅप समर्थन",
+                feature6: "सर्व मूलभूत वैशिष्ट्ये",
+                feature7: "स्मार्ट बंडल ऑफर",
+                feature8: "कालबाह्यता अंदाज अलर्ट",
+                feature9: "विक्री विश्लेषण अहवाल",
+                feature10: "प्राधान्य समर्थन",
+                feature11: "मल्टी-यूजर प्रवेश",
+                feature12: "सर्व प्रो वैशिष्ट्ये",
+                feature13: "एकाधिक स्टोअर व्यवस्थापन",
+                feature14: "पुरवठादार व्यवस्थापन",
+                feature15: "सानुकूल अहवाल",
+                feature16: "समर्पित खाते व्यवस्थापक",
+                feature17: "24/7 समर्थन",
+                testimonialsTitle: "दुकानदार काय म्हणतात",
+                testimonialsSubtitle: "स्टॉकगार्ड वापरणाऱ्या भारतीय किराणा मालकांकडून ऐका",
+                testimonial1: "\"स्टॉकगार्डने माझे कालबाह्य माल 40% ने कमी केला! व्हॉईस नोट सिस्टम माझ्यासारख्या व्यस्त दुकानदारांसाठी परिपूर्ण आहे ज्यांना क्लिष्ट सॉफ्टवेअरसाठी वेळ नसतो.\"",
+                client1Name: "राजेश कुमार",
+                client1Store: "किराणा दुकान, दिल्ली",
+                testimonial2: "\"बंडल ऑफर सूचनांनी जुन्या स्टॉकला पटकन साफ करण्यास मदत केली. मी एका महिन्यात ₹8,000 अतिरिक्त कमावले जे डेड लॉस झाले असते!\"",
+                client2Name: "प्रिया शर्मा",
+                client2Store: "सामान्य दुकान, मुंबई",
+                testimonial3: "\"55 वर्षांचा दुकानदार म्हणून, मला तंत्रज्ञानाची काळजी होती. पण व्हाट्सअॅप मला माहित आहे! स्टॉकगार्डने इन्व्हेंटरी व्यवस्थापन इतके सोपे केले.\"",
+                client3Name: "विजय पाटील",
+                client3Store: "किराणा दुकान, अहमदाबाद",
+                ctaTitle: "आपला डेड स्टॉक कमी करण्यासाठी तयार आहात?",
+                ctaSubtitle: "स्टॉकगार्डसह पैसे वाचवणाऱ्या आणि कचरा कमी करणाऱ्या हजारो भारतीय दुकानदारांमध्ये सामील व्हा",
+                ctaBtn: "व्हाट्सअॅपवर विनामूल्य चाचणी सुरू करा",
+                footerAbout: "स्टॉकगार्ड बद्दल",
+                footerAboutText: "स्टॉकगार्ड साध्या व्हाट्सअॅप-आधारित इन्व्हेंटरी व्यवस्थापनाद्वारे भारतीय दुकानदारांना डेड स्टॉक कमी करण्यास आणि नफा वाढवण्यास मदत करते.",
+                footerLinks: "द्रुत दुवे",
+                footerFaq: "सामान्य प्रश्न",
+                footerContact: "आमच्याशी संपर्क साधा",
+                footerAddress: "123 बिझनेस स्ट्रीट, मुंबई, भारत",
+                footerCopyright: "&copy; 2023 स्टॉकगार्ड. सर्व हक्क राखीव. | भारतीय दुकानदारांसाठी ❤️ सह डिझाइन केलेले"
+            }
+        };
+
+        // Smooth scrolling for navigation links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                
+                document.querySelector(this.getAttribute('href')).scrollIntoView({
+                    behavior: 'smooth'
+                });
+            });
+        });
+        
+        // WhatsApp button functionality
+        document.querySelectorAll('.btn-whatsapp').forEach(button => {
+            button.addEventListener('click', function(e) {
+                e.preventDefault();
+                alert('In the live version, this would open WhatsApp with our business number. Currently configured to: +919876543210');
+            });
+        });
+        
+        // Enrollment button functionality
+        document.querySelectorAll('.btn-enroll').forEach(button => {
+            button.addEventListener('click', function(e) {
+                e.preventDefault();
+                // Scroll to pricing section
+                document.querySelector('#pricing').scrollIntoView({
+                    behavior: 'smooth'
+                });
+                
+                // In a real implementation, this would open a signup form
+                setTimeout(() => {
+                    alert('In the live version, this would open an enrollment form with payment options.');
+                }, 800);
+            });
+        });
+        
+        // Mobile menu toggle
+        const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
+        const navLinks = document.querySelector('.nav-links');
+        
+        mobileMenuBtn.addEventListener('click', () => {
+            navLinks.style.display = navLinks.style.display === 'flex' ? 'none' : 'flex';
+        });
+        
+        // Close mobile menu when clicking a link
+        document.querySelectorAll('.nav-links a').forEach(link => {
+            link.addEventListener('click', () => {
+                if (window.innerWidth <= 900) {
+                    navLinks.style.display = 'none';
+                }
+            });
+        });
+        
+        // Adjust mobile menu on window resize
+        window.addEventListener('resize', () => {
+            if (window.innerWidth > 900) {
+                navLinks.style.display = 'flex';
+            } else {
+                navLinks.style.display = 'none';
+            }
+        });
+        
+        // Language selector functionality
+        const languageBtn = document.querySelector('.language-btn');
+        const languageOptions = document.querySelector('.language-options');
+        const currentLanguage = document.querySelector('.current-language');
+        
+        // Toggle language dropdown
+        languageBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            languageOptions.classList.toggle('show-language');
+        });
+        
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!languageBtn.contains(e.target) && !languageOptions.contains(e.target)) {
+                languageOptions.classList.remove('show-language');
+            }
+        });
+        
+        // Change language
+        document.querySelectorAll('.language-option').forEach(option => {
+            option.addEventListener('click', () => {
+                const lang = option.getAttribute('data-lang');
+                changeLanguage(lang);
+                
+                // Update UI
+                document.querySelectorAll('.language-option').forEach(opt => {
+                    opt.classList.remove('active');
+                });
+                option.classList.add('active');
+                currentLanguage.textContent = option.textContent.split(' ')[0];
+                
+                // Close dropdown
+                languageOptions.classList.remove('show-language');
+            });
+        });
+        
+        // Change page language
+        function changeLanguage(lang) {
+            // Get all translatable elements
+            const elements = document.querySelectorAll('[data-translate]');
+            
+            elements.forEach(element => {
+                const key = element.getAttribute('data-translate');
+                
+                if (translations[lang] && translations[lang][key]) {
+                    if (element.hasAttribute('data-translate-html')) {
+                        element.innerHTML = translations[lang][key];
+                    } else {
+                        element.textContent = translations[lang][key];
+                    }
+                }
+            });
+        }
+        
+        // Set default language to Hindi
+        document.addEventListener('DOMContentLoaded', () => {
+            changeLanguage('hi');
+        });
+    </script>
+</body>
+</html>
