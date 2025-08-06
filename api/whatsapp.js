@@ -81,8 +81,12 @@ async function downloadAudio(url) {
 }
 
 async function googleTranscribe(flacBuffer) {
+  const rawJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+  const cleanedJson = rawJson.replace(/\\n/g, '\n');
+  const credentials = JSON.parse(cleanedJson);
+
   const auth = new GoogleAuth({
-    credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON),
+    credentials,
     scopes: ['https://www.googleapis.com/auth/cloud-platform']
   });
 
