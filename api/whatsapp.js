@@ -1,9 +1,9 @@
-// /api/whatsapp.js (Google STT accepts OGG directly)
+// /api/whatsapp.js
 const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
 
-// Initialize Twilio
+// Initialize Twilio client
 const twilioClient = twilio(
   process.env.ACCOUNT_SID,
   process.env.AUTH_TOKEN
@@ -13,21 +13,22 @@ module.exports = async (req, res) => {
   const response = new twilio.twiml.MessagingResponse();
   
   try {
-    if (req.method !== 'POST') throw new Error('Only POST allowed');
+    if (req.method !== 'POST') throw new Error('Only POST requests allowed');
 
     // Handle voice note
     if (req.body.NumMedia > 0 && req.body.MediaContentType0 === 'audio/ogg') {
-      const audioBuffer = await downloadAudio(req.body.MediaUrl0);
+      console.log('Processing voice note from:', req.body.MediaUrl0);
+      const audioBuffer = await downloadTwilioAudio(req.body.MediaUrl0);
       const transcript = await googleTranscribe(audioBuffer);
       response.message(`✅ Transcribed: "${transcript}"`);
     } 
-    // Handle text commands
+    // Handle text
     else {
       response.message('🎤 Send a voice note: "10 Parle-G sold"');
     }
 
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error:', error.message);
     response.message(`❌ Error: ${error.message.split('\n')[0]}`);
   }
 
@@ -35,16 +36,35 @@ module.exports = async (req, res) => {
   res.send(response.toString());
 };
 
-// Download audio (no conversion needed)
-async function downloadAudio(url) {
-  const { data } = await axios.get(url, {
-    responseType: 'arraybuffer',
-    timeout: 5000
-  });
-  return data;
+// Fixed Twilio Audio Download with Auth
+async function downloadTwilioAudio(url) {
+  try {
+    console.log('Downloading audio with Twilio auth...');
+    const { data } = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: 5000,
+      auth: {
+        username: process.env.ACCOUNT_SID,
+        password: process.env.AUTH_TOKEN
+      },
+      headers: {
+        'Accept': 'audio/ogg',
+        'User-Agent': 'TwilioWhatsApp/1.0'
+      }
+    });
+    console.log('Audio downloaded successfully');
+    return data;
+  } catch (error) {
+    console.error('Download failed:', {
+      status: error.response?.status,
+      headers: error.response?.headers,
+      data: error.response?.data?.toString('utf8')
+    });
+    throw new Error('Failed to download audio from Twilio');
+  }
 }
 
-// Google STT (accepts OGG)
+// Google STT (unchanged)
 async function googleTranscribe(buffer) {
   const auth = new GoogleAuth({
     credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON),
@@ -59,11 +79,11 @@ async function googleTranscribe(buffer) {
       audio: { content: buffer.toString('base64') },
       config: {
         languageCode: 'hi-IN',
-        encoding: 'OGG_OPUS', // Direct OGG support
+        encoding: 'OGG_OPUS',
         sampleRateHertz: 16000
       }
     }
   });
-
+  
   return data.results[0].alternatives[0].transcript;
 }
