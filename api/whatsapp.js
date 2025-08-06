@@ -1,13 +1,11 @@
-// /api/whatsapp.js
 const twilio = require('twilio');
-const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
+const FormData = require('form-data');
 
 module.exports = async (req, res) => {
   const response = new twilio.twiml.MessagingResponse();
-  
+
   try {
-    // 1. Validate request method
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
       return;
@@ -15,42 +13,18 @@ module.exports = async (req, res) => {
 
     const { MediaUrl0, NumMedia, SpeechResult } = req.body;
 
-    // 2. Handle voice note
     if (NumMedia > 0 && MediaUrl0) {
       console.log('[1] Downloading audio...');
       const audioBuffer = await downloadAudio(MediaUrl0);
-      
-      // 3. Analyze audio (simplified)
-      const audioInfo = analyzeAudio(audioBuffer);
-      console.log('Audio Analysis:', {
-        format: audioInfo.format,
-        sampleRate: `${audioInfo.sampleRate}Hz`,
-        size: `${audioInfo.sizeKB}KB`
-      });
 
-      // 4. Process transcription
-      let transcript;
-      try {
-        console.log('[2] Sending to Google STT...');
-        transcript = await googleTranscribe(
-          audioBuffer, 
-          audioInfo.sampleRate,
-          audioInfo.format.includes('OGG') ? 'OGG_OPUS' : 'LINEAR16'
-        );
-      } catch (error) {
-        console.error('Google STT failed, using Twilio fallback:', error.message);
-        transcript = SpeechResult || 'Could not transcribe audio';
-      }
-      
+      console.log('[2] Uploading to AssemblyAI...');
+      const transcript = await transcribeWithAssemblyAI(audioBuffer);
+
       response.message(`✅ Transcribed: "${transcript}"`);
-    }
-    // Fallback to Twilio transcription
-    else if (SpeechResult) {
+    } else if (SpeechResult) {
       console.log('[1] Using Twilio transcription');
       response.message(`🔊 (Twilio): "${SpeechResult}"`);
-    }
-    // Default prompt
-    else {
+    } else {
       console.log('[1] No media received');
       response.message('🎤 Send a voice note: "10 Parle-G sold"');
     }
@@ -58,9 +32,9 @@ module.exports = async (req, res) => {
   } catch (error) {
     console.error('Processing Error:', {
       error: error.message,
-      requestBody: { 
+      requestBody: {
         hasMedia: !!req.body.MediaUrl0,
-        mediaType: req.body.MediaContentType0 
+        mediaType: req.body.MediaContentType0
       }
     });
     response.message('❌ System error. Please try again with a clear voice message.');
@@ -70,17 +44,6 @@ module.exports = async (req, res) => {
   res.send(response.toString());
 };
 
-// Simple audio analysis
-function analyzeAudio(buffer) {
-  const header = buffer.slice(0, 4).toString('hex');
-  return {
-    format: header === '4f676753' ? 'OGG/Opus' : 'Unknown',
-    sampleRate: 8000, // Twilio voice notes are always 8kHz
-    sizeKB: Math.round(buffer.length / 1024)
-  };
-}
-
-// Download audio with Twilio auth
 async function downloadAudio(url) {
   const { data } = await axios.get(url, {
     responseType: 'arraybuffer',
@@ -96,61 +59,62 @@ async function downloadAudio(url) {
   return data;
 }
 
-// Google STT optimized for 8kHz audio
-async function googleTranscribe(buffer, sampleRate, format) {
-  const auth = new GoogleAuth({
-    credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON),
-    scopes: ['https://www.googleapis.com/auth/cloud-platform']
-  });
+async function transcribeWithAssemblyAI(buffer) {
+  const uploadRes = await axios.post(
+    'https://api.assemblyai.com/v2/upload',
+    buffer,
+    {
+      headers: {
+        authorization: process.env.ASSEMBLYAI_API_KEY,
+        'Content-Type': 'application/octet-stream'
+      }
+    }
+  );
 
-  const client = await auth.getClient();
-  
-  // Configuration optimized for Twilio's 8kHz audio
-  const config = {
-    encoding: format,
-    sampleRateHertz: sampleRate,
-    languageCode: 'hi-IN',
-    model: 'telephony',      // Specialized for phone audio
-    useEnhanced: true,       // Better accuracy worth the cost
-    enableAutomaticPunctuation: true,
-    speechContexts: [{
-      phrases: [
-        // Products
-        'Parle-G', 'Britannia', 'Sunfeast', 'Bourbon', 'Maggi', 
-        // Quantities
-        '10', '20', '50', '100', '500', '1000',
-        // Units
-        'kg', 'किलो', 'ग्राम', 'पैकेट', 'बॉक्स',
-        // Actions
-        'खरीदा', 'बेचा', 'बिक्री', 'क्रय', 'लिया', 'दिया', 'बचा'
-      ],
-      boost: 25.0  // Slightly reduced boost since we're not converting
-    }]
-  };
+  const transcriptRes = await axios.post(
+    'https://api.assemblyai.com/v2/transcript',
+    {
+      audio_url: uploadRes.data.upload_url,
+      language_code: 'hi',
+      punctuate: true,
+      boost_param: {
+        phrases: [
+          'Parle-G', 'Britannia', 'Sunfeast', 'Bourbon', 'Maggi',
+          '10', '20', '50', '100', '500', '1000',
+          'kg', 'किलो', 'ग्राम', 'पैकेट', 'बॉक्स',
+          'खरीदा', 'बेचा', 'बिक्री', 'क्रय', 'लिया', 'दिया', 'बचा'
+        ]
+      }
+    },
+    {
+      headers: {
+        authorization: process.env.ASSEMBLYAI_API_KEY,
+        'Content-Type': 'application/json'
+      }
+    }
+  );
 
-  try {
-    const { data } = await client.request({
-      url: 'https://speech.googleapis.com/v1/speech:recognize',
-      method: 'POST',
-      data: {
-        audio: { content: buffer.toString('base64') },
-        config
-      },
-      timeout: 8000
-    });
+  const transcriptId = transcriptRes.data.id;
 
-    const transcript = data.results?.[0]?.alternatives?.[0]?.transcript;
-    if (!transcript) throw new Error('Empty transcript received');
-    
-    return transcript;
-  } catch (error) {
-    const errorDetails = error.response?.data?.error?.message || error.message;
-    console.error('Google STT Error:', {
-      error: errorDetails,
-      config: `${format}@${sampleRate}Hz`,
-      bufferSize: `${Math.round(buffer.length / 1024)}KB`
-    });
-    
-    throw new Error('Speech recognition service failed');
+  // Polling for completion
+  for (let i = 0; i < 20; i++) {
+    const statusRes = await axios.get(
+      `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
+      {
+        headers: {
+          authorization: process.env.ASSEMBLYAI_API_KEY
+        }
+      }
+    );
+
+    if (statusRes.data.status === 'completed') {
+      return statusRes.data.text;
+    } else if (statusRes.data.status === 'error') {
+      throw new Error('AssemblyAI transcription failed');
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
   }
+
+  throw new Error('AssemblyAI transcription timed out');
 }
