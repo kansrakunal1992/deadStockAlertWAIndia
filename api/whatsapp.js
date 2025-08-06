@@ -1,6 +1,6 @@
+
 const twilio = require('twilio');
 const axios = require('axios');
-const FormData = require('form-data');
 
 module.exports = async (req, res) => {
   const response = new twilio.twiml.MessagingResponse();
@@ -77,7 +77,7 @@ async function transcribeWithAssemblyAI(buffer) {
       audio_url: uploadRes.data.upload_url,
       language_code: 'hi',
       punctuate: true,
-      boost_param: {
+      speech_boost: {
         phrases: [
           'Parle-G', 'Britannia', 'Sunfeast', 'Bourbon', 'Maggi',
           '10', '20', '50', '100', '500', '1000',
@@ -96,7 +96,6 @@ async function transcribeWithAssemblyAI(buffer) {
 
   const transcriptId = transcriptRes.data.id;
 
-  // Polling for completion
   for (let i = 0; i < 20; i++) {
     const statusRes = await axios.get(
       `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
