@@ -4,7 +4,8 @@
   "dependencies": {
     "twilio": "^4.23.0",
     "axios": "^1.6.7",
-    "google-auth-library": "^9.10.0"
+    "google-auth-library": "^9.10.0",
+    "form-data": "^4.0.0"
   },
   "engines": {
     "node": ">=18.x"
