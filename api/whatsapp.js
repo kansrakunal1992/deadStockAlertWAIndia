@@ -1,4 +1,3 @@
-// /api/whatsapp.js file
 const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
@@ -52,19 +51,13 @@ module.exports = async (req, res) => {
   res.send(response.toString());
 };
 
-// Audio conversion using FFmpeg
 async function convertToFLAC(oggBuffer) {
   try {
-    // Write input file
     fs.writeFileSync('/tmp/input.ogg', oggBuffer);
-    
-    // Convert to FLAC and upsample to 16kHz
     execSync(
       'ffmpeg -i /tmp/input.ogg -ar 16000 -ac 1 -c:a flac -compression_level 5 /tmp/output.flac',
       { timeout: 3000 }
     );
-    
-    // Read converted file
     return fs.readFileSync('/tmp/output.flac');
   } catch (error) {
     console.error('FFmpeg conversion failed:', error.message);
@@ -72,7 +65,6 @@ async function convertToFLAC(oggBuffer) {
   }
 }
 
-// Download audio with Twilio auth
 async function downloadAudio(url) {
   const { data } = await axios.get(url, {
     responseType: 'arraybuffer',
@@ -88,7 +80,6 @@ async function downloadAudio(url) {
   return data;
 }
 
-// Google STT with optimized configuration
 async function googleTranscribe(flacBuffer) {
   const auth = new GoogleAuth({
     credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON),
@@ -97,7 +88,6 @@ async function googleTranscribe(flacBuffer) {
 
   const client = await auth.getClient();
   
-  // Base configuration
   const baseConfig = {
     languageCode: 'hi-IN',
     useEnhanced: true,
@@ -106,7 +96,6 @@ async function googleTranscribe(flacBuffer) {
     speechContexts: [{
       phrases: [
         'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
-        'Sunfeast', 'सनफीस्ट', 'Bourbon', 'बॉर्बन',
         '10', 'दस', '20', 'बीस', '50', 'पचास', '100', 'सौ',
         'kg', 'किलो', 'ग्राम', 'पैकेट', 'बॉक्स', 'किलोग्राम',
         'खरीदा', 'बेचा', 'बिक्री', 'क्रय', 'लिया', 'दिया', 'बचा',
@@ -116,7 +105,6 @@ async function googleTranscribe(flacBuffer) {
     }]
   };
 
-  // Try multiple configurations
   const configs = [
     { ...baseConfig, model: 'telephony' },
     { ...baseConfig, model: 'latest_short' },
@@ -125,7 +113,6 @@ async function googleTranscribe(flacBuffer) {
 
   for (const config of configs) {
     try {
-      // Set audio parameters
       config.encoding = 'FLAC';
       config.sampleRateHertz = 16000;
 
@@ -151,6 +138,5 @@ async function googleTranscribe(flacBuffer) {
       });
     }
   }
-  
   throw new Error('All STT attempts failed');
 }
