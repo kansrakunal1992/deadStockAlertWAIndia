@@ -27,37 +27,31 @@ module.exports = async (req, res) => {
         // 2. Download audio with strict validation
         const { data: audioBuffer, headers } = await axios.get(audioUrl, {
           responseType: 'arraybuffer',
-          timeout: 5000, // 5-second timeout
-          maxContentLength: 10 * 1024 * 1024, // 10MB max
+          timeout: 5000,
+          maxContentLength: 10 * 1024 * 1024,
           validateStatus: (status) => status === 200
         });
 
         // 3. Verify audio content
         if (!headers['content-type']?.includes('audio/ogg')) {
-          throw new Error('Response is not audio - got content-type: ' + headers['content-type']);
+          throw new Error('Invalid audio content type: ' + headers['content-type']);
         }
 
         // 4. Transcribe with Google Cloud STT
-        const transcript = await googleTranscribe(audioBuffer, 'hi-IN');
+        const transcript = await googleTranscribe(audioBuffer);
         
-        // 5. Validate transcription contains numbers
+        // 5. Validate transcription
         if (!transcript.match(/\d+/)) {
-          throw new Error('No quantities detected in transcript');
+          throw new Error('No quantities detected');
         }
 
         response.message(`✅ Transcribed: "${transcript}"\n\nReply "1" to confirm.`);
 
       } catch (error) {
-        console.error('Voice Processing Error:', error.message);
-        
-        // Fallback 1: Try Twilio's built-in transcription
-        if (body.SpeechResult) {
-          response.message(`🔊 (Basic) Transcribed: "${body.SpeechResult}"`);
-        } 
-        // Fallback 2: Generic error message
-        else {
-          response.message('❌ Could not process. Please say: "10 Parle-G sold"');
-        }
+        console.error('Processing Error:', error.message);
+        response.message(error.message.includes('audio') ? 
+          '❌ Invalid audio. Say "10 Parle-G sold"' : 
+          '🔊 Basic Transcription: "' + (body.SpeechResult || 'Not available') + '"');
       }
     }
     // Handle confirmation
@@ -74,49 +68,44 @@ module.exports = async (req, res) => {
   res.send(response.toString());
 };
 
-// Google Cloud Speech-to-Text with robust error handling
-async function googleTranscribe(audioBuffer, languageCode = 'hi-IN') {
+// Google Cloud Speech-to-Text with credential fixes
+async function googleTranscribe(audioBuffer) {
   try {
-    // 1. Load and validate credentials
+    // 1. Parse credentials with proper newline handling
     const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
-    
-    if (!credentials.private_key || !credentials.client_email) {
-      throw new Error('Invalid Google Cloud credentials');
-    }
+    const privateKey = credentials.private_key.replace(/\\n/g, '\n');
 
-    // 2. Authenticate with proper newline handling
+    // 2. Authenticate
     const auth = new GoogleAuth({
       credentials: {
         ...credentials,
-        private_key: credentials.private_key.replace(/\\n/g, '\n') // Fix newlines
+        private_key: privateKey
       },
-      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-      projectId: credentials.project_id
+      scopes: ['https://www.googleapis.com/auth/cloud-platform']
     });
 
     const client = await auth.getClient();
     const audioBase64 = audioBuffer.toString('base64');
 
-    // 3. Prepare request with Indian retail context
+    // 3. Prepare optimized request
     const request = {
       audio: { content: audioBase64 },
       config: {
-        languageCode: languageCode,
+        languageCode: 'hi-IN',
         enableAutomaticPunctuation: true,
         model: 'latest_short',
-        useEnhanced: true,
         speechContexts: [{
           phrases: [
-            'Parle-G', 'Maggi', 'Dabur', 'kg', 'liter', 'pcs',
-            'beche', 'khareeda', 'सोल्ड', 'खरीदा', 'किलो',
-            '10', '20', '30', '40', '50' // Number boosts
+            'Parle-G', 'Maggi', 'Dabur', 'kg', 'liter',
+            '10', '20', '30', '40', '50',
+            'beche', 'khareeda', 'किलो'
           ],
           boost: 20.0
         }]
       }
     };
 
-    // 4. Call Google STT API
+    // 4. Call API
     const { data } = await client.request({
       url: 'https://speech.googleapis.com/v1/speech:recognize',
       method: 'POST',
@@ -124,14 +113,14 @@ async function googleTranscribe(audioBuffer, languageCode = 'hi-IN') {
       timeout: 10000
     });
 
-    if (!data.results || !data.results[0]?.alternatives[0]?.transcript) {
-      throw new Error('Invalid Google STT response: ' + JSON.stringify(data));
+    if (!data.results?.[0]?.alternatives?.[0]?.transcript) {
+      throw new Error('Empty transcription result');
     }
 
     return data.results[0].alternatives[0].transcript;
 
   } catch (error) {
-    console.error('Google STT Error:', error.message);
-    throw new Error('Failed to transcribe audio');
+    console.error('Google STT Error:', error.response?.data || error.message);
+    throw new Error('Failed to transcribe: ' + error.message.split('\n')[0]);
   }
 }
