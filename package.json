@@ -2,16 +2,17 @@
   "name": "whatsapp-business-api",
   "version": "1.0.0",
   "description": "Twilio WhatsApp Business API with Google STT transcription",
-  "main": "api/whatsapp.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node api/whatsapp.js",
+    "start": "node server.js",
     "postinstall": "bash install-ffmpeg.sh",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "twilio": "^4.23.0",
     "axios": "^1.6.7",
-    "google-auth-library": "^9.10.0"
+    "google-auth-library": "^9.10.0",
+    "express": "^4.18.2"
   },
   "engines": {
     "node": ">=18.x"
