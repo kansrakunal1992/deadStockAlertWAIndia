@@ -1,7 +1,7 @@
 {
   "name": "whatsapp-business-api",
   "version": "1.0.0",
-  "description": "Twilio WhatsApp Business API with AssemblyAI transcription",
+  "description": "Twilio WhatsApp Business API with Google STT",
   "main": "api/whatsapp.js",
   "scripts": {
     "start": "node api/whatsapp.js",
@@ -10,7 +10,7 @@
   "dependencies": {
     "twilio": "^4.23.0",
     "axios": "^1.6.7",
-    "form-data": "^4.0.0"
+    "google-auth-library": "^9.10.0"
   },
   "engines": {
     "node": ">=18.x"
