@@ -1,10 +1,11 @@
 {
   "name": "whatsapp-business-api",
   "version": "1.0.0",
-  "description": "Twilio WhatsApp Business API with Google STT",
+  "description": "Twilio WhatsApp Business API with Google STT transcription",
   "main": "api/whatsapp.js",
   "scripts": {
     "start": "node api/whatsapp.js",
+    "postinstall": "bash install-ffmpeg.sh",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
