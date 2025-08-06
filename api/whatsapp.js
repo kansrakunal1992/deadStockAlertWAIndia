@@ -2,14 +2,12 @@
 const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
-const { execSync } = require('child_process');
-const fs = require('fs/promises');
 
 module.exports = async (req, res) => {
   const response = new twilio.twiml.MessagingResponse();
   
   try {
-    // 1. Validate request
+    // 1. Validate request method
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
       return;
@@ -22,33 +20,25 @@ module.exports = async (req, res) => {
       console.log('[1] Downloading audio...');
       const audioBuffer = await downloadAudio(MediaUrl0);
       
-      // 3. Analyze audio
-      const audioInfo = await analyzeAudio(audioBuffer);
+      // 3. Analyze audio (simplified)
+      const audioInfo = analyzeAudio(audioBuffer);
       console.log('Audio Analysis:', {
         format: audioInfo.format,
         sampleRate: `${audioInfo.sampleRate}Hz`,
         size: `${audioInfo.sizeKB}KB`
       });
 
-      // 4. Process transcription with proper fallbacks
+      // 4. Process transcription
       let transcript;
       try {
-        if (audioInfo.format === 'OGG/Opus' && audioInfo.sampleRate === 8000) {
-          console.log('[2] Optimizing for Twilio audio');
-          const flacBuffer = await convertToFLAC(audioBuffer);
-          transcript = await googleTranscribe(flacBuffer, {
-            sampleRate: 16000,
-            format: 'FLAC'
-          });
-        } else {
-          console.log('[2] Using standard Google STT');
-          transcript = await googleTranscribe(audioBuffer, {
-            sampleRate: audioInfo.sampleRate,
-            format: audioInfo.format.includes('OGG') ? 'OGG_OPUS' : 'LINEAR16'
-          });
-        }
-      } catch (googleError) {
-        console.error('Google STT failed, using Twilio fallback:', googleError.message);
+        console.log('[2] Sending to Google STT...');
+        transcript = await googleTranscribe(
+          audioBuffer, 
+          audioInfo.sampleRate,
+          audioInfo.format.includes('OGG') ? 'OGG_OPUS' : 'LINEAR16'
+        );
+      } catch (error) {
+        console.error('Google STT failed, using Twilio fallback:', error.message);
         transcript = SpeechResult || 'Could not transcribe audio';
       }
       
@@ -80,33 +70,14 @@ module.exports = async (req, res) => {
   res.send(response.toString());
 };
 
-// Audio Analysis
-async function analyzeAudio(buffer) {
+// Simple audio analysis
+function analyzeAudio(buffer) {
   const header = buffer.slice(0, 4).toString('hex');
-  const isOGG = header === '4f676753'; // OGG magic number
-  
   return {
-    format: isOGG ? 'OGG/Opus' : 'Unknown',
-    sampleRate: isOGG ? 8000 : 16000, // Twilio uses 8kHz
+    format: header === '4f676753' ? 'OGG/Opus' : 'Unknown',
+    sampleRate: 8000, // Twilio voice notes are always 8kHz
     sizeKB: Math.round(buffer.length / 1024)
   };
-}
-
-// Convert OGG to FLAC and upsample to 16kHz
-async function convertToFLAC(oggBuffer) {
-  try {
-    await fs.writeFile('/tmp/input.ogg', oggBuffer);
-    
-    execSync(
-      'ffmpeg -i /tmp/input.ogg -ar 16000 -ac 1 -c:a flac -compression_level 5 /tmp/output.flac',
-      { timeout: 3000 }
-    );
-    
-    return fs.readFile('/tmp/output.flac');
-  } catch (error) {
-    console.error('Audio conversion failed:', error.message);
-    throw new Error('Audio processing error');
-  }
 }
 
 // Download audio with Twilio auth
@@ -117,13 +88,16 @@ async function downloadAudio(url) {
     auth: {
       username: process.env.ACCOUNT_SID,
       password: process.env.AUTH_TOKEN
+    },
+    headers: {
+      'User-Agent': 'WhatsApp-Business-Automation/1.0'
     }
   });
   return data;
 }
 
-// Optimized Google STT with proper error handling
-async function googleTranscribe(buffer, { sampleRate, format }) {
+// Google STT optimized for 8kHz audio
+async function googleTranscribe(buffer, sampleRate, format) {
   const auth = new GoogleAuth({
     credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON),
     scopes: ['https://www.googleapis.com/auth/cloud-platform']
@@ -131,21 +105,26 @@ async function googleTranscribe(buffer, { sampleRate, format }) {
 
   const client = await auth.getClient();
   
-  // Enhanced configuration
+  // Configuration optimized for Twilio's 8kHz audio
   const config = {
     encoding: format,
     sampleRateHertz: sampleRate,
     languageCode: 'hi-IN',
-    model: 'telephony',
-    useEnhanced: true,
+    model: 'telephony',      // Specialized for phone audio
+    useEnhanced: true,       // Better accuracy worth the cost
+    enableAutomaticPunctuation: true,
     speechContexts: [{
       phrases: [
-        'Parle-G', 'Britannia', 'Sunfeast', 'Bourbon',
-        '10', '20', '50', '100', '500',
-        'kg', 'किलो', 'ग्राम', 'पैकेट',
-        'खरीदा', 'बेचा', 'बिक्री', 'क्रय', 'लिया', 'दिया'
+        // Products
+        'Parle-G', 'Britannia', 'Sunfeast', 'Bourbon', 'Maggi', 
+        // Quantities
+        '10', '20', '50', '100', '500', '1000',
+        // Units
+        'kg', 'किलो', 'ग्राम', 'पैकेट', 'बॉक्स',
+        // Actions
+        'खरीदा', 'बेचा', 'बिक्री', 'क्रय', 'लिया', 'दिया', 'बचा'
       ],
-      boost: 30.0
+      boost: 25.0  // Slightly reduced boost since we're not converting
     }]
   };
 
@@ -160,24 +139,18 @@ async function googleTranscribe(buffer, { sampleRate, format }) {
       timeout: 8000
     });
 
-    if (!data.results?.[0]?.alternatives?.[0]?.transcript) {
-      throw new Error('Empty transcript received from Google');
-    }
+    const transcript = data.results?.[0]?.alternatives?.[0]?.transcript;
+    if (!transcript) throw new Error('Empty transcript received');
     
-    return data.results[0].alternatives[0].transcript;
+    return transcript;
   } catch (error) {
-    // Extract meaningful error message
-    const errorMessage = error.response?.data?.error?.message || 
-                         error.message || 
-                         'Google STT service error';
-    
-    // Log detailed diagnostics
+    const errorDetails = error.response?.data?.error?.message || error.message;
     console.error('Google STT Error:', {
-      error: errorMessage,
+      error: errorDetails,
       config: `${format}@${sampleRate}Hz`,
       bufferSize: `${Math.round(buffer.length / 1024)}KB`
     });
     
-    throw new Error('Google speech recognition failed');
+    throw new Error('Speech recognition service failed');
   }
 }
