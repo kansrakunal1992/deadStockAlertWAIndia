@@ -1,18 +1,16 @@
 {
-  "name": "whatsapp-business-api",
+  "name": "stockguard",
   "version": "1.0.0",
-  "description": "Twilio WhatsApp Business API with Google STT transcription",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "postinstall": "bash install-ffmpeg.sh",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "postinstall": "bash install-ffmpeg.sh"
   },
   "dependencies": {
+    "express": "^4.18.2",
     "twilio": "^4.23.0",
     "axios": "^1.6.7",
-    "google-auth-library": "^9.10.0",
-    "express": "^4.18.2"
+    "google-auth-library": "^9.10.0"
   },
   "engines": {
     "node": ">=18.x"
