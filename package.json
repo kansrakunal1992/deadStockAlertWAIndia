@@ -1,12 +1,19 @@
 {
-  "name": "dead-stock-alert",
+  "name": "whatsapp-business-api",
   "version": "1.0.0",
+  "description": "Twilio WhatsApp Business API with Google STT",
+  "main": "api/whatsapp.js",
+  "scripts": {
+    "start": "node api/whatsapp.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
   "dependencies": {
-    "twilio": "^4.23.0",
-    "axios": "^1.6.7",
-    "google-auth-library": "^9.10.0"
+    "twilio": "^4.23.0",               // For Twilio WhatsApp API
+    "google-auth-library": "^9.10.0",  // For Google STT auth
+    "axios": "^1.6.7",                 // For HTTP requests (audio download)
+    "form-data": "^4.0.0"              // For multipart requests (if using audio processing APIs)
   },
   "engines": {
-    "node": ">=18.x"
+    "node": ">=18.x"                   // Minimum Node.js version (Vercel uses Node 18+)
   }
 }
