@@ -2,6 +2,7 @@
 const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
+const { execSync } = require('child_process');
 
 // Initialize Twilio client
 const twilioClient = twilio(
@@ -11,116 +12,146 @@ const twilioClient = twilio(
 
 module.exports = async (req, res) => {
   const response = new twilio.twiml.MessagingResponse();
+  console.log('=== NEW REQUEST ===');
+  console.log('Request Headers:', req.headers);
+  console.log('Request Body:', JSON.stringify(req.body, null, 2));
 
   if (req.method === 'POST') {
     const body = req.body;
+    console.log('[1] Received WhatsApp message with NumMedia:', body.NumMedia);
 
     // Handle voice note
     if (body.NumMedia > 0 && body.MediaContentType0 === 'audio/ogg') {
+      console.log('[2] Audio attachment detected');
+      console.log('MediaUrl0:', body.MediaUrl0);
+      console.log('MediaContentType0:', body.MediaContentType0);
+
       try {
-        // 1. Validate Twilio audio URL
-        const audioUrl = body.MediaUrl0;
-        if (!audioUrl || !audioUrl.startsWith('https://api.twilio.com')) {
-          throw new Error('Invalid Twilio audio URL');
+        // 1. Download and validate audio
+        console.log('[3] Downloading audio from Twilio...');
+        const { audioBuffer, headers } = await validateAndDownloadAudio(body.MediaUrl0);
+        console.log('[4] Audio download completed');
+        console.log('Audio Headers:', headers);
+        console.log('Audio Buffer Length:', audioBuffer.length, 'bytes');
+
+        // 2. Log initial audio format
+        console.log('[5] Checking audio format...');
+        const isWav = isValidWav(audioBuffer);
+        console.log(`Audio is ${isWav ? 'WAV' : 'OGG'}`);
+        console.log('First 16 bytes:', audioBuffer.slice(0, 16).toString('hex'));
+
+        // 3. Convert audio if needed
+        let processedBuffer = audioBuffer;
+        if (!isWav) {
+          console.log('[6] Converting OGG to WAV...');
+          try {
+            processedBuffer = await convertAudio(audioBuffer);
+            console.log('[7] Conversion successful');
+            console.log('Converted Buffer Length:', processedBuffer.length, 'bytes');
+          } catch (convertError) {
+            console.error('Conversion failed, using original:', convertError.message);
+            processedBuffer = audioBuffer; // Fallback
+          }
         }
 
-        // 2. Download audio with strict validation
-        const { data: audioBuffer, headers } = await axios.get(audioUrl, {
-          responseType: 'arraybuffer',
-          timeout: 5000,
-          maxContentLength: 10 * 1024 * 1024,
-          validateStatus: (status) => status === 200
-        });
+        // 4. Transcribe
+        console.log('[8] Sending to Google STT...');
+        const transcript = await googleTranscribe(processedBuffer);
+        console.log('[9] Transcription successful:', transcript);
 
-        // 3. Verify audio content
-        if (!headers['content-type']?.includes('audio/ogg')) {
-          throw new Error('Invalid audio content type: ' + headers['content-type']);
-        }
-
-        // 4. Transcribe with Google Cloud STT
-        const transcript = await googleTranscribe(audioBuffer);
-        
-        // 5. Validate transcription
-        if (!transcript.match(/\d+/)) {
-          throw new Error('No quantities detected');
-        }
-
-        response.message(`✅ Transcribed: "${transcript}"\n\nReply "1" to confirm.`);
+        response.message(`✅ Transcribed: "${transcript}"`);
 
       } catch (error) {
-        console.error('Processing Error:', error.message);
-        response.message(error.message.includes('audio') ? 
-          '❌ Invalid audio. Say "10 Parle-G sold"' : 
-          '🔊 Basic Transcription: "' + (body.SpeechResult || 'Not available') + '"');
+        console.error('[ERROR] Processing failed:', error.message);
+        console.error('Error Stack:', error.stack);
+        response.message(`❌ Failed: ${error.message.split('\n')[0]}`);
       }
-    }
-    // Handle confirmation
-    else if (body.Body === '1') {
-      response.message('🗃️ Inventory update initiated...');
-    }
-    // Default prompt
-    else {
-      response.message('🎤 Send voice note: "10 Parle-G sold"');
     }
   }
 
+  console.log('=== END PROCESSING ===');
   res.setHeader('Content-Type', 'text/xml');
   res.send(response.toString());
 };
 
-// Google Cloud Speech-to-Text with credential fixes
-async function googleTranscribe(audioBuffer) {
+// Audio Processing Functions
+async function validateAndDownloadAudio(url) {
+  console.log('Validating audio URL:', url);
+  if (!url || !url.startsWith('https://api.twilio.com/')) {
+    throw new Error(`Invalid Twilio URL: ${url}`);
+  }
+
+  console.log('Downloading audio...');
+  const { data, headers } = await axios.get(url, {
+    responseType: 'arraybuffer',
+    timeout: 5000,
+    validateStatus: null
+  });
+
+  console.log('Download completed. Status:', headers.status);
+  if (headers.status !== 200) {
+    console.error('Download failed. Response:', data.toString('utf8').slice(0, 200));
+    throw new Error(`Twilio returned ${headers.status}`);
+  }
+
+  if (!headers['content-type']?.includes('audio/')) {
+    throw new Error(`Expected audio, got ${headers['content-type']}`);
+  }
+
+  return { audioBuffer: data, headers };
+}
+
+async function convertAudio(buffer) {
+  console.log('Starting audio conversion...');
   try {
-    // 1. Parse credentials with proper newline handling
-    const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
-    const privateKey = credentials.private_key.replace(/\\n/g, '\n');
-
-    // 2. Authenticate
-    const auth = new GoogleAuth({
-      credentials: {
-        ...credentials,
-        private_key: privateKey
-      },
-      scopes: ['https://www.googleapis.com/auth/cloud-platform']
+    const result = execSync('ffmpeg -i pipe:0 -ar 16000 -ac 1 -f wav pipe:1 2>&1', {
+      input: buffer,
+      stdio: ['pipe', 'pipe', 'pipe']
     });
+    console.log('FFmpeg output:', result.toString());
+    return result;
+  } catch (error) {
+    console.error('FFmpeg Error:', error.stderr?.toString());
+    throw error;
+  }
+}
 
-    const client = await auth.getClient();
-    const audioBase64 = audioBuffer.toString('base64');
+function isValidWav(buffer) {
+  return buffer.length > 12 && 
+         buffer.toString('ascii', 0, 4) === 'RIFF' && 
+         buffer.toString('ascii', 8, 12) === 'WAVE';
+}
 
-    // 3. Prepare optimized request
-    const request = {
+// Google STT Function
+async function googleTranscribe(buffer) {
+  console.log('Initializing Google STT...');
+  const auth = new GoogleAuth({
+    credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON),
+    scopes: ['https://www.googleapis.com/auth/cloud-platform']
+  });
+  
+  const client = await auth.getClient();
+  const audioBase64 = buffer.toString('base64');
+  console.log('Audio payload size:', Math.round(audioBase64.length / 1024), 'KB');
+
+  console.log('Sending to Google STT API...');
+  const { data, status } = await client.request({
+    url: 'https://speech.googleapis.com/v1/speech:recognize',
+    method: 'POST',
+    data: {
       audio: { content: audioBase64 },
       config: {
         languageCode: 'hi-IN',
-        enableAutomaticPunctuation: true,
-        model: 'latest_short',
-        speechContexts: [{
-          phrases: [
-            'Parle-G', 'Maggi', 'Dabur', 'kg', 'liter',
-            '10', '20', '30', '40', '50',
-            'beche', 'khareeda', 'किलो'
-          ],
-          boost: 20.0
-        }]
+        encoding: 'LINEAR16',
+        sampleRateHertz: 16000
       }
-    };
-
-    // 4. Call API
-    const { data } = await client.request({
-      url: 'https://speech.googleapis.com/v1/speech:recognize',
-      method: 'POST',
-      data: request,
-      timeout: 10000
-    });
-
-    if (!data.results?.[0]?.alternatives?.[0]?.transcript) {
-      throw new Error('Empty transcription result');
     }
-
-    return data.results[0].alternatives[0].transcript;
-
-  } catch (error) {
-    console.error('Google STT Error:', error.response?.data || error.message);
-    throw new Error('Failed to transcribe: ' + error.message.split('\n')[0]);
+  });
+  
+  console.log('Google API Response:', { status, data });
+  if (!data.results?.[0]?.alternatives?.[0]?.transcript) {
+    throw new Error('Empty transcription result');
   }
+  
+  return data.results[0].alternatives[0].transcript;
 }
