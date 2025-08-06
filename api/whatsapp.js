@@ -1,4 +1,4 @@
-// /api/whatsapp.js
+// /api/whatsapp.js (Final Verified Version)
 const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
@@ -12,107 +12,107 @@ const twilioClient = twilio(
 
 module.exports = async (req, res) => {
   const response = new twilio.twiml.MessagingResponse();
-  console.log('=== NEW REQUEST ===');
-  console.log('Request Headers:', req.headers);
-  console.log('Request Body:', JSON.stringify(req.body, null, 2));
+  console.log('\n=== NEW REQUEST ===', new Date().toISOString());
 
-  if (req.method === 'POST') {
-    const body = req.body;
-    console.log('[1] Received WhatsApp message with NumMedia:', body.NumMedia);
+  try {
+    if (req.method !== 'POST') {
+      throw new Error('Only POST requests allowed');
+    }
+
+    console.log('[1] Request Body:', JSON.stringify({
+      NumMedia: req.body.NumMedia,
+      MediaContentType0: req.body.MediaContentType0,
+      Body: req.body.Body?.length > 50 ? req.body.Body.slice(0, 50) + '...' : req.body.Body
+    }, null, 2));
 
     // Handle voice note
-    if (body.NumMedia > 0 && body.MediaContentType0 === 'audio/ogg') {
-      console.log('[2] Audio attachment detected');
-      console.log('MediaUrl0:', body.MediaUrl0);
-      console.log('MediaContentType0:', body.MediaContentType0);
-
-      try {
-        // 1. Download and validate audio
-        console.log('[3] Downloading audio from Twilio...');
-        const { audioBuffer, headers } = await validateAndDownloadAudio(body.MediaUrl0);
-        console.log('[4] Audio download completed');
-        console.log('Audio Headers:', headers);
-        console.log('Audio Buffer Length:', audioBuffer.length, 'bytes');
-
-        // 2. Log initial audio format
-        console.log('[5] Checking audio format...');
-        const isWav = isValidWav(audioBuffer);
-        console.log(`Audio is ${isWav ? 'WAV' : 'OGG'}`);
-        console.log('First 16 bytes:', audioBuffer.slice(0, 16).toString('hex'));
-
-        // 3. Convert audio if needed
-        let processedBuffer = audioBuffer;
-        if (!isWav) {
-          console.log('[6] Converting OGG to WAV...');
-          try {
-            processedBuffer = await convertAudio(audioBuffer);
-            console.log('[7] Conversion successful');
-            console.log('Converted Buffer Length:', processedBuffer.length, 'bytes');
-          } catch (convertError) {
-            console.error('Conversion failed, using original:', convertError.message);
-            processedBuffer = audioBuffer; // Fallback
-          }
-        }
-
-        // 4. Transcribe
-        console.log('[8] Sending to Google STT...');
-        const transcript = await googleTranscribe(processedBuffer);
-        console.log('[9] Transcription successful:', transcript);
-
-        response.message(`✅ Transcribed: "${transcript}"`);
-
-      } catch (error) {
-        console.error('[ERROR] Processing failed:', error.message);
-        console.error('Error Stack:', error.stack);
-        response.message(`❌ Failed: ${error.message.split('\n')[0]}`);
-      }
+    if (req.body.NumMedia > 0 && req.body.MediaContentType0 === 'audio/ogg') {
+      console.log('[2] Processing voice note...');
+      const transcript = await processVoiceNote(req.body.MediaUrl0);
+      response.message(`✅ Transcribed: "${transcript}"`);
+    } 
+    // Handle text commands
+    else if (req.body.Body?.toLowerCase().includes('inventory')) {
+      console.log('[2] Processing text command');
+      response.message('🎤 Send a voice note: "10 Parle-G sold"');
     }
+    // Default response
+    else {
+      console.log('[2] Unrecognized input');
+      response.message('Please send a voice note or type "inventory"');
+    }
+
+  } catch (error) {
+    console.error('[ERROR]', error.message);
+    console.error('Stack:', error.stack);
+    response.message(`❌ Error: ${error.message.split('\n')[0]}`);
   }
 
-  console.log('=== END PROCESSING ===');
+  console.log('=== END PROCESSING ===\n');
   res.setHeader('Content-Type', 'text/xml');
-  res.send(response.toString());
+  res.status(200).send(response.toString());
 };
 
-// Audio Processing Functions
+// Voice Note Processor
+async function processVoiceNote(audioUrl) {
+  console.log('[3] Downloading audio...');
+  const { audioBuffer, headers } = await validateAndDownloadAudio(audioUrl);
+
+  console.log('[4] Audio Info:', {
+    size: `${(audioBuffer.length / 1024).toFixed(2)} KB`,
+    headers: {
+      'content-type': headers['content-type'],
+      'content-length': headers['content-length']
+    },
+    firstBytes: audioBuffer.slice(0, 4).toString('hex')
+  });
+
+  console.log('[5] Converting audio if needed...');
+  const processedBuffer = await convertAudio(audioBuffer);
+
+  console.log('[6] Transcribing...');
+  return await googleTranscribe(processedBuffer);
+}
+
+// Audio Helpers
 async function validateAndDownloadAudio(url) {
-  console.log('Validating audio URL:', url);
   if (!url || !url.startsWith('https://api.twilio.com/')) {
-    throw new Error(`Invalid Twilio URL: ${url}`);
+    throw new Error(`Invalid audio URL: ${url}`);
   }
 
-  console.log('Downloading audio...');
-  const { data, headers } = await axios.get(url, {
+  const { data, headers, status } = await axios.get(url, {
     responseType: 'arraybuffer',
-    timeout: 5000,
+    timeout: 10000,
     validateStatus: null
   });
 
-  console.log('Download completed. Status:', headers.status);
-  if (headers.status !== 200) {
-    console.error('Download failed. Response:', data.toString('utf8').slice(0, 200));
-    throw new Error(`Twilio returned ${headers.status}`);
+  if (status !== 200) {
+    throw new Error(`Twilio audio download failed (${status}): ${data.toString().slice(0, 100)}`);
   }
 
   if (!headers['content-type']?.includes('audio/')) {
-    throw new Error(`Expected audio, got ${headers['content-type']}`);
+    throw new Error(`Invalid content-type: ${headers['content-type']}`);
   }
 
   return { audioBuffer: data, headers };
 }
 
 async function convertAudio(buffer) {
-  console.log('Starting audio conversion...');
   try {
-    const result = execSync('ffmpeg -i pipe:0 -ar 16000 -ac 1 -f wav pipe:1 2>&1', {
+    if (isValidWav(buffer)) {
+      console.log('Audio is already WAV format');
+      return buffer;
+    }
+
+    console.log('Converting OGG to WAV via FFmpeg...');
+    return execSync('ffmpeg -i pipe:0 -ar 16000 -ac 1 -f wav pipe:1 2>&1', {
       input: buffer,
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      maxBuffer: 10 * 1024 * 1024 // 10MB
     });
-    console.log('FFmpeg output:', result.toString());
-    return result;
   } catch (error) {
-    console.error('FFmpeg Error:', error.stderr?.toString());
-    throw error;
+    console.warn('Conversion failed, using original:', error.message);
+    return buffer; // Fallback
   }
 }
 
@@ -122,20 +122,18 @@ function isValidWav(buffer) {
          buffer.toString('ascii', 8, 12) === 'WAVE';
 }
 
-// Google STT Function
+// Google STT
 async function googleTranscribe(buffer) {
-  console.log('Initializing Google STT...');
   const auth = new GoogleAuth({
     credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON),
     scopes: ['https://www.googleapis.com/auth/cloud-platform']
   });
-  
+
   const client = await auth.getClient();
   const audioBase64 = buffer.toString('base64');
-  console.log('Audio payload size:', Math.round(audioBase64.length / 1024), 'KB');
 
-  console.log('Sending to Google STT API...');
-  const { data, status } = await client.request({
+  console.log('[7] Sending to Google STT (size:', `${Math.round(audioBase64.length / 1024)} KB)`);
+  const { data } = await client.request({
     url: 'https://speech.googleapis.com/v1/speech:recognize',
     method: 'POST',
     data: {
@@ -143,15 +141,22 @@ async function googleTranscribe(buffer) {
       config: {
         languageCode: 'hi-IN',
         encoding: 'LINEAR16',
-        sampleRateHertz: 16000
+        sampleRateHertz: 16000,
+        enableAutomaticPunctuation: true,
+        model: 'latest_short',
+        speechContexts: [{
+          phrases: ['Parle-G', 'Maggi', 'kg', 'liter', '10', '20', 'खरीदा'],
+          boost: 15.0
+        }]
       }
-    }
+    },
+    timeout: 15000
   });
-  
-  console.log('Google API Response:', { status, data });
+
   if (!data.results?.[0]?.alternatives?.[0]?.transcript) {
-    throw new Error('Empty transcription result');
+    throw new Error('Empty transcription: ' + JSON.stringify(data));
   }
-  
+
+  console.log('[8] Transcription success');
   return data.results[0].alternatives[0].transcript;
 }
