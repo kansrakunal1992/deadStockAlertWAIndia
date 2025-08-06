@@ -12,9 +12,7 @@ module.exports = async (req, res) => {
       res.status(405).send('Method Not Allowed');
       return;
     }
-
     const { MediaUrl0, NumMedia, SpeechResult } = req.body;
-
     if (NumMedia > 0 && MediaUrl0) {
       console.log('[1] Downloading audio...');
       const audioBuffer = await downloadAudio(MediaUrl0);
@@ -35,7 +33,6 @@ module.exports = async (req, res) => {
       console.log('[1] No media received');
       response.message('🎤 Send a voice note: "10 Parle-G sold"');
     }
-
   } catch (error) {
     console.error('Processing Error:', {
       error: error.message,
@@ -46,7 +43,6 @@ module.exports = async (req, res) => {
     });
     response.message('❌ System error. Please try again with a clear voice message.');
   }
-
   res.setHeader('Content-Type', 'text/xml');
   res.send(response.toString());
 };
@@ -81,66 +77,91 @@ async function downloadAudio(url) {
 }
 
 async function googleTranscribe(flacBuffer) {
-  const rawJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-  const cleanedJson = rawJson.replace(/\\n/g, '\n');
-  const credentials = JSON.parse(cleanedJson);
-
-  const auth = new GoogleAuth({
-    credentials,
-    scopes: ['https://www.googleapis.com/auth/cloud-platform']
-  });
-
-  const client = await auth.getClient();
-  
-  const baseConfig = {
-    languageCode: 'hi-IN',
-    useEnhanced: true,
-    enableAutomaticPunctuation: true,
-    audioChannelCount: 1,
-    speechContexts: [{
-      phrases: [
-        'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
-        '10', 'दस', '20', 'बीस', '50', 'पचास', '100', 'सौ',
-        'kg', 'किलो', 'ग्राम', 'पैकेट', 'बॉक्स', 'किलोग्राम',
-        'खरीदा', 'बेचा', 'बिक्री', 'क्रय', 'लिया', 'दिया', 'बचा',
-        'sold', 'purchased', 'bought', 'ordered'
-      ],
-      boost: 32.0
-    }]
-  };
-
-  const configs = [
-    { ...baseConfig, model: 'telephony' },
-    { ...baseConfig, model: 'latest_short' },
-    { ...baseConfig, model: 'default' }
-  ];
-
-  for (const config of configs) {
-    try {
-      config.encoding = 'FLAC';
-      config.sampleRateHertz = 16000;
-
-      const { data } = await client.request({
-        url: 'https://speech.googleapis.com/v1/speech:recognize',
-        method: 'POST',
-        data: {
-          audio: { content: flacBuffer.toString('base64') },
-          config
-        },
-        timeout: 8000
-      });
-
-      const transcript = data.results?.[0]?.alternatives?.[0]?.transcript;
-      if (transcript) {
-        console.log(`STT Success: ${config.model} model`);
-        return transcript;
-      }
-    } catch (error) {
-      console.warn(`STT Attempt Failed:`, {
-        model: config.model,
-        error: error.response?.data?.error?.message || error.message
-      });
+  try {
+    // Get and decode the Base64 GCP key
+    const base64Key = process.env.GCP_BASE64_KEY?.trim();
+    
+    if (!base64Key) {
+      throw new Error('GCP_BASE64_KEY environment variable not set');
     }
+    
+    // Decode the Base64 key
+    let decodedKey;
+    try {
+      decodedKey = Buffer.from(base64Key, 'base64').toString('utf8');
+    } catch (decodeErr) {
+      throw new Error(`Base64 decoding failed: ${decodeErr.message}`);
+    }
+    
+    // Parse the JSON
+    let credentials;
+    try {
+      credentials = JSON.parse(decodedKey);
+    } catch (parseErr) {
+      throw new Error(`JSON parsing failed: ${parseErr.message}`);
+    }
+    
+    // Initialize GoogleAuth with the credentials
+    const auth = new GoogleAuth({
+      credentials,
+      scopes: ['https://www.googleapis.com/auth/cloud-platform']
+    });
+    
+    const client = await auth.getClient();
+    
+    const baseConfig = {
+      languageCode: 'hi-IN',
+      useEnhanced: true,
+      enableAutomaticPunctuation: true,
+      audioChannelCount: 1,
+      speechContexts: [{
+        phrases: [
+          'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
+          '10', 'दस', '20', 'बीस', '50', 'पचास', '100', 'सौ',
+          'kg', 'किलो', 'ग्राम', 'पैकेट', 'बॉक्स', 'किलोग्राम',
+          'खरीदा', 'बेचा', 'बिक्री', 'क्रय', 'लिया', 'दिया', 'बचा',
+          'sold', 'purchased', 'bought', 'ordered'
+        ],
+        boost: 32.0
+      }]
+    };
+    
+    const configs = [
+      { ...baseConfig, model: 'telephony' },
+      { ...baseConfig, model: 'latest_short' },
+      { ...baseConfig, model: 'default' }
+    ];
+    
+    for (const config of configs) {
+      try {
+        config.encoding = 'FLAC';
+        config.sampleRateHertz = 16000;
+        const { data } = await client.request({
+          url: 'https://speech.googleapis.com/v1/speech:recognize',
+          method: 'POST',
+          data: {
+            audio: { content: flacBuffer.toString('base64') },
+            config
+          },
+          timeout: 8000
+        });
+        
+        const transcript = data.results?.[0]?.alternatives?.[0]?.transcript;
+        if (transcript) {
+          console.log(`STT Success: ${config.model} model`);
+          return transcript;
+        }
+      } catch (error) {
+        console.warn(`STT Attempt Failed:`, {
+          model: config.model,
+          error: error.response?.data?.error?.message || error.message
+        });
+      }
+    }
+    
+    throw new Error('All STT attempts failed');
+  } catch (error) {
+    console.error('Google Transcription Error:', error.message);
+    throw error;
   }
-  throw new Error('All STT attempts failed');
 }
