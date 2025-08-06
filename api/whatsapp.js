@@ -1,4 +1,4 @@
-// /api/whatsapp.js
+// /api/whatsapp.js file
 const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
