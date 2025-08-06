@@ -1,4 +1,3 @@
-
 const twilio = require('twilio');
 const axios = require('axios');
 
@@ -16,6 +15,7 @@ module.exports = async (req, res) => {
     if (NumMedia > 0 && MediaUrl0) {
       console.log('[1] Downloading audio...');
       const audioBuffer = await downloadAudio(MediaUrl0);
+      console.log('Audio buffer size:', audioBuffer.length);
 
       console.log('[2] Uploading to AssemblyAI...');
       const transcript = await transcribeWithAssemblyAI(audioBuffer);
@@ -60,21 +60,25 @@ async function downloadAudio(url) {
 }
 
 async function transcribeWithAssemblyAI(buffer) {
-  const uploadRes = await axios.post(
-    'https://api.assemblyai.com/v2/upload',
-    buffer,
-    {
-      headers: {
-        authorization: process.env.ASSEMBLYAI_API_KEY,
-        'Content-Type': 'application/octet-stream'
-      }
-    }
-  );
+  // Step 1: Upload audio
+  const uploadRes = await axios({
+    method: 'POST',
+    url: 'https://api.assemblyai.com/v2/upload',
+    headers: {
+      authorization: process.env.ASSEMBLYAI_API_KEY,
+      'Transfer-Encoding': 'chunked',
+      'Content-Type': 'application/octet-stream'
+    },
+    data: buffer
+  });
 
+  const audioUrl = uploadRes.data.upload_url;
+
+  // Step 2: Request transcription
   const transcriptRes = await axios.post(
     'https://api.assemblyai.com/v2/transcript',
     {
-      audio_url: uploadRes.data.upload_url,
+      audio_url: audioUrl,
       language_code: 'hi',
       punctuate: true,
       speech_boost: {
@@ -96,6 +100,7 @@ async function transcribeWithAssemblyAI(buffer) {
 
   const transcriptId = transcriptRes.data.id;
 
+  // Step 3: Poll for result
   for (let i = 0; i < 20; i++) {
     const statusRes = await axios.get(
       `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
