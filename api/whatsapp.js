@@ -77,33 +77,46 @@ module.exports = async (req, res) => {
 // Google Cloud Speech-to-Text with robust error handling
 async function googleTranscribe(audioBuffer, languageCode = 'hi-IN') {
   try {
-    // 1. Authenticate
+    // 1. Load and validate credentials
+    const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+    
+    if (!credentials.private_key || !credentials.client_email) {
+      throw new Error('Invalid Google Cloud credentials');
+    }
+
+    // 2. Authenticate with proper newline handling
     const auth = new GoogleAuth({
-      credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON),
-      scopes: ['https://www.googleapis.com/auth/cloud-platform']
+      credentials: {
+        ...credentials,
+        private_key: credentials.private_key.replace(/\\n/g, '\n') // Fix newlines
+      },
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      projectId: credentials.project_id
     });
 
     const client = await auth.getClient();
     const audioBase64 = audioBuffer.toString('base64');
 
-    // 2. Prepare request with Indian retail context
+    // 3. Prepare request with Indian retail context
     const request = {
       audio: { content: audioBase64 },
       config: {
         languageCode: languageCode,
         enableAutomaticPunctuation: true,
         model: 'latest_short',
+        useEnhanced: true,
         speechContexts: [{
           phrases: [
             'Parle-G', 'Maggi', 'Dabur', 'kg', 'liter', 'pcs',
-            'beche', 'khareeda', 'सोल्ड', 'खरीदा', 'किलो'
+            'beche', 'khareeda', 'सोल्ड', 'खरीदा', 'किलो',
+            '10', '20', '30', '40', '50' // Number boosts
           ],
           boost: 20.0
         }]
       }
     };
 
-    // 3. Call Google STT API
+    // 4. Call Google STT API
     const { data } = await client.request({
       url: 'https://speech.googleapis.com/v1/speech:recognize',
       method: 'POST',
@@ -111,14 +124,14 @@ async function googleTranscribe(audioBuffer, languageCode = 'hi-IN') {
       timeout: 10000
     });
 
-    if (!data.results || !data.results[0].alternatives[0]) {
-      throw new Error('Invalid Google STT response');
+    if (!data.results || !data.results[0]?.alternatives[0]?.transcript) {
+      throw new Error('Invalid Google STT response: ' + JSON.stringify(data));
     }
 
     return data.results[0].alternatives[0].transcript;
 
   } catch (error) {
     console.error('Google STT Error:', error.message);
-    throw error; // Re-throw for upstream handling
+    throw new Error('Failed to transcribe audio');
   }
 }
