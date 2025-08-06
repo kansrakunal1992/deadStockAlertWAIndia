@@ -1,2 +1,10 @@
 [build]
-packages = ["ffmpeg"]
+packages = [
+    "ffmpeg",
+    "libavcodec-extra",
+    "libavformat-dev",
+    "libswscale-dev"
+]
+
+[deploy]
+start_command = "node server.js"
