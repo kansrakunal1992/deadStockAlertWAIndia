@@ -2,11 +2,32 @@ const axios = require('axios');
 
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
-// Clean up base ID (remove any trailing characters)
-AIRTABLE_BASE_ID = AIRTABLE_BASE_ID.trim().replace(/[;,\s]+$/, '');
+// Aggressive cleaning of base ID
+AIRTABLE_BASE_ID = AIRTABLE_BASE_ID
+  .trim()
+  .replace(/[;,\s]+$/, '')
+  .replace(/[;,\s]+/g, '')
+  .replace(/[^a-zA-Z0-9]/g, '');
 const TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || 'Inventory';
 
 const airtableBaseURL = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_NAME}`;
+
+// Debug function to check all possible URLs
+function debugURLs() {
+  const raw = process.env.AIRTABLE_BASE_ID || '';
+  const cleaned = AIRTABLE_BASE_ID;
+  const baseURL = `https://api.airtable.com/v0/${cleaned}`;
+  const fullURL = `https://api.airtable.com/v0/${cleaned}/${TABLE_NAME}`;
+  
+  console.log('=== URL DEBUG ===');
+  console.log('Raw Base ID:', JSON.stringify(raw));
+  console.log('Cleaned Base ID:', JSON.stringify(cleaned));
+  console.log('Base URL:', baseURL);
+  console.log('Full URL:', fullURL);
+  console.log('=== END DEBUG ===');
+  
+  return { baseURL, fullURL };
+}
 
 // Enhanced error logging
 function logError(context, error) {
@@ -160,6 +181,9 @@ async function testConnection() {
   try {
     console.log(`[${context}] Starting comprehensive test...`);
     
+    // Debug URLs first
+    const { baseURL, fullURL } = debugURLs();
+    
     // Check environment variables with detailed logging
     console.log(`[${context}] Environment Variables:`);
     console.log(`  - Raw Base ID: "${process.env.AIRTABLE_BASE_ID}"`);
@@ -195,7 +219,6 @@ async function testConnection() {
     
     // Test 2: Base access with detailed URL logging
     console.log(`[${context}] Test 2: Base access...`);
-    const baseURL = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}`;
     console.log(`[${context}] Testing URL: ${baseURL}`);
     
     const baseTest = await axios({
@@ -276,6 +299,7 @@ async function testConnection() {
       console.log(`[${context}] • Table name should be: ${TABLE_NAME}`);
       console.log(`[${context}] • Check if base exists and token has access`);
       console.log(`[${context}] • Check for invisible characters in base ID`);
+      console.log(`[${context}] • The URL being tested is: ${debugURLs().baseURL}`);
     } else if (error.message.includes('not accessible')) {
       console.log(`[${context}] • Base not accessible with this token`);
       console.log(`[${context}] • Create a new token with access to this base`);
