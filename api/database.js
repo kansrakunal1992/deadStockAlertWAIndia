@@ -266,13 +266,13 @@ async function testConnection() {
     }
     console.log(`[${context}] ✅ Our base found: ${ourBase.name} (${ourBase.id})`);
     
-    // Test 2: Base access with detailed URL logging - FIXED to include table name
-    console.log(`[${context}] Test 2: Base access...`);
-    console.log(`[${context}] Testing URL: ${fullURL}`); // Changed from baseURL to fullURL
+    // Test 2: Table access with detailed URL logging
+    console.log(`[${context}] Test 2: Table access...`);
+    console.log(`[${context}] Testing URL: ${fullURL}`);
     
-    const baseTest = await axios({
+    const tableResponse = await axios({
       method: 'get',
-      url: fullURL, // Changed from baseURL to fullURL
+      url: fullURL,
       headers: {
         'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
         'Content-Type': 'application/json'
@@ -280,29 +280,29 @@ async function testConnection() {
       timeout: 5000
     });
     
-    console.log(`[${context}] ✅ Base access successful`);
-    console.log(`[${context}] Available tables:`, baseTest.data.tables.map(t => t.name));
-    
-    // Check if our table exists
-    const ourTable = baseTest.data.tables.find(t => t.name === TABLE_NAME);
-    if (!ourTable) {
-      throw new Error(`Table "${TABLE_NAME}" not found in base`);
-    }
-    console.log(`[${context}] ✅ Our table found: ${ourTable.name} (${ourTable.id})`);
-    
-    // Test 3: Table access
-    console.log(`[${context}] Test 3: Table access...`);
-    const tableResult = await airtableRequest(
-      { method: 'get', params: { maxRecords: 1 } },
-      `${context} - Table Access`
-    );
-    
     console.log(`[${context}] ✅ Table access successful`);
-    console.log(`[${context}] Table contains ${tableResult.records.length} records`);
     
-    // Test 4: Write permissions (create a test record if table is empty)
-    if (tableResult.records.length === 0) {
-      console.log(`[${context}] Test 4: Write permissions (creating test record)...`);
+    // Log the response structure for debugging
+    console.log(`[${context}] Response structure:`, {
+      hasRecords: Array.isArray(tableResponse.data.records),
+      recordsCount: tableResponse.data.records ? tableResponse.data.records.length : 0,
+      hasOffset: 'offset' in tableResponse.data,
+      hasTables: 'tables' in tableResponse.data
+    });
+    
+    // Check if we got records
+    if (!Array.isArray(tableResponse.data.records)) {
+      console.log(`[${context}] ⚠️  Unexpected response structure - no records array`);
+      console.log(`[${context}] Response keys:`, Object.keys(tableResponse.data));
+      console.log(`[${context}] Full response:`, JSON.stringify(tableResponse.data, null, 2));
+      throw new Error('Unexpected response structure from Airtable API');
+    }
+    
+    console.log(`[${context}] Table contains ${tableResponse.data.records.length} records`);
+    
+    // Test 3: Write permissions (create a test record if table is empty)
+    if (tableResponse.data.records.length === 0) {
+      console.log(`[${context}] Test 3: Write permissions (creating test record)...`);
       const testRecord = {
         fields: {
           ShopID: 'test-connection',
@@ -349,6 +349,10 @@ async function testConnection() {
       console.log(`[${context}] • Check if base exists and token has access`);
       console.log(`[${context}] • Check for invisible characters in base ID`);
       console.log(`[${context}] • The URL being tested is: ${debugURLs().fullURL}`);
+    } else if (error.message.includes('Unexpected response structure')) {
+      console.log(`[${context}] • API response structure has changed`);
+      console.log(`[${context}] • Check Airtable API documentation`);
+      console.log(`[${context}] • The response keys were:`, error.response?.data ? Object.keys(error.response.data) : 'No response data');
     } else if (error.message.includes('not accessible')) {
       console.log(`[${context}] • Base not accessible with this token`);
       console.log(`[${context}] • Create a new token with access to this base`);
