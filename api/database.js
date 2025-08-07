@@ -2,22 +2,54 @@ const axios = require('axios');
 
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
-// Aggressive cleaning of base ID
-AIRTABLE_BASE_ID = AIRTABLE_BASE_ID
-  .trim()
-  .replace(/[;,\s]+$/, '')
-  .replace(/[;,\s]+/g, '')
-  .replace(/[^a-zA-Z0-9]/g, '');
+
+// Debug function to analyze each character
+function analyzeBaseID() {
+  const raw = process.env.AIRTABLE_BASE_ID || '';
+  console.log('=== CHARACTER ANALYSIS ===');
+  console.log('Raw Base ID length:', raw.length);
+  console.log('Raw Base ID chars:');
+  
+  for (let i = 0; i < raw.length; i++) {
+    const char = raw[i];
+    const charCode = raw.charCodeAt(i);
+    console.log(`  Position ${i}: "${char}" (charCode: ${charCode})`);
+  }
+  
+  // Clean the base ID character by character
+  let cleaned = '';
+  for (let i = 0; i < raw.length; i++) {
+    const char = raw[i];
+    const charCode = raw.charCodeAt(i);
+    
+    // Only keep alphanumeric characters
+    if ((charCode >= 48 && charCode <= 57) ||  // 0-9
+        (charCode >= 65 && charCode <= 90) ||  // A-Z
+        (charCode >= 97 && charCode <= 122)) { // a-z
+      cleaned += char;
+    }
+  }
+  
+  console.log('Cleaned Base ID:', cleaned);
+  console.log('Cleaned Base ID length:', cleaned.length);
+  console.log('=== END ANALYSIS ===');
+  
+  return cleaned;
+}
+
+// Use the analyzed and cleaned base ID
+AIRTABLE_BASE_ID = analyzeBaseID();
 const TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || 'Inventory';
 
-const airtableBaseURL = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_NAME}`;
+// Explicit URL construction (avoiding template literals)
+const airtableBaseURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME;
 
 // Debug function to check all possible URLs
 function debugURLs() {
   const raw = process.env.AIRTABLE_BASE_ID || '';
   const cleaned = AIRTABLE_BASE_ID;
-  const baseURL = `https://api.airtable.com/v0/${cleaned}`;
-  const fullURL = `https://api.airtable.com/v0/${cleaned}/${TABLE_NAME}`;
+  const baseURL = 'https://api.airtable.com/v0/' + cleaned;
+  const fullURL = 'https://api.airtable.com/v0/' + cleaned + '/' + TABLE_NAME;
   
   console.log('=== URL DEBUG ===');
   console.log('Raw Base ID:', JSON.stringify(raw));
@@ -50,7 +82,7 @@ function logError(context, error) {
 // Helper function to make Airtable requests with retry logic
 async function airtableRequest(config, context = 'Airtable Request', maxRetries = 3) {
   const headers = {
-    'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
+    'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
     'Content-Type': 'application/json'
   };
 
@@ -97,7 +129,7 @@ async function updateInventory(shopId, product, quantityChange) {
     }
     
     // First, try to find existing record
-    const filterFormula = `AND({ShopID} = '${shopId}', {Product} = '${product}')`;
+    const filterFormula = 'AND({ShopID} = \'' + shopId + '\', {Product} = \'' + product + '\')';
     console.log(`[${context}] Searching with filter: ${filterFormula}`);
     
     const findResult = await airtableRequest(
@@ -131,7 +163,7 @@ async function updateInventory(shopId, product, quantityChange) {
       await airtableRequest(
         {
           method: 'patch',
-          url: `${airtableBaseURL}/${recordId}`,
+          url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + recordId,
           data: updateData
         },
         `${context} - Update Record`
@@ -201,7 +233,7 @@ async function testConnection() {
       method: 'get',
       url: 'https://api.airtable.com/v0/meta/bases',
       headers: {
-        'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
+        'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
         'Content-Type': 'application/json'
       },
       timeout: 5000
@@ -225,7 +257,7 @@ async function testConnection() {
       method: 'get',
       url: baseURL,
       headers: {
-        'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
+        'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
         'Content-Type': 'application/json'
       },
       timeout: 5000
@@ -273,7 +305,7 @@ async function testConnection() {
       
       // Clean up test record
       await airtableRequest(
-        { method: 'delete', url: `${airtableBaseURL}/${createResult.records[0].id}` },
+        { method: 'delete', url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + createResult.records[0].id },
         `${context} - Cleanup`
       );
       
