@@ -168,8 +168,30 @@ async function testConnection() {
       throw new Error('Missing required environment variables');
     }
     
-    // Test 1: Base access
-    console.log(`[${context}] Test 1: Base access...`);
+    // Test 1: List accessible bases first
+    console.log(`[${context}] Test 1: Listing accessible bases...`);
+    const basesResponse = await axios({
+      method: 'get',
+      url: 'https://api.airtable.com/v0/meta/bases',
+      headers: {
+        'Authorization': `Bearer ${AIRTABLE_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 5000
+    });
+    
+    console.log(`[${context}] ✅ Bases list retrieved successfully`);
+    console.log(`[${context}] Accessible bases:`, basesResponse.data.bases.map(b => ({ id: b.id, name: b.name })));
+    
+    // Check if our base is in the list
+    const ourBase = basesResponse.data.bases.find(b => b.id === AIRTABLE_BASE_ID);
+    if (!ourBase) {
+      throw new Error(`Base ${AIRTABLE_BASE_ID} not accessible with this token`);
+    }
+    console.log(`[${context}] ✅ Our base found: ${ourBase.name} (${ourBase.id})`);
+    
+    // Test 2: Base access
+    console.log(`[${context}] Test 2: Base access...`);
     const baseURL = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}`;
     const baseTest = await axios({
       method: 'get',
@@ -184,8 +206,15 @@ async function testConnection() {
     console.log(`[${context}] ✅ Base access successful`);
     console.log(`[${context}] Available tables:`, baseTest.data.tables.map(t => t.name));
     
-    // Test 2: Table access
-    console.log(`[${context}] Test 2: Table access...`);
+    // Check if our table exists
+    const ourTable = baseTest.data.tables.find(t => t.name === TABLE_NAME);
+    if (!ourTable) {
+      throw new Error(`Table "${TABLE_NAME}" not found in base`);
+    }
+    console.log(`[${context}] ✅ Our table found: ${ourTable.name} (${ourTable.id})`);
+    
+    // Test 3: Table access
+    console.log(`[${context}] Test 3: Table access...`);
     const tableResult = await airtableRequest(
       { method: 'get', params: { maxRecords: 1 } },
       `${context} - Table Access`
@@ -194,9 +223,9 @@ async function testConnection() {
     console.log(`[${context}] ✅ Table access successful`);
     console.log(`[${context}] Table contains ${tableResult.records.length} records`);
     
-    // Test 3: Write permissions (create a test record if table is empty)
+    // Test 4: Write permissions (create a test record if table is empty)
     if (tableResult.records.length === 0) {
-      console.log(`[${context}] Test 3: Write permissions (creating test record)...`);
+      console.log(`[${context}] Test 4: Write permissions (creating test record)...`);
       const testRecord = {
         fields: {
           ShopID: 'test-connection',
@@ -237,9 +266,13 @@ async function testConnection() {
       console.log(`[${context}] • Ensure token has: data.records:read, data.records:write, data.bases:read, schema.bases:read`);
       console.log(`[${context}] • Verify token has access to this base`);
     } else if (error.response?.status === 404) {
-      console.log(`[${context}] • 404 Error: Check base ID and table name`);
+      console.log(`[${context}] • 404 Error: Base or table not found`);
       console.log(`[${context}] • Base ID should be: ${AIRTABLE_BASE_ID}`);
       console.log(`[${context}] • Table name should be: ${TABLE_NAME}`);
+      console.log(`[${context}] • Check if base exists and token has access`);
+    } else if (error.message.includes('not accessible')) {
+      console.log(`[${context}] • Base not accessible with this token`);
+      console.log(`[${context}] • Create a new token with access to this base`);
     } else if (error.code === 'ECONNREFUSED') {
       console.log(`[${context}] • Connection refused: Check network connectivity`);
     } else if (error.code === 'ETIMEDOUT') {
