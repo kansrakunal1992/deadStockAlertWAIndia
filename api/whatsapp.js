@@ -58,6 +58,26 @@ module.exports = async (req, res) => {
   res.send(response.toString());
 };
 
+async function downloadAudio(url) {
+  console.log('[1] Downloading audio from:', url);
+  const { data } = await axios.get(url, {
+    responseType: 'arraybuffer',
+    timeout: 5000,
+    auth: {
+      username: process.env.ACCOUNT_SID,
+      password: process.env.AUTH_TOKEN
+    },
+    headers: {
+      'User-Agent': 'WhatsApp-Business-Automation/1.0'
+    }
+  });
+  
+  const hash = crypto.createHash('md5').update(data).digest('hex');
+  console.log(`[1] Audio downloaded, size: ${data.length} bytes, MD5: ${hash}`);
+  
+  return data;
+}
+
 async function convertToFLAC(oggBuffer) {
   try {
     const inputHash = crypto.createHash('md5').update(oggBuffer).digest('hex');
@@ -82,26 +102,6 @@ async function convertToFLAC(oggBuffer) {
     console.error('FFmpeg conversion failed:', error.message);
     throw new Error('Audio processing error');
   }
-}
-
-async function downloadAudio(url) {
-  console.log('[1] Downloading audio from:', url);
-  const { data } = await axios.get(url, {
-    responseType: 'arraybuffer',
-    timeout: 5000,
-    auth: {
-      username: process.env.ACCOUNT_SID,
-      password: process.env.AUTH_TOKEN
-    },
-    headers: {
-      'User-Agent': 'WhatsApp-Business-Automation/1.0'
-    }
-  });
-  
-  const hash = crypto.createHash('md5').update(data).digest('hex');
-  console.log(`[1] Audio downloaded, size: ${data.length} bytes, MD5: ${hash}`);
-  
-  return data;
 }
 
 async function googleTranscribe(flacBuffer, requestId) {
@@ -165,7 +165,7 @@ async function googleTranscribe(flacBuffer, requestId) {
         console.log(`[${requestId}] Processing with ${config.model} model, audio size: ${audioContent.length}`);
         
         const { data } = await client.request({
-          url: `https://speech.googleapis.com/v1/speech:recognize?_${Date.now()}`,
+          url: 'https://speech.googleapis.com/v1/speech:recognize',
           method: 'POST',
           data: {
             audio: { content: audioContent },
