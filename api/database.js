@@ -3,163 +3,62 @@ const axios = require('axios');
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
 
-// Debug function to analyze each character
-function analyzeBaseID() {
-  const raw = process.env.AIRTABLE_BASE_ID || '';
-  console.log('=== CHARACTER ANALYSIS ===');
-  console.log('Raw Base ID length:', raw.length);
-  console.log('Raw Base ID chars:');
-  
-  for (let i = 0; i < raw.length; i++) {
-    const char = raw[i];
-    const charCode = raw.charCodeAt(i);
-    console.log(`  Position ${i}: "${char}" (charCode: ${charCode})`);
-  }
-  
-  // Clean the base ID character by character
-  let cleaned = '';
-  for (let i = 0; i < raw.length; i++) {
-    const char = raw[i];
-    const charCode = raw.charCodeAt(i);
-    
-    // Only keep alphanumeric characters
-    if ((charCode >= 48 && charCode <= 57) ||  // 0-9
-        (charCode >= 65 && charCode <= 90) ||  // A-Z
-        (charCode >= 97 && charCode <= 122)) { // a-z
-      cleaned += char;
-    }
-  }
-  
-  console.log('Cleaned Base ID:', cleaned);
-  console.log('Cleaned Base ID length:', cleaned.length);
-  console.log('=== END ANALYSIS ===');
-  
-  return cleaned;
-}
+// Clean the base ID
+AIRTABLE_BASE_ID = AIRTABLE_BASE_ID
+  .trim()
+  .replace(/[;,\s]+$/, '')
+  .replace(/[;,\s]+/g, '')
+  .replace(/[^a-zA-Z0-9]/g, '');
 
-// Use the analyzed and cleaned base ID
-AIRTABLE_BASE_ID = analyzeBaseID();
 const TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || 'Inventory';
 
-// Function to clean URLs
-function cleanURL(url) {
-  const cleaned = url
-    .trim()
-    .replace(/[;,\s]+$/, '')
-    .replace(/[;,\s]+/g, '')
-    .replace(/[^a-zA-Z0-9\/\-\._~:\/\?#\[\]@!\$&'\(\)\*\+,;=]/g, '');
-  console.log('URL Cleaning:');
-  console.log('  Original:', JSON.stringify(url));
-  console.log('  Cleaned:', JSON.stringify(cleaned));
-  return cleaned;
-}
+// URL construction
+const airtableBaseURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME;
 
-// Explicit URL construction (avoiding template literals)
-const airtableBaseURL = cleanURL('https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME);
-
-// Debug function to check all possible URLs
-function debugURLs() {
-  const raw = process.env.AIRTABLE_BASE_ID || '';
-  const cleaned = AIRTABLE_BASE_ID;
-  const baseURL = cleanURL('https://api.airtable.com/v0/' + cleaned);
-  const fullURL = cleanURL('https://api.airtable.com/v0/' + cleaned + '/' + TABLE_NAME);
-  
-  console.log('=== URL DEBUG ===');
-  console.log('Raw Base ID:', JSON.stringify(raw));
-  console.log('Cleaned Base ID:', JSON.stringify(cleaned));
-  console.log('Base URL:', baseURL);
-  console.log('Full URL:', fullURL);
-  console.log('=== END DEBUG ===');
-  
-  return { baseURL, fullURL };
-}
-
-// Enhanced error logging
+// Error logging
 function logError(context, error) {
-  console.error(`[${context}] Error Details:`, {
-    message: error.message,
-    response: error.response ? {
-      status: error.response.status,
-      statusText: error.response.statusText,
-      data: error.response.data,
-      headers: error.response.headers
-    } : 'No response',
-    config: error.config ? {
-      url: error.config.url,
-      method: error.config.method,
-      headers: error.config.headers
-    } : 'No config'
-  });
+  console.error(`[${context}] Error:`, error.message);
+  if (error.response) {
+    console.error(`[${context}] Status:`, error.response.status);
+    console.error(`[${context}] Data:`, error.response.data);
+  }
 }
 
-// Helper function to make Airtable requests with retry logic
-async function airtableRequest(config, context = 'Airtable Request', maxRetries = 3) {
+// Airtable request helper
+async function airtableRequest(config, context = 'Airtable Request') {
   const headers = {
     'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
     'Content-Type': 'application/json'
   };
 
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      // Clean the URL before making the request
-      const cleanUrl = cleanURL(config.url || airtableBaseURL);
-      console.log(`[${context}] Attempt ${attempt} - Using URL: ${cleanUrl}`);
-      
-      const response = await axios({
-        ...config,
-        url: cleanUrl,
-        headers,
-        timeout: 10000 // 10 second timeout
-      });
-      
-      console.log(`[${context}] Attempt ${attempt} successful`);
-      return response.data;
-    } catch (error) {
-      logError(`${context} Attempt ${attempt}`, error);
-      
-      if (attempt === maxRetries) {
-        throw new Error(`Failed after ${maxRetries} attempts: ${error.message}`);
-      }
-      
-      // Wait before retry (exponential backoff)
-      const waitTime = Math.pow(2, attempt) * 1000;
-      console.log(`[${context}] Waiting ${waitTime}ms before retry...`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
+  try {
+    const response = await axios({
+      ...config,
+      url: config.url || airtableBaseURL,
+      headers,
+      timeout: 10000
+    });
+    
+    return response.data;
+  } catch (error) {
+    logError(context, error);
+    throw error;
   }
 }
 
-// Update inventory with comprehensive error handling
+// Update inventory
 async function updateInventory(shopId, product, quantityChange) {
   const context = `Update ${shopId} - ${product}`;
   
   try {
-    console.log(`[${context}] Starting update with quantity change: ${quantityChange}`);
+    console.log(`[${context}] Starting update: ${quantityChange}`);
     
-    // Validate inputs
-    if (!shopId || !product) {
-      throw new Error('Missing required fields: shopId or product');
-    }
-    
-    if (typeof quantityChange !== 'number') {
-      throw new Error('quantityChange must be a number');
-    }
-    
-    // First, try to find existing record
+    // Find existing record
     const filterFormula = 'AND({ShopID} = \'' + shopId + '\', {Product} = \'' + product + '\')';
-    console.log(`[${context}] Searching with filter: ${filterFormula}`);
-    
-    const findResult = await airtableRequest(
-      {
-        method: 'get',
-        params: {
-          filterByFormula: filterFormula
-        }
-      },
-      `${context} - Find Record`
-    );
-    
-    console.log(`[${context}] Found ${findResult.records.length} existing records`);
+    const findResult = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula }
+    }, `${context} - Find`);
     
     let newQuantity;
     if (findResult.records.length > 0) {
@@ -168,25 +67,20 @@ async function updateInventory(shopId, product, quantityChange) {
       const currentQty = findResult.records[0].fields.Quantity || 0;
       newQuantity = currentQty + quantityChange;
       
-      console.log(`[${context}] Updating record ${recordId}: ${currentQty} -> ${newQuantity}`);
-      
       const updateData = {
         fields: {
           Quantity: newQuantity,
           LastUpdated: new Date().toISOString()
         }
       };
-
-      await airtableRequest(
-        {
-          method: 'patch',
-          url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + recordId,
-          data: updateData
-        },
-        `${context} - Update Record`
-      );
       
-      console.log(`[${context}] Update successful`);
+      await airtableRequest({
+        method: 'patch',
+        url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + recordId,
+        data: updateData
+      }, `${context} - Update`);
+      
+      console.log(`[${context}] Updated: ${currentQty} -> ${newQuantity}`);
     } else {
       // Create new record
       newQuantity = quantityChange;
@@ -198,18 +92,13 @@ async function updateInventory(shopId, product, quantityChange) {
           LastUpdated: new Date().toISOString()
         }
       };
-
-      console.log(`[${context}] Creating new record with quantity ${newQuantity}`);
       
-      await airtableRequest(
-        {
-          method: 'post',
-          data: createData
-        },
-        `${context} - Create Record`
-      );
+      await airtableRequest({
+        method: 'post',
+        data: createData
+      }, `${context} - Create`);
       
-      console.log(`[${context}] Create successful`);
+      console.log(`[${context}] Created: ${newQuantity}`);
     }
 
     return { success: true, newQuantity };
@@ -217,186 +106,35 @@ async function updateInventory(shopId, product, quantityChange) {
     logError(context, error);
     return { 
       success: false, 
-      error: error.message,
-      details: error.response?.data || 'No additional details'
+      error: error.message 
     };
   }
 }
 
-// Comprehensive connection test
+// Simple connection test
 async function testConnection() {
   const context = 'Connection Test';
   
   try {
-    console.log(`[${context}] Starting comprehensive test...`);
+    console.log(`[${context}] Testing connection...`);
     
-    // Debug URLs first
-    const { baseURL, fullURL } = debugURLs();
-    
-    // Check environment variables with detailed logging
-    console.log(`[${context}] Environment Variables:`);
-    console.log(`  - Raw Base ID: "${process.env.AIRTABLE_BASE_ID}"`);
-    console.log(`  - Cleaned Base ID: "${AIRTABLE_BASE_ID}"`);
-    console.log(`  - Table Name: ${TABLE_NAME}`);
-    console.log(`  - API Key: ${AIRTABLE_API_KEY ? AIRTABLE_API_KEY.substring(0, 15) + '...' : 'MISSING'}`);
-    
-    if (!AIRTABLE_API_KEY || !AIRTABLE_BASE_ID) {
-      throw new Error('Missing required environment variables');
-    }
-    
-    // Test 1: List accessible bases first
-    console.log(`[${context}] Test 1: Listing accessible bases...`);
-    const basesResponse = await axios({
+    // Test table access
+    const result = await airtableRequest({
       method: 'get',
-      url: 'https://api.airtable.com/v0/meta/bases',
-      headers: {
-        'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
-        'Content-Type': 'application/json'
-      },
-      timeout: 5000
-    });
+      params: { maxRecords: 1 }
+    }, `${context} - Table Access`);
     
-    console.log(`[${context}] ✅ Bases list retrieved successfully`);
-    console.log(`[${context}] Accessible bases:`, basesResponse.data.bases.map(b => ({ id: b.id, name: b.name })));
+    console.log(`[${context}] ✅ Connection successful`);
+    console.log(`[${context}] Table contains ${result.records.length} records`);
     
-    // Check if our base is in the list
-    const ourBase = basesResponse.data.bases.find(b => b.id === AIRTABLE_BASE_ID);
-    if (!ourBase) {
-      throw new Error(`Base ${AIRTABLE_BASE_ID} not accessible with this token`);
-    }
-    console.log(`[${context}] ✅ Our base found: ${ourBase.name} (${ourBase.id})`);
-    
-    // Test 2: Table access with detailed URL logging
-    console.log(`[${context}] Test 2: Table access...`);
-    console.log(`[${context}] Testing URL: ${fullURL}`);
-    
-    const tableResponse = await axios({
-      method: 'get',
-      url: fullURL,
-      headers: {
-        'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
-        'Content-Type': 'application/json'
-      },
-      timeout: 5000
-    });
-    
-    console.log(`[${context}] ✅ Table access successful`);
-    
-    // Log the response structure for debugging
-    console.log(`[${context}] Response structure:`, {
-      hasRecords: Array.isArray(tableResponse.data.records),
-      recordsCount: tableResponse.data.records ? tableResponse.data.records.length : 0,
-      hasOffset: 'offset' in tableResponse.data,
-      hasTables: 'tables' in tableResponse.data
-    });
-    
-    // Check if we got records
-    if (!Array.isArray(tableResponse.data.records)) {
-      console.log(`[${context}] ⚠️  Unexpected response structure - no records array`);
-      console.log(`[${context}] Response keys:`, Object.keys(tableResponse.data));
-      console.log(`[${context}] Full response:`, JSON.stringify(tableResponse.data, null, 2));
-      throw new Error('Unexpected response structure from Airtable API');
-    }
-    
-    console.log(`[${context}] Table contains ${tableResponse.data.records.length} records`);
-    
-    // Test 3: Write permissions (create a test record if table is empty)
-    if (tableResponse.data.records.length === 0) {
-      console.log(`[${context}] Test 3: Write permissions (creating test record)...`);
-      const testRecord = {
-        fields: {
-          ShopID: 'test-connection',
-          Product: 'test-product',
-          Quantity: 0,
-          LastUpdated: new Date().toISOString()
-        }
-      };
-      
-      const createResult = await airtableRequest(
-        { method: 'post', data: testRecord },
-        `${context} - Write Test`
-      );
-      
-      console.log(`[${context}] ✅ Write permissions successful`);
-      console.log(`[${context}] Created test record: ${createResult.records[0].id}`);
-      
-      // Clean up test record
-      await airtableRequest(
-        { method: 'delete', url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + createResult.records[0].id },
-        `${context} - Cleanup`
-      );
-      
-      console.log(`[${context}] ✅ Test record cleaned up`);
-    }
-    
-    console.log(`[${context}] 🎉 All tests passed! Connection is fully functional.`);
     return true;
-    
   } catch (error) {
     logError(context, error);
-    
-    // Provide specific troubleshooting advice
-    console.log(`[${context}] 🔍 Troubleshooting Advice:`);
-    
-    if (error.response?.status === 403) {
-      console.log(`[${context}] • 403 Error: Check token permissions`);
-      console.log(`[${context}] • Ensure token has: data.records:read, data.records:write, data.bases:read, schema.bases:read`);
-      console.log(`[${context}] • Verify token has access to this base`);
-    } else if (error.response?.status === 404) {
-      console.log(`[${context}] • 404 Error: Base or table not found`);
-      console.log(`[${context}] • Base ID should be: ${AIRTABLE_BASE_ID}`);
-      console.log(`[${context}] • Table name should be: ${TABLE_NAME}`);
-      console.log(`[${context}] • Check if base exists and token has access`);
-      console.log(`[${context}] • Check for invisible characters in base ID`);
-      console.log(`[${context}] • The URL being tested is: ${debugURLs().fullURL}`);
-    } else if (error.message.includes('Unexpected response structure')) {
-      console.log(`[${context}] • API response structure has changed`);
-      console.log(`[${context}] • Check Airtable API documentation`);
-      console.log(`[${context}] • The response keys were:`, error.response?.data ? Object.keys(error.response.data) : 'No response data');
-    } else if (error.message.includes('not accessible')) {
-      console.log(`[${context}] • Base not accessible with this token`);
-      console.log(`[${context}] • Create a new token with access to this base`);
-    } else if (error.code === 'ECONNREFUSED') {
-      console.log(`[${context}] • Connection refused: Check network connectivity`);
-    } else if (error.code === 'ETIMEDOUT') {
-      console.log(`[${context}] • Timeout: Airtable API may be slow`);
-    }
-    
     return false;
   }
-}
-
-// Helper function to validate Airtable configuration
-function validateConfiguration() {
-  const issues = [];
-  
-  if (!AIRTABLE_API_KEY) {
-    issues.push('AIRTABLE_API_KEY is missing');
-  } else if (!AIRTABLE_API_KEY.startsWith('pat')) {
-    issues.push('AIRTABLE_API_KEY should start with "pat" (Personal Access Token)');
-  }
-  
-  if (!AIRTABLE_BASE_ID) {
-    issues.push('AIRTABLE_BASE_ID is missing');
-  } else if (!AIRTABLE_BASE_ID.startsWith('app')) {
-    issues.push('AIRTABLE_BASE_ID should start with "app"');
-  }
-  
-  if (!TABLE_NAME) {
-    issues.push('TABLE_NAME is missing');
-  }
-  
-  if (issues.length > 0) {
-    console.log('Configuration Issues:');
-    issues.forEach(issue => console.log(`  • ${issue}`));
-    return false;
-  }
-  
-  return true;
 }
 
 module.exports = { 
   updateInventory, 
-  testConnection,
-  validateConfiguration 
+  testConnection 
 };
