@@ -1,7 +1,9 @@
 const axios = require('axios');
 
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
-const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
+let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
+// Clean up base ID (remove any trailing characters)
+AIRTABLE_BASE_ID = AIRTABLE_BASE_ID.trim().replace(/[;,\s]+$/, '');
 const TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || 'Inventory';
 
 const airtableBaseURL = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_NAME}`;
@@ -158,9 +160,10 @@ async function testConnection() {
   try {
     console.log(`[${context}] Starting comprehensive test...`);
     
-    // Check environment variables
+    // Check environment variables with detailed logging
     console.log(`[${context}] Environment Variables:`);
-    console.log(`  - Base ID: ${AIRTABLE_BASE_ID || 'MISSING'}`);
+    console.log(`  - Raw Base ID: "${process.env.AIRTABLE_BASE_ID}"`);
+    console.log(`  - Cleaned Base ID: "${AIRTABLE_BASE_ID}"`);
     console.log(`  - Table Name: ${TABLE_NAME}`);
     console.log(`  - API Key: ${AIRTABLE_API_KEY ? AIRTABLE_API_KEY.substring(0, 15) + '...' : 'MISSING'}`);
     
@@ -190,9 +193,11 @@ async function testConnection() {
     }
     console.log(`[${context}] ✅ Our base found: ${ourBase.name} (${ourBase.id})`);
     
-    // Test 2: Base access
+    // Test 2: Base access with detailed URL logging
     console.log(`[${context}] Test 2: Base access...`);
     const baseURL = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}`;
+    console.log(`[${context}] Testing URL: ${baseURL}`);
+    
     const baseTest = await axios({
       method: 'get',
       url: baseURL,
@@ -270,6 +275,7 @@ async function testConnection() {
       console.log(`[${context}] • Base ID should be: ${AIRTABLE_BASE_ID}`);
       console.log(`[${context}] • Table name should be: ${TABLE_NAME}`);
       console.log(`[${context}] • Check if base exists and token has access`);
+      console.log(`[${context}] • Check for invisible characters in base ID`);
     } else if (error.message.includes('not accessible')) {
       console.log(`[${context}] • Base not accessible with this token`);
       console.log(`[${context}] • Create a new token with access to this base`);
