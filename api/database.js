@@ -41,15 +41,28 @@ function analyzeBaseID() {
 AIRTABLE_BASE_ID = analyzeBaseID();
 const TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || 'Inventory';
 
+// Function to clean URLs
+function cleanURL(url) {
+  const cleaned = url
+    .trim()
+    .replace(/[;,\s]+$/, '')
+    .replace(/[;,\s]+/g, '')
+    .replace(/[^a-zA-Z0-9\/\-\._~:\/\?#\[\]@!\$&'\(\)\*\+,;=]/g, '');
+  console.log('URL Cleaning:');
+  console.log('  Original:', JSON.stringify(url));
+  console.log('  Cleaned:', JSON.stringify(cleaned));
+  return cleaned;
+}
+
 // Explicit URL construction (avoiding template literals)
-const airtableBaseURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME;
+const airtableBaseURL = cleanURL('https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME);
 
 // Debug function to check all possible URLs
 function debugURLs() {
   const raw = process.env.AIRTABLE_BASE_ID || '';
   const cleaned = AIRTABLE_BASE_ID;
-  const baseURL = 'https://api.airtable.com/v0/' + cleaned;
-  const fullURL = 'https://api.airtable.com/v0/' + cleaned + '/' + TABLE_NAME;
+  const baseURL = cleanURL('https://api.airtable.com/v0/' + cleaned);
+  const fullURL = cleanURL('https://api.airtable.com/v0/' + cleaned + '/' + TABLE_NAME);
   
   console.log('=== URL DEBUG ===');
   console.log('Raw Base ID:', JSON.stringify(raw));
@@ -88,9 +101,13 @@ async function airtableRequest(config, context = 'Airtable Request', maxRetries 
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
+      // Clean the URL before making the request
+      const cleanUrl = cleanURL(config.url || airtableBaseURL);
+      console.log(`[${context}] Attempt ${attempt} - Using URL: ${cleanUrl}`);
+      
       const response = await axios({
         ...config,
-        url: config.url || airtableBaseURL,
+        url: cleanUrl,
         headers,
         timeout: 10000 // 10 second timeout
       });
@@ -249,13 +266,13 @@ async function testConnection() {
     }
     console.log(`[${context}] ✅ Our base found: ${ourBase.name} (${ourBase.id})`);
     
-    // Test 2: Base access with detailed URL logging
+    // Test 2: Base access with detailed URL logging - FIXED to include table name
     console.log(`[${context}] Test 2: Base access...`);
-    console.log(`[${context}] Testing URL: ${baseURL}`);
+    console.log(`[${context}] Testing URL: ${fullURL}`); // Changed from baseURL to fullURL
     
     const baseTest = await axios({
       method: 'get',
-      url: baseURL,
+      url: fullURL, // Changed from baseURL to fullURL
       headers: {
         'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
         'Content-Type': 'application/json'
@@ -331,7 +348,7 @@ async function testConnection() {
       console.log(`[${context}] • Table name should be: ${TABLE_NAME}`);
       console.log(`[${context}] • Check if base exists and token has access`);
       console.log(`[${context}] • Check for invisible characters in base ID`);
-      console.log(`[${context}] • The URL being tested is: ${debugURLs().baseURL}`);
+      console.log(`[${context}] • The URL being tested is: ${debugURLs().fullURL}`);
     } else if (error.message.includes('not accessible')) {
       console.log(`[${context}] • Base not accessible with this token`);
       console.log(`[${context}] • Create a new token with access to this base`);
