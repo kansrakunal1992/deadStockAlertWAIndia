@@ -34,6 +34,19 @@ module.exports = async (req, res) => {
       console.log(`[${requestId}] [5] Parsing transcript...`);
       const parsed = parseTranscript(cleanTranscript);
       
+      // RESTRICTION: Validate if it's an inventory update
+      if (!isValidInventoryUpdate(parsed)) {
+        console.log(`[${requestId}] Rejected: Not an inventory update`);
+        response.message(
+          '❌ Please send an inventory update only:\n\n' +
+          'Examples:\n' +
+          '• "10 Parle-G sold"\n' +
+          '• "5kg sugar purchased"\n' +
+          '• "2 boxes Maggi bought"'
+        );
+        return res.send(response.toString());
+      }
+      
       console.log(`[${requestId}] [6] Updating inventory...`);
       const shopId = From.replace('whatsapp:', '');
       const dbResult = await updateInventory(shopId, parsed.product, parsed.quantity);
@@ -54,7 +67,7 @@ module.exports = async (req, res) => {
     }
     else {
       console.log(`[${requestId}] [1] No media received`);
-      response.message('🎤 Send a voice note: "10 Parle-G sold"');
+      response.message('🎤 Send inventory update: "10 Parle-G sold"');
     }
   } catch (error) {
     console.error(`[${requestId}] Processing Error:`, error.message);
@@ -135,6 +148,20 @@ function parseTranscript(transcript) {
     quantity: isPurchase ? quantity : -quantity,
     action: isPurchase ? 'purchased' : 'sold'
   };
+}
+
+// RESTRICTION: Validate if transcript is an inventory update
+function isValidInventoryUpdate(parsed) {
+  // Check if product is known (not "Unknown")
+  const validProduct = parsed.product !== 'Unknown';
+  
+  // Check if quantity is non-zero
+  const validQuantity = parsed.quantity !== 0;
+  
+  // Check if action is purchase or sale
+  const validAction = ['purchased', 'sold'].includes(parsed.action);
+  
+  return validProduct && validQuantity && validAction;
 }
 
 // Audio Processing Functions
