@@ -1,5 +1,6 @@
 const axios = require('axios');
 
+// Your Personal Access Token should start with "pat"
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 const AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID;
 const TABLE_NAME = 'Inventory';
@@ -21,7 +22,12 @@ async function airtableRequest(config) {
     });
     return response.data;
   } catch (error) {
-    console.error('Airtable API Error:', error.response?.data || error.message);
+    console.error('Airtable API Error:', {
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      data: error.response?.data,
+      url: config.url || airtableBaseURL
+    });
     throw error;
   }
 }
@@ -94,7 +100,7 @@ async function testConnection() {
   try {
     console.log('Testing Airtable connection...');
     console.log('Base URL:', airtableBaseURL);
-    console.log('API Key:', AIRTABLE_API_KEY ? 'Set' : 'Missing');
+    console.log('API Key format:', AIRTABLE_API_KEY ? AIRTABLE_API_KEY.substring(0, 10) + '...' : 'Missing');
     
     const result = await airtableRequest({ method: 'get' });
     console.log('Airtable connection successful');
