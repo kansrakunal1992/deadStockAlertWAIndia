@@ -4,7 +4,7 @@ const axios = require('axios');
 const { execSync } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
-const { updateInventory } = require('./database');
+const { updateInventory, testConnection } = require('./database');
 
 module.exports = async (req, res) => {
   const response = new twilio.twiml.MessagingResponse();
@@ -31,35 +31,50 @@ module.exports = async (req, res) => {
       console.log(`[${requestId}] [4] Validating transcript...`);
       const cleanTranscript = await validateTranscript(rawTranscript, requestId);
       
-      console.log(`[${requestId}] [5] Parsing transcript...`);
-      const parsed = parseTranscript(cleanTranscript);
+      console.log(`[${requestId}] [5] Parsing multiple updates...`);
+      const updates = parseMultipleUpdates(cleanTranscript);
       
-      // RESTRICTION: Validate if it's an inventory update
-      if (!isValidInventoryUpdate(parsed)) {
-        console.log(`[${requestId}] Rejected: Not an inventory update`);
+      // RESTRICTION: Validate if there are any valid inventory updates
+      if (updates.length === 0) {
+        console.log(`[${requestId}] Rejected: No valid inventory updates`);
         response.message(
-          '❌ Please send an inventory update only:\n\n' +
+          '❌ Please send inventory updates only:\n\n' +
           'Examples:\n' +
           '• "10 Parle-G sold"\n' +
           '• "5kg sugar purchased"\n' +
-          '• "2 boxes Maggi bought"'
+          '• "2 boxes Maggi bought"\n\n' +
+          'You can send multiple updates in one message!'
         );
         return res.send(response.toString());
       }
       
-      console.log(`[${requestId}] [6] Updating inventory...`);
-      const shopId = From.replace('whatsapp:', '');
-      const dbResult = await updateInventory(shopId, parsed.product, parsed.quantity);
-      
-      if (dbResult.success) {
-        response.message(
-          `✅ Updated: ${parsed.product}\n` +
-          `📊 Change: ${parsed.quantity > 0 ? '+' : ''}${parsed.quantity}\n` +
-          `📦 Stock: ${dbResult.newQuantity}`
-        );
-      } else {
-        response.message('❌ Database error. Please try again.');
+      console.log(`[${requestId}] [6] Testing Airtable connection...`);
+      const connectionTest = await testConnection();
+      if (!connectionTest) {
+        console.error(`[${requestId}] Airtable connection failed`);
+        response.message('❌ Database connection error. Please try again later.');
+        return res.send(response.toString());
       }
+      
+      console.log(`[${requestId}] [7] Updating inventory for ${updates.length} items...`);
+      const shopId = From.replace('whatsapp:', '');
+      const results = await updateMultipleInventory(shopId, updates);
+      
+      // Format response message
+      let message = '✅ Updates processed:\n\n';
+      let successCount = 0;
+      
+      for (const result of results) {
+        if (result.success) {
+          successCount++;
+          message += `• ${result.product}: ${result.quantity > 0 ? '+' : ''}${result.quantity} (Stock: ${result.newQuantity})\n`;
+        } else {
+          message += `• ${result.product}: Error - ${result.error}\n`;
+        }
+      }
+      
+      message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+      response.message(message);
     }
     else if (SpeechResult) {
       console.log(`[${requestId}] [1] Using Twilio transcription`);
@@ -77,6 +92,96 @@ module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'text/xml');
   res.send(response.toString());
 };
+
+// NEW: Parse multiple inventory updates from transcript
+function parseMultipleUpdates(transcript) {
+  const updates = [];
+  const sentences = transcript.split(/[.!?]+/);
+  
+  for (const sentence of sentences) {
+    const trimmed = sentence.trim();
+    if (trimmed) {
+      const update = parseSingleUpdate(trimmed);
+      if (isValidInventoryUpdate(update)) {
+        updates.push(update);
+      }
+    }
+  }
+  
+  console.log(`Parsed ${updates.length} valid updates from transcript`);
+  return updates;
+}
+
+// Modified: Parse single update (used by multi-update parser)
+function parseSingleUpdate(transcript) {
+  const products = [
+    'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
+    'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata',
+    'flour', 'आटा', 'sugar', 'चीनी', 'packets', 'पैकेट'
+  ];
+  
+  const product = products.find(p => 
+    transcript.toLowerCase().includes(p.toLowerCase())
+  ) || 'Unknown';
+  
+  const quantityMatch = transcript.match(/(\d+|दस|बीस|पचास|सौ)/i);
+  let quantity = 0;
+  
+  if (quantityMatch) {
+    const num = quantityMatch[1];
+    const hindiToEnglish = {
+      'दस': 10, 'बीस': 20, 'पचास': 50, 'सौ': 100
+    };
+    quantity = hindiToEnglish[num] || parseInt(num) || 0;
+  }
+  
+  const isPurchase = /(खरीदा|लिया|bought|purchased)/i.test(transcript);
+  
+  return {
+    product,
+    quantity: isPurchase ? quantity : -quantity,
+    action: isPurchase ? 'purchased' : 'sold'
+  };
+}
+
+// NEW: Handle multiple inventory updates
+async function updateMultipleInventory(shopId, updates) {
+  const results = [];
+  
+  for (const update of updates) {
+    try {
+      const result = await updateInventory(shopId, update.product, update.quantity);
+      results.push({
+        product: update.product,
+        quantity: update.quantity,
+        ...result
+      });
+    } catch (error) {
+      results.push({
+        product: update.product,
+        quantity: update.quantity,
+        success: false,
+        error: error.message
+      });
+    }
+  }
+  
+  return results;
+}
+
+// RESTRICTION: Validate if transcript is an inventory update
+function isValidInventoryUpdate(parsed) {
+  // Check if product is known (not "Unknown")
+  const validProduct = parsed.product !== 'Unknown';
+  
+  // Check if quantity is non-zero
+  const validQuantity = parsed.quantity !== 0;
+  
+  // Check if action is purchase or sale
+  const validAction = ['purchased', 'sold'].includes(parsed.action);
+  
+  return validProduct && validQuantity && validAction;
+}
 
 // Deepseek AI Validation
 async function validateTranscript(transcript, requestId) {
@@ -117,51 +222,6 @@ async function validateTranscript(transcript, requestId) {
     console.warn(`[${requestId}] Deepseek validation failed, using original:`, error.message);
     return transcript;
   }
-}
-
-// Parse Transcript Function
-function parseTranscript(transcript) {
-  const products = [
-    'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
-    'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata'
-  ];
-  
-  const product = products.find(p => 
-    transcript.toLowerCase().includes(p.toLowerCase())
-  ) || 'Unknown';
-  
-  const quantityMatch = transcript.match(/(\d+|दस|बीस|पचास|सौ)/i);
-  let quantity = 0;
-  
-  if (quantityMatch) {
-    const num = quantityMatch[1];
-    const hindiToEnglish = {
-      'दस': 10, 'बीस': 20, 'पचास': 50, 'सौ': 100
-    };
-    quantity = hindiToEnglish[num] || parseInt(num) || 0;
-  }
-  
-  const isPurchase = /(खरीदा|लिया|bought|purchased)/i.test(transcript);
-  
-  return {
-    product,
-    quantity: isPurchase ? quantity : -quantity,
-    action: isPurchase ? 'purchased' : 'sold'
-  };
-}
-
-// RESTRICTION: Validate if transcript is an inventory update
-function isValidInventoryUpdate(parsed) {
-  // Check if product is known (not "Unknown")
-  const validProduct = parsed.product !== 'Unknown';
-  
-  // Check if quantity is non-zero
-  const validQuantity = parsed.quantity !== 0;
-  
-  // Check if action is purchase or sale
-  const validAction = ['purchased', 'sold'].includes(parsed.action);
-  
-  return validProduct && validQuantity && validAction;
 }
 
 // Audio Processing Functions
