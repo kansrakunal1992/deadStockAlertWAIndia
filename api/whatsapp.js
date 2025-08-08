@@ -182,9 +182,35 @@ function isValidInventoryUpdate(parsed) {
   return validProduct && validQuantity && validAction;
 }
 
-// Deepseek AI Validation
+// FIXED: Handle "bacha" vs "becha" confusion
 async function validateTranscript(transcript, requestId) {
   try {
+    // First, fix common mispronunciations before sending to DeepSeek
+    let fixedTranscript = transcript;
+    
+    // Fix "bacha" to "becha" when it's likely meant as "sold"
+    // This pattern looks for "bacha" followed by product names or quantities
+    fixedTranscript = fixedTranscript.replace(/bacha\s+(\d+\s*)?(kg|packets?|kilos?)?\s*([a-zA-Z\s]+)?/gi, (match, qty, unit, product) => {
+      // If it's followed by a quantity or product, it's likely "sold" not "remaining"
+      if (qty || unit || (product && !product.includes('remaining'))) {
+        return match.replace('bacha', 'becha');
+      }
+      return match;
+    });
+    
+    // Also handle the case where "bacha" appears at the end of a sentence
+    fixedTranscript = fixedTranscript.replace(/([a-zA-Z\s]+)\s+bacha[.!?]*$/gi, (match, product) => {
+      // If it's a product name followed by "bacha", it's likely "sold"
+      if (product && !product.includes('remaining')) {
+        return product + ' becha';
+      }
+      return match;
+    });
+    
+    if (fixedTranscript !== transcript) {
+      console.log(`[${requestId}] Fixed mispronunciations: "${transcript}" → "${fixedTranscript}"`);
+    }
+    
     const response = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -200,7 +226,7 @@ async function validateTranscript(transcript, requestId) {
           },
           {
             role: "user",
-            content: transcript
+            content: fixedTranscript
           }
         ],
         max_tokens: 50,
