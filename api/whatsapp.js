@@ -15,7 +15,6 @@ module.exports = async (req, res) => {
       res.status(405).send('Method Not Allowed');
       return;
     }
-
     const { MediaUrl0, NumMedia, SpeechResult, From } = req.body;
     
     if (NumMedia > 0 && MediaUrl0) {
@@ -265,6 +264,7 @@ async function convertToFLAC(oggBuffer) {
   }
 }
 
+// FIXED: Combine all speech segments into a single transcript
 async function googleTranscribe(flacBuffer, requestId) {
   try {
     const base64Key = process.env.GCP_BASE64_KEY?.trim();
@@ -325,10 +325,22 @@ async function googleTranscribe(flacBuffer, requestId) {
           timeout: 8000
         });
         console.log(`[${requestId}] Google STT response:`, JSON.stringify(data, null, 2));
-        const transcript = data.results?.[0]?.alternatives?.[0]?.transcript;
-        if (transcript) {
-          console.log(`[${requestId}] STT Success: ${config.model} model - Transcript: "${transcript}"`);
-          return transcript;
+        
+        // FIXED: Combine all results into a single transcript
+        let fullTranscript = '';
+        if (data.results && data.results.length > 0) {
+          for (const result of data.results) {
+            if (result.alternatives && result.alternatives.length > 0) {
+              fullTranscript += result.alternatives[0].transcript + ' ';
+            }
+          }
+        }
+        
+        fullTranscript = fullTranscript.trim();
+        
+        if (fullTranscript) {
+          console.log(`[${requestId}] STT Success: ${config.model} model - Transcript: "${fullTranscript}"`);
+          return fullTranscript;
         }
       } catch (error) {
         console.warn(`[${requestId}] STT Attempt Failed:`, {
