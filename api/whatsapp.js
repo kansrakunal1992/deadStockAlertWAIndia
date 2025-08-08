@@ -111,7 +111,7 @@ function parseMultipleUpdates(transcript) {
   return updates;
 }
 
-// Modified: Parse single update (used by multi-update parser)
+// FIXED: Parse single update with better action detection
 function parseSingleUpdate(transcript) {
   const products = [
     'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
@@ -119,31 +119,77 @@ function parseSingleUpdate(transcript) {
     'flour', 'आटा', 'sugar', 'चीनी', 'packets', 'पैकेट'
   ];
   
+  // Find product (case-insensitive)
   const product = products.find(p => 
     transcript.toLowerCase().includes(p.toLowerCase())
   ) || 'Unknown';
   
-  const quantityMatch = transcript.match(/(\d+|दस|बीस|पचास|सौ)/i);
+  // Support for multiple number formats (digits, English words, Hindi words)
+  const numberWords = {
+    // English
+    'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 
+    'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12,
+    'thirteen': 13, 'fourteen': 14, 'fifteen': 15, 'sixteen': 16, 'seventeen': 17,
+    'eighteen': 18, 'nineteen': 19, 'twenty': 20, 'thirty': 30, 'forty': 40, 
+    'fifty': 50, 'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90, 'hundred': 100,
+    
+    // Hindi
+    'एक': 1, 'दो': 2, 'तीन': 3, 'चार': 4, 'पांच': 5, 'छह': 6, 
+    'सात': 7, 'आठ': 8, 'नौ': 9, 'दस': 10, 'ग्यारह': 11, 'बारह': 12,
+    'तेरह': 13, 'चौदह': 14, 'पंद्रह': 15, 'सोलह': 16, 'सत्रह': 17,
+    'अठारह': 18, 'उन्नीस': 19, 'बीस': 20, 'तीस': 30, 'चालीस': 40, 
+    'पचास': 50, 'साठ': 60, 'सत्तर': 70, 'अस्सी': 80, 'नब्बे': 90, 'सौ': 100
+  };
+  
   let quantity = 0;
   
-  if (quantityMatch) {
-    const num = quantityMatch[1];
-    const hindiToEnglish = {
-      'दस': 10, 'बीस': 20, 'पचास': 50, 'सौ': 100
-    };
-    quantity = hindiToEnglish[num] || parseInt(num) || 0;
+  // Try to match digits first
+  const digitMatch = transcript.match(/(\d+)/i);
+  if (digitMatch) {
+    quantity = parseInt(digitMatch[1]) || 0;
+  } else {
+    // Try to match number words
+    const words = transcript.toLowerCase().split(/\s+/);
+    for (const word of words) {
+      if (numberWords[word]) {
+        quantity = numberWords[word];
+        break;
+      }
+    }
   }
   
-  const isPurchase = /(खरीदा|लिया|bought|purchased)/i.test(transcript);
+  // FIXED: Better action detection with priority for purchase/sold over remaining
+  const isPurchase = /(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)/i.test(transcript);
+  const isSold = /(बेचा|बेचे|becha|sold|बिक्री)/i.test(transcript);
+  const isRemaining = /(बचा|बचे|बाकी|remaining|left)/i.test(transcript);
+  
+  // Determine the action and quantity
+  let action, finalQuantity;
+  
+  if (isPurchase) {
+    action = 'purchased';
+    finalQuantity = quantity;  // Positive for purchases
+  } else if (isSold) {
+    action = 'sold';
+    finalQuantity = -quantity;  // Negative for sales
+  } else if (isRemaining) {
+    // Only treat as "remaining" if no other action is detected
+    action = 'remaining';
+    finalQuantity = quantity;  // This will be handled as an absolute value
+  } else {
+    // Default to sold if no specific action is detected
+    action = 'sold';
+    finalQuantity = -quantity;  // Negative for sales
+  }
   
   return {
     product,
-    quantity: isPurchase ? quantity : -quantity,
-    action: isPurchase ? 'purchased' : 'sold'
+    quantity: finalQuantity,
+    action
   };
 }
 
-// NEW: Handle multiple inventory updates
+// FIXED: Handle multiple inventory updates
 async function updateMultipleInventory(shopId, updates) {
   const results = [];
   
@@ -176,39 +222,56 @@ function isValidInventoryUpdate(parsed) {
   // Check if quantity is non-zero
   const validQuantity = parsed.quantity !== 0;
   
-  // Check if action is purchase or sale
-  const validAction = ['purchased', 'sold'].includes(parsed.action);
+  // Check if action is purchase, sold, or remaining
+  const validAction = ['purchased', 'sold', 'remaining'].includes(parsed.action);
   
   return validProduct && validQuantity && validAction;
 }
 
-// FIXED: Handle "bacha" vs "becha" confusion
+// FIXED: Improved handling of "bacha" vs "becha" confusion
 async function validateTranscript(transcript, requestId) {
   try {
     // First, fix common mispronunciations before sending to DeepSeek
     let fixedTranscript = transcript;
     
-    // Fix "bacha" to "becha" when it's likely meant as "sold"
-    // This pattern looks for "bacha" followed by product names or quantities
-    fixedTranscript = fixedTranscript.replace(/bacha\s+(\d+\s*)?(kg|packets?|kilos?)?\s*([a-zA-Z\s]+)?/gi, (match, qty, unit, product) => {
-      // If it's followed by a quantity or product, it's likely "sold" not "remaining"
-      if (qty || unit || (product && !product.includes('remaining'))) {
-        return match.replace('bacha', 'becha');
-      }
-      return match;
+    // IMPROVED: More comprehensive patterns for fixing "bacha" to "becha"
+    
+    // Pattern 1: "बचा" followed by a quantity and product (most common case)
+    fixedTranscript = fixedTranscript.replace(/(\d+)\s*(kg|किलो|packets?|पैकेट|grams?|ग्राम)\s*([a-zA-Z\s]+)\s+बचा/gi, (match, qty, unit, product) => {
+      console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${qty} ${unit} ${product} बेचा"`);
+      return `${qty} ${unit} ${product} बेचा`;
     });
     
-    // Also handle the case where "bacha" appears at the end of a sentence
-    fixedTranscript = fixedTranscript.replace(/([a-zA-Z\s]+)\s+bacha[.!?]*$/gi, (match, product) => {
-      // If it's a product name followed by "bacha", it's likely "sold"
-      if (product && !product.includes('remaining')) {
-        return product + ' becha';
+    // Pattern 2: "बचा" followed by a product and quantity
+    fixedTranscript = fixedTranscript.replace(/([a-zA-Z\s]+)\s+(\d+)\s*(kg|किलो|packets?|पैकेट|grams?|ग्राम)\s+बचा/gi, (match, product, qty, unit) => {
+      console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${product} ${qty} ${unit} बेचा"`);
+      return `${product} ${qty} ${unit} बेचा`;
+    });
+    
+    // Pattern 3: Product followed by "बचा" and then purchase action
+    fixedTranscript = fixedTranscript.replace(/([a-zA-Z\s]+)\s+बचा\s+.*?(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)/gi, (match, product, purchase) => {
+      console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${product} बेचा, ${purchase}"`);
+      return `${product} बेचा, ${purchase}`;
+    });
+    
+    // Pattern 4: Purchase action followed by product and "बचा"
+    fixedTranscript = fixedTranscript.replace(/(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)\s+([a-zA-Z\s]+)\s+बचा/gi, (match, purchase, product) => {
+      console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${purchase} ${product}, बेचा ${product}"`);
+      return `${purchase} ${product}, बेचा ${product}`;
+    });
+    
+    // Pattern 5: Simple "बचा" at the end of a sentence with a product
+    fixedTranscript = fixedTranscript.replace(/([a-zA-Z\s]+)\s+बचा[.!?]*$/gi, (match, product) => {
+      // Only replace if it doesn't contain words indicating "remaining"
+      if (!product.match(/(remaining|left|बाकी)/i)) {
+        console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${product} बेचा"`);
+        return `${product} बेचा`;
       }
       return match;
     });
     
     if (fixedTranscript !== transcript) {
-      console.log(`[${requestId}] Fixed mispronunciations: "${transcript}" → "${fixedTranscript}"`);
+      console.log(`[${requestId}] Fixed transcript: "${transcript}" → "${fixedTranscript}"`);
     }
     
     const response = await axios.post(
@@ -222,6 +285,7 @@ async function validateTranscript(transcript, requestId) {
             - Fix grammar errors
             - Convert to English if needed
             - Ensure product names are correct
+            - Convert number words to digits (e.g., "five" → "5")
             - Return ONLY the cleaned text, nothing else`
           },
           {
@@ -290,7 +354,7 @@ async function convertToFLAC(oggBuffer) {
   }
 }
 
-// FIXED: Combine all speech segments into a single transcript
+// FIXED: Combine all speech segments into a single transcript and detect language
 async function googleTranscribe(flacBuffer, requestId) {
   try {
     const base64Key = process.env.GCP_BASE64_KEY?.trim();
@@ -314,70 +378,125 @@ async function googleTranscribe(flacBuffer, requestId) {
       scopes: ['https://www.googleapis.com/auth/cloud-platform']
     });
     const client = await auth.getClient();
-    const baseConfig = {
-      languageCode: 'hi-IN',
-      useEnhanced: true,
-      enableAutomaticPunctuation: true,
-      audioChannelCount: 1,
-      speechContexts: [{
-        phrases: [
-          'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
-          '10', 'दस', '20', 'बीस', '50', 'पचास', '100', 'सौ',
-          'kg', 'किलो', 'ग्राम', 'पैकेट', 'बॉक्स', 'किलोग्राम',
-          'खरीदा', 'बेचा', 'बिक्री', 'क्रय', 'लिया', 'दिया', 'बचा',
-          'sold', 'purchased', 'bought', 'ordered'
-        ],
-        boost: 32.0
-      }]
-    };
-    const configs = [
-      { ...baseConfig, model: 'telephony' },
-      { ...baseConfig, model: 'latest_short' },
-      { ...baseConfig, model: 'default' }
+    
+    // Try multiple languages to support multilingual input
+    const languageConfigs = [
+      { languageCode: 'hi-IN', name: 'Hindi' },
+      { languageCode: 'en-IN', name: 'English (India)' },
+      { languageCode: 'en-US', name: 'English (US)' }
     ];
-    for (const config of configs) {
+    
+    for (const langConfig of languageConfigs) {
       try {
-        config.encoding = 'FLAC';
-        config.sampleRateHertz = 16000;
-        const audioContent = flacBuffer.toString('base64');
-        console.log(`[${requestId}] Processing with ${config.model} model, audio size: ${audioContent.length}`);
-        const { data } = await client.request({
-          url: 'https://speech.googleapis.com/v1/speech:recognize',
-          method: 'POST',
-          data: {
-            audio: { content: audioContent },
-            config
-          },
-          timeout: 8000
-        });
-        console.log(`[${requestId}] Google STT response:`, JSON.stringify(data, null, 2));
+        const baseConfig = {
+          languageCode: langConfig.languageCode,
+          useEnhanced: true,
+          enableAutomaticPunctuation: true,
+          audioChannelCount: 1,
+          speechContexts: [{
+            phrases: [
+              'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
+              '10', 'दस', '20', 'बीस', '50', 'पचास', '100', 'सौ',
+              'kg', 'किलो', 'ग्राम', 'पैकेट', 'बॉक्स', 'किलोग्राम',
+              'खरीदा', 'बेचा', 'बिक्री', 'क्रय', 'लिया', 'दिया', 'बचा',
+              'sold', 'purchased', 'bought', 'ordered'
+            ],
+            boost: 32.0
+          }]
+        };
         
-        // FIXED: Combine all results into a single transcript
-        let fullTranscript = '';
-        if (data.results && data.results.length > 0) {
-          for (const result of data.results) {
-            if (result.alternatives && result.alternatives.length > 0) {
-              fullTranscript += result.alternatives[0].transcript + ' ';
+        const configs = [
+          { ...baseConfig, model: 'telephony' },
+          { ...baseConfig, model: 'latest_short' },
+          { ...baseConfig, model: 'default' }
+        ];
+        
+        for (const config of configs) {
+          try {
+            config.encoding = 'FLAC';
+            config.sampleRateHertz = 16000;
+            const audioContent = flacBuffer.toString('base64');
+            console.log(`[${requestId}] Processing with ${config.model} model (${langConfig.name}), audio size: ${audioContent.length}`);
+            const { data } = await client.request({
+              url: 'https://speech.googleapis.com/v1/speech:recognize',
+              method: 'POST',
+              data: {
+                audio: { content: audioContent },
+                config
+              },
+              timeout: 8000
+            });
+            
+            // Combine all results into a single transcript
+            let fullTranscript = '';
+            if (data.results && data.results.length > 0) {
+              for (const result of data.results) {
+                if (result.alternatives && result.alternatives.length > 0) {
+                  fullTranscript += result.alternatives[0].transcript + ' ';
+                }
+              }
             }
+            
+            fullTranscript = fullTranscript.trim();
+            
+            if (fullTranscript) {
+              console.log(`[${requestId}] STT Success: ${config.model} model (${langConfig.name}) - Transcript: "${fullTranscript}"`);
+              return fullTranscript;
+            }
+          } catch (error) {
+            console.warn(`[${requestId}] STT Attempt Failed:`, {
+              model: config.model,
+              language: langConfig.name,
+              error: error.response?.data?.error?.message || error.message
+            });
           }
         }
-        
-        fullTranscript = fullTranscript.trim();
-        
-        if (fullTranscript) {
-          console.log(`[${requestId}] STT Success: ${config.model} model - Transcript: "${fullTranscript}"`);
-          return fullTranscript;
-        }
       } catch (error) {
-        console.warn(`[${requestId}] STT Attempt Failed:`, {
-          model: config.model,
-          error: error.response?.data?.error?.message || error.message
-        });
+        console.warn(`[${requestId}] Language ${langConfig.name} failed:`, error.message);
       }
     }
     throw new Error(`[${requestId}] All STT attempts failed`);
   } catch (error) {
     console.error(`[${requestId}] Google Transcription Error:`, error.message);
+    throw error;
+  }
+}
+
+// Helper function for Airtable requests
+async function airtableRequest(config, context = 'Airtable Request') {
+  const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
+  let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
+  
+  // Clean the base ID
+  AIRTABLE_BASE_ID = AIRTABLE_BASE_ID
+    .trim()
+    .replace(/[;,\s]+$/, '')
+    .replace(/[;,\s]+/g, '')
+    .replace(/[^a-zA-Z0-9]/g, '');
+    
+  const TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || 'Inventory';
+  const airtableBaseURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME;
+  
+  const headers = {
+    'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
+    'Content-Type': 'application/json'
+  };
+  
+  try {
+    const response = await axios({
+      ...config,
+      url: config.url || airtableBaseURL,
+      headers,
+      timeout: 10000
+    });
+    
+    return response.data;
+  } catch (error) {
+    console.error(`[${context}] Error:`, error.message);
+    if (error.response) {
+      console.error(`[${context}] Status:`, error.response.status);
+      console.error(`[${context}] Data:`, error.response.data);
+    }
     throw error;
   }
 }
