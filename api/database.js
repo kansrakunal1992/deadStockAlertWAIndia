@@ -1,5 +1,4 @@
 const axios = require('axios');
-
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
 
@@ -30,7 +29,7 @@ async function airtableRequest(config, context = 'Airtable Request') {
     'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
     'Content-Type': 'application/json'
   };
-
+  
   try {
     const response = await axios({
       ...config,
@@ -46,7 +45,7 @@ async function airtableRequest(config, context = 'Airtable Request') {
   }
 }
 
-// Update inventory
+// Update inventory using delete and recreate approach
 async function updateInventory(shopId, product, quantityChange) {
   const context = `Update ${shopId} - ${product}`;
   
@@ -62,29 +61,36 @@ async function updateInventory(shopId, product, quantityChange) {
     
     let newQuantity;
     if (findResult.records.length > 0) {
-      // Update existing record
+      // Delete existing record and create new one (instead of update)
       const recordId = findResult.records[0].id;
       const currentQty = findResult.records[0].fields.Quantity || 0;
       newQuantity = currentQty + quantityChange;
       
-      console.log(`[${context}] Found record ${recordId}, updating: ${currentQty} -> ${newQuantity}`);
+      console.log(`[${context}] Found record ${recordId}, deleting and recreating: ${currentQty} -> ${newQuantity}`);
       
-      const updateData = {
+      // Delete the old record
+      await airtableRequest({
+        method: 'delete',
+        url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME + '/' + recordId
+      }, `${context} - Delete`);
+      
+      console.log(`[${context}] Deleted old record`);
+      
+      // Create new record
+      const createData = {
         fields: {
+          ShopID: shopId,
+          Product: product,
           Quantity: newQuantity
         }
       };
       
-      console.log(`[${context}] Update data:`, updateData);
-      console.log(`[${context}] Update URL: https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${recordId}`);
-      
       await airtableRequest({
-        method: 'patch',
-        url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + recordId,
-        data: updateData
-      }, `${context} - Update`);
+        method: 'post',
+        data: createData
+      }, `${context} - Recreate`);
       
-      console.log(`[${context}] Updated successfully`);
+      console.log(`[${context}] Created new record with quantity: ${newQuantity}`);
     } else {
       // Create new record
       newQuantity = quantityChange;
@@ -96,16 +102,13 @@ async function updateInventory(shopId, product, quantityChange) {
         }
       };
       
-      console.log(`[${context}] Creating new record with data:`, createData);
-      
       await airtableRequest({
         method: 'post',
         data: createData
       }, `${context} - Create`);
       
-      console.log(`[${context}] Created successfully`);
+      console.log(`[${context}] Created new record with quantity: ${newQuantity}`);
     }
-
     return { success: true, newQuantity };
   } catch (error) {
     logError(context, error);
