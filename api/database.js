@@ -67,12 +67,16 @@ async function updateInventory(shopId, product, quantityChange) {
       const currentQty = findResult.records[0].fields.Quantity || 0;
       newQuantity = currentQty + quantityChange;
       
+      console.log(`[${context}] Found record ${recordId}, updating: ${currentQty} -> ${newQuantity}`);
+      
       const updateData = {
         fields: {
           Quantity: newQuantity
-          // Temporarily removed LastUpdated
         }
       };
+      
+      console.log(`[${context}] Update data:`, updateData);
+      console.log(`[${context}] Update URL: https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${recordId}`);
       
       await airtableRequest({
         method: 'patch',
@@ -80,7 +84,7 @@ async function updateInventory(shopId, product, quantityChange) {
         data: updateData
       }, `${context} - Update`);
       
-      console.log(`[${context}] Updated: ${currentQty} -> ${newQuantity}`);
+      console.log(`[${context}] Updated successfully`);
     } else {
       // Create new record
       newQuantity = quantityChange;
@@ -89,16 +93,17 @@ async function updateInventory(shopId, product, quantityChange) {
           ShopID: shopId,
           Product: product,
           Quantity: newQuantity
-          // Temporarily removed LastUpdated
         }
       };
+      
+      console.log(`[${context}] Creating new record with data:`, createData);
       
       await airtableRequest({
         method: 'post',
         data: createData
       }, `${context} - Create`);
       
-      console.log(`[${context}] Created: ${newQuantity}`);
+      console.log(`[${context}] Created successfully`);
     }
 
     return { success: true, newQuantity };
