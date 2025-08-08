@@ -15,6 +15,11 @@ const TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || 'Inventory';
 // URL construction
 const airtableBaseURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME;
 
+// Format date for Airtable
+function formatDateForAirtable(date) {
+  return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
 // Error logging
 function logError(context, error) {
   console.error(`[${context}] Error:`, error.message);
@@ -70,7 +75,7 @@ async function updateInventory(shopId, product, quantityChange) {
       const updateData = {
         fields: {
           Quantity: newQuantity,
-          LastUpdated: new Date().toISOString()
+          LastUpdated: formatDateForAirtable(new Date())
         }
       };
       
@@ -89,7 +94,7 @@ async function updateInventory(shopId, product, quantityChange) {
           ShopID: shopId,
           Product: product,
           Quantity: newQuantity,
-          LastUpdated: new Date().toISOString()
+          LastUpdated: formatDateForAirtable(new Date())
         }
       };
       
