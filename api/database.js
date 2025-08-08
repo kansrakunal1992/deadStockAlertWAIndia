@@ -74,8 +74,6 @@ async function updateInventory(shopId, product, quantityChange) {
         url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME + '/' + recordId
       }, `${context} - Delete`);
       
-      console.log(`[${context}] Deleted old record`);
-      
       // Create new record
       const createData = {
         fields: {
@@ -89,8 +87,6 @@ async function updateInventory(shopId, product, quantityChange) {
         method: 'post',
         data: createData
       }, `${context} - Recreate`);
-      
-      console.log(`[${context}] Created new record with quantity: ${newQuantity}`);
     } else {
       // Create new record
       newQuantity = quantityChange;
@@ -106,9 +102,8 @@ async function updateInventory(shopId, product, quantityChange) {
         method: 'post',
         data: createData
       }, `${context} - Create`);
-      
-      console.log(`[${context}] Created new record with quantity: ${newQuantity}`);
     }
+    
     return { success: true, newQuantity };
   } catch (error) {
     logError(context, error);
