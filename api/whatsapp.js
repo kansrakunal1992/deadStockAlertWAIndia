@@ -291,7 +291,7 @@ async function detectLanguage(transcript, requestId) {
   }
 }
 
-// FIXED: Generate response in multiple languages and scripts without labels
+// Generate response in multiple languages and scripts without labels
 async function generateMultiLanguageResponse(message, languageCode, requestId) {
   try {
     // If the language is English, return the message as is
@@ -622,7 +622,7 @@ async function convertToFLAC(oggBuffer) {
   }
 }
 
-// Make language detection more agnostic
+// FIXED: Revert to original transcription settings that worked well
 async function googleTranscribe(flacBuffer, requestId) {
   try {
     const base64Key = process.env.GCP_BASE64_KEY?.trim();
@@ -647,11 +647,11 @@ async function googleTranscribe(flacBuffer, requestId) {
     });
     const client = await auth.getClient();
     
-    // Try English first, then other languages
+    // REVERTED: Back to original language priority that worked well
     const languageConfigs = [
-      { languageCode: 'en-US', name: 'English (US)' },
+      { languageCode: 'hi-IN', name: 'Hindi' },  // Back to Hindi first
       { languageCode: 'en-IN', name: 'English (India)' },
-      { languageCode: 'hi-IN', name: 'Hindi' }
+      { languageCode: 'en-US', name: 'English (US)' }
     ];
     
     for (const langConfig of languageConfigs) {
@@ -661,7 +661,7 @@ async function googleTranscribe(flacBuffer, requestId) {
           useEnhanced: true,
           enableAutomaticPunctuation: true,
           audioChannelCount: 1,
-          // Enhanced speech context with more terms
+          // SIMPLIFIED: Back to original speech context that worked well
           speechContexts: [{
             phrases: [
               'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
@@ -670,17 +670,16 @@ async function googleTranscribe(flacBuffer, requestId) {
               '10', 'दस', '20', 'बीस', '50', 'पचास', '100', 'सौ',
               'kg', 'किलो', 'ग्राम', 'पैकेट', 'बॉक्स', 'किलोग्राम',
               'खरीदा', 'बेचा', 'बिक्री', 'क्रय', 'लिया', 'दिया', 'बचा',
-              'sold', 'purchased', 'bought', 'ordered',
-              // Add more specific terms to improve recognition
-              'sold 10 kg flour', 'bought 5 packets of maggi', 'flour', 'flower' // To help distinguish
+              'sold', 'purchased', 'bought', 'ordered'
             ],
             boost: 32.0
           }]
         };
         
+        // REVERTED: Back to original model priority that worked well
         const configs = [
-          { ...baseConfig, model: 'latest_short' }, // Try latest_short first for better accuracy
-          { ...baseConfig, model: 'telephony' },
+          { ...baseConfig, model: 'telephony' },  // Back to telephony first
+          { ...baseConfig, model: 'latest_short' },
           { ...baseConfig, model: 'default' }
         ];
         
