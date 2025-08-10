@@ -36,10 +36,24 @@ module.exports = async (req, res) => {
     }
     const { MediaUrl0, NumMedia, SpeechResult, From, Body } = req.body;
     
-    // Check if this is a text message with expiry date
+    // FIXED: First check if this is a text message with expiry date
     if (!NumMedia && Body) {
-      console.log(`[${requestId}] [1] Processing text message for expiry date`);
-      await handleExpiryDateInput(Body, From, response, requestId);
+      console.log(`[${requestId}] [1] Processing text message for expiry date: "${Body}"`);
+      
+      // Check if this looks like an expiry date input
+      if (isExpiryDateInput(Body)) {
+        console.log(`[${requestId}] Message appears to be an expiry date input`);
+        await handleExpiryDateInput(Body, From, response, requestId);
+      } else {
+        console.log(`[${requestId}] Message does not appear to be an expiry date input, sending default response`);
+        const defaultMessage = await generateMultiLanguageResponse(
+          '🎤 Send inventory update: "10 Parle-G sold". Please also provide expiry date for purchased items.',
+          'en', // Default to English
+          requestId
+        );
+        response.message(defaultMessage);
+      }
+      
       return res.send(response.toString());
     }
     
@@ -94,14 +108,16 @@ module.exports = async (req, res) => {
       // Format response message in multiple languages
       let message = '✅ Updates processed:\n\n';
       let successCount = 0;
+      let hasPurchases = false;
       
       for (const result of results) {
         if (result.success) {
           successCount++;
           message += `• ${result.product}: ${result.quantity > 0 ? '+' : ''}${result.quantity} (Stock: ${result.newQuantity})\n`;
           
-          // Prompt for expiry date if this was a purchase
+          // Check if this was a purchase
           if (result.quantity > 0) {
+            hasPurchases = true;
             message += `  ⏰ Please reply with expiry date for ${result.product}: "DD/MM/YYYY" or "DD Month YYYY"\n`;
           }
         } else {
@@ -110,6 +126,11 @@ module.exports = async (req, res) => {
       }
       
       message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+      
+      // Log if there were purchases
+      if (hasPurchases) {
+        console.log(`[${requestId}] Detected purchases, prompting for expiry dates`);
+      }
       
       // Generate response in both Roman and native scripts
       const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
@@ -142,19 +163,51 @@ module.exports = async (req, res) => {
   }
   
   // Ensure the response is always sent
+  console.log(`[${requestId}] Sending TwiML response`);
   res.setHeader('Content-Type', 'text/xml');
   res.send(response.toString());
 };
 
+// FIXED: New function to check if a message is an expiry date input
+function isExpiryDateInput(message) {
+  // Check if the message contains a date in DD/MM/YYYY format
+  if (message.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/)) {
+    return true;
+  }
+  
+  // Check if the message contains a date in "DD Month YYYY" format
+  if (message.match(/\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}/i)) {
+    return true;
+  }
+  
+  // Check if the message contains common product names that might be followed by an expiry date
+  const products = [
+    'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
+    'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata',
+    'flour', 'आटा', 'sugar', 'चीनी', 'packets', 'पैकेट'
+  ];
+  
+  for (const product of products) {
+    if (message.toLowerCase().includes(product.toLowerCase())) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
 // Handle text message with expiry date
 async function handleExpiryDateInput(body, from, response, requestId) {
   try {
+    console.log(`[${requestId}] Processing expiry date input: "${body}"`);
+    
     // Extract product and expiry date from the message
     const productMatch = body.match(/([a-zA-Z\s]+):?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i);
     
     if (!productMatch) {
+      console.log(`[${requestId}] Invalid expiry date format`);
       const errorMessage = await generateMultiLanguageResponse(
-        'Please provide product name and expiry date in format: "Product: DD/MM/YYYY" or "Product: DD Month YYYY"',
+        'Invalid format. Please use: "Product: DD/MM/YYYY" or "Product: DD Month YYYY"',
         'en', // Default to English
         requestId
       );
@@ -165,9 +218,12 @@ async function handleExpiryDateInput(body, from, response, requestId) {
     const product = productMatch[1].trim();
     const expiryDateStr = productMatch[2];
     
+    console.log(`[${requestId}] Extracted product: "${product}", expiry date: "${expiryDateStr}"`);
+    
     // Parse the expiry date
     const expiryDate = parseExpiryDate(expiryDateStr);
     if (!expiryDate) {
+      console.log(`[${requestId}] Failed to parse expiry date`);
       const errorMessage = await generateMultiLanguageResponse(
         'Invalid date format. Please use: "Product: DD/MM/YYYY" or "Product: DD Month YYYY"',
         'en', // Default to English
@@ -179,9 +235,11 @@ async function handleExpiryDateInput(body, from, response, requestId) {
     
     // Get the most recent batch for this product
     const shopId = from.replace('whatsapp:', '');
+    console.log(`[${requestId}] Looking for recent batches for ${product}`);
     const batches = await getBatchRecords(shopId, product);
     
     if (batches.length === 0) {
+      console.log(`[${requestId}] No recent purchase found for ${product}`);
       const errorMessage = await generateMultiLanguageResponse(
         `No recent purchase found for ${product}. Please make a purchase first.`,
         'en', // Default to English
@@ -193,10 +251,12 @@ async function handleExpiryDateInput(body, from, response, requestId) {
     
     // Format the expiry date for Airtable
     const formattedExpiryDate = formatDateForAirtable(expiryDate);
+    console.log(`[${requestId}] Formatted expiry date: ${formattedExpiryDate}`);
     
     // Update the most recent batch with expiry date
     const latestBatch = batches[0];
-    await createBatchRecord({
+    console.log(`[${requestId}] Updating batch ${latestBatch.id} with expiry date`);
+    const batchResult = await createBatchRecord({
       shopId,
       product,
       quantity: latestBatch.fields.Quantity,
@@ -205,12 +265,23 @@ async function handleExpiryDateInput(body, from, response, requestId) {
       batchId: latestBatch.id
     });
     
-    const successMessage = await generateMultiLanguageResponse(
-      `✅ Expiry date updated for ${product}: ${formattedExpiryDate}`,
-      'en', // Default to English
-      requestId
-    );
-    response.message(successMessage);
+    if (batchResult.success) {
+      console.log(`[${requestId}] Successfully updated batch with expiry date`);
+      const successMessage = await generateMultiLanguageResponse(
+        `✅ Expiry date updated for ${product}: ${formattedExpiryDate}`,
+        'en', // Default to English
+        requestId
+      );
+      response.message(successMessage);
+    } else {
+      console.error(`[${requestId}] Failed to update batch: ${batchResult.error}`);
+      const errorMessage = await generateMultiLanguageResponse(
+        `Error updating expiry date for ${product}. Please try again.`,
+        'en', // Default to English
+        requestId
+      );
+      response.message(errorMessage);
+    }
   } catch (error) {
     console.error(`[${requestId}] Error handling expiry date input:`, error.message);
     const errorMessage = await generateMultiLanguageResponse(
@@ -448,20 +519,29 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   
   for (const update of updates) {
     try {
+      console.log(`[Update ${shopId} - ${update.product}] Processing update: ${update.quantity}`);
+      
       const result = await updateInventory(shopId, update.product, update.quantity);
       
       // Create batch record for purchases
       if (update.quantity > 0 && result.success) {
+        console.log(`[Update ${shopId} - ${update.product}] Creating batch record for purchase`);
         // Format current date for Airtable
         const formattedPurchaseDate = formatDateForAirtable(new Date());
         
-        await createBatchRecord({
+        const batchResult = await createBatchRecord({
           shopId,
           product: update.product,
           quantity: update.quantity,
           purchaseDate: formattedPurchaseDate,
           expiryDate: null // Will be updated later
         });
+        
+        if (batchResult.success) {
+          console.log(`[Update ${shopId} - ${update.product}] Batch record created with ID: ${batchResult.id}`);
+        } else {
+          console.error(`[Update ${shopId} - ${update.product}] Failed to create batch record: ${batchResult.error}`);
+        }
       }
       
       results.push({
@@ -470,6 +550,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         ...result
       });
     } catch (error) {
+      console.error(`[Update ${shopId} - ${update.product}] Error:`, error.message);
       results.push({
         product: update.product,
         quantity: update.quantity,
