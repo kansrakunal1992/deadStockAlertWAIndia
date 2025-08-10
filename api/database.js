@@ -196,6 +196,36 @@ async function getBatchRecords(shopId, product) {
   }
 }
 
+// NEW: Update batch expiry date
+async function updateBatchExpiry(batchId, expiryDate) {
+  const context = `Update Batch Expiry ${batchId}`;
+  
+  try {
+    console.log(`[${context}] Updating batch ${batchId} with expiry date ${expiryDate}`);
+    
+    const updateData = {
+      fields: {
+        ExpiryDate: expiryDate
+      }
+    };
+    
+    const result = await airtableBatchRequest({
+      method: 'patch',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`,
+      data: updateData
+    }, context);
+    
+    console.log(`[${context}] Batch expiry date updated successfully`);
+    return { success: true };
+  } catch (error) {
+    logError(context, error);
+    return { 
+      success: false, 
+      error: error.message 
+    };
+  }
+}
+
 // Simple connection test
 async function testConnection() {
   const context = 'Connection Test';
@@ -223,5 +253,6 @@ module.exports = {
   updateInventory, 
   testConnection,
   createBatchRecord,
-  getBatchRecords
+  getBatchRecords,
+  updateBatchExpiry
 };
