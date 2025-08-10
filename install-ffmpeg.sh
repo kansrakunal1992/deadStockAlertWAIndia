@@ -1,6 +1,5 @@
 #!/bin/bash
 echo "=== FFmpeg Installation Check ==="
-
 # Check system type
 if [[ "$(uname -m)" == "x86_64" ]]; then
     echo "System: x86_64"
@@ -12,7 +11,6 @@ else
     echo "Unsupported architecture"
     exit 1
 fi
-
 # Install FFmpeg
 if ! command -v ffmpeg &> /dev/null; then
     echo "→ Installing FFmpeg..."
@@ -23,7 +21,6 @@ if ! command -v ffmpeg &> /dev/null; then
         exit 1
     fi
 fi
-
 echo "✓ FFmpeg installed:"
 ffmpeg -version | head -n 1
 exit 0
