@@ -113,6 +113,9 @@ module.exports = async (req, res) => {
       
       // Generate response in both Roman and native scripts
       const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      
+      // Ensure the response is properly sent
+      console.log(`[${requestId}] Sending WhatsApp response:`, formattedResponse);
       response.message(formattedResponse);
     }
     else if (SpeechResult) {
@@ -138,6 +141,7 @@ module.exports = async (req, res) => {
     response.message(errorMessage);
   }
   
+  // Ensure the response is always sent
   res.setHeader('Content-Type', 'text/xml');
   res.send(response.toString());
 };
@@ -287,9 +291,14 @@ async function detectLanguage(transcript, requestId) {
   }
 }
 
-// Generate response in multiple languages and scripts
+// FIXED: Generate response in multiple languages and scripts without labels
 async function generateMultiLanguageResponse(message, languageCode, requestId) {
   try {
+    // If the language is English, return the message as is
+    if (languageCode === 'en') {
+      return message;
+    }
+    
     const response = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -300,13 +309,11 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
             content: `You are a multilingual assistant. Translate the given message to the target language and provide it in both Roman script and native script (if applicable).
             
             Format your response exactly as:
-            [Roman Script]
             <translation in Roman script>
             
-            [Native Script]
-            <translation in native script, or same as Roman if no native script>
+            <translation in native script>
             
-            If the target language is English, provide the message as-is in both sections.`
+            Do not include any labels like [Roman Script] or [Native Script]. Just provide the translations one after the other with a blank line in between.`
           },
           {
             role: "user",
@@ -336,7 +343,8 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
 // Parse multiple inventory updates from transcript
 function parseMultipleUpdates(transcript) {
   const updates = [];
-  const sentences = transcript.split(/[.!?]+/);
+  // Better sentence splitting to handle "&" and other conjunctions
+  const sentences = transcript.split(/[.!?&]+/);
   
   for (const sentence of sentences) {
     const trimmed = sentence.trim();
@@ -360,10 +368,14 @@ function parseSingleUpdate(transcript) {
     'flour', 'आटा', 'sugar', 'चीनी', 'packets', 'पैकेट'
   ];
   
-  // Find product (case-insensitive)
-  const product = products.find(p => 
-    transcript.toLowerCase().includes(p.toLowerCase())
-  ) || 'Unknown';
+  // Improved product matching with partial matches
+  let product = 'Unknown';
+  for (const p of products) {
+    if (transcript.toLowerCase().includes(p.toLowerCase())) {
+      product = p;
+      break;
+    }
+  }
   
   // Support for multiple number formats (digits, English words, Hindi words)
   const numberWords = {
@@ -540,7 +552,7 @@ async function validateTranscript(transcript, requestId) {
             content: `You are an inventory assistant. Clean up this transcript:
             - Fix grammar errors
             - Convert to English if needed
-            - Ensure product names are correct
+            - Ensure product names are correct (e.g., "flower" should be "flour")
             - Convert number words to digits (e.g., "five" → "5")
             - Return ONLY the cleaned text, nothing else`
           },
@@ -610,7 +622,7 @@ async function convertToFLAC(oggBuffer) {
   }
 }
 
-// Combine all speech segments into a single transcript and detect language
+// Make language detection more agnostic
 async function googleTranscribe(flacBuffer, requestId) {
   try {
     const base64Key = process.env.GCP_BASE64_KEY?.trim();
@@ -635,11 +647,11 @@ async function googleTranscribe(flacBuffer, requestId) {
     });
     const client = await auth.getClient();
     
-    // Try multiple languages to support multilingual input
+    // Try English first, then other languages
     const languageConfigs = [
-      { languageCode: 'hi-IN', name: 'Hindi' },
+      { languageCode: 'en-US', name: 'English (US)' },
       { languageCode: 'en-IN', name: 'English (India)' },
-      { languageCode: 'en-US', name: 'English (US)' }
+      { languageCode: 'hi-IN', name: 'Hindi' }
     ];
     
     for (const langConfig of languageConfigs) {
@@ -649,21 +661,26 @@ async function googleTranscribe(flacBuffer, requestId) {
           useEnhanced: true,
           enableAutomaticPunctuation: true,
           audioChannelCount: 1,
+          // Enhanced speech context with more terms
           speechContexts: [{
             phrases: [
               'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
+              'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata',
+              'flour', 'आटा', 'sugar', 'चीनी', 'packets', 'पैकेट',
               '10', 'दस', '20', 'बीस', '50', 'पचास', '100', 'सौ',
               'kg', 'किलो', 'ग्राम', 'पैकेट', 'बॉक्स', 'किलोग्राम',
               'खरीदा', 'बेचा', 'बिक्री', 'क्रय', 'लिया', 'दिया', 'बचा',
-              'sold', 'purchased', 'bought', 'ordered'
+              'sold', 'purchased', 'bought', 'ordered',
+              // Add more specific terms to improve recognition
+              'sold 10 kg flour', 'bought 5 packets of maggi', 'flour', 'flower' // To help distinguish
             ],
             boost: 32.0
           }]
         };
         
         const configs = [
+          { ...baseConfig, model: 'latest_short' }, // Try latest_short first for better accuracy
           { ...baseConfig, model: 'telephony' },
-          { ...baseConfig, model: 'latest_short' },
           { ...baseConfig, model: 'default' }
         ];
         
