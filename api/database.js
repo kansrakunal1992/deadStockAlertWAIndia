@@ -10,9 +10,11 @@ AIRTABLE_BASE_ID = AIRTABLE_BASE_ID
   .replace(/[^a-zA-Z0-9]/g, '');
 
 const TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || 'Inventory';
+const BATCH_TABLE_NAME = process.env.AIRTABLE_BATCH_TABLE_NAME || 'InventoryBatches';
 
 // URL construction
 const airtableBaseURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME;
+const airtableBatchURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + BATCH_TABLE_NAME;
 
 // Error logging
 function logError(context, error) {
@@ -34,6 +36,28 @@ async function airtableRequest(config, context = 'Airtable Request') {
     const response = await axios({
       ...config,
       url: config.url || airtableBaseURL,
+      headers,
+      timeout: 10000
+    });
+    
+    return response.data;
+  } catch (error) {
+    logError(context, error);
+    throw error;
+  }
+}
+
+// Airtable batch request helper
+async function airtableBatchRequest(config, context = 'Airtable Batch Request') {
+  const headers = {
+    'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
+    'Content-Type': 'application/json'
+  };
+  
+  try {
+    const response = await axios({
+      ...config,
+      url: config.url || airtableBatchURL,
       headers,
       timeout: 10000
     });
@@ -114,6 +138,64 @@ async function updateInventory(shopId, product, quantityChange) {
   }
 }
 
+// Create a batch record for tracking purchases with expiry dates
+async function createBatchRecord(batchData) {
+  const context = `Create Batch ${batchData.shopId} - ${batchData.product}`;
+  
+  try {
+    console.log(`[${context}] Creating batch record for ${batchData.quantity} units`);
+    
+    const createData = {
+      fields: {
+        ShopID: batchData.shopId,
+        Product: batchData.product,
+        Quantity: batchData.quantity,
+        PurchaseDate: batchData.purchaseDate,
+        ExpiryDate: batchData.expiryDate,
+        OriginalRecordID: batchData.batchId || ''
+      }
+    };
+    
+    const result = await airtableBatchRequest({
+      method: 'post',
+      data: createData
+    }, context);
+    
+    console.log(`[${context}] Batch record created with ID: ${result.id}`);
+    return { success: true, id: result.id };
+  } catch (error) {
+    logError(context, error);
+    return { 
+      success: false, 
+      error: error.message 
+    };
+  }
+}
+
+// Get batch records for a specific product
+async function getBatchRecords(shopId, product) {
+  const context = `Get Batches ${shopId} - ${product}`;
+  
+  try {
+    console.log(`[${context}] Retrieving batch records`);
+    
+    const filterFormula = 'AND({ShopID} = \'' + shopId + '\', {Product} = \'' + product + '\')';
+    const result = await airtableBatchRequest({
+      method: 'get',
+      params: { 
+        filterByFormula: filterFormula,
+        sort: [{ field: 'PurchaseDate', direction: 'desc' }]
+      }
+    }, context);
+    
+    console.log(`[${context}] Found ${result.records.length} batch records`);
+    return result.records;
+  } catch (error) {
+    logError(context, error);
+    return [];
+  }
+}
+
 // Simple connection test
 async function testConnection() {
   const context = 'Connection Test';
@@ -139,5 +221,7 @@ async function testConnection() {
 
 module.exports = { 
   updateInventory, 
-  testConnection 
+  testConnection,
+  createBatchRecord,
+  getBatchRecords
 };
