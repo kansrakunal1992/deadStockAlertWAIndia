@@ -48,6 +48,43 @@ function formatDateForDisplay(date) {
   return date; // Return as is if can't parse
 }
 
+// Enhanced language detection with fallback
+async function detectLanguageWithFallback(text, requestId) {
+  try {
+    const response = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: "deepseek-chat",
+        messages: [
+          {
+            role: "system",
+            content: `Detect the language of this text and respond with only the language code (e.g., "hi" for Hindi, "en" for English, "ta" for Tamil, etc.)`
+          },
+          {
+            role: "user",
+            content: text
+          }
+        ],
+        max_tokens: 10,
+        temperature: 0.1
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    const languageCode = response.data.choices[0].message.content.trim().toLowerCase();
+    console.log(`[${requestId}] Detected language: ${languageCode}`);
+    return languageCode;
+  } catch (error) {
+    console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+    return 'en';
+  }
+}
+
 module.exports = async (req, res) => {
   const response = new twilio.twiml.MessagingResponse();
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -63,6 +100,41 @@ module.exports = async (req, res) => {
     if (!NumMedia && Body) {
       console.log(`[${requestId}] [1] Processing text message: "${Body}"`);
       
+      // Check for common greetings in multiple languages
+      const greetings = {
+        'hi': ['hello', 'hi', 'hey', 'नमस्ते', 'नमस्कार', 'हाय'],
+        'ta': ['vanakkam', 'வணக்கம்'],
+        'te': ['నమస్కారం', 'హలో'],
+        'kn': ['ನಮಸ್ಕಾರ', 'ಹಲೋ'],
+        'bn': ['নমস্কার', 'হ্যালো'],
+        'gu': ['નમસ્તે', 'હેલો'],
+        'mr': ['नमस्कार', 'हॅलो'],
+        'en': ['hello', 'hi', 'hey']
+      };
+
+      const lowerBody = Body.toLowerCase();
+      let isGreeting = false;
+      let greetingLang = 'en';
+
+      for (const [lang, greetingList] of Object.entries(greetings)) {
+        if (greetingList.some(g => lowerBody.includes(g))) {
+          isGreeting = true;
+          greetingLang = lang;
+          break;
+        }
+      }
+
+      if (isGreeting) {
+        console.log(`[${requestId}] Detected greeting in language: ${greetingLang}`);
+        const welcomeMessage = await generateMultiLanguageResponse(
+          '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.',
+          greetingLang,
+          requestId
+        );
+        response.message(welcomeMessage);
+        return res.send(response.toString());
+      }
+      
       // Check if this is a batch selection response
       if (isBatchSelectionResponse(Body)) {
         console.log(`[${requestId}] Message appears to be a batch selection response`);
@@ -76,9 +148,20 @@ module.exports = async (req, res) => {
       // Otherwise, send default response
       else {
         console.log(`[${requestId}] Message does not appear to be a batch selection or expiry date update`);
+        
+        // Detect the language of the incoming message
+        let detectedLanguage;
+        try {
+          detectedLanguage = await detectLanguageWithFallback(Body, requestId);
+          console.log(`[${requestId}] Detected language for default response: ${detectedLanguage}`);
+        } catch (error) {
+          console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+          detectedLanguage = 'en';
+        }
+        
         const defaultMessage = await generateMultiLanguageResponse(
           '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.',
-          'en', // Default to English
+          detectedLanguage, // Use detected language instead of defaulting to English
           requestId
         );
         response.message(defaultMessage);
@@ -101,7 +184,7 @@ module.exports = async (req, res) => {
       const cleanTranscript = await validateTranscript(rawTranscript, requestId);
       
       console.log(`[${requestId}] [5] Detecting language...`);
-      const detectedLanguage = await detectLanguage(cleanTranscript, requestId);
+      const detectedLanguage = await detectLanguageWithFallback(cleanTranscript, requestId);
       
       console.log(`[${requestId}] [6] Parsing multiple updates...`);
       const updates = parseMultipleUpdates(cleanTranscript);
@@ -179,9 +262,20 @@ module.exports = async (req, res) => {
     }
     else {
       console.log(`[${requestId}] [1] No media received`);
+      
+      // Detect the language of the incoming text message
+      let detectedLanguage;
+      try {
+        detectedLanguage = await detectLanguageWithFallback(Body, requestId);
+        console.log(`[${requestId}] Detected language for welcome message: ${detectedLanguage}`);
+      } catch (error) {
+        console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+        detectedLanguage = 'en';
+      }
+      
       const welcomeMessage = await generateMultiLanguageResponse(
         '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.',
-        'en', // Default to English
+        detectedLanguage, // Use detected language instead of defaulting to English
         requestId
       );
       response.message(welcomeMessage);
@@ -481,43 +575,6 @@ function parseExpiryDate(dateStr) {
   }
   
   return null;
-}
-
-// Detect language of transcript
-async function detectLanguage(transcript, requestId) {
-  try {
-    const response = await axios.post(
-      'https://api.deepseek.com/v1/chat/completions',
-      {
-        model: "deepseek-chat",
-        messages: [
-          {
-            role: "system",
-            content: `Detect the language of this text and respond with only the language code (e.g., "hi" for Hindi, "en" for English, "ta" for Tamil, etc.)`
-          },
-          {
-            role: "user",
-            content: transcript
-          }
-        ],
-        max_tokens: 10,
-        temperature: 0.1
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    
-    const languageCode = response.data.choices[0].message.content.trim().toLowerCase();
-    console.log(`[${requestId}] Detected language: ${languageCode}`);
-    return languageCode;
-  } catch (error) {
-    console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-    return 'en';
-  }
 }
 
 // Generate response in multiple languages and scripts without labels
