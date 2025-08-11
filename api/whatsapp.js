@@ -592,14 +592,19 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
         messages: [
           {
             role: "system",
-            content: `You are a multilingual assistant. Translate the given message to the target language and provide it in both Roman script and native script (if applicable).
+            content: `You are a multilingual assistant. Translate the given message to the target language and provide it in two formats:
             
             Format your response exactly as:
-            <translation in Roman script>
+            Line 1: Translation in native script (e.g., Devanagari for Hindi)
+            Empty line
+            Line 3: Translation in Roman script (transliteration using English alphabet)
             
-            <translation in native script>
+            For example, for Hindi:
+            नमस्ते, आप कैसे हैं?
             
-            Do not include any labels like [Roman Script] or [Native Script]. Just provide the translations one after the other with a blank line in between.`
+            Namaste, aap kaise hain?
+            
+            Do NOT include any labels like [Roman Script], [Native Script], <translation>, or any other markers. Just provide the translations one after the other with a blank line in between.`
           },
           {
             role: "user",
@@ -617,8 +622,26 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
       }
     );
     
-    const translated = response.data.choices[0].message.content.trim();
-    console.log(`[${requestId}] Generated multilingual response:`, translated);
+    let translated = response.data.choices[0].message.content.trim();
+    console.log(`[${requestId}] Raw multilingual response:`, translated);
+    
+    // Post-process to remove any labels that might have been included
+    translated = translated.replace(/<translation in roman script>/gi, '');
+    translated = translated.replace(/<translation in native script>/gi, '');
+    translated = translated.replace(/\[roman script\]/gi, '');
+    translated = translated.replace(/\[native script\]/gi, '');
+    translated = translated.replace(/translation in roman script:/gi, '');
+    translated = translated.replace(/translation in native script:/gi, '');
+    
+    // Remove quotes that might have been added
+    translated = translated.replace(/^"(.*)"$/, '$1');
+    translated = translated.replace(/"/g, '');
+    
+    // Remove extra blank lines
+    translated = translated.replace(/\n\s*\n\s*\n/g, '\n\n');
+    translated = translated.replace(/^\s+|\s+$/g, '');
+    
+    console.log(`[${requestId}] Cleaned multilingual response:`, translated);
     return translated;
   } catch (error) {
     console.warn(`[${requestId}] Translation failed, using original:`, error.message);
