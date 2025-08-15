@@ -6,23 +6,25 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { updateInventory, testConnection, createBatchRecord, getBatchRecords, updateBatchExpiry } = require('./database');
 
+// Global storage for user preferences and pending transcriptions
+global.userPreferences = {};
+global.pendingTranscriptions = {};
+
 // Helper function to format dates for Airtable (YYYY-MM-DD)
 function formatDateForAirtable(date) {
   if (date instanceof Date) {
-    return date.toISOString().split('T')[0]; // Returns YYYY-MM-DD
+    return date.toISOString().split('T')[0];
   }
   if (typeof date === 'string') {
-    // If it's already a string in YYYY-MM-DD format, return as is
     if (date.match(/^\d{4}-\d{2}-\d{2}$/)) {
       return date;
     }
-    // Otherwise, try to parse it
     const parsedDate = new Date(date);
     if (!isNaN(parsedDate.getTime())) {
       return parsedDate.toISOString().split('T')[0];
     }
   }
-  return null; // Invalid date
+  return null;
 }
 
 // Helper function to format date for display (DD/MM/YYYY)
@@ -34,18 +36,16 @@ function formatDateForDisplay(date) {
     return `${day}/${month}/${year}`;
   }
   if (typeof date === 'string') {
-    // If it's already in YYYY-MM-DD format, convert to DD/MM/YYYY
     if (date.match(/^\d{4}-\d{2}-\d{2}$/)) {
       const [year, month, day] = date.split('-');
       return `${day}/${month}/${year}`;
     }
-    // Otherwise, try to parse it
     const parsedDate = new Date(date);
     if (!isNaN(parsedDate.getTime())) {
       return formatDateForDisplay(parsedDate);
     }
   }
-  return date; // Return as is if can't parse
+  return date;
 }
 
 // Enhanced language detection with fallback
@@ -85,6 +85,117 @@ async function detectLanguageWithFallback(text, requestId) {
   }
 }
 
+// Create interactive button message
+function createButtonMessage(message, buttons) {
+  const response = new twilio.twiml.MessagingResponse();
+  const messageObj = response.message(message);
+  
+  // Add interactive buttons
+  messageObj.body(message);
+  
+  return response.toString();
+}
+
+// Function to process confirmed transcription
+async function processConfirmedTranscription(transcript, from, detectedLanguage, requestId, response, res) {
+  try {
+    console.log(`[${requestId}] [6] Parsing multiple updates...`);
+    const updates = parseMultipleUpdates(transcript);
+    
+    if (updates.length === 0) {
+      console.log(`[${requestId}] Rejected: No valid inventory updates`);
+      const errorMessage = await generateMultiLanguageResponse(
+        'Please send inventory updates only. Examples: "10 Parle-G sold", "5kg sugar purchased", "2 boxes Maggi bought". You can send multiple updates in one message!',
+        detectedLanguage,
+        requestId
+      );
+      response.message(errorMessage);
+      return res.send(response.toString());
+    }
+    
+    console.log(`[${requestId}] [7] Testing Airtable connection...`);
+    const connectionTest = await testConnection();
+    if (!connectionTest) {
+      console.error(`[${requestId}] Airtable connection failed`);
+      const errorMessage = await generateMultiLanguageResponse(
+        'Database connection error. Please try again later.',
+        detectedLanguage,
+        requestId
+      );
+      response.message(errorMessage);
+      return res.send(response.toString());
+    }
+    
+    console.log(`[${requestId}] [8] Updating inventory for ${updates.length} items...`);
+    const shopId = from.replace('whatsapp:', '');
+    const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+    
+    let message = '✅ Updates processed:\n\n';
+    let successCount = 0;
+    let hasSales = false;
+    
+    for (const result of results) {
+      if (result.success) {
+        successCount++;
+        message += `• ${result.product}: ${result.quantity > 0 ? '+' : ''}${result.quantity} (Stock: ${result.newQuantity})\n`;
+        
+        if (result.quantity > 0 && result.batchDate) {
+          message += `  Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
+        }
+        
+        if (result.quantity < 0) {
+          hasSales = true;
+        }
+      } else {
+        message += `• ${result.product}: Error - ${result.error}\n`;
+      }
+    }
+    
+    message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+    
+    if (hasSales) {
+      message += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
+    }
+    
+    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    
+    console.log(`[${requestId}] Sending WhatsApp response:`, formattedResponse);
+    response.message(formattedResponse);
+    return res.send(response.toString());
+  } catch (error) {
+    console.error(`[${requestId}] Error processing confirmed transcription:`, error.message);
+    const errorMessage = await generateMultiLanguageResponse(
+      'System error. Please try again with a clear voice message.',
+      detectedLanguage,
+      requestId
+    );
+    response.message(errorMessage);
+    return res.send(response.toString());
+  }
+}
+
+// Function to confirm transcription with user
+async function confirmTranscription(transcript, from, detectedLanguage, requestId) {
+  const response = new twilio.twiml.MessagingResponse();
+  
+  const confirmationMessage = await generateMultiLanguageResponse(
+    `I heard: "${transcript}". Is this correct? Please reply with "yes" to confirm or "no" to try again.`,
+    detectedLanguage,
+    requestId
+  );
+  
+  response.message(confirmationMessage);
+  
+  // Store the transcript temporarily
+  global.pendingTranscriptions[from] = {
+    transcript,
+    detectedLanguage,
+    timestamp: Date.now()
+  };
+  
+  return response.toString();
+}
+
 module.exports = async (req, res) => {
   const response = new twilio.twiml.MessagingResponse();
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -94,13 +205,99 @@ module.exports = async (req, res) => {
       res.status(405).send('Method Not Allowed');
       return;
     }
-    const { MediaUrl0, NumMedia, SpeechResult, From, Body } = req.body;
     
-    // Check if this is a text message with batch selection or expiry date
+    const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
+    
+    // Check for user preference
+    let userPreference = 'voice'; // Default to voice
+    if (global.userPreferences[From]) {
+      userPreference = global.userPreferences[From];
+      console.log(`[${requestId}] User preference: ${userPreference}`);
+    }
+    
+    // Handle button responses
+    if (ButtonText) {
+      console.log(`[${requestId}] Button clicked: ${ButtonText}`);
+      
+      // Store user preference
+      if (!global.userPreferences) {
+        global.userPreferences = {};
+      }
+      
+      // Detect language for response
+      let detectedLanguage = 'en';
+      try {
+        detectedLanguage = await detectLanguageWithFallback(ButtonText, requestId);
+      } catch (error) {
+        console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+      }
+      
+      if (ButtonText === 'Voice Message' || ButtonText === 'voice_input') {
+        global.userPreferences[From] = 'voice';
+        
+        const voiceMessage = await generateMultiLanguageResponse(
+          '🎤 Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
+          detectedLanguage,
+          requestId
+        );
+        response.message(voiceMessage);
+      } else if (ButtonText === 'Text Message' || ButtonText === 'text_input') {
+        global.userPreferences[From] = 'text';
+        
+        const textMessage = await generateMultiLanguageResponse(
+          '📝 Please type your inventory update. Example: "10 Parle-G sold"',
+          detectedLanguage,
+          requestId
+        );
+        response.message(textMessage);
+      }
+      
+      return res.send(response.toString());
+    }
+    
+    // Handle confirmation responses
+    if (Body && (Body.toLowerCase() === 'yes' || Body.toLowerCase() === 'no')) {
+      console.log(`[${requestId}] Message appears to be a confirmation response: "${Body}"`);
+      
+      if (global.pendingTranscriptions[From]) {
+        const pending = global.pendingTranscriptions[From];
+        
+        if (Body.toLowerCase() === 'yes') {
+          console.log(`[${requestId}] User confirmed transcription: "${pending.transcript}"`);
+          
+          await processConfirmedTranscription(
+            pending.transcript, 
+            From, 
+            pending.detectedLanguage, 
+            requestId, 
+            response, 
+            res
+          );
+          
+          delete global.pendingTranscriptions[From];
+          return;
+        } else {
+          console.log(`[${requestId}] User rejected transcription`);
+          
+          const errorMessage = await generateMultiLanguageResponse(
+            'Please try again with a clear voice message.',
+            pending.detectedLanguage,
+            requestId
+          );
+          response.message(errorMessage);
+          
+          delete global.pendingTranscriptions[From];
+          
+          return res.send(response.toString());
+        }
+      }
+    }
+    
+    // Handle text messages
     if (!NumMedia && Body) {
       console.log(`[${requestId}] [1] Processing text message: "${Body}"`);
       
-      // Check for common greetings in multiple languages
+      // Check for common greetings
       const greetings = {
         'hi': ['hello', 'hi', 'hey', 'नमस्ते', 'नमस्कार', 'हाय'],
         'ta': ['vanakkam', 'வணக்கம்'],
@@ -111,11 +308,11 @@ module.exports = async (req, res) => {
         'mr': ['नमस्कार', 'हॅलो'],
         'en': ['hello', 'hi', 'hey']
       };
-
+      
       const lowerBody = Body.toLowerCase();
       let isGreeting = false;
       let greetingLang = 'en';
-
+      
       for (const [lang, greetingList] of Object.entries(greetings)) {
         if (greetingList.some(g => lowerBody.includes(g))) {
           isGreeting = true;
@@ -123,53 +320,88 @@ module.exports = async (req, res) => {
           break;
         }
       }
-
+      
       if (isGreeting) {
         console.log(`[${requestId}] Detected greeting in language: ${greetingLang}`);
+        
+        if (userPreference !== 'voice') {
+          const preferenceMessage = await generateMultiLanguageResponse(
+            `Welcome! I see you prefer to send updates by ${userPreference}. How can I help you today?`,
+            greetingLang,
+            requestId
+          );
+          response.message(preferenceMessage);
+          return res.send(response.toString());
+        }
+        
         const welcomeMessage = await generateMultiLanguageResponse(
-          '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.',
+          'Welcome! How would you like to send your inventory update?',
           greetingLang,
           requestId
         );
-        response.message(welcomeMessage);
-        return res.send(response.toString());
+        
+        // Create interactive buttons
+        const buttons = [
+          { id: 'voice_input', title: 'Voice Message' },
+          { id: 'text_input', title: 'Text Message' }
+        ];
+        
+        const buttonResponse = createButtonMessage(welcomeMessage, buttons);
+        return res.send(buttonResponse);
       }
       
-      // Check if this is a batch selection response
+      // Check for batch selection or expiry date updates
       if (isBatchSelectionResponse(Body)) {
         console.log(`[${requestId}] Message appears to be a batch selection response`);
         await handleBatchSelectionResponse(Body, From, response, requestId);
       } 
-      // Check if this is an expiry date update
       else if (isExpiryDateUpdate(Body)) {
         console.log(`[${requestId}] Message appears to be an expiry date update`);
         await handleExpiryDateUpdate(Body, From, response, requestId);
       }
-      // Otherwise, send default response
       else {
         console.log(`[${requestId}] Message does not appear to be a batch selection or expiry date update`);
         
-        // Detect the language of the incoming message
         let detectedLanguage;
         try {
           detectedLanguage = await detectLanguageWithFallback(Body, requestId);
-          console.log(`[${requestId}] Detected language for default response: ${detectedLanguage}`);
+          console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
         } catch (error) {
           console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
           detectedLanguage = 'en';
         }
         
-        const defaultMessage = await generateMultiLanguageResponse(
-          '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.',
-          detectedLanguage, // Use detected language instead of defaulting to English
-          requestId
-        );
-        response.message(defaultMessage);
+        // Try to parse as inventory update
+        const updates = parseMultipleUpdates(Body);
+        
+        if (updates.length > 0) {
+          console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
+          
+          await processConfirmedTranscription(
+            Body, 
+            From, 
+            detectedLanguage, 
+            requestId, 
+            response, 
+            res
+          );
+          return;
+        } else {
+          const defaultMessage = await generateMultiLanguageResponse(
+            userPreference === 'voice' 
+              ? '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.'
+              : '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.',
+            detectedLanguage,
+            requestId
+          );
+          response.message(defaultMessage);
+        }
       }
       
       return res.send(response.toString());
     }
     
+    // Handle voice messages
     if (NumMedia > 0 && MediaUrl0) {
       console.log(`[${requestId}] [1] Downloading audio...`);
       const audioBuffer = await downloadAudio(MediaUrl0);
@@ -178,7 +410,9 @@ module.exports = async (req, res) => {
       const flacBuffer = await convertToFLAC(audioBuffer);
       
       console.log(`[${requestId}] [3] Transcribing with Google STT...`);
-      const rawTranscript = await googleTranscribe(flacBuffer, requestId);
+      const transcriptionResult = await googleTranscribe(flacBuffer, requestId);
+      const rawTranscript = transcriptionResult.transcript;
+      const confidence = transcriptionResult.confidence;
       
       console.log(`[${requestId}] [4] Validating transcript...`);
       const cleanTranscript = await validateTranscript(rawTranscript, requestId);
@@ -186,75 +420,26 @@ module.exports = async (req, res) => {
       console.log(`[${requestId}] [5] Detecting language...`);
       const detectedLanguage = await detectLanguageWithFallback(cleanTranscript, requestId);
       
-      console.log(`[${requestId}] [6] Parsing multiple updates...`);
-      const updates = parseMultipleUpdates(cleanTranscript);
+      // Confidence-based confirmation
+      const CONFIDENCE_THRESHOLD = 0.8;
       
-      // RESTRICTION: Validate if there are any valid inventory updates
-      if (updates.length === 0) {
-        console.log(`[${requestId}] Rejected: No valid inventory updates`);
-        const errorMessage = await generateMultiLanguageResponse(
-          'Please send inventory updates only. Examples: "10 Parle-G sold", "5kg sugar purchased", "2 boxes Maggi bought". You can send multiple updates in one message!',
-          detectedLanguage,
-          requestId
+      if (confidence < CONFIDENCE_THRESHOLD) {
+        console.log(`[${requestId}] [5.5] Low confidence (${confidence}), requesting confirmation...`);
+        const confirmationResponse = await confirmTranscription(cleanTranscript, From, detectedLanguage, requestId);
+        return res.send(confirmationResponse);
+      } else {
+        console.log(`[${requestId}] [5.5] High confidence (${confidence}), proceeding without confirmation...`);
+        
+        await processConfirmedTranscription(
+          cleanTranscript, 
+          From, 
+          detectedLanguage, 
+          requestId, 
+          response, 
+          res
         );
-        response.message(errorMessage);
-        return res.send(response.toString());
+        return;
       }
-      
-      console.log(`[${requestId}] [7] Testing Airtable connection...`);
-      const connectionTest = await testConnection();
-      if (!connectionTest) {
-        console.error(`[${requestId}] Airtable connection failed`);
-        const errorMessage = await generateMultiLanguageResponse(
-          'Database connection error. Please try again later.',
-          detectedLanguage,
-          requestId
-        );
-        response.message(errorMessage);
-        return res.send(response.toString());
-      }
-      
-      console.log(`[${requestId}] [8] Updating inventory for ${updates.length} items...`);
-      const shopId = From.replace('whatsapp:', '');
-      const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-      
-      // Format response message in multiple languages
-      let message = '✅ Updates processed:\n\n';
-      let successCount = 0;
-      let hasSales = false;
-      
-      for (const result of results) {
-        if (result.success) {
-          successCount++;
-          message += `• ${result.product}: ${result.quantity > 0 ? '+' : ''}${result.quantity} (Stock: ${result.newQuantity})\n`;
-          
-          // Add batch information for purchases
-          if (result.quantity > 0 && result.batchDate) {
-            message += `  Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
-          }
-          
-          // Check if this was a sale
-          if (result.quantity < 0) {
-            hasSales = true;
-          }
-        } else {
-          message += `• ${result.product}: Error - ${result.error}\n`;
-        }
-      }
-      
-      message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
-      
-      // Add batch selection prompt if there were sales
-      if (hasSales) {
-        message += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
-      }
-      
-      // Generate response in both Roman and native scripts
-      const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
-      
-      // Ensure the response is properly sent
-      console.log(`[${requestId}] Sending WhatsApp response:`, formattedResponse);
-      response.message(formattedResponse);
     }
     else if (SpeechResult) {
       console.log(`[${requestId}] [1] Using Twilio transcription`);
@@ -263,34 +448,42 @@ module.exports = async (req, res) => {
     else {
       console.log(`[${requestId}] [1] No media received`);
       
-      // Detect the language of the incoming text message
       let detectedLanguage;
       try {
-        detectedLanguage = await detectLanguageWithFallback(Body, requestId);
+        detectedLanguage = await detectLanguageWithFallback(Body || "", requestId);
         console.log(`[${requestId}] Detected language for welcome message: ${detectedLanguage}`);
       } catch (error) {
         console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
         detectedLanguage = 'en';
       }
       
-      const welcomeMessage = await generateMultiLanguageResponse(
-        '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.',
-        detectedLanguage, // Use detected language instead of defaulting to English
-        requestId
-      );
+      let welcomeMessage;
+      if (userPreference === 'voice') {
+        welcomeMessage = await generateMultiLanguageResponse(
+          '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.',
+          detectedLanguage,
+          requestId
+        );
+      } else {
+        welcomeMessage = await generateMultiLanguageResponse(
+          '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.',
+          detectedLanguage,
+          requestId
+        );
+      }
+      
       response.message(welcomeMessage);
     }
   } catch (error) {
     console.error(`[${requestId}] Processing Error:`, error.message);
     const errorMessage = await generateMultiLanguageResponse(
       'System error. Please try again with a clear voice message.',
-      'en', // Default to English
+      'en',
       requestId
     );
     response.message(errorMessage);
   }
   
-  // Ensure the response is always sent
   console.log(`[${requestId}] Sending TwiML response`);
   res.setHeader('Content-Type', 'text/xml');
   res.send(response.toString());
@@ -298,7 +491,6 @@ module.exports = async (req, res) => {
 
 // NEW: Function to check if a message is a batch selection response
 function isBatchSelectionResponse(message) {
-  // Check for batch selection keywords
   const batchSelectionKeywords = ['oldest', 'newest', 'batch', 'expiry'];
   const lowerMessage = message.toLowerCase();
   
@@ -308,12 +500,10 @@ function isBatchSelectionResponse(message) {
     }
   }
   
-  // Check for date format (DD/MM/YYYY)
   if (lowerMessage.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/)) {
     return true;
   }
   
-  // Check for month format (DD Month YYYY)
   if (lowerMessage.match(/\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}/i)) {
     return true;
   }
@@ -323,7 +513,6 @@ function isBatchSelectionResponse(message) {
 
 // NEW: Function to check if a message is an expiry date update
 function isExpiryDateUpdate(message) {
-  // Check for product name followed by expiry date
   const products = [
     'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
     'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata',
@@ -347,7 +536,6 @@ async function handleBatchSelectionResponse(body, from, response, requestId) {
     const shopId = from.replace('whatsapp:', '');
     const lowerBody = body.toLowerCase();
     
-    // Extract product name from the message
     let product = null;
     const products = [
       'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
@@ -365,37 +553,32 @@ async function handleBatchSelectionResponse(body, from, response, requestId) {
     if (!product) {
       const errorMessage = await generateMultiLanguageResponse(
         'Please specify which product you are referring to.',
-        'en', // Default to English
+        'en',
         requestId
       );
       response.message(errorMessage);
       return;
     }
     
-    // Get all batches for this product
     const batches = await getBatchRecords(shopId, product);
     
     if (batches.length === 0) {
       const errorMessage = await generateMultiLanguageResponse(
         `No batches found for ${product}.`,
-        'en', // Default to English
+        'en',
         requestId
       );
       response.message(errorMessage);
       return;
     }
     
-    // Determine which batch was selected
     let selectedBatch = null;
     
     if (lowerBody.includes('oldest')) {
-      // Select the oldest batch
       selectedBatch = batches[batches.length - 1];
     } else if (lowerBody.includes('newest')) {
-      // Select the newest batch
       selectedBatch = batches[0];
     } else {
-      // Try to extract a date from the message
       const dateMatch = body.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})|(\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4})/i);
       
       if (dateMatch) {
@@ -403,7 +586,6 @@ async function handleBatchSelectionResponse(body, from, response, requestId) {
         const parsedDate = parseExpiryDate(dateStr);
         
         if (parsedDate) {
-          // Find batch with matching expiry date
           selectedBatch = batches.find(batch => {
             if (!batch.fields.ExpiryDate) return false;
             const batchDate = new Date(batch.fields.ExpiryDate);
@@ -414,11 +596,11 @@ async function handleBatchSelectionResponse(body, from, response, requestId) {
     }
     
     if (!selectedBatch) {
-      // Default to oldest batch if no specific selection was made
       selectedBatch = batches[batches.length - 1];
     }
     
-    // Update the batch with the specified expiry date if provided
+    const dateMatch = body.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})|(\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4})/i);
+    
     if (dateMatch) {
       const dateStr = dateMatch[0];
       const parsedDate = parseExpiryDate(dateStr);
@@ -429,7 +611,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId) {
         
         const successMessage = await generateMultiLanguageResponse(
           `✅ Updated expiry date for ${product} batch to ${formatDateForDisplay(parsedDate)}`,
-          'en', // Default to English
+          'en',
           requestId
         );
         response.message(successMessage);
@@ -437,10 +619,9 @@ async function handleBatchSelectionResponse(body, from, response, requestId) {
       }
     }
     
-    // If no date was provided, just confirm the batch selection
     const confirmMessage = await generateMultiLanguageResponse(
       `✅ Selected ${product} batch from ${formatDateForDisplay(selectedBatch.fields.PurchaseDate)}`,
-      'en', // Default to English
+      'en',
       requestId
     );
     response.message(confirmMessage);
@@ -448,7 +629,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId) {
     console.error(`[${requestId}] Error handling batch selection response:`, error.message);
     const errorMessage = await generateMultiLanguageResponse(
       'Error processing batch selection. Please try again.',
-      'en', // Default to English
+      'en',
       requestId
     );
     response.message(errorMessage);
@@ -460,14 +641,13 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
   try {
     console.log(`[${requestId}] Processing expiry date update: "${body}"`);
     
-    // Extract product and expiry date from the message
     const productMatch = body.match(/([a-zA-Z\s]+):?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i);
     
     if (!productMatch) {
       console.log(`[${requestId}] Invalid expiry date format`);
       const errorMessage = await generateMultiLanguageResponse(
         'Invalid format. Please use: "Product: DD/MM/YYYY" or "Product: DD Month YYYY"',
-        'en', // Default to English
+        'en',
         requestId
       );
       response.message(errorMessage);
@@ -479,20 +659,18 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
     
     console.log(`[${requestId}] Extracted product: "${product}", expiry date: "${expiryDateStr}"`);
     
-    // Parse the expiry date
     const expiryDate = parseExpiryDate(expiryDateStr);
     if (!expiryDate) {
       console.log(`[${requestId}] Failed to parse expiry date`);
       const errorMessage = await generateMultiLanguageResponse(
         'Invalid date format. Please use: "Product: DD/MM/YYYY" or "Product: DD Month YYYY"',
-        'en', // Default to English
+        'en',
         requestId
       );
       response.message(errorMessage);
       return;
     }
     
-    // Get the most recent batch for this product
     const shopId = from.replace('whatsapp:', '');
     console.log(`[${requestId}] Looking for recent batches for ${product}`);
     const batches = await getBatchRecords(shopId, product);
@@ -501,18 +679,16 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
       console.log(`[${requestId}] No recent purchase found for ${product}`);
       const errorMessage = await generateMultiLanguageResponse(
         `No recent purchase found for ${product}. Please make a purchase first.`,
-        'en', // Default to English
+        'en',
         requestId
       );
       response.message(errorMessage);
       return;
     }
     
-    // Format the expiry date for Airtable
     const formattedExpiryDate = formatDateForAirtable(expiryDate);
     console.log(`[${requestId}] Formatted expiry date: ${formattedExpiryDate}`);
     
-    // Update the most recent batch with expiry date
     const latestBatch = batches[0];
     console.log(`[${requestId}] Updating batch ${latestBatch.id} with expiry date`);
     const batchResult = await updateBatchExpiry(latestBatch.id, formattedExpiryDate);
@@ -521,7 +697,7 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
       console.log(`[${requestId}] Successfully updated batch with expiry date`);
       const successMessage = await generateMultiLanguageResponse(
         `✅ Expiry date updated for ${product}: ${formatDateForDisplay(expiryDate)}`,
-        'en', // Default to English
+        'en',
         requestId
       );
       response.message(successMessage);
@@ -529,7 +705,7 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
       console.error(`[${requestId}] Failed to update batch: ${batchResult.error}`);
       const errorMessage = await generateMultiLanguageResponse(
         `Error updating expiry date for ${product}. Please try again.`,
-        'en', // Default to English
+        'en',
         requestId
       );
       response.message(errorMessage);
@@ -538,7 +714,7 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
     console.error(`[${requestId}] Error handling expiry date update:`, error.message);
     const errorMessage = await generateMultiLanguageResponse(
       'Error processing expiry date. Please try again.',
-      'en', // Default to English
+      'en',
       requestId
     );
     response.message(errorMessage);
@@ -547,14 +723,12 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
 
 // Parse expiry date in various formats
 function parseExpiryDate(dateStr) {
-  // Try DD/MM/YYYY format
   const dmyMatch = dateStr.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
   if (dmyMatch) {
     const day = parseInt(dmyMatch[1]);
     const month = parseInt(dmyMatch[2]);
     let year = parseInt(dmyMatch[3]);
     
-    // Handle 2-digit year
     if (year < 100) {
       year += year < 50 ? 2000 : 1900;
     }
@@ -562,7 +736,6 @@ function parseExpiryDate(dateStr) {
     return new Date(year, month - 1, day);
   }
   
-  // Try "DD Month YYYY" format
   const monthMatch = dateStr.match(/(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i);
   if (monthMatch) {
     const day = parseInt(monthMatch[1]);
@@ -580,7 +753,6 @@ function parseExpiryDate(dateStr) {
 // Generate response in multiple languages and scripts without labels
 async function generateMultiLanguageResponse(message, languageCode, requestId) {
   try {
-    // If the language is English, return the message as is
     if (languageCode === 'en') {
       return message;
     }
@@ -625,7 +797,6 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
     let translated = response.data.choices[0].message.content.trim();
     console.log(`[${requestId}] Raw multilingual response:`, translated);
     
-    // Post-process to remove any labels that might have been included
     translated = translated.replace(/<translation in roman script>/gi, '');
     translated = translated.replace(/<translation in native script>/gi, '');
     translated = translated.replace(/\[roman script\]/gi, '');
@@ -633,11 +804,9 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
     translated = translated.replace(/translation in roman script:/gi, '');
     translated = translated.replace(/translation in native script:/gi, '');
     
-    // Remove quotes that might have been added
     translated = translated.replace(/^"(.*)"$/, '$1');
     translated = translated.replace(/"/g, '');
     
-    // Remove extra blank lines
     translated = translated.replace(/\n\s*\n\s*\n/g, '\n\n');
     translated = translated.replace(/^\s+|\s+$/g, '');
     
@@ -652,7 +821,6 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
 // Parse multiple inventory updates from transcript
 function parseMultipleUpdates(transcript) {
   const updates = [];
-  // Better sentence splitting to handle "&" and other conjunctions
   const sentences = transcript.split(/[.!?&]+/);
   
   for (const sentence of sentences) {
@@ -677,7 +845,6 @@ function parseSingleUpdate(transcript) {
     'flour', 'आटा', 'sugar', 'चीनी', 'packets', 'पैकेट'
   ];
   
-  // Improved product matching with partial matches
   let product = 'Unknown';
   for (const p of products) {
     if (transcript.toLowerCase().includes(p.toLowerCase())) {
@@ -686,16 +853,13 @@ function parseSingleUpdate(transcript) {
     }
   }
   
-  // Support for multiple number formats (digits, English words, Hindi words)
   const numberWords = {
-    // English
     'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 
     'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12,
     'thirteen': 13, 'fourteen': 14, 'fifteen': 15, 'sixteen': 16, 'seventeen': 17,
     'eighteen': 18, 'nineteen': 19, 'twenty': 20, 'thirty': 30, 'forty': 40, 
     'fifty': 50, 'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90, 'hundred': 100,
     
-    // Hindi
     'एक': 1, 'दो': 2, 'तीन': 3, 'चार': 4, 'पांच': 5, 'छह': 6, 
     'सात': 7, 'आठ': 8, 'नौ': 9, 'दस': 10, 'ग्यारह': 11, 'बारह': 12,
     'तेरह': 13, 'चौदह': 14, 'पंद्रह': 15, 'सोलह': 16, 'सत्रह': 17,
@@ -705,12 +869,10 @@ function parseSingleUpdate(transcript) {
   
   let quantity = 0;
   
-  // Try to match digits first
   const digitMatch = transcript.match(/(\d+)/i);
   if (digitMatch) {
     quantity = parseInt(digitMatch[1]) || 0;
   } else {
-    // Try to match number words
     const words = transcript.toLowerCase().split(/\s+/);
     for (const word of words) {
       if (numberWords[word]) {
@@ -720,28 +882,24 @@ function parseSingleUpdate(transcript) {
     }
   }
   
-  // Better action detection with priority for purchase/sold over remaining
   const isPurchase = /(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)/i.test(transcript);
   const isSold = /(बेचा|बेचे|becha|sold|बिक्री)/i.test(transcript);
   const isRemaining = /(बचा|बचे|बाकी|remaining|left)/i.test(transcript);
   
-  // Determine the action and quantity
   let action, finalQuantity;
   
   if (isPurchase) {
     action = 'purchased';
-    finalQuantity = quantity;  // Positive for purchases
+    finalQuantity = quantity;
   } else if (isSold) {
     action = 'sold';
-    finalQuantity = -quantity;  // Negative for sales
+    finalQuantity = -quantity;
   } else if (isRemaining) {
-    // Only treat as "remaining" if no other action is detected
     action = 'remaining';
-    finalQuantity = quantity;  // This will be handled as an absolute value
+    finalQuantity = quantity;
   } else {
-    // Default to sold if no specific action is detected
     action = 'sold';
-    finalQuantity = -quantity;  // Negative for sales
+    finalQuantity = -quantity;
   }
   
   return {
@@ -761,10 +919,8 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       
       const result = await updateInventory(shopId, update.product, update.quantity);
       
-      // Create batch record for purchases
       if (update.quantity > 0 && result.success) {
         console.log(`[Update ${shopId} - ${update.product}] Creating batch record for purchase`);
-        // Format current date for Airtable
         const formattedPurchaseDate = formatDateForAirtable(new Date());
         
         const batchResult = await createBatchRecord({
@@ -772,12 +928,11 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           product: update.product,
           quantity: update.quantity,
           purchaseDate: formattedPurchaseDate,
-          expiryDate: null // Will be updated later
+          expiryDate: null
         });
         
         if (batchResult.success) {
           console.log(`[Update ${shopId} - ${update.product}] Batch record created with ID: ${batchResult.id}`);
-          // Add batch date to result for display
           result.batchDate = formattedPurchaseDate;
         } else {
           console.error(`[Update ${shopId} - ${update.product}] Failed to create batch record: ${batchResult.error}`);
@@ -805,13 +960,8 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
 // Validate if transcript is an inventory update
 function isValidInventoryUpdate(parsed) {
-  // Check if product is known (not "Unknown")
   const validProduct = parsed.product !== 'Unknown';
-  
-  // Check if quantity is non-zero
   const validQuantity = parsed.quantity !== 0;
-  
-  // Check if action is purchase, sold, or remaining
   const validAction = ['purchased', 'sold', 'remaining'].includes(parsed.action);
   
   return validProduct && validQuantity && validAction;
@@ -820,38 +970,29 @@ function isValidInventoryUpdate(parsed) {
 // Improved handling of "bacha" vs "becha" confusion
 async function validateTranscript(transcript, requestId) {
   try {
-    // First, fix common mispronunciations before sending to DeepSeek
     let fixedTranscript = transcript;
     
-    // More comprehensive patterns for fixing "bacha" to "becha"
-    
-    // Pattern 1: "बचा" followed by a quantity and product (most common case)
     fixedTranscript = fixedTranscript.replace(/(\d+)\s*(kg|किलो|packets?|पैकेट|grams?|ग्राम)\s*([a-zA-Z\s]+)\s+बचा/gi, (match, qty, unit, product) => {
       console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${qty} ${unit} ${product} बेचा"`);
       return `${qty} ${unit} ${product} बेचा`;
     });
     
-    // Pattern 2: "बचा" followed by a product and quantity
     fixedTranscript = fixedTranscript.replace(/([a-zA-Z\s]+)\s+(\d+)\s*(kg|किलो|packets?|पैकेट|grams?|ग्राम)\s+बचा/gi, (match, product, qty, unit) => {
       console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${product} ${qty} ${unit} बेचा"`);
       return `${product} ${qty} ${unit} बेचा`;
     });
     
-    // Pattern 3: Product followed by "बचा" and then purchase action
     fixedTranscript = fixedTranscript.replace(/([a-zA-Z\s]+)\s+बचा\s+.*?(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)/gi, (match, product, purchase) => {
       console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${product} बेचा, ${purchase}"`);
       return `${product} बेचा, ${purchase}`;
     });
     
-    // Pattern 4: Purchase action followed by product and "बचा"
     fixedTranscript = fixedTranscript.replace(/(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)\s+([a-zA-Z\s]+)\s+बचा/gi, (match, purchase, product) => {
       console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${purchase} ${product}, बेचा ${product}"`);
       return `${purchase} ${product}, बेचा ${product}`;
     });
     
-    // Pattern 5: Simple "बचा" at the end of a sentence with a product
     fixedTranscript = fixedTranscript.replace(/([a-zA-Z\s]+)\s+बचा[.!?]*$/gi, (match, product) => {
-      // Only replace if it doesn't contain words indicating "remaining"
       if (!product.match(/(remaining|left|बाकी)/i)) {
         console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${product} बेचा"`);
         return `${product} बेचा`;
@@ -933,7 +1074,7 @@ async function convertToFLAC(oggBuffer) {
     const flacBuffer = fs.readFileSync('/tmp/output.flac');
     const outputHash = crypto.createHash('md5').update(flacBuffer).digest('hex');
     console.log(`[2] Conversion complete, output size: ${flacBuffer.length} bytes, MD5: ${outputHash}`);
-    // Clean up temporary files
+    
     fs.unlinkSync('/tmp/input.ogg');
     fs.unlinkSync('/tmp/output.flac');
     return flacBuffer;
@@ -943,7 +1084,7 @@ async function convertToFLAC(oggBuffer) {
   }
 }
 
-// FIXED: Revert to original transcription settings that worked well
+// Google Transcription with confidence tracking
 async function googleTranscribe(flacBuffer, requestId) {
   try {
     const base64Key = process.env.GCP_BASE64_KEY?.trim();
@@ -968,9 +1109,8 @@ async function googleTranscribe(flacBuffer, requestId) {
     });
     const client = await auth.getClient();
     
-    // REVERTED: Back to original language priority that worked well
     const languageConfigs = [
-      { languageCode: 'hi-IN', name: 'Hindi' },  // Back to Hindi first
+      { languageCode: 'hi-IN', name: 'Hindi' },
       { languageCode: 'en-IN', name: 'English (India)' },
       { languageCode: 'en-US', name: 'English (US)' }
     ];
@@ -982,7 +1122,6 @@ async function googleTranscribe(flacBuffer, requestId) {
           useEnhanced: true,
           enableAutomaticPunctuation: true,
           audioChannelCount: 1,
-          // SIMPLIFIED: Back to original speech context that worked well
           speechContexts: [{
             phrases: [
               'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
@@ -997,9 +1136,8 @@ async function googleTranscribe(flacBuffer, requestId) {
           }]
         };
         
-        // REVERTED: Back to original model priority that worked well
         const configs = [
-          { ...baseConfig, model: 'telephony' },  // Back to telephony first
+          { ...baseConfig, model: 'telephony' },
           { ...baseConfig, model: 'latest_short' },
           { ...baseConfig, model: 'default' }
         ];
@@ -1020,12 +1158,20 @@ async function googleTranscribe(flacBuffer, requestId) {
               timeout: 8000
             });
             
-            // Combine all results into a single transcript
             let fullTranscript = '';
+            let confidenceSum = 0;
+            let confidenceCount = 0;
+            
             if (data.results && data.results.length > 0) {
               for (const result of data.results) {
                 if (result.alternatives && result.alternatives.length > 0) {
-                  fullTranscript += result.alternatives[0].transcript + ' ';
+                  const alternative = result.alternatives[0];
+                  fullTranscript += alternative.transcript + ' ';
+                  
+                  if (alternative.confidence) {
+                    confidenceSum += alternative.confidence;
+                    confidenceCount++;
+                  }
                 }
               }
             }
@@ -1033,8 +1179,13 @@ async function googleTranscribe(flacBuffer, requestId) {
             fullTranscript = fullTranscript.trim();
             
             if (fullTranscript) {
-              console.log(`[${requestId}] STT Success: ${config.model} model (${langConfig.name}) - Transcript: "${fullTranscript}"`);
-              return fullTranscript;
+              const avgConfidence = confidenceCount > 0 ? confidenceSum / confidenceCount : 0;
+              console.log(`[${requestId}] STT Success: ${config.model} model (${langConfig.name}) - Transcript: "${fullTranscript}" (Confidence: ${avgConfidence.toFixed(2)})`);
+              
+              return {
+                transcript: fullTranscript,
+                confidence: avgConfidence
+              };
             }
           } catch (error) {
             console.warn(`[${requestId}] STT Attempt Failed:`, {
@@ -1060,7 +1211,6 @@ async function airtableRequest(config, context = 'Airtable Request') {
   const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
   let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
   
-  // Clean the base ID
   AIRTABLE_BASE_ID = AIRTABLE_BASE_ID
     .trim()
     .replace(/[;,\s]+$/, '')
