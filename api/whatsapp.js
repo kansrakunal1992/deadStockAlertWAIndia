@@ -141,6 +141,9 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       message += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
     }
     
+    // Add option to switch input method
+    message += `\n\nTo switch input method, reply "switch to text" or "switch to voice".`;
+    
     const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
     
     console.log(`[${requestId}] Sending WhatsApp response:`, formattedResponse);
@@ -237,7 +240,7 @@ module.exports = async (req, res) => {
       return res.send(response.toString());
     }
     
-    // Handle text-based selection responses (NEW)
+    // Handle text-based selection responses
     if (Body && (Body === '1' || Body === '2' || Body.toLowerCase() === 'voice' || Body.toLowerCase() === 'text')) {
       console.log(`[${requestId}] Text-based selection: "${Body}"`);
       
@@ -275,6 +278,62 @@ module.exports = async (req, res) => {
       }
       
       return res.send(response.toString());
+    }
+    
+    // Handle input method switch commands (NEW)
+    if (Body) {
+      const lowerBody = Body.toLowerCase();
+      
+      // Check for switch commands
+      if (lowerBody.includes('switch to text') || lowerBody.includes('change to text') || lowerBody.includes('use text')) {
+        console.log(`[${requestId}] User switching to text input`);
+        
+        if (!global.userPreferences) {
+          global.userPreferences = {};
+        }
+        
+        global.userPreferences[From] = 'text';
+        
+        let detectedLanguage = 'en';
+        try {
+          detectedLanguage = await detectLanguageWithFallback(Body, requestId);
+        } catch (error) {
+          console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+        }
+        
+        const switchMessage = await generateMultiLanguageResponse(
+          '✅ Switched to text input mode. Please type your inventory update. Example: "10 Parle-G sold"',
+          detectedLanguage,
+          requestId
+        );
+        response.message(switchMessage);
+        return res.send(response.toString());
+      }
+      
+      if (lowerBody.includes('switch to voice') || lowerBody.includes('change to voice') || lowerBody.includes('use voice')) {
+        console.log(`[${requestId}] User switching to voice input`);
+        
+        if (!global.userPreferences) {
+          global.userPreferences = {};
+        }
+        
+        global.userPreferences[From] = 'voice';
+        
+        let detectedLanguage = 'en';
+        try {
+          detectedLanguage = await detectLanguageWithFallback(Body, requestId);
+        } catch (error) {
+          console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+        }
+        
+        const switchMessage = await generateMultiLanguageResponse(
+          '✅ Switched to voice input mode. Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
+          detectedLanguage,
+          requestId
+        );
+        response.message(switchMessage);
+        return res.send(response.toString());
+      }
     }
     
     // Handle confirmation responses
@@ -356,7 +415,7 @@ module.exports = async (req, res) => {
           return res.send(response.toString());
         }
         
-        // UPDATED: Use text-based selection instead of buttons
+        // Use text-based selection
         const welcomeMessage = await generateMultiLanguageResponse(
           'Welcome! How would you like to send your inventory update?\n\nReply:\n• "1" for Voice Message\n• "2" for Text Message',
           greetingLang,
@@ -406,8 +465,8 @@ module.exports = async (req, res) => {
         } else {
           const defaultMessage = await generateMultiLanguageResponse(
             userPreference === 'voice' 
-              ? '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.'
-              : '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.',
+              ? '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to text input, reply "switch to text".'
+              : '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to voice input, reply "switch to voice".',
             detectedLanguage,
             requestId
           );
@@ -477,13 +536,13 @@ module.exports = async (req, res) => {
       let welcomeMessage;
       if (userPreference === 'voice') {
         welcomeMessage = await generateMultiLanguageResponse(
-          '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.',
+          '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to text input, reply "switch to text".',
           detectedLanguage,
           requestId
         );
       } else {
         welcomeMessage = await generateMultiLanguageResponse(
-          '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.',
+          '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to voice input, reply "switch to voice".',
           detectedLanguage,
           requestId
         );
