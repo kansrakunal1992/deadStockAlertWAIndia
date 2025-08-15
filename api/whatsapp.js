@@ -80,29 +80,6 @@ async function detectLanguageWithFallback(text, requestId) {
     return 'en';
   }
 }
-// FIXED: Create interactive button message
-function createButtonMessage(message, buttons) {
-  const response = new twilio.twiml.MessagingResponse();
-  const messageObj = response.message({
-    body: message
-  });
-
-  // Add interactive buttons using Twilio's format
-  const buttonsObj = messageObj.buttons();
-  buttons.forEach(button => {
-    buttonsObj.button({
-      action: {
-        type: 'reply',
-        reply: {
-          id: button.id,
-          title: button.title
-        }
-      }
-    });
-  });
-
-  return response.toString();
-}
 // Function to process confirmed transcription
 async function processConfirmedTranscription(transcript, from, detectedLanguage, requestId, response, res) {
   try {
@@ -220,7 +197,7 @@ module.exports = async (req, res) => {
       console.log(`[${requestId}] User preference: ${userPreference}`);
     }
     
-    // Handle button responses
+    // Handle button responses (if any)
     if (ButtonText) {
       console.log(`[${requestId}] Button clicked: ${ButtonText}`);
       
@@ -247,6 +224,46 @@ module.exports = async (req, res) => {
         );
         response.message(voiceMessage);
       } else if (ButtonText === 'Text Message' || ButtonText === 'text_input') {
+        global.userPreferences[From] = 'text';
+        
+        const textMessage = await generateMultiLanguageResponse(
+          '📝 Please type your inventory update. Example: "10 Parle-G sold"',
+          detectedLanguage,
+          requestId
+        );
+        response.message(textMessage);
+      }
+      
+      return res.send(response.toString());
+    }
+    
+    // Handle text-based selection responses (NEW)
+    if (Body && (Body === '1' || Body === '2' || Body.toLowerCase() === 'voice' || Body.toLowerCase() === 'text')) {
+      console.log(`[${requestId}] Text-based selection: "${Body}"`);
+      
+      // Store user preference
+      if (!global.userPreferences) {
+        global.userPreferences = {};
+      }
+      
+      // Detect language for response
+      let detectedLanguage = 'en';
+      try {
+        detectedLanguage = await detectLanguageWithFallback(Body, requestId);
+      } catch (error) {
+        console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+      }
+      
+      if (Body === '1' || Body.toLowerCase() === 'voice') {
+        global.userPreferences[From] = 'voice';
+        
+        const voiceMessage = await generateMultiLanguageResponse(
+          '🎤 Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
+          detectedLanguage,
+          requestId
+        );
+        response.message(voiceMessage);
+      } else if (Body === '2' || Body.toLowerCase() === 'text') {
         global.userPreferences[From] = 'text';
         
         const textMessage = await generateMultiLanguageResponse(
@@ -339,20 +356,15 @@ module.exports = async (req, res) => {
           return res.send(response.toString());
         }
         
+        // UPDATED: Use text-based selection instead of buttons
         const welcomeMessage = await generateMultiLanguageResponse(
-          'Welcome! How would you like to send your inventory update?',
+          'Welcome! How would you like to send your inventory update?\n\nReply:\n• "1" for Voice Message\n• "2" for Text Message',
           greetingLang,
           requestId
         );
         
-        // Create interactive buttons
-        const buttons = [
-          { id: 'voice_input', title: 'Voice Message' },
-          { id: 'text_input', title: 'Text Message' }
-        ];
-        
-        const buttonResponse = createButtonMessage(welcomeMessage, buttons);
-        return res.send(buttonResponse);
+        response.message(welcomeMessage);
+        return res.send(response.toString());
       }
       
       // Check for batch selection or expiry date updates
