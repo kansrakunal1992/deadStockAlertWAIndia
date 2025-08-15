@@ -5,11 +5,9 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
 const { updateInventory, testConnection, createBatchRecord, getBatchRecords, updateBatchExpiry } = require('./database');
-
 // Global storage for user preferences and pending transcriptions
 global.userPreferences = {};
 global.pendingTranscriptions = {};
-
 // Helper function to format dates for Airtable (YYYY-MM-DD)
 function formatDateForAirtable(date) {
   if (date instanceof Date) {
@@ -26,7 +24,6 @@ function formatDateForAirtable(date) {
   }
   return null;
 }
-
 // Helper function to format date for display (DD/MM/YYYY)
 function formatDateForDisplay(date) {
   if (date instanceof Date) {
@@ -47,7 +44,6 @@ function formatDateForDisplay(date) {
   }
   return date;
 }
-
 // Enhanced language detection with fallback
 async function detectLanguageWithFallback(text, requestId) {
   try {
@@ -84,18 +80,29 @@ async function detectLanguageWithFallback(text, requestId) {
     return 'en';
   }
 }
-
-// Create interactive button message
+// FIXED: Create interactive button message
 function createButtonMessage(message, buttons) {
   const response = new twilio.twiml.MessagingResponse();
-  const messageObj = response.message(message);
-  
-  // Add interactive buttons
-  messageObj.body(message);
-  
+  const messageObj = response.message({
+    body: message
+  });
+
+  // Add interactive buttons using Twilio's format
+  const buttonsObj = messageObj.buttons();
+  buttons.forEach(button => {
+    buttonsObj.button({
+      action: {
+        type: 'reply',
+        reply: {
+          id: button.id,
+          title: button.title
+        }
+      }
+    });
+  });
+
   return response.toString();
 }
-
 // Function to process confirmed transcription
 async function processConfirmedTranscription(transcript, from, detectedLanguage, requestId, response, res) {
   try {
@@ -173,7 +180,6 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     return res.send(response.toString());
   }
 }
-
 // Function to confirm transcription with user
 async function confirmTranscription(transcript, from, detectedLanguage, requestId) {
   const response = new twilio.twiml.MessagingResponse();
@@ -195,7 +201,6 @@ async function confirmTranscription(transcript, from, detectedLanguage, requestI
   
   return response.toString();
 }
-
 module.exports = async (req, res) => {
   const response = new twilio.twiml.MessagingResponse();
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -488,7 +493,6 @@ module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'text/xml');
   res.send(response.toString());
 };
-
 // NEW: Function to check if a message is a batch selection response
 function isBatchSelectionResponse(message) {
   const batchSelectionKeywords = ['oldest', 'newest', 'batch', 'expiry'];
@@ -510,7 +514,6 @@ function isBatchSelectionResponse(message) {
   
   return false;
 }
-
 // NEW: Function to check if a message is an expiry date update
 function isExpiryDateUpdate(message) {
   const products = [
@@ -527,7 +530,6 @@ function isExpiryDateUpdate(message) {
   
   return false;
 }
-
 // NEW: Handle batch selection response
 async function handleBatchSelectionResponse(body, from, response, requestId) {
   try {
@@ -635,7 +637,6 @@ async function handleBatchSelectionResponse(body, from, response, requestId) {
     response.message(errorMessage);
   }
 }
-
 // NEW: Handle expiry date update
 async function handleExpiryDateUpdate(body, from, response, requestId) {
   try {
@@ -720,7 +721,6 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
     response.message(errorMessage);
   }
 }
-
 // Parse expiry date in various formats
 function parseExpiryDate(dateStr) {
   const dmyMatch = dateStr.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
@@ -749,7 +749,6 @@ function parseExpiryDate(dateStr) {
   
   return null;
 }
-
 // Generate response in multiple languages and scripts without labels
 async function generateMultiLanguageResponse(message, languageCode, requestId) {
   try {
@@ -817,7 +816,6 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
     return message;
   }
 }
-
 // Parse multiple inventory updates from transcript
 function parseMultipleUpdates(transcript) {
   const updates = [];
@@ -836,7 +834,6 @@ function parseMultipleUpdates(transcript) {
   console.log(`Parsed ${updates.length} valid updates from transcript`);
   return updates;
 }
-
 // Parse single update with better action detection
 function parseSingleUpdate(transcript) {
   const products = [
@@ -908,7 +905,6 @@ function parseSingleUpdate(transcript) {
     action
   };
 }
-
 // Handle multiple inventory updates with batch tracking
 async function updateMultipleInventory(shopId, updates, languageCode) {
   const results = [];
@@ -957,7 +953,6 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   
   return results;
 }
-
 // Validate if transcript is an inventory update
 function isValidInventoryUpdate(parsed) {
   const validProduct = parsed.product !== 'Unknown';
@@ -966,7 +961,6 @@ function isValidInventoryUpdate(parsed) {
   
   return validProduct && validQuantity && validAction;
 }
-
 // Improved handling of "bacha" vs "becha" confusion
 async function validateTranscript(transcript, requestId) {
   try {
@@ -1042,7 +1036,6 @@ async function validateTranscript(transcript, requestId) {
     return transcript;
   }
 }
-
 // Audio Processing Functions
 async function downloadAudio(url) {
   console.log('[1] Downloading audio from:', url);
@@ -1061,7 +1054,6 @@ async function downloadAudio(url) {
   console.log(`[1] Audio downloaded, size: ${data.length} bytes, MD5: ${hash}`);
   return data;
 }
-
 async function convertToFLAC(oggBuffer) {
   try {
     const inputHash = crypto.createHash('md5').update(oggBuffer).digest('hex');
@@ -1083,7 +1075,6 @@ async function convertToFLAC(oggBuffer) {
     throw new Error('Audio processing error');
   }
 }
-
 // Google Transcription with confidence tracking
 async function googleTranscribe(flacBuffer, requestId) {
   try {
@@ -1205,7 +1196,6 @@ async function googleTranscribe(flacBuffer, requestId) {
     throw error;
   }
 }
-
 // Helper function for Airtable requests
 async function airtableRequest(config, context = 'Airtable Request') {
   const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
