@@ -5,9 +5,12 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
 const { updateInventory, testConnection, createBatchRecord, getBatchRecords, updateBatchExpiry } = require('./database');
-// Global storage for user preferences and pending transcriptions
+
+// Global storage for user preferences, pending transcriptions, and conversation state
 global.userPreferences = {};
 global.pendingTranscriptions = {};
+global.conversationState = {}; // Track conversation state per user
+
 // Helper function to format dates for Airtable (YYYY-MM-DD)
 function formatDateForAirtable(date) {
   if (date instanceof Date) {
@@ -24,6 +27,7 @@ function formatDateForAirtable(date) {
   }
   return null;
 }
+
 // Helper function to format date for display (DD/MM/YYYY)
 function formatDateForDisplay(date) {
   if (date instanceof Date) {
@@ -44,6 +48,7 @@ function formatDateForDisplay(date) {
   }
   return date;
 }
+
 // Enhanced language detection with fallback
 async function detectLanguageWithFallback(text, requestId) {
   try {
@@ -80,6 +85,7 @@ async function detectLanguageWithFallback(text, requestId) {
     return 'en';
   }
 }
+
 // Function to process confirmed transcription
 async function processConfirmedTranscription(transcript, from, detectedLanguage, requestId, response, res) {
   try {
@@ -139,6 +145,12 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     
     if (hasSales) {
       message += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
+      // Set conversation state to expect batch selection
+      global.conversationState[from] = {
+        state: 'awaiting_batch_selection',
+        language: detectedLanguage,
+        timestamp: Date.now()
+      };
     }
     
     // Add option to switch input method
@@ -160,6 +172,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     return res.send(response.toString());
   }
 }
+
 // Function to confirm transcription with user
 async function confirmTranscription(transcript, from, detectedLanguage, requestId) {
   const response = new twilio.twiml.MessagingResponse();
@@ -181,6 +194,7 @@ async function confirmTranscription(transcript, from, detectedLanguage, requestI
   
   return response.toString();
 }
+
 module.exports = async (req, res) => {
   const response = new twilio.twiml.MessagingResponse();
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -201,12 +215,25 @@ module.exports = async (req, res) => {
       BodyValue: Body
     });
     
-    // Check for user preference
+    // Initialize conversation state if not exists
+    if (!global.conversationState[From]) {
+      global.conversationState[From] = {
+        state: 'idle',
+        language: 'en',
+        timestamp: Date.now()
+      };
+    }
+    
+    // Get user preference
     let userPreference = 'voice'; // Default to voice
     if (global.userPreferences[From]) {
       userPreference = global.userPreferences[From];
       console.log(`[${requestId}] User preference: ${userPreference}`);
     }
+    
+    // Get conversation state
+    const conversationState = global.conversationState[From];
+    console.log(`[${requestId}] Conversation state:`, conversationState);
     
     // Handle button responses (if any)
     if (ButtonText) {
@@ -224,6 +251,9 @@ module.exports = async (req, res) => {
       } catch (error) {
         console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
       }
+      
+      // Update conversation language
+      conversationState.language = detectedLanguage;
       
       if (ButtonText === 'Voice Message' || ButtonText === 'voice_input') {
         global.userPreferences[From] = 'voice';
@@ -265,6 +295,9 @@ module.exports = async (req, res) => {
         console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
       }
       
+      // Update conversation language
+      conversationState.language = detectedLanguage;
+      
       if (Body === '1' || Body.toLowerCase() === 'voice') {
         global.userPreferences[From] = 'voice';
         
@@ -288,7 +321,7 @@ module.exports = async (req, res) => {
       return res.send(response.toString());
     }
     
-    // Handle input method switch commands (NEW)
+    // Handle input method switch commands
     if (Body) {
       const lowerBody = Body.toLowerCase();
       
@@ -308,6 +341,9 @@ module.exports = async (req, res) => {
         } catch (error) {
           console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
         }
+        
+        // Update conversation language
+        conversationState.language = detectedLanguage;
         
         const switchMessage = await generateMultiLanguageResponse(
           '✅ Switched to text input mode. Please type your inventory update. Example: "10 Parle-G sold"',
@@ -333,6 +369,9 @@ module.exports = async (req, res) => {
         } catch (error) {
           console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
         }
+        
+        // Update conversation language
+        conversationState.language = detectedLanguage;
         
         const switchMessage = await generateMultiLanguageResponse(
           '✅ Switched to voice input mode. Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
@@ -386,6 +425,13 @@ module.exports = async (req, res) => {
     if (Body && (NumMedia === '0' || NumMedia === 0 || !NumMedia)) {
       console.log(`[${requestId}] [1] Processing text message: "${Body}"`);
       
+      // Check if we're in a specific conversation state
+      if (conversationState.state === 'awaiting_batch_selection') {
+        console.log(`[${requestId}] In batch selection state, processing batch selection`);
+        await handleBatchSelectionResponse(Body, From, response, requestId, conversationState.language);
+        return res.send(response.toString());
+      }
+      
       // Check for common greetings
       const greetings = {
         'hi': ['hello', 'hi', 'hey', 'नमस्ते', 'नमस्कार', 'हाय'],
@@ -413,6 +459,9 @@ module.exports = async (req, res) => {
       if (isGreeting) {
         console.log(`[${requestId}] Detected greeting in language: ${greetingLang}`);
         
+        // Update conversation language
+        conversationState.language = greetingLang;
+        
         if (userPreference !== 'voice') {
           const preferenceMessage = await generateMultiLanguageResponse(
             `Welcome! I see you prefer to send updates by ${userPreference}. How can I help you today?`,
@@ -437,22 +486,26 @@ module.exports = async (req, res) => {
       // Check for batch selection or expiry date updates
       if (isBatchSelectionResponse(Body)) {
         console.log(`[${requestId}] Message appears to be a batch selection response`);
-        await handleBatchSelectionResponse(Body, From, response, requestId);
+        await handleBatchSelectionResponse(Body, From, response, requestId, conversationState.language);
       } 
       else if (isExpiryDateUpdate(Body)) {
         console.log(`[${requestId}] Message appears to be an expiry date update`);
-        await handleExpiryDateUpdate(Body, From, response, requestId);
+        await handleExpiryDateUpdate(Body, From, response, requestId, conversationState.language);
       }
       else {
         console.log(`[${requestId}] Message does not appear to be a batch selection or expiry date update`);
         
-        let detectedLanguage;
+        // Detect language for this message
+        let detectedLanguage = conversationState.language; // Use conversation language by default
         try {
           detectedLanguage = await detectLanguageWithFallback(Body, requestId);
+          // Update conversation language if different
+          if (detectedLanguage !== conversationState.language) {
+            conversationState.language = detectedLanguage;
+          }
           console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
         } catch (error) {
-          console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-          detectedLanguage = 'en';
+          console.warn(`[${requestId}] Language detection failed, using conversation language:`, error.message);
         }
         
         // Try to parse as inventory update
@@ -504,6 +557,18 @@ module.exports = async (req, res) => {
       console.log(`[${requestId}] [5] Detecting language...`);
       const detectedLanguage = await detectLanguageWithFallback(cleanTranscript, requestId);
       
+      // Update conversation language
+      conversationState.language = detectedLanguage;
+      
+      // Check if we're in a specific conversation state
+      if (conversationState.state === 'awaiting_batch_selection') {
+        console.log(`[${requestId}] In batch selection state, checking voice transcript for batch selection`);
+        if (isBatchSelectionResponse(cleanTranscript)) {
+          await handleBatchSelectionResponse(cleanTranscript, From, response, requestId, detectedLanguage);
+          return res.send(response.toString());
+        }
+      }
+      
       // Confidence-based confirmation
       const CONFIDENCE_THRESHOLD = 0.8;
       
@@ -532,13 +597,12 @@ module.exports = async (req, res) => {
     else {
       console.log(`[${requestId}] [1] No media received`);
       
-      let detectedLanguage;
+      let detectedLanguage = conversationState.language; // Use conversation language by default
       try {
         detectedLanguage = await detectLanguageWithFallback(Body || "", requestId);
         console.log(`[${requestId}] Detected language for welcome message: ${detectedLanguage}`);
       } catch (error) {
-        console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-        detectedLanguage = 'en';
+        console.warn(`[${requestId}] Language detection failed, using conversation language:`, error.message);
       }
       
       let welcomeMessage;
@@ -572,7 +636,8 @@ module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'text/xml');
   res.send(response.toString());
 };
-// NEW: Function to check if a message is a batch selection response
+
+// Function to check if a message is a batch selection response
 function isBatchSelectionResponse(message) {
   const batchSelectionKeywords = ['oldest', 'newest', 'batch', 'expiry'];
   const lowerMessage = message.toLowerCase();
@@ -593,7 +658,8 @@ function isBatchSelectionResponse(message) {
   
   return false;
 }
-// NEW: Function to check if a message is an expiry date update
+
+// Function to check if a message is an expiry date update
 function isExpiryDateUpdate(message) {
   const products = [
     'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
@@ -609,8 +675,9 @@ function isExpiryDateUpdate(message) {
   
   return false;
 }
-// NEW: Handle batch selection response
-async function handleBatchSelectionResponse(body, from, response, requestId) {
+
+// Handle batch selection response with language parameter
+async function handleBatchSelectionResponse(body, from, response, requestId, languageCode) {
   try {
     console.log(`[${requestId}] Processing batch selection response: "${body}"`);
     
@@ -634,7 +701,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId) {
     if (!product) {
       const errorMessage = await generateMultiLanguageResponse(
         'Please specify which product you are referring to.',
-        'en',
+        languageCode,
         requestId
       );
       response.message(errorMessage);
@@ -646,7 +713,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId) {
     if (batches.length === 0) {
       const errorMessage = await generateMultiLanguageResponse(
         `No batches found for ${product}.`,
-        'en',
+        languageCode,
         requestId
       );
       response.message(errorMessage);
@@ -692,7 +759,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId) {
         
         const successMessage = await generateMultiLanguageResponse(
           `✅ Updated expiry date for ${product} batch to ${formatDateForDisplay(parsedDate)}`,
-          'en',
+          languageCode,
           requestId
         );
         response.message(successMessage);
@@ -702,7 +769,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId) {
     
     const confirmMessage = await generateMultiLanguageResponse(
       `✅ Selected ${product} batch from ${formatDateForDisplay(selectedBatch.fields.PurchaseDate)}`,
-      'en',
+      languageCode,
       requestId
     );
     response.message(confirmMessage);
@@ -710,14 +777,15 @@ async function handleBatchSelectionResponse(body, from, response, requestId) {
     console.error(`[${requestId}] Error handling batch selection response:`, error.message);
     const errorMessage = await generateMultiLanguageResponse(
       'Error processing batch selection. Please try again.',
-      'en',
+      languageCode,
       requestId
     );
     response.message(errorMessage);
   }
 }
-// NEW: Handle expiry date update
-async function handleExpiryDateUpdate(body, from, response, requestId) {
+
+// Handle expiry date update with language parameter
+async function handleExpiryDateUpdate(body, from, response, requestId, languageCode) {
   try {
     console.log(`[${requestId}] Processing expiry date update: "${body}"`);
     
@@ -727,7 +795,7 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
       console.log(`[${requestId}] Invalid expiry date format`);
       const errorMessage = await generateMultiLanguageResponse(
         'Invalid format. Please use: "Product: DD/MM/YYYY" or "Product: DD Month YYYY"',
-        'en',
+        languageCode,
         requestId
       );
       response.message(errorMessage);
@@ -744,7 +812,7 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
       console.log(`[${requestId}] Failed to parse expiry date`);
       const errorMessage = await generateMultiLanguageResponse(
         'Invalid date format. Please use: "Product: DD/MM/YYYY" or "Product: DD Month YYYY"',
-        'en',
+        languageCode,
         requestId
       );
       response.message(errorMessage);
@@ -759,7 +827,7 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
       console.log(`[${requestId}] No recent purchase found for ${product}`);
       const errorMessage = await generateMultiLanguageResponse(
         `No recent purchase found for ${product}. Please make a purchase first.`,
-        'en',
+        languageCode,
         requestId
       );
       response.message(errorMessage);
@@ -777,7 +845,7 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
       console.log(`[${requestId}] Successfully updated batch with expiry date`);
       const successMessage = await generateMultiLanguageResponse(
         `✅ Expiry date updated for ${product}: ${formatDateForDisplay(expiryDate)}`,
-        'en',
+        languageCode,
         requestId
       );
       response.message(successMessage);
@@ -785,7 +853,7 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
       console.error(`[${requestId}] Failed to update batch: ${batchResult.error}`);
       const errorMessage = await generateMultiLanguageResponse(
         `Error updating expiry date for ${product}. Please try again.`,
-        'en',
+        languageCode,
         requestId
       );
       response.message(errorMessage);
@@ -794,12 +862,13 @@ async function handleExpiryDateUpdate(body, from, response, requestId) {
     console.error(`[${requestId}] Error handling expiry date update:`, error.message);
     const errorMessage = await generateMultiLanguageResponse(
       'Error processing expiry date. Please try again.',
-      'en',
+      languageCode,
       requestId
     );
     response.message(errorMessage);
   }
 }
+
 // Parse expiry date in various formats
 function parseExpiryDate(dateStr) {
   const dmyMatch = dateStr.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
@@ -828,6 +897,7 @@ function parseExpiryDate(dateStr) {
   
   return null;
 }
+
 // Generate response in multiple languages and scripts without labels
 async function generateMultiLanguageResponse(message, languageCode, requestId) {
   try {
@@ -895,6 +965,7 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
     return message;
   }
 }
+
 // Parse multiple inventory updates from transcript
 function parseMultipleUpdates(transcript) {
   const updates = [];
@@ -913,6 +984,7 @@ function parseMultipleUpdates(transcript) {
   console.log(`Parsed ${updates.length} valid updates from transcript`);
   return updates;
 }
+
 // Parse single update with better action detection
 function parseSingleUpdate(transcript) {
   const products = [
@@ -984,6 +1056,7 @@ function parseSingleUpdate(transcript) {
     action
   };
 }
+
 // Handle multiple inventory updates with batch tracking
 async function updateMultipleInventory(shopId, updates, languageCode) {
   const results = [];
@@ -1032,6 +1105,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   
   return results;
 }
+
 // Validate if transcript is an inventory update
 function isValidInventoryUpdate(parsed) {
   const validProduct = parsed.product !== 'Unknown';
@@ -1040,6 +1114,7 @@ function isValidInventoryUpdate(parsed) {
   
   return validProduct && validQuantity && validAction;
 }
+
 // Improved handling of "bacha" vs "becha" confusion
 async function validateTranscript(transcript, requestId) {
   try {
@@ -1115,6 +1190,7 @@ async function validateTranscript(transcript, requestId) {
     return transcript;
   }
 }
+
 // Audio Processing Functions
 async function downloadAudio(url) {
   console.log('[1] Downloading audio from:', url);
@@ -1133,6 +1209,7 @@ async function downloadAudio(url) {
   console.log(`[1] Audio downloaded, size: ${data.length} bytes, MD5: ${hash}`);
   return data;
 }
+
 async function convertToFLAC(oggBuffer) {
   try {
     const inputHash = crypto.createHash('md5').update(oggBuffer).digest('hex');
@@ -1154,6 +1231,7 @@ async function convertToFLAC(oggBuffer) {
     throw new Error('Audio processing error');
   }
 }
+
 // Google Transcription with confidence tracking
 async function googleTranscribe(flacBuffer, requestId) {
   try {
@@ -1275,6 +1353,7 @@ async function googleTranscribe(flacBuffer, requestId) {
     throw error;
   }
 }
+
 // Helper function for Airtable requests
 async function airtableRequest(config, context = 'Airtable Request') {
   const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
