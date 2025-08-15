@@ -2,7 +2,6 @@ const axios = require('axios');
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
 
-// Clean the base ID
 AIRTABLE_BASE_ID = AIRTABLE_BASE_ID
   .trim()
   .replace(/[;,\s]+$/, '')
@@ -12,11 +11,9 @@ AIRTABLE_BASE_ID = AIRTABLE_BASE_ID
 const TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || 'Inventory';
 const BATCH_TABLE_NAME = process.env.AIRTABLE_BATCH_TABLE_NAME || 'InventoryBatches';
 
-// URL construction
 const airtableBaseURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME;
 const airtableBatchURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + BATCH_TABLE_NAME;
 
-// Error logging
 function logError(context, error) {
   console.error(`[${context}] Error:`, error.message);
   if (error.response) {
@@ -25,7 +22,6 @@ function logError(context, error) {
   }
 }
 
-// Airtable request helper
 async function airtableRequest(config, context = 'Airtable Request') {
   const headers = {
     'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
@@ -47,7 +43,6 @@ async function airtableRequest(config, context = 'Airtable Request') {
   }
 }
 
-// Airtable batch request helper
 async function airtableBatchRequest(config, context = 'Airtable Batch Request') {
   const headers = {
     'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
@@ -69,14 +64,12 @@ async function airtableBatchRequest(config, context = 'Airtable Batch Request') 
   }
 }
 
-// Update inventory using delete and recreate approach
 async function updateInventory(shopId, product, quantityChange) {
   const context = `Update ${shopId} - ${product}`;
   
   try {
     console.log(`[${context}] Starting update: ${quantityChange}`);
     
-    // Find existing record
     const filterFormula = 'AND({ShopID} = \'' + shopId + '\', {Product} = \'' + product + '\')';
     const findResult = await airtableRequest({
       method: 'get',
@@ -85,20 +78,17 @@ async function updateInventory(shopId, product, quantityChange) {
     
     let newQuantity;
     if (findResult.records.length > 0) {
-      // Delete existing record and create new one (instead of update)
       const recordId = findResult.records[0].id;
       const currentQty = findResult.records[0].fields.Quantity || 0;
       newQuantity = currentQty + quantityChange;
       
       console.log(`[${context}] Found record ${recordId}, deleting and recreating: ${currentQty} -> ${newQuantity}`);
       
-      // Delete the old record
       await airtableRequest({
         method: 'delete',
         url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME + '/' + recordId
       }, `${context} - Delete`);
       
-      // Create new record
       const createData = {
         fields: {
           ShopID: shopId,
@@ -112,7 +102,6 @@ async function updateInventory(shopId, product, quantityChange) {
         data: createData
       }, `${context} - Recreate`);
     } else {
-      // Create new record
       newQuantity = quantityChange;
       const createData = {
         fields: {
@@ -138,7 +127,6 @@ async function updateInventory(shopId, product, quantityChange) {
   }
 }
 
-// Create a batch record for tracking purchases with expiry dates
 async function createBatchRecord(batchData) {
   const context = `Create Batch ${batchData.shopId} - ${batchData.product}`;
   
@@ -172,7 +160,6 @@ async function createBatchRecord(batchData) {
   }
 }
 
-// Get batch records for a specific product
 async function getBatchRecords(shopId, product) {
   const context = `Get Batches ${shopId} - ${product}`;
   
@@ -196,7 +183,6 @@ async function getBatchRecords(shopId, product) {
   }
 }
 
-// NEW: Update batch expiry date
 async function updateBatchExpiry(batchId, expiryDate) {
   const context = `Update Batch Expiry ${batchId}`;
   
@@ -226,14 +212,12 @@ async function updateBatchExpiry(batchId, expiryDate) {
   }
 }
 
-// Simple connection test
 async function testConnection() {
   const context = 'Connection Test';
   
   try {
     console.log(`[${context}] Testing connection...`);
     
-    // Test table access
     const result = await airtableRequest({
       method: 'get',
       params: { maxRecords: 1 }
