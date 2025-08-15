@@ -193,6 +193,14 @@ module.exports = async (req, res) => {
     
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
     
+    // Log the received values for debugging
+    console.log(`[${requestId}] Received values:`, {
+      NumMedia: typeof NumMedia,
+      NumMediaValue: NumMedia,
+      Body: typeof Body,
+      BodyValue: Body
+    });
+    
     // Check for user preference
     let userPreference = 'voice'; // Default to voice
     if (global.userPreferences[From]) {
@@ -374,8 +382,8 @@ module.exports = async (req, res) => {
       }
     }
     
-    // Handle text messages
-    if (!NumMedia && Body) {
+    // FIXED: Handle text messages with proper condition
+    if (Body && (NumMedia === '0' || NumMedia === 0 || !NumMedia)) {
       console.log(`[${requestId}] [1] Processing text message: "${Body}"`);
       
       // Check for common greetings
@@ -478,7 +486,7 @@ module.exports = async (req, res) => {
     }
     
     // Handle voice messages
-    if (NumMedia > 0 && MediaUrl0) {
+    if (NumMedia && MediaUrl0 && (NumMedia !== '0' && NumMedia !== 0)) {
       console.log(`[${requestId}] [1] Downloading audio...`);
       const audioBuffer = await downloadAudio(MediaUrl0);
       
