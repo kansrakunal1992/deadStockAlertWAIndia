@@ -98,11 +98,11 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
 async function sendWhatsAppMessage(to, body) {
   try {
     // Check if required environment variables are set
-    if (!process.env.TWILIO_ACCOUNT_SID) {
-      throw new Error('TWILIO_ACCOUNT_SID environment variable is not set');
+    if (!process.env.ACCOUNT_SID) {
+      throw new Error('ACCOUNT_SID environment variable is not set');
     }
-    if (!process.env.TWILIO_AUTH_TOKEN) {
-      throw new Error('TWILIO_AUTH_TOKEN environment variable is not set');
+    if (!process.env.AUTH_TOKEN) {
+      throw new Error('AUTH_TOKEN environment variable is not set');
     }
     if (!process.env.TWILIO_WHATSAPP_NUMBER) {
       throw new Error('TWILIO_WHATSAPP_NUMBER environment variable is not set');
@@ -112,7 +112,7 @@ async function sendWhatsAppMessage(to, body) {
     console.log(`Using Twilio WhatsApp number: ${process.env.TWILIO_WHATSAPP_NUMBER}`);
     
     // Initialize Twilio client
-    const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+    const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
     
     // Ensure the to number is in the format 'whatsapp:+<number>'
     const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
@@ -142,8 +142,8 @@ async function runDailySummary() {
     
     // Log environment variables for debugging (without exposing sensitive data)
     console.log('Environment variables check:');
-    console.log(`TWILIO_ACCOUNT_SID set: ${!!process.env.TWILIO_ACCOUNT_SID}`);
-    console.log(`TWILIO_AUTH_TOKEN set: ${!!process.env.TWILIO_AUTH_TOKEN}`);
+    console.log(`ACCOUNT_SID set: ${!!process.env.ACCOUNT_SID}`);
+    console.log(`AUTH_TOKEN set: ${!!process.env.AUTH_TOKEN}`);
     console.log(`TWILIO_WHATSAPP_NUMBER: ${process.env.TWILIO_WHATSAPP_NUMBER}`);
     console.log(`DEEPSEEK_API_KEY set: ${!!process.env.DEEPSEEK_API_KEY}`);
     
