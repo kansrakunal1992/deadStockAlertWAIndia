@@ -7,7 +7,7 @@ const {
   getUserPreference,
   getShopBatchRecords,
   getRecentSales
-} = require('./api/database');
+} = require('./database');
 
 // Helper function to format dates for display (DD/MM/YYYY)
 function formatDateForDisplay(date) {
