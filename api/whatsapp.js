@@ -4,7 +4,7 @@ const axios = require('axios');
 const { execSync } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
-const { updateInventory, testConnection, createBatchRecord, getBatchRecords, updateBatchExpiry } = require('./database');
+const { updateInventory, testConnection, createBatchRecord, getBatchRecords, updateBatchExpiry, saveUserPreference } = require('./database');
 
 // Global storage for user preferences, pending transcriptions, and conversation state
 global.userPreferences = {};
@@ -214,7 +214,13 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     // Add switch option in completion messages
     message += `\n\nTo switch input method, reply "switch to text" or "switch to voice".`;
     
-    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    // Use conversation state language if available
+    let responseLanguage = detectedLanguage;
+    if (global.conversationState && global.conversationState[from] && global.conversationState[from].language) {
+      responseLanguage = global.conversationState[from].language;
+    }
+    
+    const formattedResponse = await generateMultiLanguageResponse(message, responseLanguage, requestId);
     console.log(`[${requestId}] Sending WhatsApp response:`, formattedResponse);
     response.message(formattedResponse);
     return res.send(response.toString());
@@ -580,6 +586,10 @@ module.exports = async (req, res) => {
           delete global.conversationState[From];
         }
         
+        // Save user preference
+        const shopId = From.replace('whatsapp:', '');
+        await saveUserPreference(shopId, greetingLang);
+        
         if (userPreference !== 'voice') {
           const preferenceMessage = await generateMultiLanguageResponse(
             `Welcome! I see you prefer to send updates by ${userPreference}. How can I help you today?`,
@@ -684,6 +694,10 @@ module.exports = async (req, res) => {
       
       console.log(`[${requestId}] [5] Detecting language...`);
       const detectedLanguage = await detectLanguageWithFallback(cleanTranscript, requestId);
+      
+      // Save user preference
+      const shopId = From.replace('whatsapp:', '');
+      await saveUserPreference(shopId, detectedLanguage);
       
       // Check if we're awaiting batch selection
       if (conversationState && conversationState.state === 'awaiting_batch_selection') {
