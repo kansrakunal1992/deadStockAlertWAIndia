@@ -58,7 +58,7 @@ app.post('/api/whatsapp', whatsappHandler);
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Schedule daily summary at 8 PM every day
-cron.schedule('0 20 * * *', () => {
+cron.schedule('35 20 * * *', () => {
   console.log('Running scheduled daily summary job at 8 PM');
   runDailySummary();
 }, {
