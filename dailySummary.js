@@ -98,10 +98,13 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
 async function sendWhatsAppMessage(to, body) {
   const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
   
+  // Ensure the to number is in the format 'whatsapp:+<number>'
+  const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
+  
   await client.messages.create({
     body: body,
     from: process.env.TWILIO_WHATSAPP_NUMBER,
-    to: to
+    to: formattedTo
   });
 }
 
