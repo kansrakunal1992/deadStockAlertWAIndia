@@ -13,9 +13,9 @@ app.use('/api/whatsapp', express.json({
     if (req.method === 'POST' && url.pathname === '/api/whatsapp') {
       const signature = req.headers['x-twilio-signature'];
       const params = req.body;
-      const twilio = require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+      const twilio = require('twilio')(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
       
-      if (!twilio.validateRequest(process.env.TWILIO_AUTH_TOKEN, signature, url, buf)) {
+      if (!twilio.validateRequest(process.env.AUTH_TOKEN, signature, url, buf)) {
         console.error('Twilio signature validation failed');
         throw new Error('Invalid signature');
       }
@@ -58,7 +58,7 @@ app.post('/api/whatsapp', whatsappHandler);
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Schedule daily summary at 8 PM every day
-cron.schedule('35 20 * * *', () => {
+cron.schedule('10 21 * * *', () => {
   console.log('Running scheduled daily summary job at 8 PM');
   runDailySummary();
 }, {
