@@ -94,24 +94,58 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
   }
 }
 
-// Send WhatsApp message
+// Send WhatsApp message with enhanced error handling
 async function sendWhatsAppMessage(to, body) {
-  const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-  
-  // Ensure the to number is in the format 'whatsapp:+<number>'
-  const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
-  
-  await client.messages.create({
-    body: body,
-    from: process.env.TWILIO_WHATSAPP_NUMBER,
-    to: formattedTo
-  });
+  try {
+    // Check if required environment variables are set
+    if (!process.env.TWILIO_ACCOUNT_SID) {
+      throw new Error('TWILIO_ACCOUNT_SID environment variable is not set');
+    }
+    if (!process.env.TWILIO_AUTH_TOKEN) {
+      throw new Error('TWILIO_AUTH_TOKEN environment variable is not set');
+    }
+    if (!process.env.TWILIO_WHATSAPP_NUMBER) {
+      throw new Error('TWILIO_WHATSAPP_NUMBER environment variable is not set');
+    }
+    
+    console.log(`Sending WhatsApp message to: ${to}`);
+    console.log(`Using Twilio WhatsApp number: ${process.env.TWILIO_WHATSAPP_NUMBER}`);
+    
+    // Initialize Twilio client
+    const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+    
+    // Ensure the to number is in the format 'whatsapp:+<number>'
+    const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
+    console.log(`Formatted to: ${formattedTo}`);
+    
+    // Create and send message
+    const message = await client.messages.create({
+      body: body,
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      to: formattedTo
+    });
+    
+    console.log(`Message sent successfully. SID: ${message.sid}`);
+    return message;
+  } catch (error) {
+    console.error('Error sending WhatsApp message:', error);
+    console.error('Error details:', error.message);
+    console.error('Error stack:', error.stack);
+    throw error;
+  }
 }
 
 // Main function to run daily summary
 async function runDailySummary() {
   try {
     console.log('Starting daily summary job...');
+    
+    // Log environment variables for debugging (without exposing sensitive data)
+    console.log('Environment variables check:');
+    console.log(`TWILIO_ACCOUNT_SID set: ${!!process.env.TWILIO_ACCOUNT_SID}`);
+    console.log(`TWILIO_AUTH_TOKEN set: ${!!process.env.TWILIO_AUTH_TOKEN}`);
+    console.log(`TWILIO_WHATSAPP_NUMBER: ${process.env.TWILIO_WHATSAPP_NUMBER}`);
+    console.log(`DEEPSEEK_API_KEY set: ${!!process.env.DEEPSEEK_API_KEY}`);
     
     // Get all shop IDs
     const shopIds = await getAllShopIds();
@@ -124,18 +158,23 @@ async function runDailySummary() {
         // Get user preference
         const userPref = await getUserPreference(shopId);
         const userLanguage = userPref.success ? userPref.language : 'en';
+        console.log(`User language: ${userLanguage}`);
         
         // Get daily updates
         const dailyUpdates = await getDailyUpdates(shopId);
+        console.log(`Found ${dailyUpdates.length} daily updates`);
         
         // Get current inventory
         const currentInventory = await getCurrentInventory(shopId);
+        console.log(`Found ${currentInventory.length} inventory items`);
         
         // Get batch records for this shop
         const batchRecords = await getShopBatchRecords(shopId);
+        console.log(`Found ${batchRecords.length} batch records`);
         
         // Get recent sales (last 7 days)
         const recentSales = await getRecentSales(shopId, 7);
+        console.log(`Found ${recentSales.length} recent sales records`);
         
         // Calculate summary
         let totalSales = 0;
