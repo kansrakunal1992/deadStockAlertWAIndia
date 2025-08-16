@@ -379,6 +379,7 @@ async function getDailyUpdates(shopId) {
     const startStr = startOfDay.toISOString();
     const endStr = endOfDay.toISOString();
     
+    // Fixed field name from "created time" to "Created Time"
     const filterFormula = `AND({ShopID} = '${shopId}', IS_AFTER({Created Time}, "${startStr}"), IS_BEFORE({Created Time}, "${endStr}"))`;
     
     const result = await airtableRequest({
@@ -449,6 +450,7 @@ async function getRecentSales(shopId, days = 7) {
     // Format dates for Airtable formula
     const dateStr = nDaysAgo.toISOString();
     
+    // Fixed field name from "created time" to "Created Time"
     const filterFormula = `AND({ShopID} = '${shopId}', {Quantity} < 0, IS_AFTER({Created Time}, "${dateStr}"))`;
     
     const result = await airtableRequest({
