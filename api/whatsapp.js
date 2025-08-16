@@ -9,6 +9,7 @@ const { updateInventory, testConnection, createBatchRecord, getBatchRecords, upd
 // Global storage for user preferences, pending transcriptions, and conversation state
 global.userPreferences = {};
 global.pendingTranscriptions = {};
+global.pendingProductUpdates = {};
 global.conversationState = {};
 
 // Expanded product list with common grocery items
