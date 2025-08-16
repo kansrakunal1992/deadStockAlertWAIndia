@@ -4,7 +4,7 @@ const axios = require('axios');
 const { execSync } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
-const { updateInventory, testConnection, createBatchRecord, getBatchRecords, updateBatchExpiry, saveUserPreference } = require('./api/database');
+const { updateInventory, testConnection, createBatchRecord, getBatchRecords, updateBatchExpiry, saveUserPreference } = require('../database');
 
 // Global storage for user preferences, pending transcriptions, and conversation state
 global.userPreferences = {};
