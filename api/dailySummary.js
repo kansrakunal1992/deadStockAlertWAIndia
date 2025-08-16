@@ -1,0 +1,276 @@
+const twilio = require('twilio');
+const axios = require('axios');
+const { 
+  getAllShopIds, 
+  getDailyUpdates, 
+  getCurrentInventory, 
+  getUserPreference,
+  getShopBatchRecords,
+  getRecentSales
+} = require('./database');
+
+// Helper function to format dates for display (DD/MM/YYYY)
+function formatDateForDisplay(date) {
+  if (date instanceof Date) {
+    const day = date.getDate().toString().padStart(2, '0');
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  }
+  return date;
+}
+
+// Helper function to calculate days between two dates
+function daysBetween(date1, date2) {
+  const oneDay = 24 * 60 * 60 * 1000; // hours*minutes*seconds*milliseconds
+  const diffDays = Math.round(Math.abs((date1 - date2) / oneDay));
+  return diffDays;
+}
+
+// Generate response in multiple languages and scripts without labels
+async function generateMultiLanguageResponse(message, languageCode) {
+  try {
+    // If the language is English, return the message as is
+    if (languageCode === 'en') {
+      return message;
+    }
+    
+    const response = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: "deepseek-chat",
+        messages: [
+          {
+            role: "system",
+            content: `You are a multilingual assistant. Translate the given message to the target language and provide it in two formats:
+Format your response exactly as:
+Line 1: Translation in native script (e.g., Devanagari for Hindi)
+Empty line
+Line 3: Translation in Roman script (transliteration using English alphabet)
+For example, for Hindi:
+नमस्ते, आप कैसे हैं?
+
+Namaste, aap kaise hain?
+Do NOT include any labels like [Roman Script], [Native Script], <translation>, or any other markers. Just provide the translations one after the other with a blank line in between.`
+          },
+          {
+            role: "user",
+            content: `Translate this message to ${languageCode}: "${message}"`
+          }
+        ],
+        max_tokens: 200,
+        temperature: 0.3
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    let translated = response.data.choices[0].message.content.trim();
+    
+    // Post-process to remove any labels that might have been included
+    translated = translated.replace(/<translation in roman script>/gi, '');
+    translated = translated.replace(/<translation in native script>/gi, '');
+    translated = translated.replace(/\[roman script\]/gi, '');
+    translated = translated.replace(/\[native script\]/gi, '');
+    translated = translated.replace(/translation in roman script:/gi, '');
+    translated = translated.replace(/translation in native script:/gi, '');
+    
+    // Remove quotes that might have been added
+    translated = translated.replace(/^"(.*)"$/, '$1');
+    translated = translated.replace(/"/g, '');
+    
+    // Remove extra blank lines
+    translated = translated.replace(/\n\s*\n\s*\n/g, '\n\n');
+    translated = translated.replace(/^\s+|\s+$/g, '');
+    
+    return translated;
+  } catch (error) {
+    console.warn('Translation failed, using original:', error.message);
+    return message;
+  }
+}
+
+// Send WhatsApp message
+async function sendWhatsAppMessage(to, body) {
+  const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+  
+  await client.messages.create({
+    body: body,
+    from: process.env.TWILIO_WHATSAPP_NUMBER,
+    to: to
+  });
+}
+
+// Main function to run daily summary
+async function runDailySummary() {
+  try {
+    console.log('Starting daily summary job...');
+    
+    // Get all shop IDs
+    const shopIds = await getAllShopIds();
+    console.log(`Found ${shopIds.length} shops to process`);
+    
+    for (const shopId of shopIds) {
+      try {
+        console.log(`Processing shop: ${shopId}`);
+        
+        // Get user preference
+        const userPref = await getUserPreference(shopId);
+        const userLanguage = userPref.success ? userPref.language : 'en';
+        
+        // Get daily updates
+        const dailyUpdates = await getDailyUpdates(shopId);
+        
+        // Get current inventory
+        const currentInventory = await getCurrentInventory(shopId);
+        
+        // Get batch records for this shop
+        const batchRecords = await getShopBatchRecords(shopId);
+        
+        // Get recent sales (last 7 days)
+        const recentSales = await getRecentSales(shopId, 7);
+        
+        // Calculate summary
+        let totalSales = 0;
+        let totalPurchases = 0;
+        const salesDetails = {};
+        const purchaseDetails = {};
+        
+        dailyUpdates.forEach(record => {
+          const product = record.fields.Product;
+          const quantity = record.fields.Quantity || 0;
+          
+          if (quantity < 0) {
+            totalSales += Math.abs(quantity);
+            salesDetails[product] = (salesDetails[product] || 0) + Math.abs(quantity);
+          } else {
+            totalPurchases += quantity;
+            purchaseDetails[product] = (purchaseDetails[product] || 0) + quantity;
+          }
+        });
+        
+        // Check for deadstock - Option 1: Items with stock < 5
+        const deadstockOption1 = [];
+        const lowStockThreshold = 5; // Items with stock less than this are considered deadstock
+        
+        currentInventory.forEach(record => {
+          const product = record.fields.Product;
+          const quantity = record.fields.Quantity || 0;
+          
+          if (quantity < lowStockThreshold && quantity > 0) {
+            deadstockOption1.push({
+              product,
+              quantity
+            });
+          }
+        });
+        
+        // Check for deadstock - Option 2: Items not sold in last 7 days and in stock for > 30 days
+        const deadstockOption2 = [];
+        const today = new Date();
+        const thirtyDaysAgo = new Date(today);
+        thirtyDaysAgo.setDate(today.getDate() - 30);
+        
+        // Create a set of products sold in the last 7 days
+        const productsSoldRecently = new Set();
+        recentSales.forEach(record => {
+          productsSoldRecently.add(record.fields.Product);
+        });
+        
+        // Create a map of product to earliest purchase date
+        const productPurchaseDates = {};
+        batchRecords.forEach(record => {
+          const product = record.fields.Product;
+          const purchaseDate = new Date(record.fields.PurchaseDate);
+          
+          if (!productPurchaseDates[product] || purchaseDate < productPurchaseDates[product]) {
+            productPurchaseDates[product] = purchaseDate;
+          }
+        });
+        
+        // Check each product in current inventory
+        currentInventory.forEach(record => {
+          const product = record.fields.Product;
+          const quantity = record.fields.Quantity || 0;
+          
+          if (quantity > 0) {
+            // Check if product was purchased more than 30 days ago
+            if (productPurchaseDates[product] && productPurchaseDates[product] < thirtyDaysAgo) {
+              // Check if product has not been sold in the last 7 days
+              if (!productsSoldRecently.has(product)) {
+                deadstockOption2.push({
+                  product,
+                  quantity,
+                  daysInStock: daysBetween(productPurchaseDates[product], today)
+                });
+              }
+            }
+          }
+        });
+        
+        // Format the message
+        let message = `📊 Daily Inventory Summary (${formatDateForDisplay(new Date())}):\n\n`;
+        message += `💰 Total Sales: ${totalSales} items\n`;
+        message += `📦 Total Purchases: ${totalPurchases} items\n\n`;
+        
+        if (Object.keys(salesDetails).length > 0) {
+          message += `🛒 Sales Details:\n`;
+          for (const [product, quantity] of Object.entries(salesDetails)) {
+            message += `• ${product}: ${quantity} sold\n`;
+          }
+          message += `\n`;
+        }
+        
+        if (Object.keys(purchaseDetails).length > 0) {
+          message += `📥 Purchase Details:\n`;
+          for (const [product, quantity] of Object.entries(purchaseDetails)) {
+            message += `• ${product}: ${quantity} purchased\n`;
+          }
+          message += `\n`;
+        }
+        
+        // Add deadstock alerts
+        if (deadstockOption1.length > 0 || deadstockOption2.length > 0) {
+          message += `⚠️ Deadstock Alert:\n\n`;
+          
+          if (deadstockOption1.length > 0) {
+            message += `Option 1 - Low Stock (less than 5 items):\n`;
+            deadstockOption1.forEach(item => {
+              message += `• ${item.product}: Only ${item.quantity} left\n`;
+            });
+            message += `\n`;
+          }
+          
+          if (deadstockOption2.length > 0) {
+            message += `Option 2 - Slow Moving (not sold in 7 days, in stock > 30 days):\n`;
+            deadstockOption2.forEach(item => {
+              message += `• ${item.product}: ${item.quantity} in stock for ${item.daysInStock} days\n`;
+            });
+            message += `\n`;
+          }
+        }
+        
+        message += `Thank you for using our inventory management system!`;
+        
+        // Generate multilingual response
+        const formattedMessage = await generateMultiLanguageResponse(message, userLanguage);
+        
+        // Send the message
+        await sendWhatsAppMessage(shopId, formattedMessage);
+        console.log(`Daily summary sent to ${shopId}`);
+      } catch (error) {
+        console.error(`Error processing shop ${shopId}:`, error.message);
+      }
+    }
+    
+    console.log('Daily summary job completed successfully');
+  } catch (error) {
+    console.error('Error in daily summary job:', error.message);
+  }
+}
+
+module.exports = { runDailySummary };
