@@ -21,6 +21,9 @@ global.pendingTranscriptions = {};
 global.pendingProductUpdates = {};
 global.conversationState = {};
 
+// Reset commands to allow users to exit any flow
+const resetCommands = ['reset', 'start over', 'restart', 'cancel', 'exit', 'stop'];
+
 // Expanded product list with common grocery items
 const products = [
 // Branded items
@@ -203,6 +206,8 @@ language: detectedLanguage
 }
 // Add switch option in completion messages
 message += `\n\nTo switch input method, reply "switch to text" or "switch to voice".`;
+// Add reset option
+message += `\nTo reset the flow, reply "reset".`;
 // Use conversation state language if available
 let responseLanguage = detectedLanguage;
 if (global.conversationState && global.conversationState[from] && global.conversationState[from].language) {
@@ -343,450 +348,6 @@ error: error.message
 return results;
 }
 
-// [Rest of the whatsapp.js file remains unchanged until the end]
-// ... (keep all existing functions and code until the end of the file)
-
-module.exports = async (req, res) => {
-const response = new twilio.twiml.MessagingResponse();
-const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-try {
-if (req.method !== 'POST') {
-res.status(405).send('Method Not Allowed');
-return;
-}
-const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
-// Log the received values for debugging
-console.log(`[${requestId}] Received values:`, {
-NumMedia: typeof NumMedia,
-NumMediaValue: NumMedia,
-Body: typeof Body,
-BodyValue: Body
-});
-// Check for user preference
-let userPreference = 'voice'; // Default to voice
-if (global.userPreferences[From]) {
-userPreference = global.userPreferences[From];
-console.log(`[${requestId}] User preference: ${userPreference}`);
-}
-// Check conversation state
-let conversationState = null;
-if (global.conversationState && global.conversationState[From]) {
-conversationState = global.conversationState[From];
-console.log(`[${requestId}] Conversation state:`, conversationState);
-}
-// Handle button responses (if any)
-if (ButtonText) {
-console.log(`[${requestId}] Button clicked: ${ButtonText}`);
-// Store user preference
-if (!global.userPreferences) {
-global.userPreferences = {};
-}
-// Detect language for response
-let detectedLanguage = 'en';
-try {
-detectedLanguage = await detectLanguageWithFallback(ButtonText, requestId);
-} catch (error) {
-console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-}
-if (ButtonText === 'Voice Message' || ButtonText === 'voice_input') {
-global.userPreferences[From] = 'voice';
-const voiceMessage = await generateMultiLanguageResponse(
-'🎤 Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
-detectedLanguage,
-requestId
-);
-response.message(voiceMessage);
-} else if (ButtonText === 'Text Message' || ButtonText === 'text_input') {
-global.userPreferences[From] = 'text';
-const textMessage = await generateMultiLanguageResponse(
-'📝 Please type your inventory update. Example: "10 Parle-G sold"',
-detectedLanguage,
-requestId
-);
-response.message(textMessage);
-}
-return res.send(response.toString());
-}
-// Handle text-based selection responses
-if (Body && (Body === '1' || Body === '2' || Body.toLowerCase() === 'voice' || Body.toLowerCase() === 'text')) {
-console.log(`[${requestId}] Text-based selection: "${Body}"`);
-// Store user preference
-if (!global.userPreferences) {
-global.userPreferences = {};
-}
-// Detect language for response
-let detectedLanguage = 'en';
-try {
-detectedLanguage = await detectLanguageWithFallback(Body, requestId);
-} catch (error) {
-console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-}
-if (Body === '1' || Body.toLowerCase() === 'voice') {
-global.userPreferences[From] = 'voice';
-const voiceMessage = await generateMultiLanguageResponse(
-'🎤 Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
-detectedLanguage,
-requestId
-);
-response.message(voiceMessage);
-} else if (Body === '2' || Body.toLowerCase() === 'text') {
-global.userPreferences[From] = 'text';
-const textMessage = await generateMultiLanguageResponse(
-'📝 Please type your inventory update. Example: "10 Parle-G sold"',
-detectedLanguage,
-requestId
-);
-response.message(textMessage);
-}
-return res.send(response.toString());
-}
-// Handle input method switch commands
-if (Body) {
-const lowerBody = Body.toLowerCase();
-// Check for switch commands
-if (lowerBody.includes('switch to text') || lowerBody.includes('change to text') || lowerBody.includes('use text')) {
-console.log(`[${requestId}] User switching to text input`);
-// Store user preference
-if (!global.userPreferences) {
-global.userPreferences = {};
-}
-global.userPreferences[From] = 'text';
-// Detect language for response
-let detectedLanguage = 'en';
-try {
-detectedLanguage = await detectLanguageWithFallback(Body, requestId);
-} catch (error) {
-console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-}
-const switchMessage = await generateMultiLanguageResponse(
-'✅ Switched to text input. Please type your inventory update. Example: "10 Parle-G sold"',
-detectedLanguage,
-requestId
-);
-response.message(switchMessage);
-return res.send(response.toString());
-}
-if (lowerBody.includes('switch to voice') || lowerBody.includes('change to voice') || lowerBody.includes('use voice')) {
-console.log(`[${requestId}] User switching to voice input`);
-// Store user preference
-if (!global.userPreferences) {
-global.userPreferences = {};
-}
-global.userPreferences[From] = 'voice';
-// Detect language for response
-let detectedLanguage = 'en';
-try {
-detectedLanguage = await detectLanguageWithFallback(Body, requestId);
-} catch (error) {
-console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-}
-const switchMessage = await generateMultiLanguageResponse(
-'✅ Switched to voice input. Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
-detectedLanguage,
-requestId
-);
-response.message(switchMessage);
-return res.send(response.toString());
-}
-}
-// Handle confirmation responses
-if (Body && (Body.toLowerCase() === 'yes' || Body.toLowerCase() === 'no')) {
-console.log(`[${requestId}] Message appears to be a confirmation response: "${Body}"`);
-// Check for pending transcriptions
-if (global.pendingTranscriptions[From]) {
-const pending = global.pendingTranscriptions[From];
-if (Body.toLowerCase() === 'yes') {
-console.log(`[${requestId}] User confirmed transcription: "${pending.transcript}"`);
-await processConfirmedTranscription(
-pending.transcript,
-From,
-pending.detectedLanguage,
-requestId,
-response,
-res
-);
-delete global.pendingTranscriptions[From];
-return;
-} else {
-console.log(`[${requestId}] User rejected transcription`);
-const errorMessage = await generateMultiLanguageResponse(
-'Please try again with a clear voice message.',
-pending.detectedLanguage,
-requestId
-);
-response.message(errorMessage);
-delete global.pendingTranscriptions[From];
-return res.send(response.toString());
-}
-}
-// Check for pending product updates
-if (global.pendingProductUpdates && global.pendingProductUpdates[From]) {
-const pending = global.pendingProductUpdates[From];
-if (Body.toLowerCase() === 'yes') {
-console.log(`[${requestId}] User confirmed product update: "${pending.update.product}"`);
-// Process the confirmed update
-const shopId = From.replace('whatsapp:', '');
-const results = await updateMultipleInventory(shopId, [pending.update], pending.detectedLanguage);
-let message = '✅ Update processed:\n\n';
-let successCount = 0;
-let hasSales = false;
-for (const result of results) {
-if (result.success) {
-successCount++;
-message += `• ${result.product}: ${result.quantity > 0 ? '+' : ''}${result.quantity} (Stock: ${result.newQuantity})\n`;
-if (result.quantity > 0 && result.batchDate) {
-message += ` Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
-}
-if (result.quantity < 0) {
-hasSales = true;
-}
-} else {
-message += `• ${result.product}: Error - ${result.error}\n`;
-}
-}
-message += `\n✅ Successfully updated ${successCount} of 1 item`;
-if (hasSales) {
-message += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
-// Set conversation state to await batch selection
-if (!global.conversationState) {
-global.conversationState = {};
-}
-global.conversationState[From] = {
-state: 'awaiting_batch_selection',
-language: pending.detectedLanguage
-};
-}
-// Add switch option in completion messages
-message += `\n\nTo switch input method, reply "switch to text" or "switch to voice".`;
-const formattedResponse = await generateMultiLanguageResponse(message, pending.detectedLanguage, requestId);
-response.message(formattedResponse);
-delete global.pendingProductUpdates[From];
-return res.send(response.toString());
-} else {
-console.log(`[${requestId}] User rejected product update`);
-const errorMessage = await generateMultiLanguageResponse(
-'Please try again with a clear message.',
-pending.detectedLanguage,
-requestId
-);
-response.message(errorMessage);
-delete global.pendingProductUpdates[From];
-return res.send(response.toString());
-}
-}
-}
-// Handle text messages
-if (Body && (NumMedia === '0' || NumMedia === 0 || !NumMedia)) {
-console.log(`[${requestId}] [1] Processing text message: "${Body}"`);
-// Check for common greetings
-const greetings = {
-'hi': ['hello', 'hi', 'hey', 'नमस्ते', 'नमस्कार', 'हाय'],
-'ta': ['vanakkam', 'வணக்கம்'],
-'te': ['నమస్కారం', 'హలో'],
-'kn': ['ನಮಸ್ಕಾರ', 'ಹಲೋ'],
-'bn': ['নমস্কার', 'হ্যালো'],
-'gu': ['નમસ્તે', 'હેલો'],
-'mr': ['नमस्कार', 'हॅलो'],
-'en': ['hello', 'hi', 'hey']
-};
-const lowerBody = Body.toLowerCase();
-let isGreeting = false;
-let greetingLang = 'en';
-for (const [lang, greetingList] of Object.entries(greetings)) {
-if (greetingList.some(g => lowerBody.includes(g))) {
-isGreeting = true;
-greetingLang = lang;
-break;
-}
-}
-if (isGreeting) {
-console.log(`[${requestId}] Detected greeting in language: ${greetingLang}`);
-// Reset conversation state on greeting
-if (global.conversationState && global.conversationState[From]) {
-delete global.conversationState[From];
-}
-// Save user preference
-const shopId = From.replace('whatsapp:', '');
-await saveUserPreference(shopId, greetingLang);
-if (userPreference !== 'voice') {
-const preferenceMessage = await generateMultiLanguageResponse(
-`Welcome! I see you prefer to send updates by ${userPreference}. How can I help you today?`,
-greetingLang,
-requestId
-);
-response.message(preferenceMessage);
-return res.send(response.toString());
-}
-// Use text-based selection instead of buttons for broader compatibility
-const welcomeMessage = await generateMultiLanguageResponse(
-'Welcome! How would you like to send your inventory update?\n\nReply:\n• "1" for Voice Message\n• "2" for Text Message',
-greetingLang,
-requestId
-);
-response.message(welcomeMessage);
-return res.send(response.toString());
-}
-// Check if we're awaiting batch selection
-if (conversationState && conversationState.state === 'awaiting_batch_selection') {
-console.log(`[${requestId}] Awaiting batch selection response`);
-await handleBatchSelectionResponse(Body, From, response, requestId, conversationState.language);
-return res.send(response.toString());
-}
-// Check for batch selection or expiry date updates
-if (isBatchSelectionResponse(Body)) {
-console.log(`[${requestId}] Message appears to be a batch selection response`);
-await handleBatchSelectionResponse(Body, From, response, requestId, conversationState ? conversationState.language : 'en');
-}
-else if (isExpiryDateUpdate(Body)) {
-console.log(`[${requestId}] Message appears to be an expiry date update`);
-await handleExpiryDateUpdate(Body, From, response, requestId, conversationState ? conversationState.language : 'en');
-}
-else {
-console.log(`[${requestId}] Message does not appear to be a batch selection or expiry date update`);
-let detectedLanguage = conversationState ? conversationState.language : 'en';
-try {
-detectedLanguage = await detectLanguageWithFallback(Body, requestId);
-console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
-} catch (error) {
-console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-detectedLanguage = 'en';
-}
-// Try to parse as inventory update
-const updates = parseMultipleUpdates(Body);
-if (updates.length > 0) {
-console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
-// Check if any updates are for unknown products
-const unknownProducts = updates.filter(u => !u.isKnown);
-if (unknownProducts.length > 0) {
-console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
-// Confirm the first unknown product
-await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
-return res.send(response.toString());
-}
-await processConfirmedTranscription(
-Body,
-From,
-detectedLanguage,
-requestId,
-response,
-res
-);
-return;
-} else {
-const defaultMessage = await generateMultiLanguageResponse(
-userPreference === 'voice'
-? '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to text input, reply "switch to text".'
-: '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to voice input, reply "switch to voice".',
-detectedLanguage,
-requestId
-);
-response.message(defaultMessage);
-}
-}
-return res.send(response.toString());
-}
-// Handle voice messages
-if (NumMedia && MediaUrl0 && (NumMedia !== '0' && NumMedia !== 0)) {
-console.log(`[${requestId}] [1] Downloading audio...`);
-const audioBuffer = await downloadAudio(MediaUrl0);
-console.log(`[${requestId}] [2] Converting audio...`);
-const flacBuffer = await convertToFLAC(audioBuffer);
-console.log(`[${requestId}] [3] Transcribing with Google STT...`);
-const transcriptionResult = await googleTranscribe(flacBuffer, requestId);
-const rawTranscript = transcriptionResult.transcript;
-const confidence = transcriptionResult.confidence;
-console.log(`[${requestId}] [4] Validating transcript...`);
-const cleanTranscript = await validateTranscript(rawTranscript, requestId);
-console.log(`[${requestId}] [5] Detecting language...`);
-const detectedLanguage = await detectLanguageWithFallback(cleanTranscript, requestId);
-// Save user preference
-const shopId = From.replace('whatsapp:', '');
-await saveUserPreference(shopId, detectedLanguage);
-// Check if we're awaiting batch selection
-if (conversationState && conversationState.state === 'awaiting_batch_selection') {
-console.log(`[${requestId}] Awaiting batch selection response from voice`);
-// Check if the transcript contains batch selection keywords
-if (isBatchSelectionResponse(cleanTranscript)) {
-await handleBatchSelectionResponse(cleanTranscript, From, response, requestId, conversationState.language);
-return res.send(response.toString());
-}
-}
-// Confidence-based confirmation
-const CONFIDENCE_THRESHOLD = 0.8;
-if (confidence < CONFIDENCE_THRESHOLD) {
-console.log(`[${requestId}] [5.5] Low confidence (${confidence}), requesting confirmation...`);
-const confirmationResponse = await confirmTranscription(cleanTranscript, From, detectedLanguage, requestId);
-return res.send(confirmationResponse);
-} else {
-console.log(`[${requestId}] [5.5] High confidence (${confidence}), proceeding without confirmation...`);
-// Parse the transcript
-const updates = parseMultipleUpdates(cleanTranscript);
-// Check if any updates are for unknown products
-const unknownProducts = updates.filter(u => !u.isKnown);
-if (unknownProducts.length > 0) {
-console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
-// Confirm the first unknown product
-await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
-return res.send(response.toString());
-}
-await processConfirmedTranscription(
-cleanTranscript,
-From,
-detectedLanguage,
-requestId,
-response,
-res
-);
-return;
-}
-}
-else if (SpeechResult) {
-console.log(`[${requestId}] [1] Using Twilio transcription`);
-response.message(`🔊 (Twilio): "${SpeechResult}"`);
-}
-else {
-console.log(`[${requestId}] [1] No media received`);
-let detectedLanguage = conversationState ? conversationState.language : 'en';
-try {
-detectedLanguage = await detectLanguageWithFallback(Body || "", requestId);
-console.log(`[${requestId}] Detected language for welcome message: ${detectedLanguage}`);
-} catch (error) {
-console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-detectedLanguage = 'en';
-}
-let welcomeMessage;
-if (userPreference === 'voice') {
-welcomeMessage = await generateMultiLanguageResponse(
-'🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to text input, reply "switch to text".',
-detectedLanguage,
-requestId
-);
-} else {
-welcomeMessage = await generateMultiLanguageResponse(
-'📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to voice input, reply "switch to voice".',
-detectedLanguage,
-requestId
-);
-}
-response.message(welcomeMessage);
-}
-} catch (error) {
-console.error(`[${requestId}] Processing Error:`, error.message);
-const errorMessage = await generateMultiLanguageResponse(
-'System error. Please try again with a clear voice message.',
-'en',
-requestId
-);
-response.message(errorMessage);
-}
-console.log(`[${requestId}] Sending TwiML response`);
-res.setHeader('Content-Type', 'text/xml');
-res.send(response.toString());
-};
-
-// [Rest of the helper functions remain unchanged]
-// ... (keep all existing helper functions like isBatchSelectionResponse, isExpiryDateUpdate, etc.)
-
 // Function to check if a message is a batch selection response
 function isBatchSelectionResponse(message) {
 const batchSelectionKeywords = ['oldest', 'newest', 'batch', 'expiry'];
@@ -821,12 +382,47 @@ return true;
 return false;
 }
 
-// Handle batch selection response
+// Handle batch selection response - IMPROVED to avoid loops
 async function handleBatchSelectionResponse(body, from, response, requestId, languageCode = 'en') {
 try {
 console.log(`[${requestId}] Processing batch selection response: "${body}"`);
 const shopId = from.replace('whatsapp:', '');
 const lowerBody = body.toLowerCase();
+// Check for reset command
+if (resetCommands.some(cmd => lowerBody.includes(cmd))) {
+console.log(`[${requestId}] User requested to reset the flow during batch selection`);
+// Clear conversation state
+if (global.conversationState && global.conversationState[from]) {
+delete global.conversationState[from];
+}
+// Get user preference
+let userPreference = 'voice'; // Default to voice
+if (global.userPreferences[from]) {
+userPreference = global.userPreferences[from];
+}
+const resetMessage = await generateMultiLanguageResponse(
+'Batch selection cancelled. Flow has been reset.',
+languageCode,
+requestId
+);
+// Provide options based on user preference
+if (userPreference === 'voice') {
+const voiceMessage = await generateMultiLanguageResponse(
+'🎤 Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
+languageCode,
+requestId
+);
+response.message(voiceMessage);
+} else {
+const textMessage = await generateMultiLanguageResponse(
+'📝 Please type your inventory update. Example: "10 Parle-G sold"',
+languageCode,
+requestId
+);
+response.message(textMessage);
+}
+return;
+}
 let product = null;
 const products = [
 'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
@@ -842,7 +438,7 @@ break;
 }
 if (!product) {
 const errorMessage = await generateMultiLanguageResponse(
-'Please specify which product you are referring to.',
+'Please specify which product you are referring to. Example: "oldest Parle-G" or "sugar expiry 15/12/2023".\n\nTo cancel batch selection, reply "reset".',
 languageCode,
 requestId
 );
@@ -852,7 +448,7 @@ return;
 const batches = await getBatchRecords(shopId, product);
 if (batches.length === 0) {
 const errorMessage = await generateMultiLanguageResponse(
-`No batches found for ${product}.`,
+`No batches found for ${product}. To cancel batch selection, reply "reset".`,
 languageCode,
 requestId
 );
@@ -889,16 +485,20 @@ if (parsedDate) {
 const formattedDate = formatDateForAirtable(parsedDate);
 await updateBatchExpiry(selectedBatch.id, formattedDate);
 const successMessage = await generateMultiLanguageResponse(
-`✅ Updated expiry date for ${product} batch to ${formatDateForDisplay(parsedDate)}`,
+`✅ Updated expiry date for ${product} batch to ${formatDateForDisplay(parsedDate)}.\n\nYou can now continue with inventory updates or reply "reset" to start over.`,
 languageCode,
 requestId
 );
 response.message(successMessage);
+// Clear conversation state
+if (global.conversationState && global.conversationState[from]) {
+delete global.conversationState[from];
+}
 return;
 }
 }
 const confirmMessage = await generateMultiLanguageResponse(
-`✅ Selected ${product} batch from ${formatDateForDisplay(selectedBatch.fields.PurchaseDate)}`,
+`✅ Selected ${product} batch from ${formatDateForDisplay(selectedBatch.fields.PurchaseDate)}.\n\nYou can now continue with inventory updates or reply "reset" to start over.`,
 languageCode,
 requestId
 );
@@ -910,7 +510,7 @@ delete global.conversationState[from];
 } catch (error) {
 console.error(`[${requestId}] Error handling batch selection response:`, error.message);
 const errorMessage = await generateMultiLanguageResponse(
-'Error processing batch selection. Please try again.',
+'Error processing batch selection. Please try again or reply "reset" to start over.',
 languageCode,
 requestId
 );
@@ -918,15 +518,51 @@ response.message(errorMessage);
 }
 }
 
-// Handle expiry date update
+// Handle expiry date update - IMPROVED to avoid loops
 async function handleExpiryDateUpdate(body, from, response, requestId, languageCode = 'en') {
 try {
 console.log(`[${requestId}] Processing expiry date update: "${body}"`);
+// Check for reset command
+const lowerBody = body.toLowerCase();
+if (resetCommands.some(cmd => lowerBody.includes(cmd))) {
+console.log(`[${requestId}] User requested to reset the flow during expiry date update`);
+// Clear conversation state
+if (global.conversationState && global.conversationState[from]) {
+delete global.conversationState[from];
+}
+// Get user preference
+let userPreference = 'voice'; // Default to voice
+if (global.userPreferences[from]) {
+userPreference = global.userPreferences[from];
+}
+const resetMessage = await generateMultiLanguageResponse(
+'Expiry date update cancelled. Flow has been reset.',
+languageCode,
+requestId
+);
+// Provide options based on user preference
+if (userPreference === 'voice') {
+const voiceMessage = await generateMultiLanguageResponse(
+'🎤 Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
+languageCode,
+requestId
+);
+response.message(voiceMessage);
+} else {
+const textMessage = await generateMultiLanguageResponse(
+'📝 Please type your inventory update. Example: "10 Parle-G sold"',
+languageCode,
+requestId
+);
+response.message(textMessage);
+}
+return;
+}
 const productMatch = body.match(/([a-zA-Z\s]+):?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i);
 if (!productMatch) {
 console.log(`[${requestId}] Invalid expiry date format`);
 const errorMessage = await generateMultiLanguageResponse(
-'Invalid format. Please use: "Product: DD/MM/YYYY" or "Product: DD Month YYYY"',
+'Invalid format. Please use: "Product: DD/MM/YYYY" or "Product: DD Month YYYY". Example: "sugar: 15/12/2023" or "flour: 15 December 2023".\n\nTo cancel, reply "reset".',
 languageCode,
 requestId
 );
@@ -940,7 +576,7 @@ const expiryDate = parseExpiryDate(expiryDateStr);
 if (!expiryDate) {
 console.log(`[${requestId}] Failed to parse expiry date`);
 const errorMessage = await generateMultiLanguageResponse(
-'Invalid date format. Please use: "Product: DD/MM/YYYY" or "Product: DD Month YYYY"',
+'Invalid date format. Please use: "Product: DD/MM/YYYY" or "Product: DD Month YYYY". Example: "sugar: 15/12/2023" or "flour: 15 December 2023".\n\nTo cancel, reply "reset".',
 languageCode,
 requestId
 );
@@ -953,7 +589,7 @@ const batches = await getBatchRecords(shopId, product);
 if (batches.length === 0) {
 console.log(`[${requestId}] No recent purchase found for ${product}`);
 const errorMessage = await generateMultiLanguageResponse(
-`No recent purchase found for ${product}. Please make a purchase first.`,
+`No recent purchase found for ${product}. Please make a purchase first.\n\nTo cancel, reply "reset".`,
 languageCode,
 requestId
 );
@@ -968,7 +604,7 @@ const batchResult = await updateBatchExpiry(latestBatch.id, formattedExpiryDate)
 if (batchResult.success) {
 console.log(`[${requestId}] Successfully updated batch with expiry date`);
 const successMessage = await generateMultiLanguageResponse(
-`✅ Expiry date updated for ${product}: ${formatDateForDisplay(expiryDate)}`,
+`✅ Expiry date updated for ${product}: ${formatDateForDisplay(expiryDate)}.\n\nYou can now continue with inventory updates or reply "reset" to start over.`,
 languageCode,
 requestId
 );
@@ -976,7 +612,7 @@ response.message(successMessage);
 } else {
 console.error(`[${requestId}] Failed to update batch: ${batchResult.error}`);
 const errorMessage = await generateMultiLanguageResponse(
-`Error updating expiry date for ${product}. Please try again.`,
+`Error updating expiry date for ${product}. Please try again or reply "reset" to start over.`,
 languageCode,
 requestId
 );
@@ -985,7 +621,7 @@ response.message(errorMessage);
 } catch (error) {
 console.error(`[${requestId}] Error handling expiry date update:`, error.message);
 const errorMessage = await generateMultiLanguageResponse(
-'Error processing expiry date. Please try again.',
+'Error processing expiry date. Please try again or reply "reset" to start over.',
 languageCode,
 requestId
 );
@@ -1120,10 +756,36 @@ return product;
 return cleaned;
 }
 
-// Parse single update with improved product detection
+// Parse single update with improved product detection and unit handling - IMPROVED
 function parseSingleUpdate(transcript) {
+// Extract units first
+let unit = '';
+let unitMultiplier = 1;
+// Check for various units and their multipliers
+const units = {
+'kg': 1, 'किलो': 1, 'kilo': 1, 'kilogram': 1, 'kilograms': 1,
+'g': 0.001, 'gram': 0.001, 'grams': 0.001, 'ग्राम': 0.001,
+'l': 1, 'liter': 1, 'liters': 1, 'litre': 1, 'litres': 1, 'लीटर': 1,
+'ml': 0.001, 'milliliter': 0.001, 'milliliters': 0.001, 'millilitre': 0.001, 'millilitres': 0.001,
+'packet': 1, 'packets': 1, 'पैकेट': 1,
+'box': 1, 'boxes': 1, 'बॉक्स': 1,
+'piece': 1, 'pieces': 1, 'पीस': 1
+};
+for (const [u, multiplier] of Object.entries(units)) {
+if (transcript.toLowerCase().includes(u)) {
+unit = u;
+unitMultiplier = multiplier;
+break;
+}
+}
+// Remove units from transcript for product extraction
+let cleanedTranscript = transcript;
+if (unit) {
+// Remove unit and any number before it (as it's part of the quantity)
+cleanedTranscript = transcript.replace(new RegExp(`(\\d+)\\s*${unit}`, 'gi'), '');
+}
 // Try to extract product name more flexibly
-let product = extractProduct(transcript);
+let product = extractProduct(cleanedTranscript);
 // Support for multiple number formats (digits, English words, Hindi words)
 const numberWords = {
 // English
@@ -1154,6 +816,8 @@ break;
 }
 }
 }
+// Apply unit multiplier
+quantity = quantity * unitMultiplier;
 // Better action detection with priority for purchase/sold over remaining
 const isPurchase = /(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)/i.test(transcript);
 const isSold = /(बेचा|बेचे|becha|sold|बिक्री)/i.test(transcript);
@@ -1178,6 +842,7 @@ return {
 product,
 quantity: finalQuantity,
 action,
+unit,
 isKnown: products.some(p => product.toLowerCase().includes(p.toLowerCase()) ||
 p.toLowerCase().includes(product.toLowerCase()))
 };
@@ -1457,3 +1122,496 @@ console.error(`[${context}] Data:`, error.response.data);
 throw error;
 }
 }
+
+// Main WhatsApp handler - IMPROVED to handle reset commands and language switching
+module.exports = async (req, res) => {
+const response = new twilio.twiml.MessagingResponse();
+const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+try {
+if (req.method !== 'POST') {
+res.status(405).send('Method Not Allowed');
+return;
+}
+const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
+// Log the received values for debugging
+console.log(`[${requestId}] Received values:`, {
+NumMedia: typeof NumMedia,
+NumMediaValue: NumMedia,
+Body: typeof Body,
+BodyValue: Body
+});
+// Check for reset commands
+if (Body) {
+const lowerBody = Body.toLowerCase();
+if (resetCommands.some(cmd => lowerBody.includes(cmd))) {
+console.log(`[${requestId}] User requested to reset the flow`);
+// Clear conversation state
+if (global.conversationState && global.conversationState[From]) {
+delete global.conversationState[From];
+}
+// Clear pending transcriptions and product updates
+if (global.pendingTranscriptions && global.pendingTranscriptions[From]) {
+delete global.pendingTranscriptions[From];
+}
+if (global.pendingProductUpdates && global.pendingProductUpdates[From]) {
+delete global.pendingProductUpdates[From];
+}
+// Get user preference
+let userPreference = 'voice'; // Default to voice
+if (global.userPreferences[From]) {
+userPreference = global.userPreferences[From];
+}
+// Detect language for response
+let detectedLanguage = 'en';
+try {
+detectedLanguage = await detectLanguageWithFallback(Body, requestId);
+} catch (error) {
+console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+}
+const resetMessage = await generateMultiLanguageResponse(
+'Flow has been reset. How would you like to send your inventory update?',
+detectedLanguage,
+requestId
+);
+// Provide options based on user preference
+if (userPreference === 'voice') {
+const voiceMessage = await generateMultiLanguageResponse(
+'🎤 Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
+detectedLanguage,
+requestId
+);
+response.message(voiceMessage);
+} else {
+const textMessage = await generateMultiLanguageResponse(
+'📝 Please type your inventory update. Example: "10 Parle-G sold"',
+detectedLanguage,
+requestId
+);
+response.message(textMessage);
+}
+return res.send(response.toString());
+}
+}
+// Check for user preference
+let userPreference = 'voice'; // Default to voice
+if (global.userPreferences[From]) {
+userPreference = global.userPreferences[From];
+console.log(`[${requestId}] User preference: ${userPreference}`);
+}
+// Check conversation state
+let conversationState = null;
+if (global.conversationState && global.conversationState[From]) {
+conversationState = global.conversationState[From];
+console.log(`[${requestId}] Conversation state:`, conversationState);
+}
+// Handle button responses (if any)
+if (ButtonText) {
+console.log(`[${requestId}] Button clicked: ${ButtonText}`);
+// Store user preference
+if (!global.userPreferences) {
+global.userPreferences = {};
+}
+// Detect language for response
+let detectedLanguage = 'en';
+try {
+detectedLanguage = await detectLanguageWithFallback(ButtonText, requestId);
+} catch (error) {
+console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+}
+if (ButtonText === 'Voice Message' || ButtonText === 'voice_input') {
+global.userPreferences[From] = 'voice';
+const voiceMessage = await generateMultiLanguageResponse(
+'🎤 Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
+detectedLanguage,
+requestId
+);
+response.message(voiceMessage);
+} else if (ButtonText === 'Text Message' || ButtonText === 'text_input') {
+global.userPreferences[From] = 'text';
+const textMessage = await generateMultiLanguageResponse(
+'📝 Please type your inventory update. Example: "10 Parle-G sold"',
+detectedLanguage,
+requestId
+);
+response.message(textMessage);
+}
+return res.send(response.toString());
+}
+// Handle text-based selection responses
+if (Body && (Body === '1' || Body === '2' || Body.toLowerCase() === 'voice' || Body.toLowerCase() === 'text')) {
+console.log(`[${requestId}] Text-based selection: "${Body}"`);
+// Store user preference
+if (!global.userPreferences) {
+global.userPreferences = {};
+}
+// Detect language for response
+let detectedLanguage = 'en';
+try {
+detectedLanguage = await detectLanguageWithFallback(Body, requestId);
+} catch (error) {
+console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+}
+if (Body === '1' || Body.toLowerCase() === 'voice') {
+global.userPreferences[From] = 'voice';
+const voiceMessage = await generateMultiLanguageResponse(
+'🎤 Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
+detectedLanguage,
+requestId
+);
+response.message(voiceMessage);
+} else if (Body === '2' || Body.toLowerCase() === 'text') {
+global.userPreferences[From] = 'text';
+const textMessage = await generateMultiLanguageResponse(
+'📝 Please type your inventory update. Example: "10 Parle-G sold"',
+detectedLanguage,
+requestId
+);
+response.message(textMessage);
+}
+return res.send(response.toString());
+}
+// Handle input method switch commands
+if (Body) {
+const lowerBody = Body.toLowerCase();
+// Check for switch commands
+if (lowerBody.includes('switch to text') || lowerBody.includes('change to text') || lowerBody.includes('use text')) {
+console.log(`[${requestId}] User switching to text input`);
+// Store user preference
+if (!global.userPreferences) {
+global.userPreferences = {};
+}
+global.userPreferences[From] = 'text';
+// Detect language for response
+let detectedLanguage = 'en';
+try {
+detectedLanguage = await detectLanguageWithFallback(Body, requestId);
+} catch (error) {
+console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+}
+const switchMessage = await generateMultiLanguageResponse(
+'✅ Switched to text input. Please type your inventory update. Example: "10 Parle-G sold"',
+detectedLanguage,
+requestId
+);
+response.message(switchMessage);
+return res.send(response.toString());
+}
+if (lowerBody.includes('switch to voice') || lowerBody.includes('change to voice') || lowerBody.includes('use voice')) {
+console.log(`[${requestId}] User switching to voice input`);
+// Store user preference
+if (!global.userPreferences) {
+global.userPreferences = {};
+}
+global.userPreferences[From] = 'voice';
+// Detect language for response
+let detectedLanguage = 'en';
+try {
+detectedLanguage = await detectLanguageWithFallback(Body, requestId);
+} catch (error) {
+console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+}
+const switchMessage = await generateMultiLanguageResponse(
+'✅ Switched to voice input. Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
+detectedLanguage,
+requestId
+);
+response.message(switchMessage);
+return res.send(response.toString());
+}
+}
+// Handle confirmation responses
+if (Body && (Body.toLowerCase() === 'yes' || Body.toLowerCase() === 'no')) {
+console.log(`[${requestId}] Message appears to be a confirmation response: "${Body}"`);
+// Check for pending transcriptions
+if (global.pendingTranscriptions[From]) {
+const pending = global.pendingTranscriptions[From];
+if (Body.toLowerCase() === 'yes') {
+console.log(`[${requestId}] User confirmed transcription: "${pending.transcript}"`);
+await processConfirmedTranscription(
+pending.transcript,
+From,
+pending.detectedLanguage,
+requestId,
+response,
+res
+);
+delete global.pendingTranscriptions[From];
+return;
+} else {
+console.log(`[${requestId}] User rejected transcription`);
+const errorMessage = await generateMultiLanguageResponse(
+'Please try again with a clear voice message.',
+pending.detectedLanguage,
+requestId
+);
+response.message(errorMessage);
+delete global.pendingTranscriptions[From];
+return res.send(response.toString());
+}
+}
+// Check for pending product updates
+if (global.pendingProductUpdates && global.pendingProductUpdates[From]) {
+const pending = global.pendingProductUpdates[From];
+if (Body.toLowerCase() === 'yes') {
+console.log(`[${requestId}] User confirmed product update: "${pending.update.product}"`);
+// Process the confirmed update
+const shopId = From.replace('whatsapp:', '');
+const results = await updateMultipleInventory(shopId, [pending.update], pending.detectedLanguage);
+let message = '✅ Update processed:\n\n';
+let successCount = 0;
+let hasSales = false;
+for (const result of results) {
+if (result.success) {
+successCount++;
+message += `• ${result.product}: ${result.quantity > 0 ? '+' : ''}${result.quantity} (Stock: ${result.newQuantity})\n`;
+if (result.quantity > 0 && result.batchDate) {
+message += ` Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
+}
+if (result.quantity < 0) {
+hasSales = true;
+}
+} else {
+message += `• ${result.product}: Error - ${result.error}\n`;
+}
+}
+message += `\n✅ Successfully updated ${successCount} of 1 item`;
+if (hasSales) {
+message += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
+// Set conversation state to await batch selection
+if (!global.conversationState) {
+global.conversationState = {};
+}
+global.conversationState[From] = {
+state: 'awaiting_batch_selection',
+language: pending.detectedLanguage
+};
+}
+// Add switch option in completion messages
+message += `\n\nTo switch input method, reply "switch to text" or "switch to voice".`;
+// Add reset option
+message += `\nTo reset the flow, reply "reset".`;
+const formattedResponse = await generateMultiLanguageResponse(message, pending.detectedLanguage, requestId);
+response.message(formattedResponse);
+delete global.pendingProductUpdates[From];
+return res.send(response.toString());
+} else {
+console.log(`[${requestId}] User rejected product update`);
+const errorMessage = await generateMultiLanguageResponse(
+'Please try again with a clear message.',
+pending.detectedLanguage,
+requestId
+);
+response.message(errorMessage);
+delete global.pendingProductUpdates[From];
+return res.send(response.toString());
+}
+}
+}
+// Handle text messages
+if (Body && (NumMedia === '0' || NumMedia === 0 || !NumMedia)) {
+console.log(`[${requestId}] [1] Processing text message: "${Body}"`);
+// Check for common greetings
+const greetings = {
+'hi': ['hello', 'hi', 'hey', 'नमस्ते', 'नमस्कार', 'हाय'],
+'ta': ['vanakkam', 'வணக்கம்'],
+'te': ['నమస్కారం', 'హలో'],
+'kn': ['ನಮಸ್ಕಾರ', 'ಹಲೋ'],
+'bn': ['নমস্কার', 'হ্যালো'],
+'gu': ['નમસ્તે', 'હેલો'],
+'mr': ['नमस्कार', 'हॅलो'],
+'en': ['hello', 'hi', 'hey']
+};
+const lowerBody = Body.toLowerCase();
+let isGreeting = false;
+let greetingLang = 'en';
+for (const [lang, greetingList] of Object.entries(greetings)) {
+if (greetingList.some(g => lowerBody.includes(g))) {
+isGreeting = true;
+greetingLang = lang;
+break;
+}
+}
+if (isGreeting) {
+console.log(`[${requestId}] Detected greeting in language: ${greetingLang}`);
+// Reset conversation state on greeting
+if (global.conversationState && global.conversationState[From]) {
+delete global.conversationState[From];
+}
+// Save user preference
+const shopId = From.replace('whatsapp:', ');
+await saveUserPreference(shopId, greetingLang);
+if (userPreference !== 'voice') {
+const preferenceMessage = await generateMultiLanguageResponse(
+`Welcome! I see you prefer to send updates by ${userPreference}. How can I help you today?`,
+greetingLang,
+requestId
+);
+response.message(preferenceMessage);
+return res.send(response.toString());
+}
+// Use text-based selection instead of buttons for broader compatibility
+const welcomeMessage = await generateMultiLanguageResponse(
+'Welcome! How would you like to send your inventory update?\n\nReply:\n• "1" for Voice Message\n• "2" for Text Message',
+greetingLang,
+requestId
+);
+response.message(welcomeMessage);
+return res.send(response.toString());
+}
+// Check if we're awaiting batch selection
+if (conversationState && conversationState.state === 'awaiting_batch_selection') {
+console.log(`[${requestId}] Awaiting batch selection response`);
+await handleBatchSelectionResponse(Body, From, response, requestId, conversationState.language);
+return res.send(response.toString());
+}
+// Check for batch selection or expiry date updates
+if (isBatchSelectionResponse(Body)) {
+console.log(`[${requestId}] Message appears to be a batch selection response`);
+await handleBatchSelectionResponse(Body, From, response, requestId, conversationState ? conversationState.language : 'en');
+}
+else if (isExpiryDateUpdate(Body)) {
+console.log(`[${requestId}] Message appears to be an expiry date update`);
+await handleExpiryDateUpdate(Body, From, response, requestId, conversationState ? conversationState.language : 'en');
+}
+else {
+console.log(`[${requestId}] Message does not appear to be a batch selection or expiry date update`);
+let detectedLanguage = conversationState ? conversationState.language : 'en';
+try {
+detectedLanguage = await detectLanguageWithFallback(Body, requestId);
+console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
+} catch (error) {
+console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+detectedLanguage = 'en';
+}
+// Try to parse as inventory update
+const updates = parseMultipleUpdates(Body);
+if (updates.length > 0) {
+console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
+// Check if any updates are for unknown products
+const unknownProducts = updates.filter(u => !u.isKnown);
+if (unknownProducts.length > 0) {
+console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
+// Confirm the first unknown product
+await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
+return res.send(response.toString());
+}
+await processConfirmedTranscription(
+Body,
+From,
+detectedLanguage,
+requestId,
+response,
+res
+);
+return;
+} else {
+const defaultMessage = await generateMultiLanguageResponse(
+userPreference === 'voice'
+? '🎤 Send inventory update: "10 Parle-G sold". For batch tracking, you can specify expiry date like: "5kg sugar purchased, expiry 15/12/2023".\n\nTo switch to text input, reply "switch to text".\nTo reset the flow, reply "reset".'
+: '📝 Type your inventory update: "10 Parle-G sold". For batch tracking, you can specify expiry date like: "5kg sugar purchased, expiry 15/12/2023".\n\nTo switch to voice input, reply "switch to voice".\nTo reset the flow, reply "reset".',
+detectedLanguage,
+requestId
+);
+response.message(defaultMessage);
+}
+}
+return res.send(response.toString());
+}
+// Handle voice messages
+if (NumMedia && MediaUrl0 && (NumMedia !== '0' && NumMedia !== 0)) {
+console.log(`[${requestId}] [1] Downloading audio...`);
+const audioBuffer = await downloadAudio(MediaUrl0);
+console.log(`[${requestId}] [2] Converting audio...`);
+const flacBuffer = await convertToFLAC(audioBuffer);
+console.log(`[${requestId}] [3] Transcribing with Google STT...`);
+const transcriptionResult = await googleTranscribe(flacBuffer, requestId);
+const rawTranscript = transcriptionResult.transcript;
+const confidence = transcriptionResult.confidence;
+console.log(`[${requestId}] [4] Validating transcript...`);
+const cleanTranscript = await validateTranscript(rawTranscript, requestId);
+console.log(`[${requestId}] [5] Detecting language...`);
+const detectedLanguage = await detectLanguageWithFallback(cleanTranscript, requestId);
+// Save user preference
+const shopId = From.replace('whatsapp:', ');
+await saveUserPreference(shopId, detectedLanguage);
+// Check if we're awaiting batch selection
+if (conversationState && conversationState.state === 'awaiting_batch_selection') {
+console.log(`[${requestId}] Awaiting batch selection response from voice`);
+// Check if the transcript contains batch selection keywords
+if (isBatchSelectionResponse(cleanTranscript)) {
+await handleBatchSelectionResponse(cleanTranscript, From, response, requestId, conversationState.language);
+return res.send(response.toString());
+}
+}
+// Confidence-based confirmation
+const CONFIDENCE_THRESHOLD = 0.8;
+if (confidence < CONFIDENCE_THRESHOLD) {
+console.log(`[${requestId}] [5.5] Low confidence (${confidence}), requesting confirmation...`);
+const confirmationResponse = await confirmTranscription(cleanTranscript, From, detectedLanguage, requestId);
+return res.send(confirmationResponse);
+} else {
+console.log(`[${requestId}] [5.5] High confidence (${confidence}), proceeding without confirmation...`);
+// Parse the transcript
+const updates = parseMultipleUpdates(cleanTranscript);
+// Check if any updates are for unknown products
+const unknownProducts = updates.filter(u => !u.isKnown);
+if (unknownProducts.length > 0) {
+console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
+// Confirm the first unknown product
+await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
+return res.send(response.toString());
+}
+await processConfirmedTranscription(
+cleanTranscript,
+From,
+detectedLanguage,
+requestId,
+response,
+res
+);
+return;
+}
+}
+else if (SpeechResult) {
+console.log(`[${requestId}] [1] Using Twilio transcription`);
+response.message(`🔊 (Twilio): "${SpeechResult}"`);
+}
+else {
+console.log(`[${requestId}] [1] No media received`);
+let detectedLanguage = conversationState ? conversationState.language : 'en';
+try {
+detectedLanguage = await detectLanguageWithFallback(Body || "", requestId);
+console.log(`[${requestId}] Detected language for welcome message: ${detectedLanguage}`);
+} catch (error) {
+console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
+detectedLanguage = 'en';
+}
+let welcomeMessage;
+if (userPreference === 'voice') {
+welcomeMessage = await generateMultiLanguageResponse(
+'🎤 Send inventory update: "10 Parle-G sold". For batch tracking, you can specify expiry date like: "5kg sugar purchased, expiry 15/12/2023".\n\nTo switch to text input, reply "switch to text".\nTo reset the flow, reply "reset".',
+detectedLanguage,
+requestId
+);
+} else {
+welcomeMessage = await generateMultiLanguageResponse(
+'📝 Type your inventory update: "10 Parle-G sold". For batch tracking, you can specify expiry date like: "5kg sugar purchased, expiry 15/12/2023".\n\nTo switch to voice input, reply "switch to voice".\nTo reset the flow, reply "reset".',
+detectedLanguage,
+requestId
+);
+}
+response.message(welcomeMessage);
+}
+} catch (error) {
+console.error(`[${requestId}] Processing Error:`, error.message);
+const errorMessage = await generateMultiLanguageResponse(
+'System error. Please try again with a clear voice message.',
+'en',
+requestId
+);
+response.message(errorMessage);
+}
+console.log(`[${requestId}] Sending TwiML response`);
+res.setHeader('Content-Type', 'text/xml');
+res.send(response.toString());
+};
