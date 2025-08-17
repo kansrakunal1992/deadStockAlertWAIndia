@@ -348,36 +348,50 @@ error: error.message
 return results;
 }
 
-// Function to check if a message is a batch selection response
+// IMPROVED Function to check if a message is a batch selection response
 function isBatchSelectionResponse(message) {
-const batchSelectionKeywords = ['oldest', 'newest', 'batch', 'expiry'];
 const lowerMessage = message.toLowerCase();
+// Only check for batch selection if we're in the awaiting_batch_selection state
+// This prevents regular messages from being treated as batch selection
+if (!global.conversationState || !global.conversationState[message.from] || 
+    global.conversationState[message.from].state !== 'awaiting_batch_selection') {
+    return false;
+}
+// Check for explicit batch selection keywords
+const batchSelectionKeywords = ['oldest', 'newest', 'batch', 'expiry'];
 for (const keyword of batchSelectionKeywords) {
-if (lowerMessage.includes(keyword)) {
-return true;
+    if (lowerMessage.includes(keyword)) {
+        return true;
+    }
 }
-}
-if (lowerMessage.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/)) {
-return true;
-}
-if (lowerMessage.match(/\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}/i)) {
-return true;
+// Check for date patterns only if batch-related keywords are present
+if (lowerMessage.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/) || 
+    lowerMessage.match(/\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}/i)) {
+    return true;
 }
 return false;
 }
 
-// Function to check if a message is an expiry date update
+// IMPROVED Function to check if a message is an expiry date update
 function isExpiryDateUpdate(message) {
-const products = [
-'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
-'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata',
-'flour', 'आटा', 'sugar', 'चीनी', 'packets', 'पैकेट',
-'potato', 'आलू', 'onion', 'प्याज', 'tomato', 'टमाटर'
-];
-for (const product of products) {
-if (message.toLowerCase().includes(product.toLowerCase())) {
-return true;
+const lowerMessage = message.toLowerCase();
+// Only check for expiry date updates if we're in the awaiting_batch_selection state
+// This prevents regular messages from being treated as expiry date updates
+if (!global.conversationState || !global.conversationState[message.from] || 
+    global.conversationState[message.from].state !== 'awaiting_batch_selection') {
+    return false;
 }
+// Check for explicit expiry update patterns
+const expiryPatterns = [
+    /expiry\s*\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/i,
+    /expiry\s*\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}/i,
+    /\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\s*expiry/i,
+    /\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4}\s*expiry/i
+];
+for (const pattern of expiryPatterns) {
+    if (pattern.test(lowerMessage)) {
+        return true;
+    }
 }
 return false;
 }
@@ -1464,17 +1478,8 @@ console.log(`[${requestId}] Awaiting batch selection response`);
 await handleBatchSelectionResponse(Body, From, response, requestId, conversationState.language);
 return res.send(response.toString());
 }
-// Check for batch selection or expiry date updates
-if (isBatchSelectionResponse(Body)) {
-console.log(`[${requestId}] Message appears to be a batch selection response`);
-await handleBatchSelectionResponse(Body, From, response, requestId, conversationState ? conversationState.language : 'en');
-}
-else if (isExpiryDateUpdate(Body)) {
-console.log(`[${requestId}] Message appears to be an expiry date update`);
-await handleExpiryDateUpdate(Body, From, response, requestId, conversationState ? conversationState.language : 'en');
-}
-else {
-console.log(`[${requestId}] Message does not appear to be a batch selection or expiry date update`);
+// IMPROVED: Try to parse as inventory update first, then check for specialized operations
+console.log(`[${requestId}] Attempting to parse as inventory update first`);
 let detectedLanguage = conversationState ? conversationState.language : 'en';
 try {
 detectedLanguage = await detectLanguageWithFallback(Body, requestId);
@@ -1495,6 +1500,7 @@ console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, re
 await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
 return res.send(response.toString());
 }
+// Process as inventory update
 await processConfirmedTranscription(
 Body,
 From,
@@ -1504,7 +1510,23 @@ response,
 res
 );
 return;
-} else {
+}
+// If not a valid inventory update, then check for specialized operations
+console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
+// Check for batch selection or expiry date updates only if we're in the awaiting_batch_selection state
+if (conversationState && conversationState.state === 'awaiting_batch_selection') {
+if (isBatchSelectionResponse(Body)) {
+console.log(`[${requestId}] Message appears to be a batch selection response`);
+await handleBatchSelectionResponse(Body, From, response, requestId, conversationState.language);
+return res.send(response.toString());
+}
+if (isExpiryDateUpdate(Body)) {
+console.log(`[${requestId}] Message appears to be an expiry date update`);
+await handleExpiryDateUpdate(Body, From, response, requestId, conversationState.language);
+return res.send(response.toString());
+}
+}
+// If we get here, it's not a valid inventory update and not a specialized operation
 const defaultMessage = await generateMultiLanguageResponse(
 userPreference === 'voice'
 ? '🎤 Send inventory update: "10 Parle-G sold". For batch tracking, you can specify expiry date like: "5kg sugar purchased, expiry 15/12/2023".\n\nTo switch to text input, reply "switch to text".\nTo reset the flow, reply "reset".'
@@ -1513,8 +1535,6 @@ detectedLanguage,
 requestId
 );
 response.message(defaultMessage);
-}
-}
 return res.send(response.toString());
 }
 // Handle voice messages
