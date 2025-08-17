@@ -371,7 +371,7 @@ return false;
 }
 }
 
-// Save user preference to Airtable
+// Save user preference to Airtable - FIXED for LastUpdated field
 async function saveUserPreference(shopId, language) {
 const context = `Save User Preference ${shopId}`;
 try {
@@ -382,13 +382,16 @@ method: 'get',
 params: { filterByFormula: filterFormula }
 }, `${context} - Find`);
 
+// Format date for Airtable (YYYY-MM-DDTHH:mm:ss.sssZ)
+const now = new Date().toISOString();
+
 if (findResult.records.length > 0) {
 // Update existing record
 const recordId = findResult.records[0].id;
 const updateData = {
 fields: {
 Language: language,
-LastUpdated: new Date().toISOString()
+LastUpdated: now
 }
 };
 await airtableUserPreferencesRequest({
@@ -402,7 +405,7 @@ const createData = {
 fields: {
 ShopID: shopId,
 Language: language,
-LastUpdated: new Date().toISOString()
+LastUpdated: now
 }
 };
 await airtableUserPreferencesRequest({
