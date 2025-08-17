@@ -1438,7 +1438,7 @@ if (global.conversationState && global.conversationState[From]) {
 delete global.conversationState[From];
 }
 // Save user preference
-const shopId = From.replace('whatsapp:', ');
+const shopId = From.replace('whatsapp:', '');
 await saveUserPreference(shopId, greetingLang);
 if (userPreference !== 'voice') {
 const preferenceMessage = await generateMultiLanguageResponse(
@@ -1532,7 +1532,7 @@ const cleanTranscript = await validateTranscript(rawTranscript, requestId);
 console.log(`[${requestId}] [5] Detecting language...`);
 const detectedLanguage = await detectLanguageWithFallback(cleanTranscript, requestId);
 // Save user preference
-const shopId = From.replace('whatsapp:', ');
+const shopId = From.replace('whatsapp:', '');
 await saveUserPreference(shopId, detectedLanguage);
 // Check if we're awaiting batch selection
 if (conversationState && conversationState.state === 'awaiting_batch_selection') {
