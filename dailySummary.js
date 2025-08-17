@@ -124,7 +124,7 @@ throw error;
 }
 }
 
-// Main function to run daily summary
+// Main function to run daily summary - IMPROVED to use user's preferred language
 async function runDailySummary() {
 try {
 console.log('Starting daily summary job...');
