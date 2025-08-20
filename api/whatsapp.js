@@ -1924,7 +1924,7 @@ async function processTextMessageAsync(body, from, requestId, conversationState)
       }
       
       // Process the confirmed updates
-      const shopId = from.replace('whatsapp:', ');
+      const shopId = from.replace('whatsapp:','');
       const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
       
       let message = '✅ Updates processed:\n\n';
