@@ -373,7 +373,7 @@ Return only valid JSON with no additional text, markdown formatting, or code blo
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 5000 // Add timeout
+        timeout: 10000 // Increased timeout
       }
     );
     
@@ -724,6 +724,17 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
       return message;
     }
     
+    // Check cache first
+    const cacheKey = `${languageCode}:${message.substring(0, 50)}`;
+    const cached = languageCache.get(cacheKey);
+    
+    if (cached && (Date.now() - cached.timestamp < LANGUAGE_CACHE_TTL)) {
+      console.log(`[${requestId}] Using cached translation for ${languageCode}`);
+      return cached.translation;
+    }
+    
+    console.log(`[${requestId}] Translating to ${languageCode}: "${message}"`);
+    
     const response = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -732,7 +743,6 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
           {
             role: "system",
             content: `You are a multilingual assistant. Translate the given message to the target language and provide it in two formats:
-            
 Format your response exactly as:
 Line 1: Translation in native script (e.g., Devanagari for Hindi)
 Empty line
@@ -755,12 +765,12 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 5000 // Add timeout
+        timeout: 10000 // Increased to 10 seconds
       }
     );
     
     let translated = response.data.choices[0].message.content.trim();
-    console.log(`[${requestId}] Raw multilingual response:`, translated);
+    console.log(`[${requestId}] Raw translation response:`, translated);
     
     // Post-process to remove any labels that might have been included
     translated = translated.replace(/<translation in roman script>/gi, '');
@@ -778,10 +788,66 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
     translated = translated.replace(/\n\s*\n\s*\n/g, '\n\n');
     translated = translated.replace(/^\s+|\s+$/g, '');
     
-    console.log(`[${requestId}] Cleaned multilingual response:`, translated);
+    // Cache the result
+    languageCache.set(cacheKey, { 
+      translation: translated, 
+      timestamp: Date.now() 
+    });
+    
+    console.log(`[${requestId}] Successfully translated to ${languageCode}`);
     return translated;
   } catch (error) {
-    console.warn(`[${requestId}] Translation failed, using original:`, error.message);
+    console.warn(`[${requestId}] Translation failed for ${languageCode}:`, error.message);
+    
+    // Fallback strategies:
+    // 1. For common greetings, use predefined translations with both scripts
+    const commonGreetings = {
+      'hi': {
+        native: 'नमस्ते',
+        roman: 'Namaste'
+      },
+      'bn': {
+        native: 'হ্যালো',
+        roman: 'Hello'
+      },
+      'ta': {
+        native: 'வணக்கம்',
+        roman: 'Vanakkam'
+      },
+      'te': {
+        native: 'నమస్కారం',
+        roman: 'Namaskaram'
+      },
+      'kn': {
+        native: 'ನಮಸ್ಕಾರ',
+        roman: 'Namaskara'
+      },
+      'gu': {
+        native: 'નમસ્તે',
+        roman: 'Namaste'
+      },
+      'mr': {
+        native: 'नमस्कार',
+        roman: 'Namaskar'
+      },
+      'en': {
+        native: 'Hello',
+        roman: 'Hello'
+      }
+    };
+    
+    // Check if this is a common greeting
+    const lowerMessage = message.toLowerCase();
+    if (lowerMessage.includes('hello') || lowerMessage.includes('hi') || lowerMessage.includes('hey') || 
+        lowerMessage.includes('नमस्ते') || lowerMessage.includes('হ্যালো') || lowerMessage.includes('வணக்கம்')) {
+      const greeting = commonGreetings[languageCode] || commonGreetings['en'];
+      const fallback = `${greeting.native}\n\n${greeting.roman}`;
+      console.log(`[${requestId}] Using fallback greeting for ${languageCode}:`, fallback);
+      return fallback;
+    }
+    
+    // 2. For other messages, return the original with a note
+    console.log(`[${requestId}] Using original message for ${languageCode}`);
     return message;
   }
 }
@@ -1460,7 +1526,8 @@ async function sendMessageViaAPI(to, body) {
     const message = await client.messages.create({
       body: body,
       from: process.env.TWILIO_WHATSAPP_NUMBER,
-      to: formattedTo
+      to: formattedTo,
+      timeout: 10000 // 10 second timeout
     });
     
     console.log(`Message sent successfully via API. SID: ${message.sid}`);
@@ -1977,20 +2044,25 @@ module.exports = async (req, res) => {
     if (Body && (NumMedia === '0' || NumMedia === 0 || !NumMedia)) {
       console.log(`[${requestId}] [1] Processing text message: "${Body}"`);
       
-      // Check for common greetings
+      // Check for common greetings with optimized detection
       const lowerBody = Body.toLowerCase();
       let isGreeting = false;
       let greetingLang = 'en';
       
-      for (const [lang, greetingList] of Object.entries(greetings)) {
-        if (greetingList.some(g => lowerBody.includes(g))) {
-          isGreeting = true;
-          greetingLang = lang;
-          break;
-        }
-      }
+      // Quick check for common greetings in any language
+      const quickGreetings = ['hello', 'hi', 'hey', 'नमस्ते', 'হ্যালো', 'வணக்கம்', 'నమస్కారం', 'ನಮಸ್ಕಾರ', 'નમસ્તે', 'नमस्कार'];
       
-      if (isGreeting) {
+      if (quickGreetings.some(g => lowerBody.includes(g))) {
+        isGreeting = true;
+        
+        // Determine specific language
+        for (const [lang, greetingList] of Object.entries(greetings)) {
+          if (greetingList.some(g => lowerBody.includes(g))) {
+            greetingLang = lang;
+            break;
+          }
+        }
+        
         console.log(`[${requestId}] Detected greeting in language: ${greetingLang}`);
         
         // Reset conversation state on greeting
@@ -2003,24 +2075,39 @@ module.exports = async (req, res) => {
         await saveUserPreference(shopId, greetingLang);
         console.log(`[${requestId}] Saved language preference: ${greetingLang} for user ${shopId}`);
         
+        // Use predefined greeting messages to avoid translation API calls
+        const greetingMessages = {
+          'hi': `नमस्ते! मैं देखता हूं कि आप ${userPreference} द्वारा अपडेट भेजना पसंद करते हैं। आज मैं आपकी कैसे मदद कर सकता हूं?\n\nNamaste! Main dekhta hoon ki aap ${userPreference} dwara update bhejna pasand karte hain. Aaj main aapki kaise madad kar sakta hoon?`,
+          'bn': `হ্যালো! আমি দেখতে পাচ্ছি আপনি ${userPreference} দিয়ে আপডেট পাঠাতে পছন্দ করেন। আজ আমি আপনাকে কিভাবে সাহায্য করতে পারি?\n\nHello! Ami dekhte pachchi apni ${userPreference} diye update pathate pochondo koren. Aaj ami apnake kivabe sahaj korte pari?`,
+          'ta': `வணக்கம்! நான் பார்க்கிறேன் நீங்கள் ${userPreference} மூலம் புதுப்பிப்புகளை அனுப்புவதை விரும்புகிறீர்கள். இன்று நான் உங்களுக்கு எப்படி உதவ முடியும்?\n\nVanakkam! Naan paarkiren neengal ${userPreference} mulam puthippugalai anupuvathai virumbukireergal. Indru naan ungaluku eppadi utha mudiyum?`,
+          'te': `నమస్కారం! నేను చూస్తున్నాను మీరు ${userPreference} ద్వారా నవీకరణలను పంపించడాన్ని ఇష్టపడతారు. నేడు నేను మీకు ఎలా సహాయపడగలను?\n\nNamaskaram! Nenu chustunnanu miru ${userPreference} dwara naveekaralanu pampinchadanni istapadaru. Nedu nenu meeku ela saahayapadagalanu?`,
+          'kn': `ನಮಸ್ಕಾರ! ನಾನು ನೋಡುತ್ತಿದ್ದೇನೆ ನೀವು ${userPreference} ಮೂಲಕ ನವೀಕರಣಗಳನ್ನು ಕಳುಹಿಸಲು ಇಷ್ಟಪಡುತ್ತೀರಿ. ಇಂದು ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?\n\nNamaskara! Nanu noduttiddene neevu ${userPreference} moolaka naveekaragannannu kelisu ishtaputtiri. Indu nanu nimage hege saahya madabahudu?`,
+          'gu': `નમસ્તે! હું જોઉં છું કે તમે ${userPreference} દ્વારા અપડેટ્સ મોકલવાનું પસંદ કરો છો. આજે હું તમને કેવી રીતે મદદ કરી શકું?\n\nNamaste! Hu joo chu ke tame ${userPreference} dwara apdets moklavanu pasand karo cho. Aje hu tamne kavi rite madad kar shakum?`,
+          'mr': `नमस्कार! मी पाहतो आपण ${userPreference} द्वारे अपडेट्स पाठवायला पसंत करता. आज मी तुम्हाला कशी मदत करू शकतो?\n\nNamaskar! Mi pahato aapan ${userPreference} dwara apdets pathavayala pasand karta. Aaj mi tumhala kashi madad karu shakto?`,
+          'en': `Hello! I see you prefer to send updates by ${userPreference}. How can I help you today?`
+        };
+        
         if (userPreference !== 'voice') {
-          const preferenceMessage = await generateMultiLanguageResponse(
-            `Welcome! I see you prefer to send updates by ${userPreference}. How can I help you today?`,
-            greetingLang,
-            requestId
-          );
-          response.message(preferenceMessage);
+          const greetingMessage = greetingMessages[greetingLang] || greetingMessages['en'];
+          response.message(greetingMessage);
           
           trackResponseTime(requestStart, requestId);
           return res.send(response.toString());
         }
         
         // Use text-based selection instead of buttons for broader compatibility
-        const welcomeMessage = await generateMultiLanguageResponse(
-          'Welcome! How would you like to send your inventory update?\n\nReply:\n• "1" for Voice Message\n• "2" for Text Message',
-          greetingLang,
-          requestId
-        );
+        const welcomeMessages = {
+          'hi': `नमस्ते! आप अपना इन्वेंट्री अपडेट कैसे भेजना चाहेंगे?\n\nजवाब दें:\n• "1" वॉइस मैसेज के लिए\n• "2" टेक्स्ट मैसेज के लिए\n\nNamaste! Aap apna inventory update kaise bhejna chaahenge?\n\nJawaab dein:\n• "1" voice message ke liye\n• "2" text message ke liye`,
+          'bn': `স্বাগতম! আপনি কিভাবে আপনার ইনভেন্টরি আপডেট পাঠাতে চান?\n\nউত্তর দিন:\n• "1" ভয়েস মেসেজের জন্য\n• "2" টেক্সট মেসেজের জন্য\n\nSwagatam! Apni kivabe apnar inventory update pathate chan?\n\nUttor din:\n• "1" voice message er jonno\n• "2" text message er jonno`,
+          'ta': `வணக்கம்! நீங்கள் உங்கள் இன்வென்டரி புதுப்பிப்பை எப்படி அனுப்ப விரும்புகிறீர்கள்?\n\nபதிலளிக்கவும்:\n• "1" குரல் செய்திக்கு\n• "2" உரை செய்திக்கு\n\nVanakkam! Neengal ungal inventory puthippai eppadi anpu virumbukireergal?\n\nBadhilikavum:\n• "1" kural seithikku\n• "2"urai seithikku`,
+          'te': `నమస్కారం! మీరు మీ ఇన్వెంటరీ నవీకరణను ఎలా పంపాలనుకుంటున్నారు?\n\nస్పందించండి:\n• "1" వాయిస్ సందేశం కోసం\n• "2" టెక్స్ట్ సందేశం కోసం\n\nNamaskaram! Meeru mee inventory naveekaranam ela paalana kosamee?\n\nSpandinchandi:\n• "1" voice message kosam\n• "2" text message kosam`,
+          'kn': `ನಮಸ್ಕಾರ! ನೀವು ನಿಮ್ಮ ಇನ್ವೆಂಟರಿ ಅಪ್‌ಡೇಟ್ ಅನ್ನು ಹೇಗೆ ಕಳುಹಿಸಲು ಬಯಸುತ್ತೀರಿ?\n\n ಪ್ರತಿಕ್ರಿಯಿಸಿ:\n• "1" ಧ್ವನಿ ಸಂದೇಶಕ್ಕಾಗಿ\n• "2" ಪಠ್ಯ ಸಂದೇಶಕ್ಕಾಗಿ\n\nNamaskara! Neevu nimma inventory update annahege kelisu baaasuttiri?\n\nPratikriyisi:\n• "1" dhwani sandeshakkaagi\n• "2" patya sandeshakkaagi`,
+          'gu': `નમસ્તે! તમે તમારું ઇન્વેન્ટરી અપડેટ કેવી રીતે મોકલવા માંગો છો?\n\n જવાબ આપો:\n• "1" વોઇસ મેસેજ માટે\n• "2" ટેક્સ્ટ મેસેજ માટે\n\nNamaste! Tame tamaru inventory update kevi rite moklava mango cho?\n\nJawaab aapo:\n• "1" voice message maate\n• "2" text message maate`,
+          'mr': `नमस्कार! तुम्ही तुमचे इन्व्हेन्टरी अपडेट कसे पाठवायला इच्छिता?\n\n उत्तर द्या:\n• "1" व्हॉइस मेसेज साठी\n• "2" मजकूर मेसेज साठी\n\nNamaskar! Tumhi tumche inventory update kase pathavayla ichhita?\n\nUttar dya:\n• "1" voice message sathi\n• "2" majkur message sathi`,
+          'en': `Welcome! How would you like to send your inventory update?\n\nReply:\n• "1" for Voice Message\n• "2" for Text Message`
+        };
+        
+        const welcomeMessage = welcomeMessages[greetingLang] || welcomeMessages['en'];
         response.message(welcomeMessage);
         
         trackResponseTime(requestStart, requestId);
