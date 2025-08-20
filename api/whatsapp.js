@@ -15,11 +15,41 @@ const {
   updateBatchQuantity
 } = require('../database');
 
-// Global storage for user preferences, pending transcriptions, and conversation state
-global.userPreferences = {};
-global.pendingTranscriptions = {};
-global.pendingProductUpdates = {};
-global.conversationState = {};
+// Performance tracking
+const responseTimes = {
+  total: 0,
+  count: 0,
+  max: 0
+};
+
+// Cache implementations
+const languageCache = new Map();
+const productMatchCache = new Map();
+const inventoryCache = new Map();
+
+// Cache TTL values
+const LANGUAGE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const INVENTORY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const PRODUCT_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+// Precompiled regex patterns for better performance
+const regexPatterns = {
+  purchaseKeywords: /(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)/gi,
+  salesKeywords: /(बेचा|बेचे|becha|sold|बिक्री)/gi,
+  remainingKeywords: /(बचा|बचे|बाकी|remaining|left)/gi,
+  dateFormats: /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})|(\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4})/gi,
+  digits: /(\d+|[०-९]+)/i,
+  resetCommands: /(reset|start over|restart|cancel|exit|stop)/gi
+};
+
+// Global storage with cleanup mechanism
+const globalState = {
+  userPreferences: {},
+  pendingTranscriptions: {},
+  pendingProductUpdates: {},
+  conversationState: {},
+  lastCleanup: Date.now()
+};
 
 // Reset commands to allow users to exit any flow
 const resetCommands = ['reset', 'start over', 'restart', 'cancel', 'exit', 'stop'];
@@ -49,6 +79,58 @@ const products = [
   'packets', 'पैकेट', 'boxes', 'बॉक्स', 'bags', 'बैग्स',
   'biscuits', 'बिस्कुट', 'chips', 'soap', 'साबुन', 'detergent', 'डिटर्जेंट'
 ];
+
+// Number words mapping
+const numberWords = {
+  // English
+  'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6,
+  'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12,
+  'thirteen': 13, 'fourteen': 14, 'fifteen': 15, 'sixteen': 16, 'seventeen': 17,
+  'eighteen': 18, 'nineteen': 19, 'twenty': 20, 'thirty': 30, 'forty': 40,
+  'fifty': 50, 'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90, 'hundred': 100,
+  // Hindi
+  'एक': 1, 'दो': 2, 'तीन': 3, 'चार': 4, 'पांच': 5, 'छह': 6,
+  'सात': 7, 'आठ': 8, 'नौ': 9, 'दस': 10, 'ग्यारह': 11, 'बारह': 12,
+  'तेरह': 13, 'चौदह': 14, 'पंद्रह': 15, 'सोलह': 16, 'सत्रह': 17,
+  'अठारह': 18, 'उन्नीस': 19, 'बीस': 20, 'तीस': 30, 'चालीस': 40,
+  'पचास': 50, 'साठ': 60, 'सत्तर': 70, 'अस्सी': 80, 'नब्बे': 90, 'सौ': 100,
+  // Special case: "सो" means 100 in Hindi when referring to quantity
+  'सो': 100,
+  // Hindi numerals (Devanagari digits)
+  '०': 0, '१': 1, '२': 2, '३': 3, '४': 4, '५': 5, '६': 6, '७': 7, '८': 8, '९': 9,
+  '१०': 10, '११': 11, '१२': 12, '१३': 13, '१४': 14, '१५': 15, '१६': 16
+};
+
+// Units mapping
+const units = {
+  'packets': 1, 'पैकेट': 1,
+  'boxes': 1, 'बॉक्स': 1,
+  'kg': 1, 'किलो': 1, 'kilo': 1, 'kilogram': 1, 'kilograms': 1,
+  'g': 0.001, 'gram': 0.001, 'grams': 0.001, 'ग्राम': 0.001,
+  'liters': 1, 'लीटर': 1, 'litre': 1, 'litres': 1,
+  'ml': 0.001, 'milliliter': 0.001, 'milliliters': 0.001, 'millilitre': 0.001, 'millilitres': 0.001,
+  'pieces': 1, 'पीस': 1
+};
+
+// Greetings mapping by language
+const greetings = {
+  'hi': ['hello', 'hi', 'hey', 'नमस्ते', 'नमस्कार', 'हाय'],
+  'ta': ['vanakkam', 'வணக்கம்'],
+  'te': ['నమస్కారం', 'హలో'],
+  'kn': ['ನಮಸ್ಕಾರ', 'ಹಲೋ'],
+  'bn': ['নমস্কার', 'হ্যালো'],
+  'gu': ['નમસ્તે', 'હેલો'],
+  'mr': ['नमस्कार', 'हॅलो'],
+  'en': ['hello', 'hi', 'hey'],
+  'fr': ['salut', 'bonjour', 'allo'],
+  'es': ['hola', 'buenos dias'],
+  'de': ['hallo', 'guten tag'],
+  'it': ['ciao', 'buongiorno'],
+  'pt': ['ola', 'bom dia'],
+  'ru': ['привет', 'здравствуй'],
+  'ja': ['こんにちは', 'やあ'],
+  'zh': ['你好', '嗨']
+};
 
 // Helper function to format dates for Airtable (YYYY-MM-DD)
 function formatDateForAirtable(date) {
@@ -88,9 +170,97 @@ function formatDateForDisplay(date) {
   return date;
 }
 
-// Enhanced language detection with fallback
+// Helper function to calculate days between two dates
+function daysBetween(date1, date2) {
+  const oneDay = 24 * 60 * 60 * 1000; // hours*minutes*seconds*milliseconds
+  const diffDays = Math.round(Math.abs((date1 - date2) / oneDay));
+  return diffDays;
+}
+
+// Performance tracking function
+function trackResponseTime(startTime, requestId) {
+  const duration = Date.now() - startTime;
+  responseTimes.total += duration;
+  responseTimes.count++;
+  responseTimes.max = Math.max(responseTimes.max, duration);
+  
+  console.log(`[${requestId}] Response time: ${duration}ms`);
+  
+  // Log slow responses
+  if (duration > 5000) {
+    console.warn(`[${requestId}] Slow response detected: ${duration}ms`);
+  }
+}
+
+// Cache cleanup function
+function cleanupCaches() {
+  const now = Date.now();
+  
+  // Clean language cache
+  for (const [key, value] of languageCache.entries()) {
+    if (now - value.timestamp > LANGUAGE_CACHE_TTL) {
+      languageCache.delete(key);
+    }
+  }
+  
+  // Clean product cache
+  for (const [key, value] of productMatchCache.entries()) {
+    if (now - value.timestamp > PRODUCT_CACHE_TTL) {
+      productMatchCache.delete(key);
+    }
+  }
+  
+  // Clean inventory cache
+  for (const [key, value] of inventoryCache.entries()) {
+    if (now - value.timestamp > INVENTORY_CACHE_TTL) {
+      inventoryCache.delete(key);
+    }
+  }
+  
+  // Clean global state every 5 minutes
+  if (now - globalState.lastCleanup > 5 * 60 * 1000) {
+    const FIVE_MINUTES = 5 * 60 * 1000;
+    
+    if (globalState.conversationState) {
+      for (const [from, state] of Object.entries(globalState.conversationState)) {
+        if (now - (state.timestamp || 0) > FIVE_MINUTES) {
+          delete globalState.conversationState[from];
+        }
+      }
+    }
+    
+    if (globalState.pendingTranscriptions) {
+      for (const [from, pending] of Object.entries(globalState.pendingTranscriptions)) {
+        if (now - (pending.timestamp || 0) > FIVE_MINUTES) {
+          delete globalState.pendingTranscriptions[from];
+        }
+      }
+    }
+    
+    if (globalState.pendingProductUpdates) {
+      for (const [from, pending] of Object.entries(globalState.pendingProductUpdates)) {
+        if (now - (pending.timestamp || 0) > FIVE_MINUTES) {
+          delete globalState.pendingProductUpdates[from];
+        }
+      }
+    }
+    
+    globalState.lastCleanup = now;
+  }
+}
+
+// Enhanced language detection with fallback and caching
 async function detectLanguageWithFallback(text, from, requestId) {
   try {
+    // Check cache first
+    const cacheKey = `${from}:${text.substring(0, 50)}`;
+    const cached = languageCache.get(cacheKey);
+    
+    if (cached && (Date.now() - cached.timestamp < LANGUAGE_CACHE_TTL)) {
+      console.log(`[${requestId}] Using cached language detection: ${cached.language}`);
+      return cached.language;
+    }
+    
     const response = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -112,9 +282,11 @@ async function detectLanguageWithFallback(text, from, requestId) {
         headers: {
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
           'Content-Type': 'application/json'
-        }
+        },
+        timeout: 3000 // Add timeout to prevent hanging
       }
     );
+    
     const languageCode = response.data.choices[0].message.content.trim().toLowerCase();
     console.log(`[${requestId}] Detected language: ${languageCode}`);
     
@@ -124,6 +296,9 @@ async function detectLanguageWithFallback(text, from, requestId) {
       await saveUserPreference(shopId, languageCode);
       console.log(`[${requestId}] Saved language preference: ${languageCode} for user ${shopId}`);
     }
+    
+    // Cache the result
+    languageCache.set(cacheKey, { language: languageCode, timestamp: Date.now() });
     
     return languageCode;
   } catch (error) {
@@ -199,7 +374,8 @@ Return only valid JSON with no additional text, markdown formatting, or code blo
         headers: {
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
           'Content-Type': 'application/json'
-        }
+        },
+        timeout: 5000 // Add timeout
       }
     );
     
@@ -274,9 +450,9 @@ function extractProduct(transcript) {
   // Remove action words and numbers, but preserve product names
   const cleaned = transcript
     .replace(/(\d+|[०-९]+|[a-zA-Z]+)\s*(kg|किलो|grams?|ग्राम|packets?|पैकेट|boxes?|बॉक्स|liters?|लीटर)/gi, ' ')
-    .replace(/(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)/gi, ' ')
-    .replace(/(बेचा|बेचे|becha|sold|बिक्री)/gi, ' ')
-    .replace(/(बचा|बचे|बाकी|remaining|left)/gi, ' ')
+    .replace(regexPatterns.purchaseKeywords, ' ')
+    .replace(regexPatterns.salesKeywords, ' ')
+    .replace(regexPatterns.remainingKeywords, ' ')
     .replace(/\s+/g, ' ')
     .trim();
     
@@ -297,33 +473,12 @@ function parseSingleUpdate(transcript) {
   // Try to extract product name more flexibly
   let product = extractProduct(transcript);
   
-  // Support for multiple number formats (digits, English words, Hindi words)
-  const numberWords = {
-    // English
-    'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6,
-    'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12,
-    'thirteen': 13, 'fourteen': 14, 'fifteen': 15, 'sixteen': 16, 'seventeen': 17,
-    'eighteen': 18, 'nineteen': 19, 'twenty': 20, 'thirty': 30, 'forty': 40,
-    'fifty': 50, 'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90, 'hundred': 100,
-    // Hindi
-    'एक': 1, 'दो': 2, 'तीन': 3, 'चार': 4, 'पांच': 5, 'छह': 6,
-    'सात': 7, 'आठ': 8, 'नौ': 9, 'दस': 10, 'ग्यारह': 11, 'बारह': 12,
-    'तेरह': 13, 'चौदह': 14, 'पंद्रह': 15, 'सोलह': 16, 'सत्रह': 17,
-    'अठारह': 18, 'उन्नीस': 19, 'बीस': 20, 'तीस': 30, 'चालीस': 40,
-    'पचास': 50, 'साठ': 60, 'सत्तर': 70, 'अस्सी': 80, 'नब्बे': 90, 'सौ': 100,
-    // Special case: "सो" means 100 in Hindi when referring to quantity
-    'सो': 100,
-    // Hindi numerals (Devanagari digits)
-    '०': 0, '१': 1, '२': 2, '३': 3, '४': 4, '५': 5, '६': 6, '७': 7, '८': 8, '९': 9,
-    '१०': 10, '११': 11, '१२': 12, '१३': 13, '१४': 14, '१५': 15, '१६': 16
-  };
-  
   let quantity = 0;
   let unit = '';
   let unitMultiplier = 1;
   
   // Try to match digits first (including Devanagari digits)
-  const digitMatch = transcript.match(/(\d+|[०-९]+)/i);
+  const digitMatch = transcript.match(regexPatterns.digits);
   if (digitMatch) {
     // Convert Devanagari digits to Arabic digits
     let digitStr = digitMatch[1];
@@ -341,17 +496,6 @@ function parseSingleUpdate(transcript) {
   }
   
   // Extract units - prioritize common units
-  const units = {
-    'packets': 1, 'पैकेट': 1,
-    'boxes': 1, 'बॉक्स': 1,
-    'kg': 1, 'किलो': 1, 'kilo': 1, 'kilogram': 1, 'kilograms': 1,
-    'g': 0.001, 'gram': 0.001, 'grams': 0.001, 'ग्राम': 0.001,
-    'liters': 1, 'लीटर': 1, 'litre': 1, 'litres': 1,
-    'ml': 0.001, 'milliliter': 0.001, 'milliliters': 0.001, 'millilitre': 0.001, 'millilitres': 0.001,
-    'pieces': 1, 'पीस': 1
-  };
-  
-  // Check for units in the transcript
   for (const [unitName, multiplier] of Object.entries(units)) {
     if (transcript.toLowerCase().includes(unitName)) {
       unit = unitName;
@@ -364,9 +508,9 @@ function parseSingleUpdate(transcript) {
   quantity = quantity * unitMultiplier;
   
   // Better action detection with priority for purchase/sold over remaining
-  const isPurchase = /(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)/i.test(transcript);
-  const isSold = /(बेचा|बेचे|becha|sold|बिक्री)/i.test(transcript);
-  const isRemaining = /(बचा|बचे|बाकी|remaining|left)/i.test(transcript);
+  const isPurchase = regexPatterns.purchaseKeywords.test(transcript);
+  const isSold = regexPatterns.salesKeywords.test(transcript);
+  const isRemaining = regexPatterns.remainingKeywords.test(transcript);
   
   let action, finalQuantity;
   if (isPurchase) {
@@ -474,7 +618,8 @@ async function validateTranscript(transcript, requestId) {
         headers: {
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
           'Content-Type': 'application/json'
-        }
+        },
+        timeout: 3000 // Add timeout
       }
     );
     
@@ -530,7 +675,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           // Add batch date to result for display
           result.batchDate = formattedPurchaseDate;
         } else {
-          console.error(`[Update ${shopId} - ${update.product}] Failed to create batch record: ${batchResult.error}`);
+          console.error(`[${requestId}] Failed to create batch record: ${batchResult.error}`);
         }
       }
       
@@ -624,7 +769,8 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
         headers: {
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
           'Content-Type': 'application/json'
-        }
+        },
+        timeout: 5000 // Add timeout
       }
     );
     
@@ -756,12 +902,13 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     if (hasSales) {
       message += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
       // Set conversation state to await batch selection
-      if (!global.conversationState) {
-        global.conversationState = {};
+      if (!globalState.conversationState) {
+        globalState.conversationState = {};
       }
-      global.conversationState[from] = {
+      globalState.conversationState[from] = {
         state: 'awaiting_batch_selection',
-        language: detectedLanguage
+        language: detectedLanguage,
+        timestamp: Date.now()
       };
     }
     
@@ -772,8 +919,8 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     
     // Use conversation state language if available
     let responseLanguage = detectedLanguage;
-    if (global.conversationState && global.conversationState[from] && global.conversationState[from].language) {
-      responseLanguage = global.conversationState[from].language;
+    if (globalState.conversationState && globalState.conversationState[from] && globalState.conversationState[from].language) {
+      responseLanguage = globalState.conversationState[from].language;
     }
     
     await sendSystemMessage(message, from, responseLanguage, requestId, response);
@@ -804,7 +951,7 @@ async function confirmTranscription(transcript, from, detectedLanguage, requestI
   );
   
   // Store the transcript temporarily
-  global.pendingTranscriptions[from] = {
+  globalState.pendingTranscriptions[from] = {
     transcript,
     detectedLanguage,
     timestamp: Date.now()
@@ -826,7 +973,7 @@ async function confirmProduct(update, from, detectedLanguage, requestId) {
   );
   
   // Store the update temporarily
-  global.pendingProductUpdates[from] = {
+  globalState.pendingProductUpdates[from] = {
     update,
     detectedLanguage,
     timestamp: Date.now()
@@ -927,7 +1074,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId, lan
     } else if (lowerBody.includes('newest')) {
       selectedBatch = batches[0];
     } else {
-      const dateMatch = body.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})|(\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4})/i);
+      const dateMatch = body.match(regexPatterns.dateFormats);
       if (dateMatch) {
         const dateStr = dateMatch[0];
         const parsedDate = parseExpiryDate(dateStr);
@@ -945,7 +1092,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId, lan
       selectedBatch = batches[batches.length - 1];
     }
     
-    const dateMatch = body.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})|(\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4})/i);
+    const dateMatch = body.match(regexPatterns.dateFormats);
     if (dateMatch) {
       const dateStr = dateMatch[0];
       const parsedDate = parseExpiryDate(dateStr);
@@ -972,8 +1119,8 @@ async function handleBatchSelectionResponse(body, from, response, requestId, lan
     );
     
     // Clear conversation state
-    if (global.conversationState && global.conversationState[from]) {
-      delete global.conversationState[from];
+    if (globalState.conversationState && globalState.conversationState[from]) {
+      delete globalState.conversationState[from];
     }
   } catch (error) {
     console.error(`[${requestId}] Error handling batch selection response:`, error.message);
@@ -1117,13 +1264,14 @@ async function checkAndUpdateLanguage(text, from, currentLanguage, requestId) {
     if (currentLanguage && detectedLanguage !== currentLanguage) {
       console.log(`[${requestId}] Language changed from ${currentLanguage} to ${detectedLanguage}`);
       
-      if (!global.conversationState) {
-        global.conversationState = {};
+      if (!globalState.conversationState) {
+        globalState.conversationState = {};
       }
       
-      global.conversationState[from] = {
-        state: global.conversationState[from]?.state || null,
-        language: detectedLanguage
+      globalState.conversationState[from] = {
+        state: globalState.conversationState[from]?.state || null,
+        language: detectedLanguage,
+        timestamp: Date.now()
       };
       
       // Also update the user preference
@@ -1319,10 +1467,14 @@ async function googleTranscribe(flacBuffer, requestId) {
 
 // Main module exports
 module.exports = async (req, res) => {
+  const requestStart = Date.now();
   const response = new twilio.twiml.MessagingResponse();
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   
   try {
+    // Clean up caches periodically
+    cleanupCaches();
+    
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
       return;
@@ -1340,15 +1492,15 @@ module.exports = async (req, res) => {
     
     // Check for user preference
     let userPreference = 'voice'; // Default to voice
-    if (global.userPreferences[From]) {
-      userPreference = global.userPreferences[From];
+    if (globalState.userPreferences[From]) {
+      userPreference = globalState.userPreferences[From];
       console.log(`[${requestId}] User preference: ${userPreference}`);
     }
     
     // Check conversation state
     let conversationState = null;
-    if (global.conversationState && global.conversationState[From]) {
-      conversationState = global.conversationState[From];
+    if (globalState.conversationState && globalState.conversationState[From]) {
+      conversationState = globalState.conversationState[From];
       console.log(`[${requestId}] Conversation state:`, conversationState);
     }
     
@@ -1357,8 +1509,8 @@ module.exports = async (req, res) => {
       console.log(`[${requestId}] Button clicked: ${ButtonText}`);
       
       // Store user preference
-      if (!global.userPreferences) {
-        global.userPreferences = {};
+      if (!globalState.userPreferences) {
+        globalState.userPreferences = {};
       }
       
       // Detect language for response
@@ -1370,7 +1522,7 @@ module.exports = async (req, res) => {
       }
       
       if (ButtonText === 'Voice Message' || ButtonText === 'voice_input') {
-        global.userPreferences[From] = 'voice';
+        globalState.userPreferences[From] = 'voice';
         
         const voiceMessage = await generateMultiLanguageResponse(
           '🎤 Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
@@ -1379,7 +1531,7 @@ module.exports = async (req, res) => {
         );
         response.message(voiceMessage);
       } else if (ButtonText === 'Text Message' || ButtonText === 'text_input') {
-        global.userPreferences[From] = 'text';
+        globalState.userPreferences[From] = 'text';
         
         const textMessage = await generateMultiLanguageResponse(
           '📝 Please type your inventory update. Example: "10 Parle-G sold"',
@@ -1389,6 +1541,7 @@ module.exports = async (req, res) => {
         response.message(textMessage);
       }
       
+      trackResponseTime(requestStart, requestId);
       return res.send(response.toString());
     }
     
@@ -1397,8 +1550,8 @@ module.exports = async (req, res) => {
       console.log(`[${requestId}] Text-based selection: "${Body}"`);
       
       // Store user preference
-      if (!global.userPreferences) {
-        global.userPreferences = {};
+      if (!globalState.userPreferences) {
+        globalState.userPreferences = {};
       }
       
       // Detect language for response
@@ -1410,7 +1563,7 @@ module.exports = async (req, res) => {
       }
       
       if (Body === '1' || Body.toLowerCase() === 'voice') {
-        global.userPreferences[From] = 'voice';
+        globalState.userPreferences[From] = 'voice';
         
         const voiceMessage = await generateMultiLanguageResponse(
           '🎤 Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
@@ -1419,7 +1572,7 @@ module.exports = async (req, res) => {
         );
         response.message(voiceMessage);
       } else if (Body === '2' || Body.toLowerCase() === 'text') {
-        global.userPreferences[From] = 'text';
+        globalState.userPreferences[From] = 'text';
         
         const textMessage = await generateMultiLanguageResponse(
           '📝 Please type your inventory update. Example: "10 Parle-G sold"',
@@ -1429,6 +1582,7 @@ module.exports = async (req, res) => {
         response.message(textMessage);
       }
       
+      trackResponseTime(requestStart, requestId);
       return res.send(response.toString());
     }
     
@@ -1441,8 +1595,8 @@ module.exports = async (req, res) => {
         console.log(`[${requestId}] User requested reset`);
         
         // Clear conversation state
-        if (global.conversationState && global.conversationState[From]) {
-          delete global.conversationState[From];
+        if (globalState.conversationState && globalState.conversationState[From]) {
+          delete globalState.conversationState[From];
         }
         
         // Detect language for response
@@ -1459,6 +1613,8 @@ module.exports = async (req, res) => {
           requestId
         );
         response.message(resetMessage);
+        
+        trackResponseTime(requestStart, requestId);
         return res.send(response.toString());
       }
       
@@ -1467,10 +1623,10 @@ module.exports = async (req, res) => {
         console.log(`[${requestId}] User switching to text input`);
         
         // Store user preference
-        if (!global.userPreferences) {
-          global.userPreferences = {};
+        if (!globalState.userPreferences) {
+          globalState.userPreferences = {};
         }
-        global.userPreferences[From] = 'text';
+        globalState.userPreferences[From] = 'text';
         
         // Detect language for response
         let detectedLanguage = 'en';
@@ -1486,6 +1642,8 @@ module.exports = async (req, res) => {
           requestId
         );
         response.message(switchMessage);
+        
+        trackResponseTime(requestStart, requestId);
         return res.send(response.toString());
       }
       
@@ -1493,10 +1651,10 @@ module.exports = async (req, res) => {
         console.log(`[${requestId}] User switching to voice input`);
         
         // Store user preference
-        if (!global.userPreferences) {
-          global.userPreferences = {};
+        if (!globalState.userPreferences) {
+          globalState.userPreferences = {};
         }
-        global.userPreferences[From] = 'voice';
+        globalState.userPreferences[From] = 'voice';
         
         // Detect language for response
         let detectedLanguage = 'en';
@@ -1512,6 +1670,8 @@ module.exports = async (req, res) => {
           requestId
         );
         response.message(switchMessage);
+        
+        trackResponseTime(requestStart, requestId);
         return res.send(response.toString());
       }
     }
@@ -1521,8 +1681,8 @@ module.exports = async (req, res) => {
       console.log(`[${requestId}] Message appears to be a confirmation response: "${Body}"`);
       
       // Check for pending transcriptions
-      if (global.pendingTranscriptions[From]) {
-        const pending = global.pendingTranscriptions[From];
+      if (globalState.pendingTranscriptions[From]) {
+        const pending = globalState.pendingTranscriptions[From];
         
         if (Body.toLowerCase() === 'yes') {
           console.log(`[${requestId}] User confirmed transcription: "${pending.transcript}"`);
@@ -1536,7 +1696,9 @@ module.exports = async (req, res) => {
             res
           );
           
-          delete global.pendingTranscriptions[From];
+          delete globalState.pendingTranscriptions[From];
+          
+          trackResponseTime(requestStart, requestId);
           return;
         } else {
           console.log(`[${requestId}] User rejected transcription`);
@@ -1548,14 +1710,16 @@ module.exports = async (req, res) => {
           );
           response.message(errorMessage);
           
-          delete global.pendingTranscriptions[From];
+          delete globalState.pendingTranscriptions[From];
+          
+          trackResponseTime(requestStart, requestId);
           return res.send(response.toString());
         }
       }
       
       // Check for pending product updates
-      if (global.pendingProductUpdates && global.pendingProductUpdates[From]) {
-        const pending = global.pendingProductUpdates[From];
+      if (globalState.pendingProductUpdates && globalState.pendingProductUpdates[From]) {
+        const pending = globalState.pendingProductUpdates[From];
         
         if (Body.toLowerCase() === 'yes') {
           console.log(`[${requestId}] User confirmed product update: "${pending.update.product}"`);
@@ -1592,12 +1756,13 @@ module.exports = async (req, res) => {
             message += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
             
             // Set conversation state to await batch selection
-            if (!global.conversationState) {
-              global.conversationState = {};
+            if (!globalState.conversationState) {
+              globalState.conversationState = {};
             }
-            global.conversationState[From] = {
+            globalState.conversationState[From] = {
               state: 'awaiting_batch_selection',
-              language: pending.detectedLanguage
+              language: pending.detectedLanguage,
+              timestamp: Date.now()
             };
           }
           
@@ -1609,7 +1774,9 @@ module.exports = async (req, res) => {
           const formattedResponse = await generateMultiLanguageResponse(message, pending.detectedLanguage, requestId);
           response.message(formattedResponse);
           
-          delete global.pendingProductUpdates[From];
+          delete globalState.pendingProductUpdates[From];
+          
+          trackResponseTime(requestStart, requestId);
           return res.send(response.toString());
         } else {
           console.log(`[${requestId}] User rejected product update`);
@@ -1621,7 +1788,9 @@ module.exports = async (req, res) => {
           );
           response.message(errorMessage);
           
-          delete global.pendingProductUpdates[From];
+          delete globalState.pendingProductUpdates[From];
+          
+          trackResponseTime(requestStart, requestId);
           return res.send(response.toString());
         }
       }
@@ -1632,25 +1801,6 @@ module.exports = async (req, res) => {
       console.log(`[${requestId}] [1] Processing text message: "${Body}"`);
       
       // Check for common greetings
-      const greetings = {
-        'hi': ['hello', 'hi', 'hey', 'नमस्ते', 'नमस्कार', 'हाय'],
-        'ta': ['vanakkam', 'வணக்கம்'],
-        'te': ['నమస్కారం', 'హలో'],
-        'kn': ['ನಮಸ್ಕಾರ', 'ಹಲೋ'],
-        'bn': ['নমস্কার', 'হ্যালো'],
-        'gu': ['નમસ્તે', 'હેલો'],
-        'mr': ['नमस्कार', 'हॅलो'],
-        'en': ['hello', 'hi', 'hey'],
-        'fr': ['salut', 'bonjour', 'allo'],
-        'es': ['hola', 'buenos dias'],
-        'de': ['hallo', 'guten tag'],
-        'it': ['ciao', 'buongiorno'],
-        'pt': ['ola', 'bom dia'],
-        'ru': ['привет', 'здравствуй'],
-        'ja': ['こんにちは', 'やあ'],
-        'zh': ['你好', '嗨']
-      };
-      
       const lowerBody = Body.toLowerCase();
       let isGreeting = false;
       let greetingLang = 'en';
@@ -1667,8 +1817,8 @@ module.exports = async (req, res) => {
         console.log(`[${requestId}] Detected greeting in language: ${greetingLang}`);
         
         // Reset conversation state on greeting
-        if (global.conversationState && global.conversationState[From]) {
-          delete global.conversationState[From];
+        if (globalState.conversationState && globalState.conversationState[From]) {
+          delete globalState.conversationState[From];
         }
         
         // Save user preference
@@ -1683,6 +1833,8 @@ module.exports = async (req, res) => {
             requestId
           );
           response.message(preferenceMessage);
+          
+          trackResponseTime(requestStart, requestId);
           return res.send(response.toString());
         }
         
@@ -1693,6 +1845,8 @@ module.exports = async (req, res) => {
           requestId
         );
         response.message(welcomeMessage);
+        
+        trackResponseTime(requestStart, requestId);
         return res.send(response.toString());
       }
       
@@ -1701,6 +1855,8 @@ module.exports = async (req, res) => {
         console.log(`[${requestId}] Awaiting batch selection response`);
         
         await handleBatchSelectionResponse(Body, From, response, requestId, conversationState.language);
+        
+        trackResponseTime(requestStart, requestId);
         return res.send(response.toString());
       }
       
@@ -1710,11 +1866,15 @@ module.exports = async (req, res) => {
           console.log(`[${requestId}] Message appears to be a batch selection response`);
           
           await handleBatchSelectionResponse(Body, From, response, requestId, conversationState.language);
+          
+          trackResponseTime(requestStart, requestId);
           return res.send(response.toString());
         } else if (isExpiryDateUpdate(Body)) {
           console.log(`[${requestId}] Message appears to be an expiry date update`);
           
           await handleExpiryDateUpdate(Body, From, response, requestId, conversationState.language);
+          
+          trackResponseTime(requestStart, requestId);
           return res.send(response.toString());
         }
       }
@@ -1740,6 +1900,8 @@ module.exports = async (req, res) => {
           
           // Confirm the first unknown product
           const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
+          
+          trackResponseTime(requestStart, requestId);
           res.send(confirmationResponse);
           return;
         }
@@ -1752,6 +1914,8 @@ module.exports = async (req, res) => {
           response,
           res
         );
+        
+        trackResponseTime(requestStart, requestId);
         return;
       } else {
         console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
@@ -1766,77 +1930,137 @@ module.exports = async (req, res) => {
         response.message(defaultMessage);
       }
       
+      trackResponseTime(requestStart, requestId);
       return res.send(response.toString());
     }
     
     // Handle voice messages
     if (NumMedia && MediaUrl0 && (NumMedia !== '0' && NumMedia !== 0)) {
-      console.log(`[${requestId}] [1] Downloading audio...`);
-      const audioBuffer = await downloadAudio(MediaUrl0);
+      // Send immediate response for voice messages
+      response.message('Processing your voice message...');
+      res.send(response.toString());
       
-      console.log(`[${requestId}] [2] Converting audio...`);
-      const flacBuffer = await convertToFLAC(audioBuffer);
-      
-      console.log(`[${requestId}] [3] Transcribing with Google STT...`);
-      const transcriptionResult = await googleTranscribe(flacBuffer, requestId);
-      const rawTranscript = transcriptionResult.transcript;
-      const confidence = transcriptionResult.confidence;
-      
-      console.log(`[${requestId}] [4] Validating transcript...`);
-      const cleanTranscript = await validateTranscript(rawTranscript, requestId);
-      
-      console.log(`[${requestId}] [5] Detecting language...`);
-      const detectedLanguage = await checkAndUpdateLanguage(cleanTranscript, From, conversationState?.language, requestId);
-      
-      // Save user preference
-      const shopId = From.replace('whatsapp:', '');
-      await saveUserPreference(shopId, detectedLanguage);
-      
-      // Check if we're awaiting batch selection
-      if (conversationState && conversationState.state === 'awaiting_batch_selection') {
-        console.log(`[${requestId}] Awaiting batch selection response from voice`);
+      // Process audio asynchronously
+      try {
+        console.log(`[${requestId}] [1] Downloading audio...`);
+        const audioBuffer = await downloadAudio(MediaUrl0);
         
-        // Check if the transcript contains batch selection keywords
-        if (isBatchSelectionResponse(cleanTranscript)) {
-          await handleBatchSelectionResponse(cleanTranscript, From, response, requestId, conversationState.language);
-          return res.send(response.toString());
-        }
-      }
-      
-      // Confidence-based confirmation
-      const CONFIDENCE_THRESHOLD = 0.8;
-      if (confidence < CONFIDENCE_THRESHOLD) {
-        console.log(`[${requestId}] [5.5] Low confidence (${confidence}), requesting confirmation...`);
+        console.log(`[${requestId}] [2] Converting audio...`);
+        const flacBuffer = await convertToFLAC(audioBuffer);
         
-        const confirmationResponse = await confirmTranscription(cleanTranscript, From, detectedLanguage, requestId);
-        return res.send(confirmationResponse);
-      } else {
-        console.log(`[${requestId}] [5.5] High confidence (${confidence}), proceeding without confirmation...`);
+        console.log(`[${requestId}] [3] Transcribing with Google STT...`);
+        const transcriptionResult = await googleTranscribe(flacBuffer, requestId);
+        const rawTranscript = transcriptionResult.transcript;
+        const confidence = transcriptionResult.confidence;
         
-        // Parse the transcript
-        const updates = await parseMultipleUpdates(cleanTranscript);
+        console.log(`[${requestId}] [4] Validating transcript...`);
+        const cleanTranscript = await validateTranscript(rawTranscript, requestId);
         
-        // Check if any updates are for unknown products
-        const unknownProducts = updates.filter(u => !u.isKnown);
+        console.log(`[${requestId}] [5] Detecting language...`);
+        const detectedLanguage = await checkAndUpdateLanguage(cleanTranscript, From, conversationState?.language, requestId);
         
-        if (unknownProducts.length > 0) {
-          console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
+        // Save user preference
+        const shopId = From.replace('whatsapp:', '');
+        await saveUserPreference(shopId, detectedLanguage);
+        
+        // Check if we're awaiting batch selection
+        if (conversationState && conversationState.state === 'awaiting_batch_selection') {
+          console.log(`[${requestId}] Awaiting batch selection response from voice`);
           
-          // Confirm the first unknown product
-          const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
-          return res.send(confirmationResponse);
+          // Check if the transcript contains batch selection keywords
+          if (isBatchSelectionResponse(cleanTranscript)) {
+            // Send follow-up message via Twilio API
+            const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+            await client.messages.create({
+              body: 'Processing your batch selection...',
+              from: process.env.TWILIO_WHATSAPP_NUMBER,
+              to: From
+            });
+            
+            await handleBatchSelectionResponse(cleanTranscript, From, new twilio.twiml.MessagingResponse(), requestId, conversationState.language);
+            return;
+          }
         }
         
-        await processConfirmedTranscription(
-          cleanTranscript,
-          From,
-          detectedLanguage,
-          requestId,
-          response,
-          res
-        );
-        return;
+        // Confidence-based confirmation
+        const CONFIDENCE_THRESHOLD = 0.8;
+        if (confidence < CONFIDENCE_THRESHOLD) {
+          console.log(`[${requestId}] [5.5] Low confidence (${confidence}), requesting confirmation...`);
+          
+          // Send confirmation request via Twilio API
+          const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+          const confirmationResponse = await confirmTranscription(cleanTranscript, From, detectedLanguage, requestId);
+          
+          // Extract just the message body from the TwiML
+          const messageBody = confirmationResponse.match(/<Body>([^<]+)<\/Body>/)[1];
+          await client.messages.create({
+            body: messageBody,
+            from: process.env.TWILIO_WHATSAPP_NUMBER,
+            to: From
+          });
+          
+        } else {
+          console.log(`[${requestId}] [5.5] High confidence (${confidence}), proceeding without confirmation...`);
+          
+          // Parse the transcript
+          const updates = await parseMultipleUpdates(cleanTranscript);
+          
+          // Check if any updates are for unknown products
+          const unknownProducts = updates.filter(u => !u.isKnown);
+          
+          if (unknownProducts.length > 0) {
+            console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
+            
+            // Confirm the first unknown product via Twilio API
+            const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+            const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
+            
+            // Extract just the message body from the TwiML
+            const messageBody = confirmationResponse.match(/<Body>([^<]+)<\/Body>/)[1];
+            await client.messages.create({
+              body: messageBody,
+              from: process.env.TWILIO_WHATSAPP_NUMBER,
+              to: From
+            });
+            
+            return;
+          }
+          
+          // Process the transcription and send result via Twilio API
+          const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+          const processResponse = new twilio.twiml.MessagingResponse();
+          
+          await processConfirmedTranscription(
+            cleanTranscript,
+            From,
+            detectedLanguage,
+            requestId,
+            processResponse,
+            { send: (response) => {
+              // Extract the message body and send via Twilio API
+              const messageBody = response.toString().match(/<Body>([^<]+)<\/Body>/)[1];
+              client.messages.create({
+                body: messageBody,
+                from: process.env.TWILIO_WHATSAPP_NUMBER,
+                to: From
+              });
+            }}
+          );
+        }
+      } catch (error) {
+        console.error(`[${requestId}] Error processing voice message:`, error);
+        
+        // Send error message via Twilio API
+        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+        await client.messages.create({
+          body: 'Sorry, I had trouble processing your voice message. Please try again.',
+          from: process.env.TWILIO_WHATSAPP_NUMBER,
+          to: From
+        });
       }
+      
+      trackResponseTime(requestStart, requestId);
+      return;
     } else if (SpeechResult) {
       console.log(`[${requestId}] [1] Using Twilio transcription`);
       response.message(`🔊 (Twilio): "${SpeechResult}"`);
@@ -1881,5 +2105,20 @@ module.exports = async (req, res) => {
   
   console.log(`[${requestId}] Sending TwiML response`);
   res.setHeader('Content-Type', 'text/xml');
+  
+  trackResponseTime(requestStart, requestId);
   res.send(response.toString());
 };
+
+// Log performance metrics periodically
+setInterval(() => {
+  if (responseTimes.count > 0) {
+    const avg = responseTimes.total / responseTimes.count;
+    console.log(`Performance stats - Avg: ${avg.toFixed(2)}ms, Max: ${responseTimes.max}ms, Count: ${responseTimes.count}`);
+    
+    // Reset for next period
+    responseTimes.total = 0;
+    responseTimes.count = 0;
+    responseTimes.max = 0;
+  }
+}, 60 * 1000);
