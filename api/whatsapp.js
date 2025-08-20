@@ -1015,8 +1015,9 @@ module.exports = async (req, res) => {
           console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
           
           // Confirm the first unknown product
-          await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
-          return res.send(response.toString());
+          const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
+          res.send(confirmationResponse);
+          return;
         }
         
         await processConfirmedTranscription(
@@ -1109,8 +1110,8 @@ module.exports = async (req, res) => {
           console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
           
           // Confirm the first unknown product
-          await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
-          return res.send(response.toString());
+          const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
+          return res.send(confirmationResponse);
         }
         
         await processConfirmedTranscription(
