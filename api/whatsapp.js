@@ -262,12 +262,13 @@ async function parseMultipleUpdates(transcript) {
 
 // Improved product extraction function
 function extractProduct(transcript) {
-  // Remove action words and numbers
+  // Remove action words and numbers, but preserve product names
   const cleaned = transcript
-    .replace(/(\d+)\s*(kg|किलो|grams?|ग्राम|packets?|पैकेट|boxes?|बॉक्स|liters?|लीटर)/gi, '')
-    .replace(/(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)/gi, '')
-    .replace(/(बेचा|बेचे|becha|sold|बिक्री)/gi, '')
-    .replace(/(बचा|बचे|बाकी|remaining|left)/gi, '')
+    .replace(/(\d+|[०-९]+|[a-zA-Z]+)\s*(kg|किलो|grams?|ग्राम|packets?|पैकेट|boxes?|बॉक्स|liters?|लीटर)/gi, ' ')
+    .replace(/(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)/gi, ' ')
+    .replace(/(बेचा|बेचे|becha|sold|बिक्री)/gi, ' ')
+    .replace(/(बचा|बचे|बाकी|remaining|left)/gi, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
     
   // Try to match with known products first
@@ -300,17 +301,25 @@ function parseSingleUpdate(transcript) {
     'सात': 7, 'आठ': 8, 'नौ': 9, 'दस': 10, 'ग्यारह': 11, 'बारह': 12,
     'तेरह': 13, 'चौदह': 14, 'पंद्रह': 15, 'सोलह': 16, 'सत्रह': 17,
     'अठारह': 18, 'उन्नीस': 19, 'बीस': 20, 'तीस': 30, 'चालीस': 40,
-    'पचास': 50, 'साठ': 60, 'सत्तर': 70, 'अस्सी': 80, 'नब्बे': 90, 'सौ': 100
+    'पचास': 50, 'साठ': 60, 'सत्तर': 70, 'अस्सी': 80, 'नब्बे': 90, 'सौ': 100,
+    // Special case: "सो" means 100 in Hindi when referring to quantity
+    'सो': 100,
+    // Hindi numerals (Devanagari digits)
+    '०': 0, '१': 1, '२': 2, '३': 3, '४': 4, '५': 5, '६': 6, '७': 7, '८': 8, '९': 9,
+    '१०': 10, '११': 11, '१२': 12, '१३': 13, '१४': 14, '१५': 15, '१६': 16
   };
   
   let quantity = 0;
   let unit = '';
   let unitMultiplier = 1;
   
-  // Try to match digits first
-  const digitMatch = transcript.match(/(\d+)/i);
+  // Try to match digits first (including Devanagari digits)
+  const digitMatch = transcript.match(/(\d+|[०-९]+)/i);
   if (digitMatch) {
-    quantity = parseInt(digitMatch[1]) || 0;
+    // Convert Devanagari digits to Arabic digits
+    let digitStr = digitMatch[1];
+    digitStr = digitStr.replace(/[०१२३४५६७८९]/g, d => '०१२३४५६७८९'.indexOf(d));
+    quantity = parseInt(digitStr) || 0;
   } else {
     // Try to match number words
     const words = transcript.toLowerCase().split(/\s+/);
@@ -1559,6 +1568,7 @@ async function validateTranscript(transcript, requestId) {
       console.log(`[${requestId}] Fixed transcript: "${transcript}" → "${fixedTranscript}"`);
     }
     
+    // Only use DeepSeek for minimal cleaning - just fix grammar and keep original language
     const response = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -1566,12 +1576,11 @@ async function validateTranscript(transcript, requestId) {
         messages: [
           {
             role: "system",
-            content: `You are an inventory assistant. Clean up this transcript:
+            content: `You are an inventory assistant. Clean up this transcript but KEEP THE ORIGINAL LANGUAGE:
             - Fix grammar errors
-            - Convert to English if needed
-            - Ensure product names are correct (e.g., "flower" should be "flour")
-            - Convert number words to digits (e.g., "five" → "5")
-            - Return ONLY the cleaned text, nothing else`
+            - Keep product names as they are (do not translate or change them)
+            - Keep numbers as they are (do not translate them)
+            - Return ONLY the cleaned text in the same language as the input, nothing else`
           },
           {
             role: "user",
@@ -1579,7 +1588,7 @@ async function validateTranscript(transcript, requestId) {
           }
         ],
         max_tokens: 50,
-        temperature: 0.3
+        temperature: 0.1
       },
       {
         headers: {
