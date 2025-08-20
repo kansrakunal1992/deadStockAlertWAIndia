@@ -2066,7 +2066,7 @@ module.exports = async (req, res) => {
       // Then check user preference from database
       else if (From) {
         try {
-          const shopId = From.replace('whatsapp:', ');
+          const shopId = From.replace('whatsapp:','');
           const userPref = await getUserPreference(shopId);
           if (userPref.success) {
             detectedLanguage = userPref.language;
