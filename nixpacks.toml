@@ -1,10 +1,208 @@
 [build]
+# Build phases configuration
+phases = [
+    { name = "install", commands = ["npm ci"] },
+    { name = "build", commands = ["npm run build"] },
+    { name = "postinstall", commands = ["chmod +x install-ffmpeg.sh && ./install-ffmpeg.sh"] }
+]
+
+# System packages to install
 packages = [
     "ffmpeg",
     "libavcodec-extra",
     "libavformat-dev",
-    "libswscale-dev"
+    "libswscale-dev",
+    "curl",
+    "wget",
+    "git",
+    "ca-certificates",
+    "gnupg"
 ]
 
+# Environment variables
+[env]
+NODE_ENV = "production"
+PORT = "3000"
+HOST = "0.0.0.0"
+
+# Start command configuration
+[start]
+command = "npm start"
+
+# Health check configuration
+[health_check]
+path = "/health"
+interval = "30s"
+timeout = "10s"
+retries = 3
+start_period = "40s"
+
+# Logging configuration
+[logging]
+format = "json"
+level = "info"
+
+# Resource limits
+[limits]
+cpu = "1"
+memory = "1Gi"
+pids = 100
+
+# Deployment configuration
 [deploy]
-start_command = "node server.js"
+# Number of instances to run
+instances = 1
+
+# Auto-scaling configuration
+[deploy.autoscaling]
+min_instances = 1
+max_instances = 3
+cpu_threshold = 70
+memory_threshold = 80
+scale_up_cooldown = "5m"
+scale_down_cooldown = "10m"
+
+# Network configuration
+[deploy.network]
+# Port mapping
+port = 3000
+
+# Health check port
+health_check_port = 3000
+
+# Security configuration
+[deploy.security]
+# Run as non-root user
+user = "node"
+
+# Read-only root filesystem
+read_only_root_filesystem = true
+
+# Security context
+[deploy.security.context]
+run_as_non_root = true
+allow_privilege_escalation = false
+read_only_root_filesystem = true
+run_as_user = 1000
+run_as_group = 1000
+
+# Volume mounts (if needed)
+[volumes]
+# Temporary directory for audio processing
+tmp = "/tmp"
+
+# FFmpeg cache directory
+ffmpeg_cache = "/opt/ffmpeg/cache"
+
+# Labels for metadata
+[labels]
+maintainer = "your-email@example.com"
+version = "1.0.0"
+description = "WhatsApp Inventory Management System"
+org.opencontainers.image.title = "StockGuard"
+org.opencontainers.image.description = "WhatsApp-based inventory management system"
+org.opencontainers.image.version = "1.0.0"
+org.opencontainers.image.authors = "Your Name"
+org.opencontainers.image.vendor = "Your Company"
+org.opencontainers.image.documentation = "https://github.com/yourusername/stockguard#readme"
+org.opencontainers.image.source = "https://github.com/yourusername/stockguard"
+org.opencontainers.image.licenses = "MIT"
+
+# Annotations for additional metadata
+[annotations]
+com.example.commit.sha = "${COMMIT_SHA}"
+com.example.commit.ref = "${COMMIT_REF}"
+com.example.build.date = "${BUILD_DATE}"
+com.example.build.url = "${BUILD_URL}"
+
+# Cache configuration
+[cache]
+# NPM cache
+npm = "/root/.npm"
+
+# FFmpeg cache
+ffmpeg = "/opt/ffmpeg/cache"
+
+# Build cache
+build = "/app/.cache"
+
+# Experimental features
+[experimental]
+# Enable experimental features
+enabled = true
+
+# Experimental build settings
+[experimental.build]
+# Use build cache
+use_build_cache = true
+
+# Use multi-stage builds
+use_multi_stage_builds = true
+
+# Optimize image size
+optimize_image_size = true
+
+# Development configuration (for dev environment)
+[dev]
+# Development environment variables
+[dev.env]
+NODE_ENV = "development"
+LOG_LEVEL = "debug"
+
+# Development start command
+[dev.start]
+command = "npm run dev"
+
+# Development health check
+[dev.health_check]
+path = "/health"
+interval = "10s"
+timeout = "5s"
+retries = 2
+start_period = "10s"
+
+# Development resource limits
+[dev.limits]
+cpu = "0.5"
+memory = "512Mi"
+pids = 50
+
+# Production configuration (for prod environment)
+[prod]
+# Production environment variables
+[prod.env]
+NODE_ENV = "production"
+LOG_LEVEL = "info"
+
+# Production start command
+[prod.start]
+command = "npm run start:prod"
+
+# Production health check
+[prod.health_check]
+path = "/health"
+interval = "30s"
+timeout = "10s"
+retries = 3
+start_period = "40s"
+
+# Production resource limits
+[prod.limits]
+cpu = "1"
+memory = "1Gi"
+pids = 100
+
+# Production scaling
+[prod.autoscaling]
+min_instances = 2
+max_instances = 5
+cpu_threshold = 70
+memory_threshold = 80
+scale_up_cooldown = "3m"
+scale_down_cooldown = "5m"
+
+# Production security
+[prod.security]
+run_as_non_root = true
+read_only_root_filesystem = true
+allow_privilege_escalation = false
