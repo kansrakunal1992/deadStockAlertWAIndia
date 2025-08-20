@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const {
   updateInventory,
   testConnection,
-BatchRecord  create,
+  createBatchRecord,
   getBatchRecords,
   updateBatchExpiry,
   saveUserPreference,
@@ -643,8 +643,8 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       const result = inventoryResults[index];
       
       if (result.success) {
-        // Create batch record for purchases
-        if (update.quantity > 0) {
+        // Create batch record for purchases only (not for sales)
+        if (update.action === 'purchased') {
           console.log(`[Update ${shopId} - ${update.product}] Creating batch record for purchase`);
           
           // Format current date for Airtable
@@ -662,7 +662,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         }
         
         // Create sales record for sales
-        if (update.quantity < 0) {
+        if (update.action === 'sold') {
           console.log(`[Update ${shopId} - ${update.product}] Creating sales record`);
           
           // Get available batches for this product
@@ -737,7 +737,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         console.log(`[Update ${shopId} - ${update.product}] Processing update: ${update.quantity} ${update.unit}`);
         
         // Check if this is a sale (negative quantity)
-        const isSale = update.quantity < 0;
+        const isSale = update.action === 'sold';
         
         // For sales, try to determine which batch to use
         let selectedBatchId = null;
@@ -754,8 +754,8 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         // Update the inventory
         const result = await updateInventory(shopId, update.product, update.quantity, update.unit);
         
-        // Create batch record for purchases
-        if (update.quantity > 0 && result.success) {
+        // Create batch record for purchases only (not for sales)
+        if (update.action === 'purchased' && result.success) {
           console.log(`[Update ${shopId} - ${update.product}] Creating batch record for purchase`);
           
           // Format current date for Airtable
@@ -779,7 +779,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         }
         
         // Create sales record for sales
-        if (isSale && result.success) {
+        if (update.action === 'sold' && result.success) {
           console.log(`[Update ${shopId} - ${update.product}] Creating sales record`);
           
           const salesResult = await createSalesRecord({
