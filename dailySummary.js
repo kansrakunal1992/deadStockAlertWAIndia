@@ -65,7 +65,8 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
                 headers: {
                     'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
                     'Content-Type': 'application/json'
-                }
+                },
+                timeout: 5000 // Add timeout
             }
         );
         
@@ -94,8 +95,8 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
     }
 }
 
-// Send WhatsApp message with enhanced error handling
-async function sendWhatsAppMessage(to, body) {
+// Send WhatsApp message with enhanced error handling and retry logic
+async function sendWhatsAppMessage(to, body, maxRetries = 2) {
     try {
         // Check if required environment variables are set
         if (!process.env.ACCOUNT_SID) {
@@ -118,15 +119,36 @@ async function sendWhatsAppMessage(to, body) {
         const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
         console.log(`Formatted to: ${formattedTo}`);
         
-        // Create and send message
-        const message = await client.messages.create({
-            body: body,
-            from: process.env.TWILIO_WHATSAPP_NUMBER,
-            to: formattedTo
-        });
+        let lastError;
         
-        console.log(`Message sent successfully. SID: ${message.sid}`);
-        return message;
+        // Retry logic with exponential backoff
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const message = await client.messages.create({
+                    body: body,
+                    from: process.env.TWILIO_WHATSAPP_NUMBER,
+                    to: formattedTo,
+                    timeout: 10000 // 10 second timeout
+                });
+                
+                console.log(`Message sent successfully. SID: ${message.sid}`);
+                return message;
+            } catch (error) {
+                lastError = error;
+                console.warn(`Attempt ${attempt} failed:`, error.message);
+                
+                // If this is the last attempt, throw the error
+                if (attempt === maxRetries) {
+                    break;
+                }
+                
+                // Wait before retrying (exponential backoff)
+                const delay = Math.pow(2, attempt) * 1000;
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+        
+        throw lastError;
     } catch (error) {
         console.error('Error sending WhatsApp message:', error);
         console.error('Error details:', error.message);
@@ -135,7 +157,173 @@ async function sendWhatsAppMessage(to, body) {
     }
 }
 
-// Main function to run daily summary
+// Process a single shop's daily summary
+async function processShopSummary(shopId) {
+    const context = `Process Shop ${shopId}`;
+    
+    try {
+        console.log(`[${context}] Starting processing`);
+        
+        // Get user preference
+        const userPref = await getUserPreference(shopId);
+        const userLanguage = userPref.success ? userPref.language : 'en';
+        console.log(`[${context}] User language: ${userLanguage}`);
+        
+        // Get sales records from the dedicated Sales table
+        const salesRecords = await getShopSalesRecords(shopId, 1); // Get today's sales
+        console.log(`[${context}] Found ${salesRecords.length} sales records`);
+        
+        // Get current inventory
+        const currentInventory = await getCurrentInventory(shopId);
+        console.log(`[${context}] Found ${currentInventory.length} inventory items`);
+        
+        // Get batch records for this shop
+        const batchRecords = await getShopBatchRecords(shopId);
+        console.log(`[${context}] Found ${batchRecords.length} batch records`);
+        
+        // Calculate summary
+        let totalSales = 0;
+        let totalSalesValue = 0;
+        const salesDetails = {};
+        
+        // Process sales records
+        salesRecords.forEach(record => {
+            const product = record.fields.Product;
+            const quantity = Math.abs(record.fields.Quantity || 0); // Convert to positive for display
+            const salePrice = record.fields.SalePrice || 0;
+            
+            totalSales += quantity;
+            totalSalesValue += quantity * salePrice;
+            salesDetails[product] = (salesDetails[product] || 0) + quantity;
+        });
+        
+        // Check for deadstock - Option 1: Items with stock < 5
+        const deadstockOption1 = [];
+        const lowStockThreshold = 5; // Items with stock less than this are considered deadstock
+        
+        currentInventory.forEach(record => {
+            const product = record.fields.Product;
+            const quantity = record.fields.Quantity || 0;
+            const unit = record.fields.Units || '';
+            
+            if (quantity < lowStockThreshold && quantity > 0) {
+                deadstockOption1.push({
+                    product,
+                    quantity,
+                    unit
+                });
+            }
+        });
+        
+        // Check for deadstock - Option 2: Items not sold in last 7 days and in stock for > 30 days
+        const deadstockOption2 = [];
+        const today = new Date();
+        const thirtyDaysAgo = new Date(today);
+        thirtyDaysAgo.setDate(today.getDate() - 30);
+        
+        // Get recent sales (last 7 days)
+        const recentSales = await getRecentSales(shopId, 7);
+        console.log(`[${context}] Found ${recentSales.length} recent sales records`);
+        
+        // Create a set of products sold in the last 7 days
+        const productsSoldRecently = new Set();
+        recentSales.forEach(record => {
+            productsSoldRecently.add(record.fields.Product);
+        });
+        
+        // Create a map of product to earliest purchase date
+        const productPurchaseDates = {};
+        batchRecords.forEach(record => {
+            const product = record.fields.Product;
+            const purchaseDate = new Date(record.fields.PurchaseDate);
+            
+            if (!productPurchaseDates[product] || purchaseDate < productPurchaseDates[product]) {
+                productPurchaseDates[product] = purchaseDate;
+            }
+        });
+        
+        // Check each product in current inventory
+        currentInventory.forEach(record => {
+            const product = record.fields.Product;
+            const quantity = record.fields.Quantity || 0;
+            const unit = record.fields.Units || '';
+            
+            if (quantity > 0) {
+                // Check if product was purchased more than 30 days ago
+                if (productPurchaseDates[product] && productPurchaseDates[product] < thirtyDaysAgo) {
+                    // Check if product has not been sold in the last 7 days
+                    if (!productsSoldRecently.has(product)) {
+                        deadstockOption2.push({
+                            product,
+                            quantity,
+                            unit,
+                            daysInStock: daysBetween(productPurchaseDates[product], today)
+                        });
+                    }
+                }
+            }
+        });
+        
+        // Format the message
+        let message = `📊 Daily Inventory Summary (${formatDateForDisplay(new Date())}):\n\n`;
+        message += `💰 Total Sales: ${totalSales} items`;
+        if (totalSalesValue > 0) {
+            message += ` (Value: ₹${totalSalesValue.toFixed(2)})`;
+        }
+        message += `\n`;
+        
+        if (Object.keys(salesDetails).length > 0) {
+            message += `\n🛒 Sales Details:\n`;
+            for (const [product, quantity] of Object.entries(salesDetails)) {
+                // Find the unit for this product
+                const inventoryRecord = currentInventory.find(r => r.fields.Product === product);
+                const unit = inventoryRecord ? inventoryRecord.fields.Units || '' : '';
+                const unitText = unit ? ` ${unit}` : '';
+                
+                message += `• ${product}: ${quantity}${unitText} sold\n`;
+            }
+        }
+        
+        // Add deadstock alerts
+        if (deadstockOption1.length > 0 || deadstockOption2.length > 0) {
+            message += `\n⚠️ Deadstock Alert:\n\n`;
+            
+            if (deadstockOption1.length > 0) {
+                message += `Option 1 - Low Stock (less than 5 items):\n`;
+                deadstockOption1.forEach(item => {
+                    const unitText = item.unit ? ` ${item.unit}` : '';
+                    message += `• ${item.product}: Only ${item.quantity}${unitText} left\n`;
+                });
+                message += `\n`;
+            }
+            
+            if (deadstockOption2.length > 0) {
+                message += `Option 2 - Slow Moving (not sold in 7 days, in stock > 30 days):\n`;
+                deadstockOption2.forEach(item => {
+                    const unitText = item.unit ? ` ${item.unit}` : '';
+                    message += `• ${item.product}: ${item.quantity}${unitText} in stock for ${item.daysInStock} days\n`;
+                });
+                message += `\n`;
+            }
+        }
+        
+        message += `Thank you for using our inventory management system!`;
+        
+        // Generate multilingual response
+        const formattedMessage = await generateMultiLanguageResponse(message, userLanguage);
+        
+        // Send the message
+        await sendWhatsAppMessage(shopId, formattedMessage);
+        console.log(`[${context}] Daily summary sent successfully`);
+        
+        return { shopId, success: true };
+    } catch (error) {
+        console.error(`[${context}] Error:`, error.message);
+        return { shopId, success: false, error: error.message };
+    }
+}
+
+// Main function to run daily summary with parallel processing
 async function runDailySummary() {
     try {
         console.log('Starting daily summary job...');
@@ -151,169 +339,55 @@ async function runDailySummary() {
         const shopIds = await getAllShopIds();
         console.log(`Found ${shopIds.length} shops to process`);
         
-        for (const shopId of shopIds) {
-            try {
-                console.log(`Processing shop: ${shopId}`);
-                
-                // Get user preference
-                const userPref = await getUserPreference(shopId);
-                const userLanguage = userPref.success ? userPref.language : 'en';
-                console.log(`User language: ${userLanguage}`);
-                
-                // Get sales records from the dedicated Sales table
-                const salesRecords = await getShopSalesRecords(shopId, 1); // Get today's sales
-                console.log(`Found ${salesRecords.length} sales records`);
-                
-                // Get current inventory
-                const currentInventory = await getCurrentInventory(shopId);
-                console.log(`Found ${currentInventory.length} inventory items`);
-                
-                // Get batch records for this shop
-                const batchRecords = await getShopBatchRecords(shopId);
-                console.log(`Found ${batchRecords.length} batch records`);
-                
-                // Calculate summary
-                let totalSales = 0;
-                let totalSalesValue = 0;
-                const salesDetails = {};
-                
-                // Process sales records
-                salesRecords.forEach(record => {
-                    const product = record.fields.Product;
-                    const quantity = Math.abs(record.fields.Quantity || 0); // Convert to positive for display
-                    const salePrice = record.fields.SalePrice || 0;
-                    
-                    totalSales += quantity;
-                    totalSalesValue += quantity * salePrice;
-                    salesDetails[product] = (salesDetails[product] || 0) + quantity;
-                });
-                
-                // Check for deadstock - Option 1: Items with stock < 5
-                const deadstockOption1 = [];
-                const lowStockThreshold = 5; // Items with stock less than this are considered deadstock
-                
-                currentInventory.forEach(record => {
-                    const product = record.fields.Product;
-                    const quantity = record.fields.Quantity || 0;
-                    const unit = record.fields.Units || '';
-                    
-                    if (quantity < lowStockThreshold && quantity > 0) {
-                        deadstockOption1.push({
-                            product,
-                            quantity,
-                            unit
-                        });
-                    }
-                });
-                
-                // Check for deadstock - Option 2: Items not sold in last 7 days and in stock for > 30 days
-                const deadstockOption2 = [];
-                const today = new Date();
-                const thirtyDaysAgo = new Date(today);
-                thirtyDaysAgo.setDate(today.getDate() - 30);
-                
-                // Get recent sales (last 7 days)
-                const recentSales = await getRecentSales(shopId, 7);
-                console.log(`Found ${recentSales.length} recent sales records`);
-                
-                // Create a set of products sold in the last 7 days
-                const productsSoldRecently = new Set();
-                recentSales.forEach(record => {
-                    productsSoldRecently.add(record.fields.Product);
-                });
-                
-                // Create a map of product to earliest purchase date
-                const productPurchaseDates = {};
-                batchRecords.forEach(record => {
-                    const product = record.fields.Product;
-                    const purchaseDate = new Date(record.fields.PurchaseDate);
-                    
-                    if (!productPurchaseDates[product] || purchaseDate < productPurchaseDates[product]) {
-                        productPurchaseDates[product] = purchaseDate;
-                    }
-                });
-                
-                // Check each product in current inventory
-                currentInventory.forEach(record => {
-                    const product = record.fields.Product;
-                    const quantity = record.fields.Quantity || 0;
-                    const unit = record.fields.Units || '';
-                    
-                    if (quantity > 0) {
-                        // Check if product was purchased more than 30 days ago
-                        if (productPurchaseDates[product] && productPurchaseDates[product] < thirtyDaysAgo) {
-                            // Check if product has not been sold in the last 7 days
-                            if (!productsSoldRecently.has(product)) {
-                                deadstockOption2.push({
-                                    product,
-                                    quantity,
-                                    unit,
-                                    daysInStock: daysBetween(productPurchaseDates[product], today)
-                                });
-                            }
-                        }
-                    }
-                });
-                
-                // Format the message
-                let message = `📊 Daily Inventory Summary (${formatDateForDisplay(new Date())}):\n\n`;
-                message += `💰 Total Sales: ${totalSales} items`;
-                if (totalSalesValue > 0) {
-                    message += ` (Value: ₹${totalSalesValue.toFixed(2)})`;
+        if (shopIds.length === 0) {
+            console.log('No shops found to process');
+            return [];
+        }
+        
+        // Process shops in parallel with a concurrency limit
+        const concurrencyLimit = 5; // Process 5 shops at a time
+        const results = [];
+        
+        for (let i = 0; i < shopIds.length; i += concurrencyLimit) {
+            const batch = shopIds.slice(i, i + concurrencyLimit);
+            console.log(`Processing batch of ${batch.length} shops (${i + 1}-${i + batch.length} of ${shopIds.length})`);
+            
+            const batchPromises = batch.map(shopId => 
+                processShopSummary(shopId).catch(error => {
+                    console.error(`Error processing shop ${shopId}:`, error.message);
+                    return { shopId, success: false, error: error.message };
+                })
+            );
+            
+            const batchResults = await Promise.allSettled(batchPromises);
+            
+            // Process results
+            for (const result of batchResults) {
+                if (result.status === 'fulfilled') {
+                    results.push(result.value);
+                } else {
+                    // This shouldn't happen since we're catching errors in the promises
+                    console.error('Unexpected error in batch processing:', result.reason);
                 }
-                message += `\n`;
-                
-                if (Object.keys(salesDetails).length > 0) {
-                    message += `\n🛒 Sales Details:\n`;
-                    for (const [product, quantity] of Object.entries(salesDetails)) {
-                        // Find the unit for this product
-                        const inventoryRecord = currentInventory.find(r => r.fields.Product === product);
-                        const unit = inventoryRecord ? inventoryRecord.fields.Units || '' : '';
-                        const unitText = unit ? ` ${unit}` : '';
-                        
-                        message += `• ${product}: ${quantity}${unitText} sold\n`;
-                    }
-                }
-                
-                // Add deadstock alerts
-                if (deadstockOption1.length > 0 || deadstockOption2.length > 0) {
-                    message += `\n⚠️ Deadstock Alert:\n\n`;
-                    
-                    if (deadstockOption1.length > 0) {
-                        message += `Option 1 - Low Stock (less than 5 items):\n`;
-                        deadstockOption1.forEach(item => {
-                            const unitText = item.unit ? ` ${item.unit}` : '';
-                            message += `• ${item.product}: Only ${item.quantity}${unitText} left\n`;
-                        });
-                        message += `\n`;
-                    }
-                    
-                    if (deadstockOption2.length > 0) {
-                        message += `Option 2 - Slow Moving (not sold in 7 days, in stock > 30 days):\n`;
-                        deadstockOption2.forEach(item => {
-                            const unitText = item.unit ? ` ${item.unit}` : '';
-                            message += `• ${item.product}: ${item.quantity}${unitText} in stock for ${item.daysInStock} days\n`;
-                        });
-                        message += `\n`;
-                    }
-                }
-                
-                message += `Thank you for using our inventory management system!`;
-                
-                // Generate multilingual response
-                const formattedMessage = await generateMultiLanguageResponse(message, userLanguage);
-                
-                // Send the message
-                await sendWhatsAppMessage(shopId, formattedMessage);
-                console.log(`Daily summary sent to ${shopId}`);
-            } catch (error) {
-                console.error(`Error processing shop ${shopId}:`, error.message);
+            }
+            
+            // Add a small delay between batches to avoid rate limiting
+            if (i + concurrencyLimit < shopIds.length) {
+                console.log('Pausing between batches to avoid rate limiting...');
+                await new Promise(resolve => setTimeout(resolve, 2000));
             }
         }
         
-        console.log('Daily summary job completed successfully');
+        // Calculate success statistics
+        const successCount = results.filter(r => r.success).length;
+        const failureCount = results.filter(r => !r.success).length;
+        
+        console.log(`Daily summary job completed: ${successCount} successful, ${failureCount} failed`);
+        
+        return results;
     } catch (error) {
         console.error('Error in daily summary job:', error.message);
+        throw error;
     }
 }
 
