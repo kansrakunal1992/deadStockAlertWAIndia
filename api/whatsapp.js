@@ -7,10 +7,11 @@ const crypto = require('crypto');
 const {
   updateInventory,
   testConnection,
-  createBatchRecord,
+BatchRecord  create,
   getBatchRecords,
   updateBatchExpiry,
   saveUserPreference,
+  getUserPreference,
   createSalesRecord,
   updateBatchQuantity,
   batchUpdateInventory
@@ -186,8 +187,8 @@ function trackResponseTime(startTime, requestId) {
   responseTimes.max = Math.max(responseTimes.max, duration);
   console.log(`[${requestId}] Response time: ${duration}ms`);
   
-  // Log slow responses - increased threshold to 10 seconds
-  if (duration > 10000) {
+  // Log slow responses - increased threshold to 15 seconds
+  if (duration > 15000) {
     console.warn(`[${requestId}] Slow response detected: ${duration}ms`);
   }
 }
@@ -288,13 +289,6 @@ async function detectLanguageWithFallback(text, from, requestId) {
     
     const languageCode = response.data.choices[0].message.content.trim().toLowerCase();
     console.log(`[${requestId}] Detected language: ${languageCode}`);
-    
-    // Save the detected language preference
-    if (from) {
-      const shopId = from.replace('whatsapp:', '');
-      await saveUserPreference(shopId, languageCode);
-      console.log(`[${requestId}] Saved language preference: ${languageCode} for user ${shopId}`);
-    }
     
     // Cache the result
     languageCache.set(cacheKey, { language: languageCode, timestamp: Date.now() });
@@ -1462,7 +1456,17 @@ async function checkAndUpdateLanguage(text, from, currentLanguage, requestId) {
       
       // Also update the user preference
       const shopId = from.replace('whatsapp:', '');
-      await saveUserPreference(shopId, detectedLanguage);
+      saveUserPreference(shopId, detectedLanguage)
+        .then(result => {
+          if (result.success) {
+            console.log(`[${requestId}] Saved language preference: ${detectedLanguage} for user ${shopId}`);
+          } else {
+            console.warn(`[${requestId}] Failed to save language preference: ${result.error}`);
+          }
+        })
+        .catch(error => {
+          console.error(`[${requestId}] Error saving language preference:`, error.message);
+        });
     }
     
     return detectedLanguage;
@@ -1695,10 +1699,6 @@ async function processVoiceMessageAsync(mediaUrl, from, requestId, conversationS
     
     console.log(`[${requestId}] [5] Detecting language...`);
     const detectedLanguage = await checkAndUpdateLanguage(cleanTranscript, from, conversationState?.language, requestId);
-    
-    // Save user preference
-    const shopId = from.replace('whatsapp:', '');
-    await saveUserPreference(shopId, detectedLanguage);
     
     // Check if we're awaiting batch selection
     if (conversationState && conversationState.state === 'awaiting_batch_selection') {
@@ -2243,10 +2243,21 @@ module.exports = async (req, res) => {
           delete globalState.conversationState[From];
         }
         
-        // Save user preference
+        // Save user preference asynchronously (don't wait for it)
         const shopId = From.replace('whatsapp:', '');
-        await saveUserPreference(shopId, greetingLang);
-        console.log(`[${requestId}] Saved language preference: ${greetingLang} for user ${shopId}`);
+        saveUserPreference(shopId, greetingLang)
+          .then(result => {
+            if (result.success) {
+              console.log(`[${requestId}] Saved language preference: ${greetingLang} for user ${shopId}`);
+            } else {
+              console.warn(`[${requestId}] Failed to save language preference: ${result.error}`);
+            }
+          })
+          .catch(error => {
+            console.error(`[${requestId}] Error saving language preference:`, error.message);
+          });
+        
+        console.log(`[${requestId}] Processing greeting without waiting for preference save`);
         
         // Use predefined greeting messages to avoid translation API calls
         const greetingMessages = {
