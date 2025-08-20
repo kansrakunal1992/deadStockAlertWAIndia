@@ -1,4 +1,5 @@
 const axios = require('axios');
+
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
 
@@ -29,87 +30,246 @@ function logError(context, error) {
   }
 }
 
-// Airtable request helper
-async function airtableRequest(config, context = 'Airtable Request') {
+// Airtable request helper with timeout and retry logic
+async function airtableRequest(config, context = 'Airtable Request', maxRetries = 2) {
   const headers = {
     'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
     'Content-Type': 'application/json'
   };
-
-  try {
-    const response = await axios({
-      ...config,
-      url: config.url || airtableBaseURL,
-      headers,
-      timeout: 10000
-    });
-    return response.data;
-  } catch (error) {
-    logError(context, error);
-    throw error;
+  
+  let lastError;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await axios({
+        ...config,
+        url: config.url || airtableBaseURL,
+        headers,
+        timeout: 10000 // 10 second timeout
+      });
+      return response.data;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[${context}] Attempt ${attempt} failed:`, error.message);
+      
+      // If this is the last attempt, throw the error
+      if (attempt === maxRetries) {
+        break;
+      }
+      
+      // Wait before retrying (exponential backoff)
+      const delay = Math.pow(2, attempt) * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
+  
+  logError(context, lastError);
+  throw lastError;
 }
 
-// Airtable batch request helper
-async function airtableBatchRequest(config, context = 'Airtable Batch Request') {
+// Airtable batch request helper with timeout and retry logic
+async function airtableBatchRequest(config, context = 'Airtable Batch Request', maxRetries = 2) {
   const headers = {
     'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
     'Content-Type': 'application/json'
   };
-
-  try {
-    const response = await axios({
-      ...config,
-      url: config.url || airtableBatchURL,
-      headers,
-      timeout: 10000
-    });
-    return response.data;
-  } catch (error) {
-    logError(context, error);
-    throw error;
+  
+  let lastError;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await axios({
+        ...config,
+        url: config.url || airtableBatchURL,
+        headers,
+        timeout: 10000 // 10 second timeout
+      });
+      return response.data;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[${context}] Attempt ${attempt} failed:`, error.message);
+      
+      // If this is the last attempt, throw the error
+      if (attempt === maxRetries) {
+        break;
+      }
+      
+      // Wait before retrying (exponential backoff)
+      const delay = Math.pow(2, attempt) * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
+  
+  logError(context, lastError);
+  throw lastError;
 }
 
-// Airtable user preferences request helper
-async function airtableUserPreferencesRequest(config, context = 'Airtable User Preferences Request') {
+// Airtable user preferences request helper with timeout and retry logic
+async function airtableUserPreferencesRequest(config, context = 'Airtable User Preferences Request', maxRetries = 2) {
   const headers = {
     'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
     'Content-Type': 'application/json'
   };
-
-  try {
-    const response = await axios({
-      ...config,
-      url: config.url || airtableUserPreferencesURL,
-      headers,
-      timeout: 10000
-    });
-    return response.data;
-  } catch (error) {
-    logError(context, error);
-    throw error;
+  
+  let lastError;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await axios({
+        ...config,
+        url: config.url || airtableUserPreferencesURL,
+        headers,
+        timeout: 10000 // 10 second timeout
+      });
+      return response.data;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[${context}] Attempt ${attempt} failed:`, error.message);
+      
+      // If this is the last attempt, throw the error
+      if (attempt === maxRetries) {
+        break;
+      }
+      
+      // Wait before retrying (exponential backoff)
+      const delay = Math.pow(2, attempt) * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
+  
+  logError(context, lastError);
+  throw lastError;
 }
 
-// Airtable sales request helper
-async function airtableSalesRequest(config, context = 'Airtable Sales Request') {
+// Airtable sales request helper with timeout and retry logic
+async function airtableSalesRequest(config, context = 'Airtable Sales Request', maxRetries = 2) {
   const headers = {
     'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
     'Content-Type': 'application/json'
   };
+  
+  let lastError;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await axios({
+        ...config,
+        url: config.url || airtableSalesURL,
+        headers,
+        timeout: 10000 // 10 second timeout
+      });
+      return response.data;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[${context}] Attempt ${attempt} failed:`, error.message);
+      
+      // If this is the last attempt, throw the error
+      if (attempt === maxRetries) {
+        break;
+      }
+      
+      // Wait before retrying (exponential backoff)
+      const delay = Math.pow(2, attempt) * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  logError(context, lastError);
+  throw lastError;
+}
 
+// Batch update inventory function for processing multiple updates in parallel
+async function batchUpdateInventory(updates) {
+  const context = 'Batch Update Inventory';
+  
   try {
-    const response = await axios({
-      ...config,
-      url: config.url || airtableSalesURL,
-      headers,
-      timeout: 10000
+    console.log(`[${context}] Starting batch update for ${updates.length} items`);
+    
+    // Process updates in parallel
+    const promises = updates.map(async update => {
+      const { shopId, product, quantityChange, unit = '' } = update;
+      const itemContext = `Update ${shopId} - ${product}`;
+      
+      // Find existing record
+      const filterFormula = 'AND({ShopID} = \'' + shopId + '\', {Product} = \'' + product + '\')';
+      const findResult = await airtableRequest({
+        method: 'get',
+        params: { filterByFormula: filterFormula }
+      }, `${itemContext} - Find`);
+      
+      let newQuantity;
+      if (findResult.records.length > 0) {
+        // Delete existing record and create new one
+        const recordId = findResult.records[0].id;
+        const currentQty = findResult.records[0].fields.Quantity || 0;
+        newQuantity = currentQty + quantityChange;
+        
+        // Delete the old record
+        await airtableRequest({
+          method: 'delete',
+          url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME + '/' + recordId
+        }, `${itemContext} - Delete`);
+        
+        // Create new record
+        const createData = {
+          fields: {
+            ShopID: shopId,
+            Product: product,
+            Quantity: newQuantity,
+            Units: unit
+          }
+        };
+        
+        await airtableRequest({
+          method: 'post',
+          data: createData
+        }, `${itemContext} - Recreate`);
+      } else {
+        // Create new record
+        newQuantity = quantityChange;
+        const createData = {
+          fields: {
+            ShopID: shopId,
+            Product: product,
+            Quantity: newQuantity,
+            Units: unit
+          }
+        };
+        
+        await airtableRequest({
+          method: 'post',
+          data: createData
+        }, `${itemContext} - Create`);
+      }
+      
+      return { product, success: true, newQuantity, unit };
     });
-    return response.data;
+    
+    const results = await Promise.allSettled(promises);
+    
+    // Process results
+    const finalResults = [];
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        finalResults.push(result.value);
+      } else {
+        console.error(`[${context}] Error processing update ${index}:`, result.reason.message);
+        finalResults.push({
+          product: updates[index].product,
+          success: false,
+          error: result.reason.message
+        });
+      }
+    });
+    
+    return finalResults;
   } catch (error) {
     logError(context, error);
-    throw error;
+    return updates.map(update => ({
+      product: update.product,
+      success: false,
+      error: error.message
+    }));
   }
 }
 
@@ -619,5 +779,6 @@ module.exports = {
   getRecentSales,
   createSalesRecord,
   updateBatchQuantity,
-  getShopSalesRecords
+  getShopSalesRecords,
+  batchUpdateInventory
 };
