@@ -228,7 +228,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
 }
 
 // Parse multiple inventory updates from transcript
-function parseMultipleUpdates(transcript) {
+async function parseMultipleUpdates(transcript) {
   const updates = [];
   
   // Try AI-based parsing first
