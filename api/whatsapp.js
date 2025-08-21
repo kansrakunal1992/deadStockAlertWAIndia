@@ -794,8 +794,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         const batches = await getBatchRecords(shopId, product);
         if (batches.length > 0) {
           // Use the oldest batch (FIFO - First In, First Out)
-          selectedBatchId = batches[batches.length - 1].id;
-          console.log(`[Update ${shopId} - ${product}] Selected batch ${selectedBatchId} for sale`);
+selectedBatchId = batches[batches.length - 1].id;
+console.log(`[Update ${shopId} - ${product}] Selected batch ${selectedBatchId} for sale`);
+console.log(`[Update ${shopId} - ${product}] Batch details:`, JSON.stringify(batches[batches.length - 1].fields));
         }
       }
       // Update the inventory using translated product name
