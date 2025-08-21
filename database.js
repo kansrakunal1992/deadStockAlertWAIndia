@@ -394,10 +394,12 @@ async function updateBatchQuantity(batchId, quantityChange, unit = '') {
     console.log(`[${context}] Updating batch ${batchId} quantity by ${quantityChange} ${unit}`);
     
     // First, get the current batch record
-    const getResult = await airtableBatchRequest({
-      method: 'get',
-      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`
-    }, `${context} - Get`);
+const getResult = await airtableBatchRequest({
+  method: 'get',
+  url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`
+}, `${context} - Get`);
+
+console.log(`[${context}] Batch record lookup result:`, getResult.records ? `Found ${getResult.records.length} records` : 'No records found');
     
     if (!getResult.records || getResult.records.length === 0) {
       throw new Error('Batch record not found');
