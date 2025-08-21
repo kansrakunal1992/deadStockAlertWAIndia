@@ -928,6 +928,6 @@ module.exports = {
   getShopSalesRecords,
   batchUpdateInventory,
   getBatchByCompositeKey,           // Add this
-  updateBatchQuantityByCompositeKey, // Add this
-  migrateToCompositeKeys            // Add this
+  updateBatchQuantityByCompositeKey
+  
 };
