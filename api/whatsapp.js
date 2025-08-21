@@ -148,33 +148,51 @@ const greetings = {
   'zh': ['你好', '嗨']
 };
 
-// Helper function to format dates for Airtable (YYYY-MM-DD)
+// Helper function to format dates for Airtable (YYYY-MM-DDTHH:mm:ss.sssZ)
 function formatDateForAirtable(date) {
   if (date instanceof Date) {
-    return date.toISOString().split('T')[0];
+    return date.toISOString();
   }
   if (typeof date === 'string') {
-    if (date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    if (date.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
+      // Already in ISO format with time
       return date;
+    }
+    if (date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      // Date only, add time component
+      return `${date}T00:00:00.000Z`;
     }
     const parsedDate = new Date(date);
     if (!isNaN(parsedDate.getTime())) {
-      return parsedDate.toISOString().split('T')[0];
+      return parsedDate.toISOString();
     }
   }
   return null;
 }
 
-// Helper function to format date for display (DD/MM/YYYY)
+// Helper function to format date for display (DD/MM/YYYY HH:MM)
 function formatDateForDisplay(date) {
   if (date instanceof Date) {
     const day = date.getDate().toString().padStart(2, '0');
     const month = (date.getMonth() + 1).toString().padStart(2, '0');
     const year = date.getFullYear();
-    return `${day}/${month}/${year}`;
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${day}/${month}/${year} ${hours}:${minutes}`;
   }
   if (typeof date === 'string') {
+    if (date.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
+      // ISO format with time
+      const parsedDate = new Date(date);
+      const day = parsedDate.getDate().toString().padStart(2, '0');
+      const month = (parsedDate.getMonth() + 1).toString().padStart(2, '0');
+      const year = parsedDate.getFullYear();
+      const hours = parsedDate.getHours().toString().padStart(2, '0');
+      const minutes = parsedDate.getMinutes().toString().padStart(2, '0');
+      return `${day}/${month}/${year} ${hours}:${minutes}`;
+    }
     if (date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      // Date only
       const [year, month, day] = date.split('-');
       return `${day}/${month}/${year}`;
     }
