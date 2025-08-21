@@ -536,16 +536,97 @@ async function updateBatchQuantityByCompositeKey(compositeKey, quantityChange, u
     console.log(`[${context}] Updating batch ${compositeKey} by ${quantityChange} ${unit}`);
     
     // Get the batch by composite key
-    const batch = await getBatchByCompositeKey(compositeKey);
+    let batch = await getBatchByCompositeKey(compositeKey);
     
     if (!batch) {
       console.error(`[${context}] Batch not found for composite key: ${compositeKey}`);
+      
+      // Try to recreate the batch from the composite key
+      const parts = compositeKey.split('|');
+      if (parts.length === 3) {
+        const [shopId, product, purchaseDate] = parts;
+        console.log(`[${context}] Attempting to recreate batch`);
+        
+        // Create a new batch record with the same details
+        const recreateResult = await createBatchRecord({
+          shopId,
+          product,
+          quantity: 0, // Start with 0, we'll update it immediately
+          unit,
+          purchaseDate
+        });
+        
+        if (recreateResult.success) {
+          // Get the newly created batch
+          batch = await getBatchByCompositeKey(compositeKey);
+          if (batch) {
+            console.log(`[${context}] Successfully recreated batch with ID: ${batch.id}`);
+          }
+        }
+      }
+      
+      if (!batch) {
+        console.error(`[${context}] Could not find or recreate batch for composite key: ${compositeKey}`);
+        return {
+          success: false,
+          error: 'Batch record not found and could not be recreated',
+          compositeKey
+        };
+      }
+    }
+    
+    // Now try to update the batch
+    try {
+      const result = await updateBatchQuantity(batch.id, quantityChange, unit);
+      return result;
+    } catch (updateError) {
+      console.error(`[${context}] Failed to update batch ${batch.id}:`, updateError.message);
+      
+      // If update failed, try to recreate the batch and update again
+      console.log(`[${context}] Attempting to recreate and update batch`);
+      
+      const parts = compositeKey.split('|');
+      if (parts.length === 3) {
+        const [shopId, product, purchaseDate] = parts;
+        
+        // Get current quantity from the batch before it was deleted
+        const currentQuantity = batch.fields.Quantity || 0;
+        const newQuantity = Math.max(0, currentQuantity + quantityChange);
+        
+        // Create a new batch record with the updated quantity
+        const recreateResult = await createBatchRecord({
+          shopId,
+          product,
+          quantity: newQuantity,
+          unit,
+          purchaseDate
+        });
+        
+        if (recreateResult.success) {
+          console.log(`[${context}] Successfully recreated batch with updated quantity: ${newQuantity}`);
+          return {
+            success: true,
+            newQuantity,
+            recreated: true
+          };
+        }
+      }
+      
       return {
         success: false,
-        error: 'Batch record not found',
+        error: `Failed to update batch: ${updateError.message}`,
         compositeKey
       };
     }
+  } catch (error) {
+    logError(context, error);
+    return {
+      success: false,
+      error: error.message,
+      compositeKey
+    };
+  }
+}
     
     // Use the existing update function that uses record ID
     return await updateBatchQuantity(batch.id, quantityChange, unit);
