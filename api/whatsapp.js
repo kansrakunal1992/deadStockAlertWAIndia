@@ -788,17 +788,18 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       // Check if this is a sale (negative quantity)
       const isSale = update.action === 'sold';
       // For sales, try to determine which batch to use
-      let selectedBatchId = null;
-      if (isSale) {
-        // Get available batches for this product using translated name
-        const batches = await getBatchRecords(shopId, product);
-        if (batches.length > 0) {
-          // Use the oldest batch (FIFO - First In, First Out)
-selectedBatchId = batches[batches.length - 1].id;
-console.log(`[Update ${shopId} - ${product}] Selected batch ${selectedBatchId} for sale`);
-console.log(`[Update ${shopId} - ${product}] Batch details:`, JSON.stringify(batches[batches.length - 1].fields));
-        }
-      }
+let selectedBatchCompositeKey = null;
+if (isSale) {
+  // Get available batches for this product using translated name
+  const batches = await getBatchRecords(shopId, product);
+  if (batches.length > 0) {
+    // Use the oldest batch (FIFO - First In, First Out)
+    const oldestBatch = batches[batches.length - 1];
+    selectedBatchCompositeKey = oldestBatch.fields.CompositeKey;
+    console.log(`[Update ${shopId} - ${product}] Selected batch with composite key: ${selectedBatchCompositeKey}`);
+    console.log(`[Update ${shopId} - ${product}] Batch details:`, JSON.stringify(oldestBatch.fields));
+  }
+}
       // Update the inventory using translated product name
       const result = await updateInventory(shopId, product, update.quantity, update.unit);
       // Create batch record for purchases only
@@ -828,24 +829,30 @@ if (update.action === 'purchased' && result.success) {
         console.log(`[Update ${shopId} - ${product}] Creating sales record`);
         // FIX: Pass the unit parameter to avoid undefined error
         const salesResult = await createSalesRecord({
-          shopId,
-          product: product, // Use translated product
-          quantity: update.quantity, // This will be negative
-          unit: update.unit, // Pass the unit
-          saleDate: new Date().toISOString(),
-          batchId: selectedBatchId,
-          salePrice: 0 // Could be enhanced to capture price
-        });
+  shopId,
+  product: product,
+  quantity: update.quantity,
+  unit: update.unit,
+  saleDate: new Date().toISOString(),
+  batchCompositeKey: selectedBatchCompositeKey, // Uses composite key
+  salePrice: 0
+});
         if (salesResult.success) {
           console.log(`[Update ${shopId} - ${product}] Sales record created with ID: ${salesResult.id}`);
           // Update batch quantity if a batch was selected
-if (selectedBatchId) {
-  console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Batch ID: "${selectedBatchId}", Quantity change: ${update.quantity}`);
-  const batchUpdateResult = await updateBatchQuantity(selectedBatchId, update.quantity);
+if (selectedBatchCompositeKey) {
+  console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${update.quantity}`);
+  const batchUpdateResult = await updateBatchQuantityByCompositeKey(
+    selectedBatchCompositeKey, 
+    update.quantity
+  );
+  
   if (batchUpdateResult.success) {
-    console.log(`[Update ${shopId} - ${product}] Updated batch quantity`);
+    console.log(`[Update ${shopId} - ${product}] Updated batch quantity successfully`);
   } else {
     console.error(`[Update ${shopId} - ${product}] Failed to update batch quantity: ${batchUpdateResult.error}`);
+    result.batchIssue = true;
+    result.batchError = batchUpdateResult.error;
   }
 }
         } else {
