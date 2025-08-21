@@ -845,48 +845,57 @@ if (update.action === 'purchased' && result.success) {
           console.error(`[update] Failed to create batch record: ${batchResult.error}`);
         }
       }
-      // Create sales record for sales only
+           // Create sales record for sales only
       if (isSale && result.success) {
         console.log(`[Update ${shopId} - ${product}] Creating sales record`);
-        // FIX: Pass the unit parameter to avoid undefined error
-        const salesResult = await createSalesRecord({
-  shopId,
-  product: product,
-  quantity: update.quantity,
-  unit: update.unit,
-  saleDate: new Date().toISOString(),
-  batchCompositeKey: selectedBatchCompositeKey, // Uses composite key
-  salePrice: 0
-});
-        if (salesResult.success) {
-          console.log(`[Update ${shopId} - ${product}] Sales record created with ID: ${salesResult.id}`);
-          // Update batch quantity if a batch was selected
-// Only proceed with batch update if we have a valid batch
-if (selectedBatchCompositeKey) {
-  console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${update.quantity}`);
-  const batchUpdateResult = await updateBatchQuantityByCompositeKey(
-    selectedBatchCompositeKey, 
-    update.quantity
-  );
-  
-  if (batchUpdateResult.success) {
-    console.log(`[Update ${shopId} - ${product}] Updated batch quantity successfully`);
-    
-    // If the batch was recreated, add a note to the result
-    if (batchUpdateResult.recreated) {
-      console.log(`[Update ${shopId} - ${product}] Batch was recreated during update`);
-      result.batchRecreated = true;
-    }
-  } else {
-    console.error(`[Update ${shopId} - ${product}] Failed to update batch quantity: ${batchUpdateResult.error}`);
-    result.batchIssue = true;
-    result.batchError = batchUpdateResult.error;
-  }
-}
-}
-        } 
-      else {
-          console.error(`[Update ${shopId} - ${product}] Failed to create sales record: ${salesResult.error}`);
+        try {
+          // FIX: Pass the unit parameter to avoid undefined error
+          const salesResult = await createSalesRecord({
+            shopId,
+            product: product,
+            quantity: update.quantity,
+            unit: update.unit,
+            saleDate: new Date().toISOString(),
+            batchCompositeKey: selectedBatchCompositeKey, // Uses composite key
+            salePrice: 0
+          });
+          
+          if (salesResult.success) {
+            console.log(`[Update ${shopId} - ${product}] Sales record created with ID: ${salesResult.id}`);
+            // Update batch quantity if a batch was selected
+            if (selectedBatchCompositeKey) {
+              console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${update.quantity}`);
+              try {
+                const batchUpdateResult = await updateBatchQuantityByCompositeKey(
+                  selectedBatchCompositeKey, 
+                  update.quantity
+                );
+                
+                if (batchUpdateResult.success) {
+                  console.log(`[Update ${shopId} - ${product}] Updated batch quantity successfully`);
+                  
+                  // If the batch was recreated, add a note to the result
+                  if (batchUpdateResult.recreated) {
+                    console.log(`[Update ${shopId} - ${product}] Batch was recreated during update`);
+                    result.batchRecreated = true;
+                  }
+                } else {
+                  console.error(`[Update ${shopId} - ${product}] Failed to update batch quantity: ${batchUpdateResult.error}`);
+                  result.batchIssue = true;
+                  result.batchError = batchUpdateResult.error;
+                }
+              } catch (batchError) {
+                console.error(`[Update ${shopId} - ${product}] Error updating batch quantity:`, batchError.message);
+                result.batchIssue = true;
+                result.batchError = batchError.message;
+              }
+            }
+          } else {
+            console.error(`[Update ${shopId} - ${product}] Failed to create sales record: ${salesResult.error}`);
+          }
+        } catch (salesError) {
+          console.error(`[Update ${shopId} - ${product}] Error creating sales record:`, salesError.message);
+          result.salesError = salesError.message;
         }
       }
       results.push({
