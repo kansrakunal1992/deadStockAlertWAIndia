@@ -1,14 +1,13 @@
 const axios = require('axios');
-
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
 
 // Clean the base ID
 AIRTABLE_BASE_ID = AIRTABLE_BASE_ID
-  .trim()
-  .replace(/[;,\s]+$/, '')
-  .replace(/[;,\s]+/g, '')
-  .replace(/[^a-zA-Z0-9]/g, '');
+.trim()
+.replace(/[;,\s]+$/, '')
+.replace(/[;,\s]+/g, '')
+.replace(/[^a-zA-Z0-9]/g, '');
 
 const TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || 'Inventory';
 const BATCH_TABLE_NAME = process.env.AIRTABLE_BATCH_TABLE_NAME || 'InventoryBatches';
@@ -30,6 +29,34 @@ function logError(context, error) {
   }
 }
 
+// Unit normalization function
+function normalizeUnit(unit) {
+  const unitMap = {
+    'g': 'kg', 'gram': 'kg', 'grams': 'kg', 'ग्राम': 'kg',
+    'ml': 'liters', 'milliliter': 'liters', 'milliliters': 'liters',
+    'packet': 'packets', 'पैकेट': 'packets', 'box': 'boxes', 'बॉक्स': 'boxes'
+  };
+  
+  return unitMap[unit.toLowerCase()] || unit;
+}
+
+// Convert quantity to base unit
+function convertToBaseUnit(quantity, unit) {
+  const normalizedUnit = normalizeUnit(unit);
+  
+  const conversionMap = {
+    'kg': 1,
+    'g': 0.001,
+    'liters': 1,
+    'ml': 0.001,
+    'packets': 1,
+    'boxes': 1,
+    'pieces': 1
+  };
+  
+  return quantity * (conversionMap[normalizedUnit] || 1);
+}
+
 // Airtable request helper with timeout and retry logic
 async function airtableRequest(config, context = 'Airtable Request', maxRetries = 2) {
   const headers = {
@@ -38,7 +65,6 @@ async function airtableRequest(config, context = 'Airtable Request', maxRetries 
   };
   
   let lastError;
-  
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await axios({
@@ -75,7 +101,6 @@ async function airtableBatchRequest(config, context = 'Airtable Batch Request', 
   };
   
   let lastError;
-  
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await axios({
@@ -112,7 +137,6 @@ async function airtableUserPreferencesRequest(config, context = 'Airtable User P
   };
   
   let lastError;
-  
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await axios({
@@ -149,7 +173,6 @@ async function airtableSalesRequest(config, context = 'Airtable Sales Request', 
   };
   
   let lastError;
-  
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await axios({
@@ -178,107 +201,14 @@ async function airtableSalesRequest(config, context = 'Airtable Sales Request', 
   throw lastError;
 }
 
-// Batch update inventory function for processing multiple updates in parallel
-async function batchUpdateInventory(updates) {
-  const context = 'Batch Update Inventory';
-  
-  try {
-    console.log(`[${context}] Starting batch update for ${updates.length} items`);
-    
-    // Process updates in parallel
-    const promises = updates.map(async update => {
-      const { shopId, product, quantityChange, unit = '' } = update;
-      const itemContext = `Update ${shopId} - ${product}`;
-      
-      // Find existing record
-      const filterFormula = 'AND({ShopID} = \'' + shopId + '\', {Product} = \'' + product + '\')';
-      const findResult = await airtableRequest({
-        method: 'get',
-        params: { filterByFormula: filterFormula }
-      }, `${itemContext} - Find`);
-      
-      let newQuantity;
-      if (findResult.records.length > 0) {
-        // Delete existing record and create new one
-        const recordId = findResult.records[0].id;
-        const currentQty = findResult.records[0].fields.Quantity || 0;
-        newQuantity = currentQty + quantityChange;
-        
-        // Delete the old record
-        await airtableRequest({
-          method: 'delete',
-          url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME + '/' + recordId
-        }, `${itemContext} - Delete`);
-        
-        // Create new record
-        const createData = {
-          fields: {
-            ShopID: shopId,
-            Product: product,
-            Quantity: newQuantity,
-            Units: unit
-          }
-        };
-        
-        await airtableRequest({
-          method: 'post',
-          data: createData
-        }, `${itemContext} - Recreate`);
-      } else {
-        // Create new record
-        newQuantity = quantityChange;
-        const createData = {
-          fields: {
-            ShopID: shopId,
-            Product: product,
-            Quantity: newQuantity,
-            Units: unit
-          }
-        };
-        
-        await airtableRequest({
-          method: 'post',
-          data: createData
-        }, `${itemContext} - Create`);
-      }
-      
-      return { product, success: true, newQuantity, unit };
-    });
-    
-    const results = await Promise.allSettled(promises);
-    
-    // Process results
-    const finalResults = [];
-    results.forEach((result, index) => {
-      if (result.status === 'fulfilled') {
-        finalResults.push(result.value);
-      } else {
-        console.error(`[${context}] Error processing update ${index}:`, result.reason.message);
-        finalResults.push({
-          product: updates[index].product,
-          success: false,
-          error: result.reason.message
-        });
-      }
-    });
-    
-    return finalResults;
-  } catch (error) {
-    logError(context, error);
-    return updates.map(update => ({
-      product: update.product,
-      success: false,
-      error: error.message
-    }));
-  }
-}
-
-// Update inventory using delete and recreate approach with units support
+// Update inventory using delete and recreate approach with proper unit handling
 async function updateInventory(shopId, product, quantityChange, unit = '') {
   const context = `Update ${shopId} - ${product}`;
-  
   try {
     console.log(`[${context}] Starting update: ${quantityChange} ${unit}`);
+    
+    // Normalize unit before processing
+    const normalizedUnit = normalizeUnit(unit);
     
     // Find existing record
     const filterFormula = 'AND({ShopID} = \'' + shopId + '\', {Product} = \'' + product + '\')';
@@ -292,9 +222,19 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
       // Delete existing record and create new one (instead of update)
       const recordId = findResult.records[0].id;
       const currentQty = findResult.records[0].fields.Quantity || 0;
-      newQuantity = currentQty + quantityChange;
+      const currentUnit = findResult.records[0].fields.Units || '';
       
-      console.log(`[${context}] Found record ${recordId}, deleting and recreating: ${currentQty} -> ${newQuantity}`);
+      // Convert both quantities to base unit for proper calculation
+      const currentBaseQty = convertToBaseUnit(currentQty, currentUnit);
+      const changeBaseQty = convertToBaseUnit(quantityChange, normalizedUnit);
+      
+      // Calculate new quantity in base unit
+      const newBaseQty = currentBaseQty + changeBaseQty;
+      
+      // Convert back to normalized unit for storage
+      newQuantity = convertToBaseUnit(newBaseQty, normalizedUnit) / convertToBaseUnit(1, normalizedUnit);
+      
+      console.log(`[${context}] Found record ${recordId}, updating: ${currentQty} ${currentUnit} -> ${newQuantity} ${normalizedUnit} (change: ${quantityChange})`);
       
       // Delete the old record
       await airtableRequest({
@@ -302,13 +242,13 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
         url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME + '/' + recordId
       }, `${context} - Delete`);
       
-      // Create new record
+      // Create new record with normalized unit
       const createData = {
         fields: {
           ShopID: shopId,
           Product: product,
           Quantity: newQuantity,
-          Units: unit
+          Units: normalizedUnit
         }
       };
       
@@ -317,14 +257,14 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
         data: createData
       }, `${context} - Recreate`);
     } else {
-      // Create new record
+      // Create new record with normalized unit
       newQuantity = quantityChange;
       const createData = {
         fields: {
           ShopID: shopId,
           Product: product,
           Quantity: newQuantity,
-          Units: unit
+          Units: normalizedUnit
         }
       };
       
@@ -334,7 +274,7 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
       }, `${context} - Create`);
     }
     
-    return { success: true, newQuantity };
+    return { success: true, newQuantity, unit: normalizedUnit };
   } catch (error) {
     logError(context, error);
     return {
@@ -347,9 +287,11 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
 // Create a batch record for tracking purchases with expiry dates
 async function createBatchRecord(batchData) {
   const context = `Create Batch ${batchData.shopId} - ${batchData.product}`;
-  
   try {
     console.log(`[${context}] Creating batch record for ${batchData.quantity} units`);
+    
+    // Normalize unit before storing
+    const normalizedUnit = normalizeUnit(batchData.unit);
     
     const createData = {
       fields: {
@@ -358,7 +300,8 @@ async function createBatchRecord(batchData) {
         Quantity: batchData.quantity,
         PurchaseDate: batchData.purchaseDate,
         ExpiryDate: batchData.expiryDate,
-        OriginalRecordID: batchData.batchId || ''
+        OriginalRecordID: batchData.batchId || '',
+        Units: normalizedUnit
       }
     };
     
@@ -381,10 +324,8 @@ async function createBatchRecord(batchData) {
 // Get batch records for a specific product
 async function getBatchRecords(shopId, product) {
   const context = `Get Batches ${shopId} - ${product}`;
-  
   try {
     console.log(`[${context}] Retrieving batch records`);
-    
     const filterFormula = 'AND({ShopID} = \'' + shopId + '\', {Product} = \'' + product + '\')';
     const result = await airtableBatchRequest({
       method: 'get',
@@ -405,10 +346,8 @@ async function getBatchRecords(shopId, product) {
 // Update batch expiry date
 async function updateBatchExpiry(batchId, expiryDate) {
   const context = `Update Batch Expiry ${batchId}`;
-  
   try {
     console.log(`[${context}] Updating batch ${batchId} with expiry date ${expiryDate}`);
-    
     const updateData = {
       fields: {
         ExpiryDate: expiryDate
@@ -432,12 +371,11 @@ async function updateBatchExpiry(batchId, expiryDate) {
   }
 }
 
-// Update batch quantity when items are sold
-async function updateBatchQuantity(batchId, quantityChange) {
+// Update batch quantity when items are sold with proper unit handling
+async function updateBatchQuantity(batchId, quantityChange, unit = '') {
   const context = `Update Batch Quantity ${batchId}`;
-  
   try {
-    console.log(`[${context}] Updating batch ${batchId} quantity by ${quantityChange}`);
+    console.log(`[${context}] Updating batch ${batchId} quantity by ${quantityChange} ${unit}`);
     
     // First, get the current batch record
     const getResult = await airtableBatchRequest({
@@ -450,7 +388,18 @@ async function updateBatchQuantity(batchId, quantityChange) {
     }
     
     const currentQuantity = getResult.records[0].fields.Quantity || 0;
-    const newQuantity = Math.max(0, currentQuantity + quantityChange); // Ensure quantity doesn't go negative
+    const currentUnit = getResult.records[0].fields.Units || '';
+    
+    // Normalize units and convert to base unit for calculation
+    const normalizedUnit = normalizeUnit(unit) || currentUnit;
+    const currentBaseQty = convertToBaseUnit(currentQuantity, currentUnit);
+    const changeBaseQty = convertToBaseUnit(quantityChange, normalizedUnit);
+    
+    // Calculate new quantity in base unit
+    const newBaseQty = Math.max(0, currentBaseQty + changeBaseQty); // Ensure quantity doesn't go negative
+    
+    // Convert back to original unit for storage
+    const newQuantity = convertToBaseUnit(newBaseQty, currentUnit) / convertToBaseUnit(1, currentUnit);
     
     const updateData = {
       fields: {
@@ -464,7 +413,7 @@ async function updateBatchQuantity(batchId, quantityChange) {
       data: updateData
     }, context);
     
-    console.log(`[${context}] Batch quantity updated from ${currentQuantity} to ${newQuantity}`);
+    console.log(`[${context}] Batch quantity updated from ${currentQuantity} to ${newQuantity} ${currentUnit}`);
     return { success: true, newQuantity };
   } catch (error) {
     logError(context, error);
@@ -478,9 +427,11 @@ async function updateBatchQuantity(batchId, quantityChange) {
 // Create a sales record
 async function createSalesRecord(salesData) {
   const context = `Create Sales ${salesData.shopId} - ${salesData.product}`;
-  
   try {
     console.log(`[${context}] Creating sales record for ${Math.abs(salesData.quantity)} units`);
+    
+    // Normalize unit before storing
+    const normalizedUnit = normalizeUnit(salesData.unit);
     
     const createData = {
       fields: {
@@ -489,7 +440,8 @@ async function createSalesRecord(salesData) {
         Quantity: salesData.quantity, // This will be negative
         SaleDate: salesData.saleDate,
         BatchID: salesData.batchId || '',
-        SalePrice: salesData.salePrice || 0
+        SalePrice: salesData.salePrice || 0,
+        Units: normalizedUnit
       }
     };
     
@@ -512,10 +464,8 @@ async function createSalesRecord(salesData) {
 // Simple connection test
 async function testConnection() {
   const context = 'Connection Test';
-  
   try {
     console.log(`[${context}] Testing connection...`);
-    
     // Test table access
     const result = await airtableRequest({
       method: 'get',
@@ -524,7 +474,6 @@ async function testConnection() {
     
     console.log(`[${context}] ✅ Connection successful`);
     console.log(`[${context}] Table contains ${result.records.length} records`);
-    
     return true;
   } catch (error) {
     logError(context, error);
@@ -535,7 +484,6 @@ async function testConnection() {
 // Save user preference to Airtable with proper date format
 async function saveUserPreference(shopId, language) {
   const context = `Save User Preference ${shopId}`;
-  
   try {
     // Format date for Airtable (YYYY-MM-DD)
     const now = new Date().toISOString().split('T')[0];
@@ -588,7 +536,6 @@ async function saveUserPreference(shopId, language) {
 // Get user preference from Airtable
 async function getUserPreference(shopId) {
   const context = `Get User Preference ${shopId}`;
-  
   try {
     const filterFormula = `{ShopID} = '${shopId}'`;
     const result = await airtableUserPreferencesRequest({
@@ -613,7 +560,6 @@ async function getUserPreference(shopId) {
 // Get all shop IDs from Inventory table
 async function getAllShopIds() {
   const context = 'Get All Shop IDs';
-  
   try {
     const result = await airtableRequest({
       method: 'get',
@@ -634,7 +580,6 @@ async function getAllShopIds() {
 // Get daily inventory updates for a shop
 async function getDailyUpdates(shopId) {
   const context = `Get Daily Updates ${shopId}`;
-  
   try {
     // Get today's date in ISO format
     const today = new Date();
@@ -665,7 +610,6 @@ async function getDailyUpdates(shopId) {
 // Get current inventory for a shop
 async function getCurrentInventory(shopId) {
   const context = `Get Current Inventory ${shopId}`;
-  
   try {
     const filterFormula = `{ShopID} = '${shopId}'`;
     const result = await airtableRequest({
@@ -685,7 +629,6 @@ async function getCurrentInventory(shopId) {
 // Get batch records for a shop
 async function getShopBatchRecords(shopId) {
   const context = `Get Shop Batches ${shopId}`;
-  
   try {
     const filterFormula = `{ShopID} = '${shopId}'`;
     const result = await airtableBatchRequest({
@@ -706,7 +649,6 @@ async function getShopBatchRecords(shopId) {
 // Get sales records for a shop in the last N days
 async function getRecentSales(shopId, days = 7) {
   const context = `Get Recent Sales ${shopId}`;
-  
   try {
     // Calculate date N days ago
     const today = new Date();
@@ -736,7 +678,6 @@ async function getRecentSales(shopId, days = 7) {
 // Get sales records for a shop
 async function getShopSalesRecords(shopId, days = 7) {
   const context = `Get Shop Sales Records ${shopId}`;
-  
   try {
     // Calculate date N days ago
     const today = new Date();
@@ -760,6 +701,113 @@ async function getShopSalesRecords(shopId, days = 7) {
   } catch (error) {
     logError(context, error);
     return [];
+  }
+}
+
+// Batch update inventory function for processing multiple updates in parallel
+async function batchUpdateInventory(updates) {
+  const context = 'Batch Update Inventory';
+  try {
+    console.log(`[${context}] Starting batch update for ${updates.length} items`);
+    
+    // Process updates in parallel
+    const promises = updates.map(async update => {
+      const { shopId, product, quantityChange, unit = '' } = update;
+      const itemContext = `Update ${shopId} - ${product}`;
+      
+      // Normalize unit before processing
+      const normalizedUnit = normalizeUnit(unit);
+      
+      // Find existing record
+      const filterFormula = 'AND({ShopID} = \'' + shopId + '\', {Product} = \'' + product + '\')';
+      const findResult = await airtableRequest({
+        method: 'get',
+        params: { filterByFormula: filterFormula }
+      }, `${itemContext} - Find`);
+      
+      let newQuantity;
+      if (findResult.records.length > 0) {
+        // Delete existing record and create new one
+        const recordId = findResult.records[0].id;
+        const currentQty = findResult.records[0].fields.Quantity || 0;
+        const currentUnit = findResult.records[0].fields.Units || '';
+        
+        // Convert both quantities to base unit for proper calculation
+        const currentBaseQty = convertToBaseUnit(currentQty, currentUnit);
+        const changeBaseQty = convertToBaseUnit(quantityChange, normalizedUnit);
+        
+        // Calculate new quantity in base unit
+        const newBaseQty = currentBaseQty + changeBaseQty;
+        
+        // Convert back to normalized unit for storage
+        newQuantity = convertToBaseUnit(newBaseQty, normalizedUnit) / convertToBaseUnit(1, normalizedUnit);
+        
+        // Delete the old record
+        await airtableRequest({
+          method: 'delete',
+          url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME + '/' + recordId
+        }, `${itemContext} - Delete`);
+        
+        // Create new record
+        const createData = {
+          fields: {
+            ShopID: shopId,
+            Product: product,
+            Quantity: newQuantity,
+            Units: normalizedUnit
+          }
+        };
+        
+        await airtableRequest({
+          method: 'post',
+          data: createData
+        }, `${itemContext} - Recreate`);
+      } else {
+        // Create new record
+        newQuantity = quantityChange;
+        const createData = {
+          fields: {
+            ShopID: shopId,
+            Product: product,
+            Quantity: newQuantity,
+            Units: normalizedUnit
+          }
+        };
+        
+        await airtableRequest({
+          method: 'post',
+          data: createData
+        }, `${itemContext} - Create`);
+      }
+      
+      return { product, success: true, newQuantity, unit: normalizedUnit };
+    });
+    
+    const results = await Promise.allSettled(promises);
+    
+    // Process results
+    const finalResults = [];
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        finalResults.push(result.value);
+      } else {
+        console.error(`[${context}] Error processing update ${index}:`, result.reason.message);
+        finalResults.push({
+          product: updates[index].product,
+          success: false,
+          error: result.reason.message
+        });
+      }
+    });
+    
+    return finalResults;
+  } catch (error) {
+    logError(context, error);
+    return updates.map(update => ({
+      product: update.product,
+      success: false,
+      error: error.message
+    }));
   }
 }
 
