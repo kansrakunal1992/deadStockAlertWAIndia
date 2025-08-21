@@ -884,7 +884,8 @@ if (selectedBatchCompositeKey) {
   }
 }
 }
-        } else {
+        } 
+      else {
           console.error(`[Update ${shopId} - ${product}] Failed to create sales record: ${salesResult.error}`);
         }
       }
