@@ -28,11 +28,13 @@ const responseTimes = {
 const languageCache = new Map();
 const productMatchCache = new Map();
 const inventoryCache = new Map();
+const productTranslationCache = new Map();
 
 // Cache TTL values
 const LANGUAGE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const INVENTORY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const PRODUCT_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 // Precompiled regex patterns for better performance
 const regexPatterns = {
@@ -226,6 +228,13 @@ function cleanupCaches() {
     }
   }
   
+  // Clean product translation cache
+  for (const [key, value] of productTranslationCache.entries()) {
+    if (now - value.timestamp > PRODUCT_TRANSLATION_CACHE_TTL) {
+      productTranslationCache.delete(key);
+    }
+  }
+  
   // Clean global state every 5 minutes
   if (now - globalState.lastCleanup > 5 * 60 * 1000) {
     const FIVE_MINUTES = 5 * 60 * 1000;
@@ -339,6 +348,71 @@ function createButtonMessage(message, buttons) {
   return twiml.toString();
 }
 
+// Function to translate product names from native languages to English
+async function translateProductName(productName, requestId) {
+  try {
+    // Check cache first
+    const cacheKey = productName.toLowerCase();
+    const cached = productTranslationCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < PRODUCT_TRANSLATION_CACHE_TTL)) {
+      console.log(`[${requestId}] Using cached product translation: "${productName}" → "${cached.translation}"`);
+      return cached.translation;
+    }
+    
+    // First check if it's already a known product in English
+    if (products.some(p => p.toLowerCase() === productName.toLowerCase())) {
+      return productName;
+    }
+    
+    // Try to translate using AI
+    const response = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: "deepseek-chat",
+        messages: [
+          {
+            role: "system",
+            content: `Translate the following product name to English. If it's already in English, return it as is. Only return the translated product name, nothing else.`
+          },
+          {
+            role: "user",
+            content: productName
+          }
+        ],
+        max_tokens: 50,
+        temperature: 0.1
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 5000
+      }
+    );
+    
+    const translated = response.data.choices[0].message.content.trim();
+    console.log(`[${requestId}] Translated product: "${productName}" → "${translated}"`);
+    
+    // Check if the translated product is in our known products list
+    if (products.some(p => p.toLowerCase() === translated.toLowerCase())) {
+      // Cache the result
+      productTranslationCache.set(cacheKey, {
+        translation: translated,
+        timestamp: Date.now()
+      });
+      
+      return translated;
+    }
+    
+    // If not found, return original
+    return productName;
+  } catch (error) {
+    console.warn(`[${requestId}] Product translation failed:`, error.message);
+    return productName;
+  }
+}
+
 // Function to parse inventory updates using AI
 async function parseInventoryUpdateWithAI(transcript, requestId) {
   try {
@@ -426,6 +500,9 @@ async function parseMultipleUpdates(transcript) {
     console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);
     const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
     if (aiUpdate && aiUpdate.product && aiUpdate.quantity !== 0) {
+      // Translate the product name
+      aiUpdate.product = await translateProductName(aiUpdate.product, 'ai-parsing');
+      
       console.log(`[AI Parsing] Successfully parsed: ${aiUpdate.quantity} ${aiUpdate.unit} of ${aiUpdate.product} (${aiUpdate.action})`);
       updates.push(aiUpdate);
       return updates;
@@ -440,7 +517,10 @@ async function parseMultipleUpdates(transcript) {
   for (const sentence of sentences) {
     const trimmed = sentence.trim();
     if (trimmed) {
-      const update = parseSingleUpdate(trimmed);
+      let update = parseSingleUpdate(trimmed);
+      // Translate the product name
+      update.product = await translateProductName(update.product, 'rule-parsing');
+      
       if (isValidInventoryUpdate(update)) {
         updates.push(update);
       }
@@ -643,7 +723,15 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   
   for (const update of updates) {
     try {
-      console.log(`[Update ${shopId} - ${update.product}] Processing update: ${update.quantity} ${update.unit}`);
+      // Translate product name before processing
+      const translatedProduct = await translateProductName(update.product, 'update');
+      console.log(`[Update ${shopId}] Using translated product: "${translatedProduct}"`);
+      
+      // Use translated product for all operations
+      const product = translatedProduct;
+      
+      // Rest of the function remains the same...
+      console.log(`[Update ${shopId} - ${product}] Processing update: ${update.quantity} ${update.unit}`);
       
       // Check if this is a sale (negative quantity)
       const isSale = update.action === 'sold';
@@ -651,46 +739,46 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       // For sales, try to determine which batch to use
       let selectedBatchId = null;
       if (isSale) {
-        // Get available batches for this product
-        const batches = await getBatchRecords(shopId, update.product);
+        // Get available batches for this product using translated name
+        const batches = await getBatchRecords(shopId, product);
         if (batches.length > 0) {
           // Use the oldest batch (FIFO - First In, First Out)
           selectedBatchId = batches[batches.length - 1].id;
-          console.log(`[Update ${shopId} - ${update.product}] Selected batch ${selectedBatchId} for sale`);
+          console.log(`[Update ${shopId} - ${product}] Selected batch ${selectedBatchId} for sale`);
         }
       }
       
-      // Update the inventory
-      const result = await updateInventory(shopId, update.product, update.quantity, update.unit);
+      // Update the inventory using translated product name
+      const result = await updateInventory(shopId, product, update.quantity, update.unit);
       
       // Create batch record for purchases only
       if (update.action === 'purchased' && result.success) {
-        console.log(`[Update ${shopId} - ${update.product}] Creating batch record for purchase`);
+        console.log(`[Update ${shopId} - ${product}] Creating batch record for purchase`);
         // Format current date for Airtable
         const formattedPurchaseDate = formatDateForAirtable(new Date());
         const batchResult = await createBatchRecord({
           shopId,
-          product: update.product,
+          product: product, // Use translated product
           quantity: update.quantity,
           purchaseDate: formattedPurchaseDate,
           expiryDate: null // Will be updated later
         });
         
         if (batchResult.success) {
-          console.log(`[Update ${shopId} - ${update.product}] Batch record created with ID: ${batchResult.id}`);
+          console.log(`[Update ${shopId} - ${product}] Batch record created with ID: ${batchResult.id}`);
           // Add batch date to result for display
           result.batchDate = formattedPurchaseDate;
         } else {
-          console.error(`[${requestId}] Failed to create batch record: ${batchResult.error}`);
+          console.error(`[update] Failed to create batch record: ${batchResult.error}`);
         }
       }
       
       // Create sales record for sales only
       if (isSale && result.success) {
-        console.log(`[Update ${shopId} - ${update.product}] Creating sales record`);
+        console.log(`[Update ${shopId} - ${product}] Creating sales record`);
         const salesResult = await createSalesRecord({
           shopId,
-          product: update.product,
+          product: product, // Use translated product
           quantity: update.quantity, // This will be negative
           saleDate: new Date().toISOString(),
           batchId: selectedBatchId,
@@ -698,24 +786,24 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         });
         
         if (salesResult.success) {
-          console.log(`[Update ${shopId} - ${update.product}] Sales record created with ID: ${salesResult.id}`);
+          console.log(`[Update ${shopId} - ${product}] Sales record created with ID: ${salesResult.id}`);
           
           // Update batch quantity if a batch was selected
           if (selectedBatchId) {
             const batchUpdateResult = await updateBatchQuantity(selectedBatchId, update.quantity);
             if (batchUpdateResult.success) {
-              console.log(`[Update ${shopId} - ${update.product}] Updated batch quantity`);
+              console.log(`[Update ${shopId} - ${product}] Updated batch quantity`);
             } else {
-              console.error(`[Update ${shopId} - ${update.product}] Failed to update batch quantity: ${batchUpdateResult.error}`);
+              console.error(`[Update ${shopId} - ${product}] Failed to update batch quantity: ${batchUpdateResult.error}`);
             }
           }
         } else {
-          console.error(`[Update ${shopId} - ${update.product}] Failed to create sales record: ${salesResult.error}`);
+          console.error(`[Update ${shopId} - ${product}] Failed to create sales record: ${salesResult.error}`);
         }
       }
       
       results.push({
-        product: update.product,
+        product: product, // Use translated product
         quantity: update.quantity,
         unit: update.unit,
         action: update.action,
@@ -1662,7 +1750,21 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       const confirmationResponse = await confirmTranscription(cleanTranscript, From, detectedLanguage, requestId);
       
       // Extract just the message body from the TwiML
-      const messageBody = confirmationResponse.match(/<Body>([^<]+)<\/Body>/)[1];
+      let messageBody;
+      try {
+        const bodyMatch = confirmationResponse.match(/<Body>([^<]+)<\/Body>/);
+        if (bodyMatch && bodyMatch[1]) {
+          messageBody = bodyMatch[1];
+        } else {
+          // Fallback: If regex fails, try to get the message directly
+          messageBody = confirmationResponse.toString();
+          // Remove TwiML tags if present
+          messageBody = messageBody.replace(/<[^>]*>/g, '').trim();
+        }
+      } catch (error) {
+        console.error(`[${requestId}] Error extracting message body:`, error);
+        messageBody = "Please confirm the transcription.";
+      }
       
       await client.messages.create({
         body: messageBody,
@@ -1686,7 +1788,21 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
         
         // Extract just the message body from the TwiML
-        const messageBody = confirmationResponse.match(/<Body>([^<]+)<\/Body>/)[1];
+        let messageBody;
+        try {
+          const bodyMatch = confirmationResponse.match(/<Body>([^<]+)<\/Body>/);
+          if (bodyMatch && bodyMatch[1]) {
+            messageBody = bodyMatch[1];
+          } else {
+            // Fallback: If regex fails, try to get the message directly
+            messageBody = confirmationResponse.toString();
+            // Remove TwiML tags if present
+            messageBody = messageBody.replace(/<[^>]*>/g, '').trim();
+          }
+        } catch (error) {
+          console.error(`[${requestId}] Error extracting message body:`, error);
+          messageBody = "Please confirm the product update.";
+        }
         
         await client.messages.create({
           body: messageBody,
@@ -1704,7 +1820,21 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       const mockResponse = {
         message: (msg) => {
           // Extract just the message body from the TwiML
-          const messageBody = msg.toString().match(/<Body>([^<]+)<\/Body>/)[1];
+          let messageBody;
+          try {
+            const bodyMatch = msg.toString().match(/<Body>([^<]+)<\/Body>/);
+            if (bodyMatch && bodyMatch[1]) {
+              messageBody = bodyMatch[1];
+            } else {
+              // Fallback: If regex fails, try to get the message directly
+              messageBody = msg.toString();
+              // Remove TwiML tags if present
+              messageBody = messageBody.replace(/<[^>]*>/g, '').trim();
+            }
+          } catch (error) {
+            console.error(`[${requestId}] Error extracting message body:`, error);
+            messageBody = "Processing complete.";
+          }
           
           return client.messages.create({
             body: messageBody,
@@ -1876,7 +2006,23 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         
         // Send via Twilio API
         const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-        const messageBody = confirmationResponse.match(/<Body>([^<]+)<\/Body>/)[1];
+        
+        // Extract message body with error handling
+        let messageBody;
+        try {
+          const bodyMatch = confirmationResponse.match(/<Body>([^<]+)<\/Body>/);
+          if (bodyMatch && bodyMatch[1]) {
+            messageBody = bodyMatch[1];
+          } else {
+            // Fallback: If regex fails, try to get the message directly
+            messageBody = confirmationResponse.toString();
+            // Remove TwiML tags if present
+            messageBody = messageBody.replace(/<[^>]*>/g, '').trim();
+          }
+        } catch (error) {
+          console.error(`[${requestId}] Error extracting message body:`, error);
+          messageBody = "Please confirm the product update.";
+        }
         
         await client.messages.create({
           body: messageBody,
@@ -1891,7 +2037,21 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       const mockResponse = {
         message: (msg) => {
           // Extract just the message body from the TwiML
-          const messageBody = msg.toString().match(/<Body>([^<]+)<\/Body>/)[1];
+          let messageBody;
+          try {
+            const bodyMatch = msg.toString().match(/<Body>([^<]+)<\/Body>/);
+            if (bodyMatch && bodyMatch[1]) {
+              messageBody = bodyMatch[1];
+            } else {
+              // Fallback: If regex fails, try to get the message directly
+              messageBody = msg.toString();
+              // Remove TwiML tags if present
+              messageBody = messageBody.replace(/<[^>]*>/g, '').trim();
+            }
+          } catch (error) {
+            console.error(`[${requestId}] Error extracting message body:`, error);
+            messageBody = "Processing complete.";
+          }
           
           return sendMessageViaAPI(From, messageBody);
         },
