@@ -803,13 +803,14 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       // Create batch record for purchases only
 if (update.action === 'purchased' && result.success) {
   console.log(`[Update ${shopId} - ${product}] Creating batch record for purchase`);
-  // Format current date for Airtable
+  // Format current date with time for Airtable
   const formattedPurchaseDate = formatDateForAirtable(new Date());
+  console.log(`[Update ${shopId} - ${product}] Using timestamp: ${formattedPurchaseDate}`);
   const batchResult = await createBatchRecord({
     shopId,
     product: product, // Use translated product
     quantity: update.quantity,
-    unit: update.unit, // Add this line to pass the unit
+    unit: update.unit, // Pass the unit
     purchaseDate: formattedPurchaseDate,
     expiryDate: null // Will be updated later
   });
@@ -1296,12 +1297,12 @@ async function handleBatchSelectionResponse(body, from, response, requestId, lan
       }
     }
     await sendSystemMessage(
-      `✅ Selected ${product} batch from ${formatDateForDisplay(selectedBatch.fields.PurchaseDate)}`,
-      from,
-      languageCode,
-      requestId,
-      response
-    );
+  `✅ Selected ${product} batch from ${formatDateForDisplay(selectedBatch.fields.PurchaseDate)}`,
+  from,
+  languageCode,
+  requestId,
+  response
+);
     // Clear conversation state
     if (globalState.conversationState && globalState.conversationState[from]) {
       delete globalState.conversationState[from];
@@ -1364,9 +1365,9 @@ async function handleExpiryDateUpdate(body, from, response, requestId, languageC
       return;
     }
     const formattedExpiryDate = formatDateForAirtable(expiryDate);
-    console.log(`[${requestId}] Formatted expiry date: ${formattedExpiryDate}`);
-    const latestBatch = batches[0];
-    console.log(`[${requestId}] Updating batch ${latestBatch.id} with expiry date`);
+console.log(`[${requestId}] Formatted expiry date: ${formattedExpiryDate}`);
+const latestBatch = batches[0];
+console.log(`[${requestId}] Updating batch ${latestBatch.id} (purchased: ${latestBatch.fields.PurchaseDate}) with expiry date`);
     const batchResult = await updateBatchExpiry(latestBatch.id, formattedExpiryDate);
     if (batchResult.success) {
       console.log(`[${requestId}] Successfully updated batch with expiry date`);
