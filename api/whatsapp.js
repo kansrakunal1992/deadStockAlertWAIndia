@@ -839,14 +839,15 @@ if (update.action === 'purchased' && result.success) {
         if (salesResult.success) {
           console.log(`[Update ${shopId} - ${product}] Sales record created with ID: ${salesResult.id}`);
           // Update batch quantity if a batch was selected
-          if (selectedBatchId) {
-            const batchUpdateResult = await updateBatchQuantity(selectedBatchId, update.quantity);
-            if (batchUpdateResult.success) {
-              console.log(`[Update ${shopId} - ${product}] Updated batch quantity`);
-            } else {
-              console.error(`[Update ${shopId} - ${product}] Failed to update batch quantity: ${batchUpdateResult.error}`);
-            }
-          }
+if (selectedBatchId) {
+  console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Batch ID: "${selectedBatchId}", Quantity change: ${update.quantity}`);
+  const batchUpdateResult = await updateBatchQuantity(selectedBatchId, update.quantity);
+  if (batchUpdateResult.success) {
+    console.log(`[Update ${shopId} - ${product}] Updated batch quantity`);
+  } else {
+    console.error(`[Update ${shopId} - ${product}] Failed to update batch quantity: ${batchUpdateResult.error}`);
+  }
+}
         } else {
           console.error(`[Update ${shopId} - ${product}] Failed to create sales record: ${salesResult.error}`);
         }
