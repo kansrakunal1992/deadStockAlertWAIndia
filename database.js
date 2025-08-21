@@ -629,47 +629,6 @@ async function recreateBatchAndUpdate(compositeKey, quantityChange, unit, contex
     };
   }
 }
-  
-  // Get the newly created batch
-  const newBatch = await getBatchByCompositeKey(compositeKey);
-  if (!newBatch) {
-    return {
-      success: false,
-      error: 'Failed to retrieve recreated batch',
-      compositeKey
-    };
-  }
-  
-  console.log(`[${context}] Successfully recreated batch with ID: ${newBatch.id}`);
-  
-  // Update the new batch quantity
-  try {
-    const updateResult = await updateBatchQuantity(newBatch.id, quantityChange, unit);
-    return {
-      ...updateResult,
-      recreated: true
-    };
-  } catch (updateError) {
-    console.error(`[${context}] Failed to update recreated batch:`, updateError.message);
-    return {
-      success: false,
-      error: `Failed to update recreated batch: ${updateError.message}`,
-      compositeKey
-    };
-  }
-}
-    
-    // Use the existing update function that uses record ID
-    return await updateBatchQuantity(batch.id, quantityChange, unit);
-  } catch (error) {
-    logError(context, error);
-    return {
-      success: false,
-      error: error.message,
-      compositeKey
-    };
-  }
-}
 
 // Simple connection test
 async function testConnection() {
