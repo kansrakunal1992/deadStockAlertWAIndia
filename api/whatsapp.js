@@ -800,6 +800,25 @@ if (isSale) {
     selectedBatchCompositeKey = oldestBatch.fields.CompositeKey;
     console.log(`[Update ${shopId} - ${product}] Selected batch with composite key: ${selectedBatchCompositeKey}`);
     console.log(`[Update ${shopId} - ${product}] Batch details:`, JSON.stringify(oldestBatch.fields));
+    
+    // Verify the batch exists before proceeding
+    const selectedBatch = await getBatchByCompositeKey(selectedBatchCompositeKey);
+    
+    if (!selectedBatch) {
+      console.warn(`[Update ${shopId} - ${product}] Selected batch no longer exists, trying to find alternative`);
+      
+      // Try to find an alternative batch
+      const existingBatches = batches.filter(batch => batch.fields.CompositeKey);
+      
+      if (existingBatches.length > 0) {
+        // Use the newest batch as alternative
+        selectedBatchCompositeKey = existingBatches[0].fields.CompositeKey;
+        console.log(`[Update ${shopId} - ${product}] Using alternative batch: ${selectedBatchCompositeKey}`);
+      } else {
+        console.error(`[Update ${shopId} - ${product}] No alternative batch found`);
+        selectedBatchCompositeKey = null;
+      }
+    }
   }
 }
       // Update the inventory using translated product name
@@ -842,6 +861,7 @@ if (update.action === 'purchased' && result.success) {
         if (salesResult.success) {
           console.log(`[Update ${shopId} - ${product}] Sales record created with ID: ${salesResult.id}`);
           // Update batch quantity if a batch was selected
+// Only proceed with batch update if we have a valid batch
 if (selectedBatchCompositeKey) {
   console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${update.quantity}`);
   const batchUpdateResult = await updateBatchQuantityByCompositeKey(
@@ -851,11 +871,18 @@ if (selectedBatchCompositeKey) {
   
   if (batchUpdateResult.success) {
     console.log(`[Update ${shopId} - ${product}] Updated batch quantity successfully`);
+    
+    // If the batch was recreated, add a note to the result
+    if (batchUpdateResult.recreated) {
+      console.log(`[Update ${shopId} - ${product}] Batch was recreated during update`);
+      result.batchRecreated = true;
+    }
   } else {
     console.error(`[Update ${shopId} - ${product}] Failed to update batch quantity: ${batchUpdateResult.error}`);
     result.batchIssue = true;
     result.batchError = batchUpdateResult.error;
   }
+}
 }
         } else {
           console.error(`[Update ${shopId} - ${product}] Failed to create sales record: ${salesResult.error}`);
