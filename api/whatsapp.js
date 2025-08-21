@@ -28,23 +28,21 @@ const responseTimes = {
 const languageCache = new Map();
 const productMatchCache = new Map();
 const inventoryCache = new Map();
-const translationCache = new Map();
 
 // Cache TTL values
 const LANGUAGE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const INVENTORY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const PRODUCT_CACHE_TTL = 60 * 60 * 1000; // 1 hour
-const TRANSLATION_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 // Precompiled regex patterns for better performance
 const regexPatterns = {
-  purchaseKeywords: /(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy|khareeda|khareedi|liya)/gi,
+  purchaseKeywords: /(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy|khareeda)/gi,
   salesKeywords: /(बेचा|बेचे|becha|sold|बिक्री|becha)/gi,
-  remainingKeywords: /(बचा|बचे|बाकी|remaining|left|bacha|bache)/gi,
+  remainingKeywords: /(बचा|बचे|बाकी|remaining|left|bacha)/gi,
   dateFormats: /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})|(\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4})/gi,
   digits: /(\d+|[०-९]+)/i,
   resetCommands: /(reset|start over|restart|cancel|exit|stop)/gi,
-  multipleUpdates: /(and|&|also|additionally|plus|और|तथा|एवं|aur)/gi
+  conjunctions: /(and|&|aur|also|और|एवं)/gi
 };
 
 // Global storage with cleanup mechanism
@@ -63,7 +61,8 @@ const resetCommands = ['reset', 'start over', 'restart', 'cancel', 'exit', 'stop
 const products = [
   // Branded items
   'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
-  'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata', 'Oreo',
+  'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata',
+  'Oreo', 'Sunfeast', 'Good Day', 'Marie Gold',
   // Basic groceries
   'flour', 'आटा', 'sugar', 'चीनी', 'salt', 'नमक',
   'rice', 'चावल', 'wheat', 'गेहूं', 'oil', 'तेल',
@@ -85,7 +84,7 @@ const products = [
   'biscuits', 'बिस्कुट', 'chips', 'soap', 'साबुन', 'detergent', 'डिटर्जेंट'
 ];
 
-// Number words mapping including Hinglish
+// Number words mapping
 const numberWords = {
   // English
   'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6,
@@ -99,20 +98,20 @@ const numberWords = {
   'तेरह': 13, 'चौदह': 14, 'पंद्रह': 15, 'सोलह': 16, 'सत्रह': 17,
   'अठारह': 18, 'उन्नीस': 19, 'बीस': 20, 'तीस': 30, 'चालीस': 40,
   'पचास': 50, 'साठ': 60, 'सत्तर': 70, 'अस्सी': 80, 'नब्बे': 90, 'सौ': 100,
-  // Special case: "सो" means 100 in Hindi when referring to quantity
-  'सो': 100,
   // Hinglish
   'ek': 1, 'do': 2, 'teen': 3, 'char': 4, 'paanch': 5, 'chhah': 6,
   'saat': 7, 'aath': 8, 'nau': 9, 'das': 10, 'gyaarah': 11, 'baarah': 12,
   'terah': 13, 'chaudah': 14, 'pandrah': 15, 'solah': 16, 'satrah': 17,
   'athaarah': 18, 'unnis': 19, 'bees': 20, 'tees': 30, 'chaalis': 40,
-  'pachaas': 50, 'saath': 60, 'sattar': 70, 'assi': 80, 'nabbay': 90, 'sau': 100,
+  'pachaas': 50, 'saath': 60, 'sattar': 70, 'assi': 80, 'nabbe': 90, 'sau': 100,
+  // Special case: "सो" means 100 in Hindi when referring to quantity
+  'सो': 100,
   // Hindi numerals (Devanagari digits)
   '०': 0, '१': 1, '२': 2, '३': 3, '४': 4, '५': 5, '६': 6, '७': 7, '८': 8, '९': 9,
   '१०': 10, '११': 11, '१२': 12, '१३': 13, '१४': 14, '१५': 15, '१६': 16
 };
 
-// Units mapping including Hinglish
+// Units mapping
 const units = {
   'packets': 1, 'पैकेट': 1, 'packet': 1,
   'boxes': 1, 'बॉक्स': 1, 'box': 1,
@@ -125,13 +124,13 @@ const units = {
 
 // Greetings mapping by language
 const greetings = {
-  'hi': ['hello', 'hi', 'hey', 'नमस्ते', 'नमस्कार', 'हाय', 'namaste'],
+  'hi': ['hello', 'hi', 'hey', 'नमस्ते', 'नमस्कार', 'हाय'],
   'ta': ['vanakkam', 'வணக்கம்'],
-  'te': ['నమస్కారం', 'హలో', 'namaskaram'],
-  'kn': ['ನಮಸ್ಕಾರ', 'ಹಲೋ', 'namaskara'],
-  'bn': ['নমস্কার', 'হ্যালো', 'namaskar'],
-  'gu': ['નમસ્તે', 'હેલો', 'namaste'],
-  'mr': ['नमस्कार', 'हॅलो', 'namaskar'],
+  'te': ['నమస్కారం', 'హలో'],
+  'kn': ['ನಮಸ್ಕಾರ', 'ಹಲೋ'],
+  'bn': ['নমস্কার', 'হ্যালো'],
+  'gu': ['નમસ્તે', 'હેલો'],
+  'mr': ['नमस्कार', 'हॅलो'],
   'en': ['hello', 'hi', 'hey'],
   'fr': ['salut', 'bonjour', 'allo'],
   'es': ['hola', 'buenos dias'],
@@ -196,8 +195,8 @@ function trackResponseTime(startTime, requestId) {
   responseTimes.max = Math.max(responseTimes.max, duration);
   console.log(`[${requestId}] Response time: ${duration}ms`);
   
-  // Log slow responses
-  if (duration > 15000) { // Increased threshold
+  // Log slow responses (increased threshold)
+  if (duration > 15000) {
     console.warn(`[${requestId}] Slow response detected: ${duration}ms`);
   }
 }
@@ -224,13 +223,6 @@ function cleanupCaches() {
   for (const [key, value] of inventoryCache.entries()) {
     if (now - value.timestamp > INVENTORY_CACHE_TTL) {
       inventoryCache.delete(key);
-    }
-  }
-  
-  // Clean translation cache
-  for (const [key, value] of translationCache.entries()) {
-    if (now - value.timestamp > TRANSLATION_CACHE_TTL) {
-      translationCache.delete(key);
     }
   }
   
@@ -284,8 +276,7 @@ async function detectLanguageWithFallback(text, from, requestId) {
         messages: [
           {
             role: "system",
-            content: `Detect the language of this text and respond with only the language code (e.g., "hi" for Hindi, "en" for English, "ta" for Tamil, etc.). 
-            For mixed languages like Hinglish (Hindi words written in Roman script), detect the primary language.`
+            content: `Detect the language of this text and respond with only the language code (e.g., "hi" for Hindi, "en" for English, "ta" for Tamil, etc.)`
           },
           {
             role: "user",
@@ -310,7 +301,9 @@ async function detectLanguageWithFallback(text, from, requestId) {
     // Save the detected language preference
     if (from) {
       const shopId = from.replace('whatsapp:', '');
-      await saveUserPreference(shopId, languageCode);
+      // Don't wait for this to complete
+      saveUserPreference(shopId, languageCode)
+        .catch(error => console.warn(`[${requestId}] Failed to save language preference:`, error.message));
       console.log(`[${requestId}] Saved language preference: ${languageCode} for user ${shopId}`);
     }
     
@@ -346,65 +339,7 @@ function createButtonMessage(message, buttons) {
   return twiml.toString();
 }
 
-// Function to translate product names from native languages to English
-async function translateProductName(productName, from, requestId) {
-  try {
-    // Check cache first
-    const cacheKey = `product:${productName}`;
-    const cached = translationCache.get(cacheKey);
-    if (cached && (Date.now() - cached.timestamp < TRANSLATION_CACHE_TTL)) {
-      console.log(`[${requestId}] Using cached product translation: ${productName} -> ${cached.translation}`);
-      return cached.translation;
-    }
-    
-    // Check if it's already a known product in English
-    if (products.some(p => p.toLowerCase() === productName.toLowerCase())) {
-      return productName;
-    }
-    
-    const response = await axios.post(
-      'https://api.deepseek.com/v1/chat/completions',
-      {
-        model: "deepseek-chat",
-        messages: [
-          {
-            role: "system",
-            content: `You are a product name translator. Translate the given product name to English.
-            If it's a brand name (like Parle-G, Maggi, Oreo, etc.), keep it as is.
-            If it's a generic product (like आटा, चीनी, etc.), translate it to English (flour, sugar).
-            For mixed language inputs like Hinglish, identify the product and translate appropriately.
-            Return only the translated product name, nothing else.`
-          },
-          {
-            role: "user",
-            content: productName
-          }
-        ],
-        max_tokens: 20,
-        temperature: 0.1
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 10000 // Increased timeout
-      }
-    );
-    
-    let translated = response.data.choices[0].message.content.trim();
-    console.log(`[${requestId}] Translated product: ${productName} -> ${translated}`);
-    
-    // Cache the result
-    translationCache.set(cacheKey, { translation: translated, timestamp: Date.now() });
-    return translated;
-  } catch (error) {
-    console.warn(`[${requestId}] Product translation failed, using original:`, error.message);
-    return productName;
-  }
-}
-
-// Function to parse inventory updates using AI with improved handling
+// Function to parse inventory updates using AI
 async function parseInventoryUpdateWithAI(transcript, requestId) {
   try {
     const response = await axios.post(
@@ -415,28 +350,22 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
           {
             role: "system",
             content: `You are an inventory parsing assistant. Extract inventory information from the user's message and return it in JSON format.
-            Extract the following fields:
-            1. product: The name of the product (e.g., "Parle-G biscuits", "sugar", "milk")
-            2. quantity: The numerical quantity (as a number)
-            3. unit: The unit of measurement (e.g., "packets", "kg", "liters", "pieces")
-            4. action: The action being performed ("purchased", "sold", "remaining")
-            
-            For the action field:
-            - Use "purchased" for words like "bought", "purchased", "buy", "खरीदा", "खरीदे", "लिया", "खरीदी", "khareeda", "khareedi"
-            - Use "sold" for words like "sold", "बेचा", "बेचे", "becha", "बिक्री", "becha"
-            - Use "remaining" for words like "remaining", "left", "बचा", "बचे", "बाकी", "bacha", "bache"
-            
-            If no action is specified, default to "purchased" for positive quantities and "sold" for negative quantities.
-            
-            If no unit is specified, infer the most appropriate unit based on the product type:
-            - For biscuits, chips, etc.: "packets"
-            - For milk, water, oil: "liters"
-            - For flour, sugar, salt: "kg"
-            - For individual items: "pieces"
-            
-            Handle mixed language inputs like Hinglish (Hindi words in Roman script) appropriately.
-            
-            Return only valid JSON with no additional text, markdown formatting, or code blocks.`
+Extract the following fields:
+1. product: The name of the product (e.g., "Parle-G biscuits", "sugar", "milk")
+2. quantity: The numerical quantity (as a number)
+3. unit: The unit of measurement (e.g., "packets", "kg", "liters", "pieces")
+4. action: The action being performed ("purchased", "sold", "remaining")
+For the action field:
+- Use "purchased" for words like "bought", "purchased", "buy", "खरीदा", "खरीदे", "लिया", "खरीदी", "khareeda"
+- Use "sold" for words like "sold", "बेचा", "बेचे", "becha", "बिक्री", "becha"
+- Use "remaining" for words like "remaining", "left", "बचा", "बचे", "बाकी", "bacha"
+If no action is specified, default to "purchased" for positive quantities and "sold" for negative quantities.
+If no unit is specified, infer the most appropriate unit based on the product type:
+- For biscuits, chips, etc.: "packets"
+- For milk, water, oil: "liters"
+- For flour, sugar, salt: "kg"
+- For individual items: "pieces"
+Return only valid JSON with no additional text, markdown formatting, or code blocks.`
           },
           {
             role: "user",
@@ -488,42 +417,17 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
   }
 }
 
-// Parse multiple inventory updates from transcript with improved handling
-async function parseMultipleUpdates(transcript, from, requestId) {
+// Parse multiple inventory updates from transcript
+async function parseMultipleUpdates(transcript) {
   const updates = [];
   
   // Try AI-based parsing first
   try {
     console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);
-    
-    // Check if the transcript contains multiple updates
-    const hasMultipleUpdates = regexPatterns.multipleUpdates.test(transcript);
-    
-    if (hasMultipleUpdates) {
-      // Split the transcript into parts and parse each part
-      const parts = transcript.split(regexPatterns.multipleUpdates);
-      
-      for (const part of parts) {
-        const trimmed = part.trim();
-        if (trimmed) {
-          const aiUpdate = await parseInventoryUpdateWithAI(trimmed, requestId);
-          if (aiUpdate && aiUpdate.product && aiUpdate.quantity !== 0) {
-            console.log(`[AI Parsing] Successfully parsed part: ${aiUpdate.quantity} ${aiUpdate.unit} of ${aiUpdate.product} (${aiUpdate.action})`);
-            updates.push(aiUpdate);
-          }
-        }
-      }
-    } else {
-      // Single update
-      const aiUpdate = await parseInventoryUpdateWithAI(transcript, requestId);
-      if (aiUpdate && aiUpdate.product && aiUpdate.quantity !== 0) {
-        console.log(`[AI Parsing] Successfully parsed: ${aiUpdate.quantity} ${aiUpdate.unit} of ${aiUpdate.product} (${aiUpdate.action})`);
-        updates.push(aiUpdate);
-        return updates;
-      }
-    }
-    
-    if (updates.length > 0) {
+    const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
+    if (aiUpdate && aiUpdate.product && aiUpdate.quantity !== 0) {
+      console.log(`[AI Parsing] Successfully parsed: ${aiUpdate.quantity} ${aiUpdate.unit} of ${aiUpdate.product} (${aiUpdate.action})`);
+      updates.push(aiUpdate);
       return updates;
     }
   } catch (error) {
@@ -531,8 +435,8 @@ async function parseMultipleUpdates(transcript, from, requestId) {
   }
   
   // Fallback to rule-based parsing if AI fails
-  // Better sentence splitting to handle "&" and other conjunctions
-  const sentences = transcript.split(/[.!?&]+/);
+  // Better sentence splitting to handle conjunctions
+  const sentences = transcript.split(regexPatterns.conjunctions);
   for (const sentence of sentences) {
     const trimmed = sentence.trim();
     if (trimmed) {
@@ -542,7 +446,6 @@ async function parseMultipleUpdates(transcript, from, requestId) {
       }
     }
   }
-  
   console.log(`[Rule-based Parsing] Parsed ${updates.length} valid updates from transcript`);
   return updates;
 }
@@ -637,7 +540,7 @@ function parseSingleUpdate(transcript) {
     unit,
     action,
     isKnown: products.some(p => product.toLowerCase().includes(p.toLowerCase()) ||
-                           p.toLowerCase().includes(product.toLowerCase()))
+                         p.toLowerCase().includes(product.toLowerCase()))
   };
 }
 
@@ -703,10 +606,10 @@ async function validateTranscript(transcript, requestId) {
           {
             role: "system",
             content: `You are an inventory assistant. Clean up this transcript but KEEP THE ORIGINAL LANGUAGE:
-            - Fix grammar errors
-            - Keep product names as they are (do not translate or change them)
-            - Keep numbers as they are (do not translate them)
-            - Return ONLY the cleaned text in the same language as the input, nothing else`
+- Fix grammar errors
+- Keep product names as they are (do not translate or change them)
+- Keep numbers as they are (do not translate them)
+- Return ONLY the cleaned text in the same language as the input, nothing else`
           },
           {
             role: "user",
@@ -734,24 +637,37 @@ async function validateTranscript(transcript, requestId) {
   }
 }
 
-// Handle multiple inventory updates with batch tracking - FIXED VERSION
-async function updateMultipleInventory(shopId, updates, languageCode, requestId) {
+// Handle multiple inventory updates with batch tracking
+async function updateMultipleInventory(shopId, updates, languageCode) {
   const results = [];
   
   for (const update of updates) {
     try {
-      console.log(`[Update ${shopId} - ${update.product}] Processing update: ${update.quantity} ${update.unit} (Action: ${update.action})`);
+      console.log(`[Update ${shopId} - ${update.product}] Processing update: ${update.quantity} ${update.unit}`);
+      
+      // Check if this is a sale (negative quantity)
+      const isSale = update.action === 'sold';
+      
+      // For sales, try to determine which batch to use
+      let selectedBatchId = null;
+      if (isSale) {
+        // Get available batches for this product
+        const batches = await getBatchRecords(shopId, update.product);
+        if (batches.length > 0) {
+          // Use the oldest batch (FIFO - First In, First Out)
+          selectedBatchId = batches[batches.length - 1].id;
+          console.log(`[Update ${shopId} - ${update.product}] Selected batch ${selectedBatchId} for sale`);
+        }
+      }
       
       // Update the inventory
       const result = await updateInventory(shopId, update.product, update.quantity, update.unit);
       
-      // Create batch record ONLY for purchases
+      // Create batch record for purchases only
       if (update.action === 'purchased' && result.success) {
         console.log(`[Update ${shopId} - ${update.product}] Creating batch record for purchase`);
-        
         // Format current date for Airtable
         const formattedPurchaseDate = formatDateForAirtable(new Date());
-        
         const batchResult = await createBatchRecord({
           shopId,
           product: update.product,
@@ -769,20 +685,9 @@ async function updateMultipleInventory(shopId, updates, languageCode, requestId)
         }
       }
       
-      // Create sales record ONLY for sales
-      if (update.action === 'sold' && result.success) {
+      // Create sales record for sales only
+      if (isSale && result.success) {
         console.log(`[Update ${shopId} - ${update.product}] Creating sales record`);
-        
-        // Get available batches for this product
-        const batches = await getBatchRecords(shopId, update.product);
-        let selectedBatchId = null;
-        
-        if (batches.length > 0) {
-          // Use the oldest batch (FIFO - First In, First Out)
-          selectedBatchId = batches[batches.length - 1].id;
-          console.log(`[Update ${shopId} - ${update.product}] Selected batch ${selectedBatchId} for sale`);
-        }
-        
         const salesResult = await createSalesRecord({
           shopId,
           product: update.product,
@@ -832,7 +737,7 @@ async function updateMultipleInventory(shopId, updates, languageCode, requestId)
   return results;
 }
 
-// Generate response in multiple languages and scripts without labels - IMPROVED VERSION
+// Generate response in multiple languages and scripts without labels
 async function generateMultiLanguageResponse(message, languageCode, requestId) {
   try {
     // If the language is English, return the message as is
@@ -849,72 +754,6 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
     }
     
     console.log(`[${requestId}] Translating to ${languageCode}: "${message}"`);
-    
-    const response = await axios.post(
-      'https://api.deepseek.com/v1/chat/completions',
-      {
-        model: "deepseek-chat",
-        messages: [
-          {
-            role: "system",
-            content: `You are a multilingual assistant. Translate the given message to the target language and provide it in two formats:
-            Format your response exactly as:
-            Line 1: Translation in native script (e.g., Devanagari for Hindi)
-            Empty line
-            Line 3: Translation in Roman script (transliteration using English alphabet)
-            
-            For example, for Hindi:
-            नमस्ते, आप कैसे हैं?
-            
-            Namaste, aap kaise hain?
-            
-            Do NOT include any labels like [Roman Script], [Native Script], <translation>, or any other markers. Just provide the translations one after the other with a blank line in between.`
-          },
-          {
-            role: "user",
-            content: `Translate this message to ${languageCode}: "${message}"`
-          }
-        ],
-        max_tokens: 200,
-        temperature: 0.3
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 15000 // Increased timeout
-      }
-    );
-    
-    let translated = response.data.choices[0].message.content.trim();
-    console.log(`[${requestId}] Raw translation response:`, translated);
-    
-    // Post-process to remove any labels that might have been included
-    translated = translated.replace(/<translation in roman script>/gi, '');
-    translated = translated.replace(/<translation in native script>/gi, '');
-    translated = translated.replace(/\[roman script\]/gi, '');
-    translated = translated.replace(/\[native script\]/gi, '');
-    translated = translated.replace(/translation in roman script:/gi, '');
-    translated = translated.replace(/translation in native script:/gi, '');
-    
-    // Remove quotes that might have been added
-    translated = translated.replace(/^"(.*)"$/, '$1');
-    translated = translated.replace(/"/g, '');
-    
-    // Remove extra blank lines
-    translated = translated.replace(/\n\s*\n\s*\n/g, '\n\n');
-    translated = translated.replace(/^\s+|\s+$/g, '');
-    
-    // Cache the result
-    languageCache.set(cacheKey, {
-      translation: translated,
-      timestamp: Date.now()
-    });
-    
-    return translated;
-  } catch (error) {
-    console.warn(`[${requestId}] Translation failed, using fallback:`, error.message);
     
     // Fallback strategies:
     // 1. For common greetings, use predefined translations with both scripts
@@ -960,10 +799,81 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
       const greeting = commonGreetings[languageCode] || commonGreetings['en'];
       const fallback = `${greeting.native}\n\n${greeting.roman}`;
       console.log(`[${requestId}] Using fallback greeting for ${languageCode}:`, fallback);
+      
+      // Cache the result
+      languageCache.set(cacheKey, {
+        translation: fallback,
+        timestamp: Date.now()
+      });
+      
       return fallback;
     }
     
-    // 2. For other messages, return the original with a note in both scripts when possible
+    // 2. For other messages, try the API
+    const response = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: "deepseek-chat",
+        messages: [
+          {
+            role: "system",
+            content: `You are a multilingual assistant. Translate the given message to the target language and provide it in two formats:
+Format your response exactly as:
+Line 1: Translation in native script (e.g., Devanagari for Hindi)
+Empty line
+Line 3: Translation in Roman script (transliteration using English alphabet)
+For example, for Hindi:
+नमस्ते, आप कैसे हैं?
+Namaste, aap kaise hain?
+Do NOT include any labels like [Roman Script], [Native Script], <translation>, or any other markers. Just provide the translations one after the other with a blank line in between.`
+          },
+          {
+            role: "user",
+            content: `Translate this message to ${languageCode}: "${message}"`
+          }
+        ],
+        max_tokens: 200,
+        temperature: 0.3
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000 // Increased timeout for better reliability
+      }
+    );
+    
+    let translated = response.data.choices[0].message.content.trim();
+    console.log(`[${requestId}] Raw translation response:`, translated);
+    
+    // Post-process to remove any labels that might have been included
+    translated = translated.replace(/<translation in roman script>/gi, '');
+    translated = translated.replace(/<translation in native script>/gi, '');
+    translated = translated.replace(/\[roman script\]/gi, '');
+    translated = translated.replace(/\[native script\]/gi, '');
+    translated = translated.replace(/translation in roman script:/gi, '');
+    translated = translated.replace(/translation in native script:/gi, '');
+    
+    // Remove quotes that might have been added
+    translated = translated.replace(/^"(.*)"$/, '$1');
+    translated = translated.replace(/"/g, '');
+    
+    // Remove extra blank lines
+    translated = translated.replace(/\n\s*\n\s*\n/g, '\n\n');
+    translated = translated.replace(/^\s+|\s+$/g, '');
+    
+    // Cache the result
+    languageCache.set(cacheKey, {
+      translation: translated,
+      timestamp: Date.now()
+    });
+    
+    return translated;
+  } catch (error) {
+    console.warn(`[${requestId}] Translation failed, using original:`, error.message);
+    
+    // 3. For other messages, return the original with a note in both scripts when possible
     console.log(`[${requestId}] Using original message for ${languageCode}`);
     return message;
   }
@@ -978,7 +888,7 @@ async function sendSystemMessage(message, from, detectedLanguage, requestId, res
     // Try to get user preference from database if not provided
     if (!userLanguage && from) {
       try {
-        const shopId = from.replace('whatsapp:','');
+        const shopId = from.replace('whatsapp:', '');
         const userPref = await getUserPreference(shopId);
         if (userPref.success) {
           userLanguage = userPref.language;
@@ -1011,11 +921,7 @@ async function sendSystemMessage(message, from, detectedLanguage, requestId, res
 async function processConfirmedTranscription(transcript, from, detectedLanguage, requestId, response, res) {
   try {
     console.log(`[${requestId}] [6] Parsing updates using AI...`);
-    
-    // Translate product names if needed
-    const translatedTranscript = await translateProductNamesInTranscript(transcript, from, requestId);
-    
-    const updates = await parseMultipleUpdates(translatedTranscript, from, requestId);
+    const updates = await parseMultipleUpdates(transcript);
     
     if (updates.length === 0) {
       console.log(`[${requestId}] Rejected: No valid inventory updates`);
@@ -1031,7 +937,6 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     
     console.log(`[${requestId}] [7] Testing Airtable connection...`);
     const connectionTest = await testConnection();
-    
     if (!connectionTest) {
       console.error(`[${requestId}] Airtable connection failed`);
       await sendSystemMessage(
@@ -1045,13 +950,12 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     }
     
     console.log(`[${requestId}] [8] Updating inventory for ${updates.length} items...`);
-    const shopId = from.replace('whatsapp:','');
-    const results = await updateMultipleInventory(shopId, updates, detectedLanguage, requestId);
+    const shopId = from.replace('whatsapp:', '');
+    const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
     
-    // Get user's preferred language
+    // Get user's preferred language for the response
     let userLanguage = detectedLanguage;
     try {
-      const shopId = from.replace('whatsapp:','');
       const userPref = await getUserPreference(shopId);
       if (userPref.success) {
         userLanguage = userPref.language;
@@ -1060,7 +964,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       console.warn(`[${requestId}] Failed to get user preference:`, error.message);
     }
     
-    // Create the base message in English
+    // Create base message in English first
     let baseMessage = '✅ Updates processed:\n\n';
     let successCount = 0;
     let hasSales = false;
@@ -1069,25 +973,20 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       if (result.success) {
         successCount++;
         const unitText = result.unit ? ` ${result.unit}` : '';
-        const quantity = Math.abs(result.quantity);
         
-        // Format the line based on action
-        let updateLine = '';
+        // Format based on action type
         if (result.action === 'purchased') {
-          updateLine = `• ${result.product}: ${quantity}${unitText} purchased (Stock: ${result.newQuantity}${unitText})`;
+          baseMessage += `• ${result.product}: ${result.quantity} ${unitText} purchased (Stock: ${result.newQuantity}${unitText})\n`;
           
-          // Add batch info for purchases
           if (result.batchDate) {
-            updateLine += `\n  Batch added: ${formatDateForDisplay(result.batchDate)}`;
+            baseMessage += `  Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
           }
         } else if (result.action === 'sold') {
-          updateLine = `• ${result.product}: ${quantity}${unitText} sold (Stock: ${result.newQuantity}${unitText})`;
+          baseMessage += `• ${result.product}: ${Math.abs(result.quantity)} ${unitText} sold (Stock: ${result.newQuantity}${unitText})\n`;
           hasSales = true;
-        } else {
-          updateLine = `• ${result.product}: ${quantity}${unitText} remaining (Stock: ${result.newQuantity}${unitText})`;
+        } else if (result.action === 'remaining') {
+          baseMessage += `• ${result.product}: ${result.quantity} ${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
         }
-        
-        baseMessage += `${updateLine}\n`;
       } else {
         baseMessage += `• ${result.product}: Error - ${result.error}\n`;
       }
@@ -1128,7 +1027,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     // Get user's preferred language for error message too
     let userLanguage = detectedLanguage;
     try {
-      const shopId = from.replace('whatsapp:','');
+      const shopId = from.replace('whatsapp:', '');
       const userPref = await getUserPreference(shopId);
       if (userPref.success) {
         userLanguage = userPref.language;
@@ -1148,54 +1047,9 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
   }
 }
 
-// Function to translate product names in transcript
-async function translateProductNamesInTranscript(transcript, from, requestId) {
-  try {
-    // Extract potential product names
-    const words = transcript.split(/\s+/);
-    let translatedTranscript = transcript;
-    
-    for (const word of words) {
-      // Clean the word from punctuation
-      const cleanWord = word.replace(/[^\w\u0900-\u097F\u0980-\u09FF]/g, '');
-      
-      if (cleanWord.length > 2) {
-        // Check if it's a known product
-        const isKnownProduct = products.some(p => 
-          p.toLowerCase().includes(cleanWord.toLowerCase()) || 
-          cleanWord.toLowerCase().includes(p.toLowerCase())
-        );
-        
-        if (!isKnownProduct) {
-          // Try to translate the product name
-          const translatedProduct = await translateProductName(cleanWord, from, requestId);
-          
-          if (translatedProduct !== cleanWord) {
-            // Replace the original word with the translated one
-            translatedTranscript = translatedTranscript.replace(
-              new RegExp(`\\b${cleanWord}\\b`, 'gi'), 
-              translatedProduct
-            );
-          }
-        }
-      }
-    }
-    
-    if (translatedTranscript !== transcript) {
-      console.log(`[${requestId}] Translated product names: "${transcript}" → "${translatedTranscript}"`);
-    }
-    
-    return translatedTranscript;
-  } catch (error) {
-    console.warn(`[${requestId}] Product name translation failed, using original:`, error.message);
-    return transcript;
-  }
-}
-
 // Function to confirm transcription with user
 async function confirmTranscription(transcript, from, detectedLanguage, requestId) {
   const response = new twilio.twiml.MessagingResponse();
-  
   await sendSystemMessage(
     `I heard: "${transcript}". Is this correct? Please reply with "yes" to confirm or "no" to try again.`,
     from,
@@ -1217,7 +1071,6 @@ async function confirmTranscription(transcript, from, detectedLanguage, requestI
 // Function to confirm product with user
 async function confirmProduct(update, from, detectedLanguage, requestId) {
   const response = new twilio.twiml.MessagingResponse();
-  
   await sendSystemMessage(
     `I heard you want to update: "${update.quantity > 0 ? '+' : ''}${update.quantity} ${update.product}" (${update.action}). Is this correct? Please reply with "yes" to confirm or "no" to try again.`,
     from,
@@ -1281,7 +1134,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId, lan
   try {
     console.log(`[${requestId}] Processing batch selection response: "${body}"`);
     
-    const shopId = from.replace('whatsapp:','');
+    const shopId = from.replace('whatsapp:', '');
     const lowerBody = body.toLowerCase();
     
     let product = null;
@@ -1428,7 +1281,7 @@ async function handleExpiryDateUpdate(body, from, response, requestId, languageC
       return;
     }
     
-    const shopId = from.replace('whatsapp:','');
+    const shopId = from.replace('whatsapp:', '');
     console.log(`[${requestId}] Looking for recent batches for ${product}`);
     
     const batches = await getBatchRecords(shopId, product);
@@ -1506,7 +1359,7 @@ function parseExpiryDate(dateStr) {
   if (monthMatch) {
     const day = parseInt(monthMatch[1]);
     const monthNames = ["January", "February", "March", "April", "May", "June",
-                      "July", "August", "September", "October", "November", "December"];
+                       "July", "August", "September", "October", "November", "December"];
     const month = monthNames.indexOf(monthMatch[2]);
     const year = parseInt(monthMatch[3]);
     
@@ -1543,7 +1396,7 @@ async function checkAndUpdateLanguage(text, from, currentLanguage, requestId) {
       };
       
       // Also update the user preference
-      const shopId = from.replace('whatsapp:','');
+      const shopId = from.replace('whatsapp:', '');
       await saveUserPreference(shopId, detectedLanguage);
     }
     
@@ -1582,6 +1435,7 @@ async function convertToFLAC(oggBuffer) {
     console.log(`[2] Converting audio, input size: ${oggBuffer.length} bytes, MD5: ${inputHash}`);
     
     fs.writeFileSync('/tmp/input.ogg', oggBuffer);
+    
     execSync(
       'ffmpeg -i /tmp/input.ogg -ar 16000 -ac 1 -c:a flac -compression_level 5 /tmp/output.flac',
       { timeout: 3000 }
@@ -1746,19 +1600,19 @@ async function sendMessageViaAPI(to, body) {
       to: formattedTo
     });
     
-    console.log('Message sent successfully via API. SID:', message.sid);
+    console.log(`Message sent successfully via API. SID: ${message.sid}`);
     return message;
   } catch (error) {
-    console.error('Error sending message via API:', error.message);
+    console.error('Error sending WhatsApp message via API:', error);
     throw error;
   }
 }
 
-// Function to process voice messages asynchronously
-async function processVoiceMessageAsync(mediaUrl, from, requestId, conversationState) {
+// Async processing for voice messages
+async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState) {
   try {
     console.log(`[${requestId}] [1] Downloading audio...`);
-    const audioBuffer = await downloadAudio(mediaUrl);
+    const audioBuffer = await downloadAudio(MediaUrl0);
     
     console.log(`[${requestId}] [2] Converting audio...`);
     const flacBuffer = await convertToFLAC(audioBuffer);
@@ -1772,10 +1626,10 @@ async function processVoiceMessageAsync(mediaUrl, from, requestId, conversationS
     const cleanTranscript = await validateTranscript(rawTranscript, requestId);
     
     console.log(`[${requestId}] [5] Detecting language...`);
-    const detectedLanguage = await checkAndUpdateLanguage(cleanTranscript, from, conversationState?.language, requestId);
+    const detectedLanguage = await checkAndUpdateLanguage(cleanTranscript, From, conversationState?.language, requestId);
     
     // Save user preference
-    const shopId = from.replace('whatsapp:','');
+    const shopId = From.replace('whatsapp:', '');
     await saveUserPreference(shopId, detectedLanguage);
     
     // Check if we're awaiting batch selection
@@ -1789,10 +1643,10 @@ async function processVoiceMessageAsync(mediaUrl, from, requestId, conversationS
         await client.messages.create({
           body: 'Processing your batch selection...',
           from: process.env.TWILIO_WHATSAPP_NUMBER,
-          to: from
+          to: From
         });
         
-        await handleBatchSelectionResponse(cleanTranscript, from, new twilio.twiml.MessagingResponse(), requestId, conversationState.language);
+        await handleBatchSelectionResponse(cleanTranscript, From, new twilio.twiml.MessagingResponse(), requestId, conversationState.language);
         return;
       }
     }
@@ -1805,7 +1659,7 @@ async function processVoiceMessageAsync(mediaUrl, from, requestId, conversationS
       
       // Send confirmation request via Twilio API
       const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-      const confirmationResponse = await confirmTranscription(cleanTranscript, from, detectedLanguage, requestId);
+      const confirmationResponse = await confirmTranscription(cleanTranscript, From, detectedLanguage, requestId);
       
       // Extract just the message body from the TwiML
       const messageBody = confirmationResponse.match(/<Body>([^<]+)<\/Body>/)[1];
@@ -1813,13 +1667,13 @@ async function processVoiceMessageAsync(mediaUrl, from, requestId, conversationS
       await client.messages.create({
         body: messageBody,
         from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: from
+        to: From
       });
     } else {
       console.log(`[${requestId}] [5.5] High confidence (${confidence}), proceeding without confirmation...`);
       
       // Parse the transcript
-      const updates = await parseMultipleUpdates(cleanTranscript, from, requestId);
+      const updates = await parseMultipleUpdates(cleanTranscript);
       
       // Check if any updates are for unknown products
       const unknownProducts = updates.filter(u => !u.isKnown);
@@ -1829,7 +1683,7 @@ async function processVoiceMessageAsync(mediaUrl, from, requestId, conversationS
         
         // Confirm the first unknown product via Twilio API
         const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-        const confirmationResponse = await confirmProduct(unknownProducts[0], from, detectedLanguage, requestId);
+        const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
         
         // Extract just the message body from the TwiML
         const messageBody = confirmationResponse.match(/<Body>([^<]+)<\/Body>/)[1];
@@ -1837,7 +1691,7 @@ async function processVoiceMessageAsync(mediaUrl, from, requestId, conversationS
         await client.messages.create({
           body: messageBody,
           from: process.env.TWILIO_WHATSAPP_NUMBER,
-          to: from
+          to: From
         });
         
         return;
@@ -1845,24 +1699,37 @@ async function processVoiceMessageAsync(mediaUrl, from, requestId, conversationS
       
       // Process the transcription and send result via Twilio API
       const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-      const processResponse = new twilio.twiml.MessagingResponse();
+      
+      // Create a mock response object for processConfirmedTranscription
+      const mockResponse = {
+        message: (msg) => {
+          // Extract just the message body from the TwiML
+          const messageBody = msg.toString().match(/<Body>([^<]+)<\/Body>/)[1];
+          
+          return client.messages.create({
+            body: messageBody,
+            from: process.env.TWILIO_WHATSAPP_NUMBER,
+            to: From
+          });
+        },
+        toString: () => '<Response><Message>Processing complete</Message></Response>'
+      };
+      
+      // Create a mock res object
+      const mockRes = {
+        send: () => {
+          // This is a no-op since we're sending via API
+          return Promise.resolve();
+        }
+      };
       
       await processConfirmedTranscription(
         cleanTranscript,
-        from,
+        From,
         detectedLanguage,
         requestId,
-        processResponse,
-        { send: (response) => {
-          // Extract the message body and send via Twilio API
-          const messageBody = response.toString().match(/<Body>([^<]+)<\/Body>/)[1];
-          
-          client.messages.create({
-            body: messageBody,
-            from: process.env.TWILIO_WHATSAPP_NUMBER,
-            to: from
-          });
-        }}
+        mockResponse,
+        mockRes
       );
     }
   } catch (error) {
@@ -1870,23 +1737,130 @@ async function processVoiceMessageAsync(mediaUrl, from, requestId, conversationS
     
     // Send error message via Twilio API
     const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-    
     await client.messages.create({
       body: 'Sorry, I had trouble processing your voice message. Please try again.',
       from: process.env.TWILIO_WHATSAPP_NUMBER,
-      to: from
+      to: From
     });
   }
 }
 
-// Function to process text messages asynchronously
-async function processTextMessageAsync(body, from, requestId, conversationState, detectedLanguage) {
+// Async processing for text messages
+async function processTextMessageAsync(Body, From, requestId, conversationState) {
   try {
-    // Translate product names if needed
-    const translatedBody = await translateProductNamesInTranscript(body, from, requestId);
+    console.log(`[${requestId}] [1] Parsing text message: "${Body}"`);
+    
+    // Check for common greetings with optimized detection
+    const lowerBody = Body.toLowerCase();
+    let isGreeting = false;
+    let greetingLang = 'en';
+    
+    // Quick check for common greetings in any language
+    const quickGreetings = ['hello', 'hi', 'hey', 'नमस्ते', 'হ্যালো', 'வணக்கம்', 'నమస్కారం', 'ನಮಸ್ಕಾರ', 'નમસ્તે', 'नमस्कार'];
+    
+    if (quickGreetings.some(g => lowerBody.includes(g))) {
+      isGreeting = true;
+      
+      // Determine specific language
+      for (const [lang, greetingList] of Object.entries(greetings)) {
+        if (greetingList.some(g => lowerBody.includes(g))) {
+          greetingLang = lang;
+          break;
+        }
+      }
+      
+      console.log(`[${requestId}] Detected greeting in language: ${greetingLang}`);
+      
+      // Reset conversation state on greeting
+      if (globalState.conversationState && globalState.conversationState[From]) {
+        delete globalState.conversationState[From];
+      }
+      
+      // Save user preference
+      const shopId = From.replace('whatsapp:', '');
+      await saveUserPreference(shopId, greetingLang);
+      console.log(`[${requestId}] Saved language preference: ${greetingLang} for user ${shopId}`);
+      
+      // Get user preference
+      let userPreference = 'voice'; // Default to voice
+      if (globalState.userPreferences[From]) {
+        userPreference = globalState.userPreferences[From];
+        console.log(`[${requestId}] User preference: ${userPreference}`);
+      }
+      
+      // Use predefined greeting messages to avoid translation API calls
+      const greetingMessages = {
+        'hi': `नमस्ते! मैं देखता हूं कि आप ${userPreference} द्वारा अपडेट भेजना पसंद करते हैं। आज मैं आपकी कैसे मदद कर सकता हूं?\n\nNamaste! Main dekhta hoon ki aap ${userPreference} dwara update bhejna pasand karte hain. Aaj main aapki kaise madad kar sakta hoon?`,
+        'bn': `হ্যালো! আমি দেখতে পাচ্ছি আপনি ${userPreference} দিয়ে আপডেট পাঠাতে পছন্দ করেন। আজ আমি আপনাকে কিভাবে সাহায্য করতে পারি?\n\nHello! Ami dekhte pachchi apni ${userPreference} diye update pathate pochondo koren. Aaj ami apnake kivabe sahaj korte pari?`,
+        'ta': `வணக்கம்! நான் பார்க்கிறேன் நீங்கள் ${userPreference} மூலம் புதுப்பிப்புகளை அனுப்புவதை விரும்புகிறீர்கள். இன்று நான் உங்களுக்கு எப்படி உதவ முடியும்?\n\nVanakkam! Naan paarkiren neengal ${userPreference} mulam puthippugalai anupuvathai virumbukireergal. Indru naan ungaluku eppadi utha mudiyum?`,
+        'te': `నమస్కారం! నేను చూస్తున్నాను మీరు ${userPreference} ద్వారా నవీకరణలను పంపించడాన్ని ఇష్టపడతారు. నేడు నేను మీకు ఎలా సహాయపడగలను?\n\nNamaskaram! Nenu chustunnanu miru ${userPreference} dwara naveekaralanu pampinchadanni istapadaru. Nedu nenu meeku ela saahayapadagalanu?`,
+        'kn': `ನಮಸ್ಕಾರ! ನಾನು ನೋಡುತ್ತಿದ್ದೇನೆ ನೀವು ${userPreference} ಮೂಲಕ ನವೀಕರಣಗಳನ್ನು ಕಳುಹಿಸಲು ಇಷ್ಟಪಡುತ್ತೀರಿ. ಇಂದು ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?\n\nNamaskara! Nanu noduttiddene neevu ${userPreference} moolaka naveekaragannannu kelisu baaasuttiri. Indu nanu nimage hege saahya madabahudu?`,
+        'gu': `નમસ્તે! હું જોઉં છું કે તમે ${userPreference} દ્વારા અપડેટ્સ મોકલવાનું પસંદ કરો છો. આજે હું તમને કેવી રીતે મદદ કરી શકું?\n\nNamaste! Hu joo chu ke tame ${userPreference} dwara apdets moklavanu pasand karo cho. Aje hu tamne kavi rite madad kar shakum?`,
+        'mr': `नमस्कार! मी पाहतो आपण ${userPreference} द्वारे अपडेट्स पाठवायला पसंत करता. आज मी तुम्हाला कशी मदत करू शकतो?\n\nNamaskar! Mi pahato aapan ${userPreference} dwara apdets pathavayala pasand karta. Aaj mi tumhala kashi madad karu shakto?`,
+        'en': `Hello! I see you prefer to send updates by ${userPreference}. How can I help you today?`
+      };
+      
+      if (userPreference !== 'voice') {
+        const greetingMessage = greetingMessages[greetingLang] || greetingMessages['en'];
+        
+        // Send via Twilio API
+        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+        await client.messages.create({
+          body: greetingMessage,
+          from: process.env.TWILIO_WHATSAPP_NUMBER,
+          to: From
+        });
+        
+        return;
+      }
+      
+      // Use text-based selection instead of buttons for broader compatibility
+      const welcomeMessages = {
+        'hi': `नमस्ते! आप अपना इन्वेंट्री अपडेट कैसे भेजना चाहेंगे?\n\nजवाब दें:\n• "1" वॉइस मैसेज के लिए\n• "2" टेक्स्ट मैसेज के लिए\n\nNamaste! Aap apna inventory update kaise bhejna chaahenge?\n\nJawaab dein:\n• "1" voice message ke liye\n• "2" text message ke liye`,
+        'bn': `স্বাগতম! আপনি কিভাবে আপনার ইনভেন্টরি আপডেট পাঠাতে চান?\n\nউত্তর দিন:\n• "1" ভয়েস মেসেজের জন্য\n• "2" টেক্সট মেসেজের জন্য\n\nSwagatam! Apni kivabe apnar inventory update pathate chan?\n\nUttor din:\n• "1" voice message er jonno\n• "2" text message er jonno`,
+        'ta': `வணக்கம்! நீங்கள் உங்கள் இன்வென்டரி புதுப்பிப்பை எப்படி அனுப்ப விரும்புகிறீர்கள்?\n\nபதிலளிக்கவும்:\n• "1" குரல் செய்திக்கு\n• "2" உரை செய்திக்கு\n\nVanakkam! Neengal ungal inventory puthippai eppadi anpu virumbukireergal?\n\nBadhilikavum:\n• "1" kural seithikku\n• "2"urai seithikku`,
+        'te': `నమస్కారం! మీరు మీ ఇన్వెంటరీ నవీకరణను ఎలా పంపాలనుకుంటున్నారు?\n\nస్పందించండి:\n• "1" వాయిస్ సందేశం కోసం\n• "2" టెక్స్ట్ సందేశం కోసం\n\nNamaskaram! Meeru mee inventory naveekaranam ela paalana kosamee?\n\nSpandinchandi:\n• "1" voice message kosam\n• "2" text message kosam`,
+        'kn': `ನಮಸ್ಕಾರ! ನೀವು ನಿಮ್ಮ ಇನ್ವೆಂಟರಿ ಅಪ್‌ಡೇಟ್ ಅನ್ನು ಹೇಗೆ ಕಳುಹಿಸಲು ಬಯಸುತ್ತೀರಿ?\n\n ಪ್ರತಿಕ್ರಿಯಿಸಿ:\n• "1" ಧ್ವನಿ ಸಂದೇಶಕ್ಕಾಗಿ\n• "2" ಪಠ್ಯ ಸಂದೇಶಕ್ಕಾಗಿ\n\nNamaskara! Neevu nimma inventory update annahege kelisu baaasuttiri?\n\nPratikriyisi:\n• "1" dhwani sandeshakkaagi\n• "2" patya sandeshakkaagi`,
+        'gu': `નમસ્તે! તમે તમારું ઇન્વેન્ટરી અપડેટ કેવી રીતે મોકલવા માંગો છો?\n\n જવાબ આપો:\n• "1" વોઇસ મેસેજ માટે\n• "2" ટેક્સ્ટ મેસેજ માટે\n\nNamaste! Tame tamaru inventory update kevi rite moklava mango cho?\n\nJawaab aapo:\n• "1" voice message maate\n• "2" text message maate`,
+        'mr': `नमस्कार! तुम्ही तुमचे इन्व्हेन्टरी अपडेट कसे पाठवायला इच्छिता?\n\n उत्तर द्या:\n• "1" व्हॉइस मेसेज साठी\n• "2" मजकूर मेसेज साठी\n\nNamaskar! Tumhi tumche inventory update kase pathavayla ichhita?\n\nUttar dya:\n• "1" voice message sathi\n• "2" majkur message sathi`,
+        'en': `Welcome! How would you like to send your inventory update?\n\nReply:\n• "1" for Voice Message\n• "2" for Text Message`
+      };
+      
+      const welcomeMessage = welcomeMessages[greetingLang] || welcomeMessages['en'];
+      
+      // Send via Twilio API
+      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+      await client.messages.create({
+        body: welcomeMessage,
+        from: process.env.TWILIO_WHATSAPP_NUMBER,
+        to: From
+      });
+      
+      return;
+    }
+    
+    // Check if we're awaiting batch selection
+    if (conversationState && conversationState.state === 'awaiting_batch_selection') {
+      console.log(`[${requestId}] Awaiting batch selection response`);
+      
+      if (isBatchSelectionResponse(Body)) {
+        await handleBatchSelectionResponse(Body, From, new twilio.twiml.MessagingResponse(), requestId, conversationState.language);
+        return;
+      } else if (isExpiryDateUpdate(Body)) {
+        await handleExpiryDateUpdate(Body, From, new twilio.twiml.MessagingResponse(), requestId, conversationState.language);
+        return;
+      }
+    }
+    
+    console.log(`[${requestId}] Attempting to parse as inventory update first`);
+    
+    // Detect language and update preference
+    let detectedLanguage = conversationState ? conversationState.language : 'en';
+    detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
+    console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
     
     // Try to parse as inventory update
-    const updates = await parseMultipleUpdates(translatedBody, from, requestId);
+    const updates = await parseMultipleUpdates(Body);
     
     if (updates.length > 0) {
       console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
@@ -1897,71 +1871,77 @@ async function processTextMessageAsync(body, from, requestId, conversationState,
       if (unknownProducts.length > 0) {
         console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
         
-        // Confirm the first unknown product via Twilio API
-        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-        const confirmationResponse = await confirmProduct(unknownProducts[0], from, detectedLanguage, requestId);
+        // Confirm the first unknown product
+        const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
         
-        // Extract just the message body from the TwiML
+        // Send via Twilio API
+        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
         const messageBody = confirmationResponse.match(/<Body>([^<]+)<\/Body>/)[1];
         
         await client.messages.create({
           body: messageBody,
           from: process.env.TWILIO_WHATSAPP_NUMBER,
-          to: from
+          to: From
         });
         
         return;
       }
       
-      // Process the updates and send result via Twilio API
-      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-      const processResponse = new twilio.twiml.MessagingResponse();
+      // Create a mock response object for processConfirmedTranscription
+      const mockResponse = {
+        message: (msg) => {
+          // Extract just the message body from the TwiML
+          const messageBody = msg.toString().match(/<Body>([^<]+)<\/Body>/)[1];
+          
+          return sendMessageViaAPI(From, messageBody);
+        },
+        toString: () => '<Response><Message>Processing complete</Message></Response>'
+      };
+      
+      // Create a mock res object
+      const mockRes = {
+        send: () => {
+          // This is a no-op since we're sending via API
+          return Promise.resolve();
+        }
+      };
       
       await processConfirmedTranscription(
-        translatedBody,
-        from,
+        Body,
+        From,
         detectedLanguage,
         requestId,
-        processResponse,
-        { send: (response) => {
-          // Extract the message body and send via Twilio API
-          const messageBody = response.toString().match(/<Body>([^<]+)<\/Body>/)[1];
-          
-          client.messages.create({
-            body: messageBody,
-            from: process.env.TWILIO_WHATSAPP_NUMBER,
-            to: from
-          });
-        }}
+        mockResponse,
+        mockRes
       );
     } else {
-      console.log(`[${requestId}] Not a valid inventory update, sending help message`);
+      console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
       
-      // Send help message via Twilio API
-      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+      // Get user preference
+      let userPreference = 'voice'; // Default to voice
+      if (globalState.userPreferences[From]) {
+        userPreference = globalState.userPreferences[From];
+        console.log(`[${requestId}] User preference: ${userPreference}`);
+      }
       
-      const helpMessage = await generateMultiLanguageResponse(
-        'Please send inventory updates only. Examples: "10 Parle-G sold", "5kg sugar purchased", "2 boxes Maggi bought". You can send multiple updates in one message!',
-        detectedLanguage,
-        requestId
-      );
+      const defaultMessage = userPreference === 'voice'
+        ? '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to text input, reply "switch to text".'
+        : '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to voice input, reply "switch to voice".';
       
-      await client.messages.create({
-        body: helpMessage,
-        from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: from
-      });
+      const translatedMessage = await generateMultiLanguageResponse(defaultMessage, detectedLanguage, requestId);
+      
+      // Send via Twilio API
+      await sendMessageViaAPI(From, translatedMessage);
     }
   } catch (error) {
     console.error(`[${requestId}] Error processing text message:`, error);
     
     // Send error message via Twilio API
     const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-    
     await client.messages.create({
       body: 'Sorry, I had trouble processing your message. Please try again.',
       from: process.env.TWILIO_WHATSAPP_NUMBER,
-      to: from
+      to: From
     });
   }
 }
@@ -1973,6 +1953,9 @@ module.exports = async (req, res) => {
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   
   try {
+    // Add request ID to the request object for logging
+    req.requestId = requestId;
+    
     // Clean up caches periodically
     cleanupCaches();
     
@@ -1993,7 +1976,6 @@ module.exports = async (req, res) => {
     
     // Check for user preference
     let userPreference = 'voice'; // Default to voice
-    
     if (globalState.userPreferences[From]) {
       userPreference = globalState.userPreferences[From];
       console.log(`[${requestId}] User preference: ${userPreference}`);
@@ -2001,7 +1983,6 @@ module.exports = async (req, res) => {
     
     // Check conversation state
     let conversationState = null;
-    
     if (globalState.conversationState && globalState.conversationState[From]) {
       conversationState = globalState.conversationState[From];
       console.log(`[${requestId}] Conversation state:`, conversationState);
@@ -2027,7 +2008,7 @@ module.exports = async (req, res) => {
       // Then check user preference from database
       else if (From) {
         try {
-          const shopId = From.replace('whatsapp:','');
+          const shopId = From.replace('whatsapp:', '');
           const userPref = await getUserPreference(shopId);
           if (userPref.success) {
             detectedLanguage = userPref.language;
@@ -2085,7 +2066,7 @@ module.exports = async (req, res) => {
       // Then check user preference from database
       else if (From) {
         try {
-          const shopId = From.replace('whatsapp:','');
+          const shopId = From.replace('whatsapp:', '');
           const userPref = await getUserPreference(shopId);
           if (userPref.success) {
             detectedLanguage = userPref.language;
@@ -2138,7 +2119,6 @@ module.exports = async (req, res) => {
         
         // Detect language for response
         let detectedLanguage = 'en';
-        
         try {
           detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
         } catch (error) {
@@ -2164,12 +2144,10 @@ module.exports = async (req, res) => {
         if (!globalState.userPreferences) {
           globalState.userPreferences = {};
         }
-        
         globalState.userPreferences[From] = 'text';
         
         // Detect language for response
         let detectedLanguage = 'en';
-        
         try {
           detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
         } catch (error) {
@@ -2194,12 +2172,10 @@ module.exports = async (req, res) => {
         if (!globalState.userPreferences) {
           globalState.userPreferences = {};
         }
-        
         globalState.userPreferences[From] = 'voice';
         
         // Detect language for response
         let detectedLanguage = 'en';
-        
         try {
           detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
         } catch (error) {
@@ -2265,8 +2241,8 @@ module.exports = async (req, res) => {
           console.log(`[${requestId}] User confirmed product update: "${pending.update.product}"`);
           
           // Process the confirmed update
-          const shopId = From.replace('whatsapp:','');
-          const results = await updateMultipleInventory(shopId, [pending.update], pending.detectedLanguage, requestId);
+          const shopId = From.replace('whatsapp:', '');
+          const results = await updateMultipleInventory(shopId, [pending.update], pending.detectedLanguage);
           
           let message = '✅ Update processed:\n\n';
           let successCount = 0;
@@ -2276,25 +2252,20 @@ module.exports = async (req, res) => {
             if (result.success) {
               successCount++;
               const unitText = result.unit ? ` ${result.unit}` : '';
-              const quantity = Math.abs(result.quantity);
               
-              // Format the line based on action
-              let updateLine = '';
+              // Format based on action type
               if (result.action === 'purchased') {
-                updateLine = `• ${result.product}: ${quantity}${unitText} purchased (Stock: ${result.newQuantity}${unitText})`;
+                message += `• ${result.product}: ${result.quantity} ${unitText} purchased (Stock: ${result.newQuantity}${unitText})\n`;
                 
-                // Add batch info for purchases
                 if (result.batchDate) {
-                  updateLine += `\n  Batch added: ${formatDateForDisplay(result.batchDate)}`;
+                  message += `  Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
                 }
               } else if (result.action === 'sold') {
-                updateLine = `• ${result.product}: ${quantity}${unitText} sold (Stock: ${result.newQuantity}${unitText})`;
+                message += `• ${result.product}: ${Math.abs(result.quantity)} ${unitText} sold (Stock: ${result.newQuantity}${unitText})\n`;
                 hasSales = true;
-              } else {
-                updateLine = `• ${result.product}: ${quantity}${unitText} remaining (Stock: ${result.newQuantity}${unitText})`;
+              } else if (result.action === 'remaining') {
+                message += `• ${result.product}: ${result.quantity} ${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
               }
-              
-              message += `${updateLine}\n`;
             } else {
               message += `• ${result.product}: Error - ${result.error}\n`;
             }
@@ -2350,116 +2321,14 @@ module.exports = async (req, res) => {
     if (Body && (NumMedia === '0' || NumMedia === 0 || !NumMedia)) {
       console.log(`[${requestId}] [1] Processing text message: "${Body}"`);
       
-      // Check for common greetings with optimized detection
-      const lowerBody = Body.toLowerCase();
-      let isGreeting = false;
-      let greetingLang = 'en';
-      
-      // Quick check for common greetings in any language
-      const quickGreetings = ['hello', 'hi', 'hey', 'नमस्ते', 'হ্যালো', 'வணக்கம்', 'నమస్కారం', 'ನಮಸ್ಕಾರ', 'નમસ્તે', 'नमस्कार'];
-      
-      if (quickGreetings.some(g => lowerBody.includes(g))) {
-        isGreeting = true;
-        
-        // Determine specific language
-        for (const [lang, greetingList] of Object.entries(greetings)) {
-          if (greetingList.some(g => lowerBody.includes(g))) {
-            greetingLang = lang;
-            break;
-          }
-        }
-        
-        console.log(`[${requestId}] Detected greeting in language: ${greetingLang}`);
-        
-        // Reset conversation state on greeting
-        if (globalState.conversationState && globalState.conversationState[From]) {
-          delete globalState.conversationState[From];
-        }
-        
-        // Save user preference asynchronously (don't wait for it)
-        const shopId = From.replace('whatsapp:','');
-        saveUserPreference(shopId, greetingLang)
-          .then(() => console.log(`[${requestId}] Saved language preference: ${greetingLang} for user ${shopId}`))
-          .catch(error => console.warn(`[${requestId}] Failed to save language preference:`, error.message));
-        
-        // Use predefined greeting messages to avoid translation API calls
-        const greetingMessages = {
-          'hi': `नमस्ते! मैं देखता हूं कि आप ${userPreference} द्वारा अपडेट भेजना पसंद करते हैं। आज मैं आपकी कैसे मदद कर सकता हूं?\n\nNamaste! Main dekhta hoon ki aap ${userPreference} dwara update bhejna pasand karte hain. Aaj main aapki kaise madad kar sakta hoon?`,
-          'bn': `হ্যালো! আমি দেখতে পাচ্ছি আপনি ${userPreference} দিয়ে আপডেট পাঠাতে পছন্দ করেন। আজ আমি আপনাকে কিভাবে সাহায্য করতে পারি?\n\nHello! Ami dekhte pachchi apni ${userPreference} diye update pathate pochondo koren. Aaj ami apnake kivabe sahaj korte pari?`,
-          'ta': `வணக்கம்! நான் பார்க்கிறேன் நீங்கள் ${userPreference} மூலம் புதுப்பிப்புகளை அனுப்புவதை விரும்புகிறீர்கள். இன்று நான் உங்களுக்கு எப்படி உதவ முடியும்?\n\nVanakkam! Naan paarkiren neengal ${userPreference} mulam puthippugalai anupuvathai virumbukireergal. Indru naan ungaluku eppadi utha mudiyum?`,
-          'te': `నమస్కారం! నేను చూస్తున్నాను మీరు ${userPreference} ద్వారా నవీకరణలను పంపించడాన్ని ఇష్టపడతారు. నేడు నేను మీకు ఎలా సహాయపడగలను?\n\nNamaskaram! Nenu chustunnanu miru ${userPreference} dwara naveekaralanu pampinchadanni istapadaru. Nedu nenu meeku ela saahayapadagalanu?`,
-          'kn': `ನಮಸ್ಕಾರ! ನಾನು ನೋಡುತ್ತಿದ್ದೇನೆ ನೀವು ${userPreference} ಮೂಲಕ ನವೀಕರಣಗಳನ್ನು ಕಳುಹಿಸಲು ಇಷ್ಟಪಡುತ್ತೀರಿ. ಇಂದು ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?\n\nNamaskara! Nanu noduttiddene neevu ${userPreference} moolaka naveekaragannannu kelisu ishtaputtiri. Indu nanu nimage hege saahya madabahudu?`,
-          'gu': `નમસ્તે! હું જોઉં છું કે તમે ${userPreference} દ્વારા અપડેટ્સ મોકલવાનું પસંદ કરો છો. આજે હું તમને કેવી રીતે મદદ કરી શકું?\n\nNamaste! Hu joo chu ke tame ${userPreference} dwara apdets moklavanu pasand karo cho. Aje hu tamne kavi rite madad kar shakum?`,
-          'mr': `नमस्कार! मी पाहतो आपण ${userPreference} द्वारे अपडेट्स पाठवायला पसंत करता. आज मी तुम्हाला कशी मदत करू शकतो?\n\nNamaskar! Mi pahato aapan ${userPreference} dwara apdets pathavayala pasand karta. Aaj mi tumhala kashi madad karu shakto?`,
-          'en': `Hello! I see you prefer to send updates by ${userPreference}. How can I help you today?`
-        };
-        
-        if (userPreference !== 'voice') {
-          const greetingMessage = greetingMessages[greetingLang] || greetingMessages['en'];
-          response.message(greetingMessage);
-          trackResponseTime(requestStart, requestId);
-          return res.send(response.toString());
-        }
-        
-        // Use text-based selection instead of buttons for broader compatibility
-        const welcomeMessages = {
-          'hi': `नमस्ते! आप अपना इन्वेंट्री अपडेट कैसे भेजना चाहेंगे?\n\nजवाब दें:\n• "1" वॉइस मैसेज के लिए\n• "2" टेक्स्ट मैसेज के लिए\n\nNamaste! Aap apna inventory update kaise bhejna chaahenge?\n\nJawaab dein:\n• "1" voice message ke liye\n• "2" text message ke liye`,
-          'bn': `স্বাগতম! আপনি কিভাবে আপনার ইনভেন্টরি আপডেট পাঠাতে চান?\n\nউত্তর দিন:\n• "1" ভয়েস মেসেজের জন্য\n• "2" টেক্সট মেসেজের জন্য\n\nSwagatam! Apni kivabe apnar inventory update pathate chan?\n\nUttor din:\n• "1" voice message er jonno\n• "2" text message er jonno`,
-          'ta': `வணக்கம்! நீங்கள் உங்கள் இன்வென்டரி புதுப்பிப்பை எப்படி அனுப்ப விரும்புகிறீர்கள்?\n\nபதிலளிக்கவும்:\n• "1" குரல் செய்திக்கு\n• "2" உரை செய்திக்கு\n\nVanakkam! Neengal ungal inventory puthippai eppadi anpu virumbukireergal?\n\nBadhilikavum:\n• "1" kural seithikku\n• "2"urai seithikku`,
-          'te': `నమస్కారం! మీరు మీ ఇన్వెంటరీ నవీకరణను ఎలా పంపాలనుకుంటున్నారు?\n\nస్పందించండి:\n• "1" వాయిస్ సందేశం కోసం\n• "2" టెక్స్ట్ సందేశం కోసం\n\nNamaskaram! Meeru mee inventory naveekaranam ela paalana kosamee?\n\nSpandinchandi:\n• "1" voice message kosam\n• "2" text message kosam`,
-          'kn': `ನಮಸ್ಕಾರ! ನೀವು ನಿಮ್ಮ ಇನ್ವೆಂಟರಿ ಅಪ್‌ಡೇಟ್ ಅನ್ನು ಹೇಗೆ ಕಳುಹಿಸಲು ಬಯಸುತ್ತೀರಿ?\n\n ಪ್ರತಿಕ್ರಿಯಿಸಿ:\n• "1" ಧ್ವನಿ ಸಂದೇಶಕ್ಕಾಗಿ\n• "2" ಪಠ್ಯ ಸಂದೇಶಕ್ಕಾಗಿ\n\nNamaskara! Neevu nimma inventory update annahege kelisu baaasuttiri?\n\nPratikriyisi:\n• "1" dhwani sandeshakkaagi\n• "2" patya sandeshakkaagi`,
-          'gu': `નમસ્તે! તમે તમારું ઇન્વેન્ટરી અપડેટ કેવી રીતે મોકલવા માંગો છો?\n\n જવાબ આપો:\n• "1" વોઇસ મેસેજ માટે\n• "2" ટેક્સ્ટ મેસેજ માટે\n\nNamaste! Tame tamaru inventory update kevi rite moklava mango cho?\n\nJawaab aapo:\n• "1" voice message maate\n• "2" text message maate`,
-          'mr': `नमस्कार! तुम्ही तुमचे इन्व्हेन्टरी अपडेट कसे पाठवायला इच्छिता?\n\n उत्तर द्या:\n• "1" व्हॉइस मेसेज साठी\n• "2" मजकूर मेसेज साठी\n\nNamaskar! Tumhi tumche inventory update kase pathavayla ichhita?\n\nUttar dya:\n• "1" voice message sathi\n• "2" majkur message sathi`,
-          'en': `Welcome! How would you like to send your inventory update?\n\nReply:\n• "1" for Voice Message\n• "2" for Text Message`
-        };
-        
-        const welcomeMessage = welcomeMessages[greetingLang] || welcomeMessages['en'];
-        response.message(welcomeMessage);
-        trackResponseTime(requestStart, requestId);
-        return res.send(response.toString());
-      }
-      
-      // Check if we're awaiting batch selection
-      if (conversationState && conversationState.state === 'awaiting_batch_selection') {
-        console.log(`[${requestId}] Awaiting batch selection response`);
-        
-        await handleBatchSelectionResponse(Body, From, response, requestId, conversationState.language);
-        trackResponseTime(requestStart, requestId);
-        return res.send(response.toString());
-      }
-      
-      // Check for batch selection or expiry date updates only if in the appropriate state
-      if (conversationState && conversationState.state === 'awaiting_batch_selection') {
-        if (isBatchSelectionResponse(Body)) {
-          console.log(`[${requestId}] Message appears to be a batch selection response`);
-          
-          await handleBatchSelectionResponse(Body, From, response, requestId, conversationState.language);
-          trackResponseTime(requestStart, requestId);
-          return res.send(response.toString());
-        } else if (isExpiryDateUpdate(Body)) {
-          console.log(`[${requestId}] Message appears to be an expiry date update`);
-          
-          await handleExpiryDateUpdate(Body, From, response, requestId, conversationState.language);
-          trackResponseTime(requestStart, requestId);
-          return res.send(response.toString());
-        }
-      }
-      
-      console.log(`[${requestId}] Attempting to parse as inventory update first`);
-      
-      // Detect language and update preference
-      let detectedLanguage = conversationState ? conversationState.language : 'en';
-      detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
-      console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
-      
       // Send immediate response and process asynchronously
-      response.message('Processing your update...');
+      response.message('Processing your message...');
       res.send(response.toString());
       
       // Process text asynchronously
-      processTextMessageAsync(Body, From, requestId, conversationState, detectedLanguage)
+      processTextMessageAsync(Body, From, requestId, conversationState)
         .catch(error => {
-          console.error(`[${requestId}] Error processing text message:`, error);
+          console.error(`[${requestId}] Error in async text processing:`, error);
         });
       
       trackResponseTime(requestStart, requestId);
@@ -2468,14 +2337,14 @@ module.exports = async (req, res) => {
     
     // Handle voice messages
     if (NumMedia && MediaUrl0 && (NumMedia !== '0' && NumMedia !== 0)) {
-      // Send immediate response for voice messages
+      // Send immediate response
       response.message('Processing your voice message...');
       res.send(response.toString());
       
       // Process audio asynchronously
       processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState)
         .catch(error => {
-          console.error(`[${requestId}] Error processing voice message:`, error);
+          console.error(`[${requestId}] Error in async voice processing:`, error);
         });
       
       trackResponseTime(requestStart, requestId);
@@ -2487,7 +2356,6 @@ module.exports = async (req, res) => {
       console.log(`[${requestId}] [1] No media received`);
       
       let detectedLanguage = conversationState ? conversationState.language : 'en';
-      
       try {
         detectedLanguage = await detectLanguageWithFallback(Body || "", From, requestId);
         console.log(`[${requestId}] Detected language for welcome message: ${detectedLanguage}`);
@@ -2497,7 +2365,6 @@ module.exports = async (req, res) => {
       }
       
       let welcomeMessage;
-      
       if (userPreference === 'voice') {
         welcomeMessage = await generateMultiLanguageResponse(
           '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to text input, reply "switch to text".',
