@@ -926,5 +926,8 @@ module.exports = {
   createSalesRecord,
   updateBatchQuantity,
   getShopSalesRecords,
-  batchUpdateInventory
+  batchUpdateInventory,
+  getBatchByCompositeKey,           // Add this
+  updateBatchQuantityByCompositeKey, // Add this
+  migrateToCompositeKeys            // Add this
 };
