@@ -329,17 +329,17 @@ async function createBatchRecord(batchData) {
     
     // Create new record
     const createData = {
-      fields: {
-        ShopID: batchData.shopId,
-        Product: batchData.product,
-        Quantity: batchData.quantity,
-        PurchaseDate: purchaseDate,
-        ExpiryDate: batchData.expiryDate,
-        OriginalRecordID: batchData.batchId || '',
-        Units: normalizedUnit,
-        CompositeKey: compositeKey  // Store the composite key
-      }
-    };
+  fields: {
+    ShopID: batchData.shopId,
+    Product: batchData.product,
+    Quantity: batchData.quantity,
+    PurchaseDate: purchaseDate,
+    ExpiryDate: batchData.expiryDate,
+    OriginalRecordID: batchData.batchId || '',
+    Units: normalizedUnit,
+    CompositeKey: compositeKey  // This will now work since it's a text field
+  }
+};
     
     console.log(`[${context}] Using purchase date: ${purchaseDate}`);
     
