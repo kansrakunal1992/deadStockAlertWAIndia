@@ -14,7 +14,10 @@ const {
   getUserPreference,
   createSalesRecord,
   updateBatchQuantity,
-  batchUpdateInventory
+  batchUpdateInventory,
+  getBatchByCompositeKey,           // Add this
+  updateBatchQuantityByCompositeKey, // Add this
+  migrateToCompositeKeys            // Add this
 } = require('../database');
 
 // Performance tracking
