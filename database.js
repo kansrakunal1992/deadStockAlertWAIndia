@@ -31,6 +31,11 @@ function logError(context, error) {
 
 // Unit normalization function
 function normalizeUnit(unit) {
+  // Add a safety check
+  if (!unit) {
+    return 'pieces'; // Default unit if none is provided
+  }
+  
   const unitMap = {
     'g': 'kg', 'gram': 'kg', 'grams': 'kg', 'ग्राम': 'kg',
     'ml': 'liters', 'milliliter': 'liters', 'milliliters': 'liters',
@@ -290,8 +295,8 @@ async function createBatchRecord(batchData) {
   try {
     console.log(`[${context}] Creating batch record for ${batchData.quantity} units`);
     
-    // Normalize unit before storing
-    const normalizedUnit = normalizeUnit(batchData.unit);
+    // Normalize unit before storing with safety check
+    const normalizedUnit = batchData.unit ? normalizeUnit(batchData.unit) : 'pieces';
     
     const createData = {
       fields: {
@@ -430,8 +435,8 @@ async function createSalesRecord(salesData) {
   try {
     console.log(`[${context}] Creating sales record for ${Math.abs(salesData.quantity)} units`);
     
-    // Normalize unit before storing
-    const normalizedUnit = normalizeUnit(salesData.unit);
+    // Normalize unit before storing with safety check
+    const normalizedUnit = salesData.unit ? normalizeUnit(salesData.unit) : 'pieces';
     
     const createData = {
       fields: {
