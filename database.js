@@ -298,17 +298,22 @@ async function createBatchRecord(batchData) {
     // Normalize unit before storing with safety check
     const normalizedUnit = batchData.unit ? normalizeUnit(batchData.unit) : 'pieces';
     
+    // Use provided purchase date or current timestamp
+    const purchaseDate = batchData.purchaseDate || new Date().toISOString();
+    
     const createData = {
       fields: {
         ShopID: batchData.shopId,
         Product: batchData.product,
         Quantity: batchData.quantity,
-        PurchaseDate: batchData.purchaseDate,
+        PurchaseDate: purchaseDate,
         ExpiryDate: batchData.expiryDate,
         OriginalRecordID: batchData.batchId || '',
         Units: normalizedUnit
       }
     };
+    
+    console.log(`[${context}] Using purchase date: ${purchaseDate}`);
     
     const result = await airtableBatchRequest({
       method: 'post',
@@ -341,6 +346,12 @@ async function getBatchRecords(shopId, product) {
     }, context);
     
     console.log(`[${context}] Found ${result.records.length} batch records`);
+    
+    // Log batch dates for debugging
+    result.records.forEach((record, index) => {
+      console.log(`[${context}] Batch ${index + 1}: ID=${record.id}, Date=${record.fields.PurchaseDate}`);
+    });
+    
     return result.records;
   } catch (error) {
     logError(context, error);
