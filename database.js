@@ -295,12 +295,39 @@ async function createBatchRecord(batchData) {
   try {
     console.log(`[${context}] Creating batch record for ${batchData.quantity} units`);
     
-    // Normalize unit before storing with safety check
+    // Normalize unit before storing
     const normalizedUnit = batchData.unit ? normalizeUnit(batchData.unit) : 'pieces';
     
     // Use provided purchase date or current timestamp
     const purchaseDate = batchData.purchaseDate || new Date().toISOString();
     
+    // Generate composite key
+    const compositeKey = `${batchData.shopId}|${batchData.product}|${purchaseDate}`;
+    
+    // Check if batch with same composite key already exists
+    const existingBatch = await getBatchByCompositeKey(compositeKey);
+    
+    if (existingBatch) {
+      console.log(`[${context}] Batch already exists, updating quantity`);
+      const newQuantity = (existingBatch.fields.Quantity || 0) + batchData.quantity;
+      
+      const updateData = {
+        fields: {
+          Quantity: newQuantity
+        }
+      };
+      
+      const result = await airtableBatchRequest({
+        method: 'patch',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${existingBatch.id}`,
+        data: updateData
+      }, context);
+      
+      console.log(`[${context}] Updated existing batch with ID: ${existingBatch.id}`);
+      return { success: true, id: existingBatch.id, compositeKey };
+    }
+    
+    // Create new record
     const createData = {
       fields: {
         ShopID: batchData.shopId,
@@ -309,7 +336,8 @@ async function createBatchRecord(batchData) {
         PurchaseDate: purchaseDate,
         ExpiryDate: batchData.expiryDate,
         OriginalRecordID: batchData.batchId || '',
-        Units: normalizedUnit
+        Units: normalizedUnit,
+        CompositeKey: compositeKey  // Store the composite key
       }
     };
     
@@ -321,7 +349,7 @@ async function createBatchRecord(batchData) {
     }, context);
     
     console.log(`[${context}] Batch record created with ID: ${result.id}`);
-    return { success: true, id: result.id };
+    return { success: true, id: result.id, compositeKey };
   } catch (error) {
     logError(context, error);
     return {
@@ -452,7 +480,7 @@ async function createSalesRecord(salesData) {
   try {
     console.log(`[${context}] Creating sales record for ${Math.abs(salesData.quantity)} units`);
     
-    // Normalize unit before storing with safety check
+    // Normalize unit before storing
     const normalizedUnit = salesData.unit ? normalizeUnit(salesData.unit) : 'pieces';
     
     const createData = {
@@ -461,7 +489,7 @@ async function createSalesRecord(salesData) {
         Product: salesData.product,
         Quantity: salesData.quantity, // This will be negative
         SaleDate: salesData.saleDate,
-        BatchID: salesData.batchId || '',
+        BatchCompositeKey: salesData.batchCompositeKey || '', // Uses composite key
         SalePrice: salesData.salePrice || 0,
         Units: normalizedUnit
       }
@@ -479,6 +507,54 @@ async function createSalesRecord(salesData) {
     return {
       success: false,
       error: error.message
+    };
+  }
+}
+
+async function getBatchByCompositeKey(compositeKey) {
+  const context = `Get Batch by Composite Key`;
+  try {
+    const filterFormula = `{CompositeKey} = '${compositeKey}'`;
+    const result = await airtableBatchRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula }
+    }, context);
+    
+    if (result.records && result.records.length > 0) {
+      return result.records[0];
+    }
+    return null;
+  } catch (error) {
+    logError(context, error);
+    return null;
+  }
+}
+
+async function updateBatchQuantityByCompositeKey(compositeKey, quantityChange, unit = '') {
+  const context = `Update Batch by Composite Key`;
+  try {
+    console.log(`[${context}] Updating batch ${compositeKey} by ${quantityChange} ${unit}`);
+    
+    // Get the batch by composite key
+    const batch = await getBatchByCompositeKey(compositeKey);
+    
+    if (!batch) {
+      console.error(`[${context}] Batch not found for composite key: ${compositeKey}`);
+      return {
+        success: false,
+        error: 'Batch record not found',
+        compositeKey
+      };
+    }
+    
+    // Use the existing update function that uses record ID
+    return await updateBatchQuantity(batch.id, quantityChange, unit);
+  } catch (error) {
+    logError(context, error);
+    return {
+      success: false,
+      error: error.message,
+      compositeKey
     };
   }
 }
