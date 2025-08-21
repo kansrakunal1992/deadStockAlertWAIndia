@@ -783,17 +783,18 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       // Update the inventory using translated product name
       const result = await updateInventory(shopId, product, update.quantity, update.unit);
       // Create batch record for purchases only
-      if (update.action === 'purchased' && result.success) {
-        console.log(`[Update ${shopId} - ${product}] Creating batch record for purchase`);
-        // Format current date for Airtable
-        const formattedPurchaseDate = formatDateForAirtable(new Date());
-        const batchResult = await createBatchRecord({
-          shopId,
-          product: product, // Use translated product
-          quantity: update.quantity,
-          purchaseDate: formattedPurchaseDate,
-          expiryDate: null // Will be updated later
-        });
+if (update.action === 'purchased' && result.success) {
+  console.log(`[Update ${shopId} - ${product}] Creating batch record for purchase`);
+  // Format current date for Airtable
+  const formattedPurchaseDate = formatDateForAirtable(new Date());
+  const batchResult = await createBatchRecord({
+    shopId,
+    product: product, // Use translated product
+    quantity: update.quantity,
+    unit: update.unit, // Add this line to pass the unit
+    purchaseDate: formattedPurchaseDate,
+    expiryDate: null // Will be updated later
+  });
         if (batchResult.success) {
           console.log(`[Update ${shopId} - ${product}] Batch record created with ID: ${batchResult.id}`);
           // Add batch date to result for display
