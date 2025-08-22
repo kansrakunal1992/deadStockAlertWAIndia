@@ -469,21 +469,24 @@ async function updateBatchQuantity(batchId, quantityChange, unit = '') {
     
     // First, get the current batch record
 console.log(`[${context}] Attempting to fetch batch with ID: "${batchId}"`);
+
+    
 const getResult = await airtableBatchRequest({
   method: 'get',
   url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`
 }, `${context} - Get`);
 
 console.log(`[${context}] API response status: ${getResult ? 'Success' : 'Failed'}`);
-console.log(`[${context}] Records found: ${getResult.records ? getResult.records.length : 0}`);
+console.log(`[${context}] Record ID: ${getResult.id ?? 'None'}`);
 
-if (!getResult.records || getResult.records.length === 0) {
+if (!getResult || !getResult.fields) {
   console.error(`[${context}] Batch record not found. Requested ID: "${batchId}"`);
   throw new Error('Batch record not found');
 }
-    
-    const currentQuantity = getResult.records[0].fields.Quantity || 0;
-    const currentUnit = getResult.records[0].fields.Units || '';
+
+const currentQuantity = getResult.fields.Quantity ?? 0;
+const currentUnit = getResult.fields.Units ?? '';
+
     
     // Normalize units and convert to base unit for calculation
     const normalizedUnit = normalizeUnit(unit) || currentUnit;
