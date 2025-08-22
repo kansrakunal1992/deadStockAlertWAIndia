@@ -973,18 +973,19 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
     };
     // Check if this is a common greeting
     const lowerMessage = message.toLowerCase();
-    if (lowerMessage.includes('hello') || lowerMessage.includes('hi') || lowerMessage.includes('hey') ||
-      lowerMessage.includes('नमस्ते') || lowerMessage.includes('হ্যালো') || lowerMessage.includes('வணக்கம்')) {
-      const greeting = commonGreetings[languageCode] || commonGreetings['en'];
-      const fallback = `${greeting.native}\n\n${greeting.roman}`;
-      console.log(`[${requestId}] Using fallback greeting for ${languageCode}:`, fallback);
-      // Cache the result
-      languageCache.set(cacheKey, {
-        translation: fallback,
-        timestamp: Date.now()
-      });
-      return fallback;
-    }
+    
+const isShortGreeting = lowerMessage.split(/\s+/).length <= 3;
+if (isShortGreeting && (
+    lowerMessage.includes('hello') ||
+    lowerMessage.includes('hi') ||
+    lowerMessage.includes('नमस्ते')
+)) {
+  const greeting = commonGreetings[languageCode] || commonGreetings['en'];
+  const fallback = `${greeting.native}\n\n${greeting.roman}`;
+  languageCache.set(cacheKey, { translation: fallback, timestamp: Date.now() });
+  return fallback;
+}
+
     // 2. For other messages, try the API
     const response = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
@@ -1251,18 +1252,14 @@ function isBatchSelectionResponse(message) {
 
 // Function to check if a message is an expiry date update
 function isExpiryDateUpdate(message) {
-  const products = [
-    'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
+  const hasDateFormat = message.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/) ||
+                        message.match(/\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}/i);
+  const products = ['Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
     'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata',
     'flour', 'आटा', 'sugar', 'चीनी', 'packets', 'पैकेट',
-    'potato', 'आलू', 'onion', 'प्याज', 'tomato', 'टमाटर'
-  ];
-  for (const product of products) {
-    if (message.toLowerCase().includes(product.toLowerCase())) {
-      return true;
-    }
-  }
-  return false;
+    'potato', 'आलू', 'onion', 'प्याज', 'tomato', 'टमाटर']; // product list
+  const hasProduct = products.some(p => message.toLowerCase().includes(p.toLowerCase()));
+  return hasDateFormat && hasProduct;
 }
 
 // Handle batch selection response
