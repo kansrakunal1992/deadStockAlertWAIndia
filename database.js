@@ -329,17 +329,17 @@ async function createBatchRecord(batchData) {
     
     // Create new record
     const createData = {
-  fields: {
-    ShopID: batchData.shopId,
-    Product: batchData.product,
-    Quantity: batchData.quantity,
-    PurchaseDate: purchaseDate,
-    ExpiryDate: batchData.expiryDate,
-    OriginalRecordID: batchData.batchId || '',
-    Units: normalizedUnit,
-    CompositeKey: compositeKey  // This will now work since it's a text field
-  }
-};
+      fields: {
+        ShopID: batchData.shopId,
+        Product: batchData.product,
+        Quantity: batchData.quantity,
+        PurchaseDate: purchaseDate,
+        ExpiryDate: batchData.expiryDate,
+        OriginalRecordID: batchData.batchId || '',
+        Units: normalizedUnit,
+        CompositeKey: compositeKey  // This will now work since it's a text field
+      }
+    };
     
     console.log(`[${context}] Using purchase date: ${purchaseDate}`);
     
@@ -349,6 +349,40 @@ async function createBatchRecord(batchData) {
     }, context);
     
     console.log(`[${context}] Batch record created with ID: ${result.id}`);
+    
+    // NEW: Update the Inventory record to link to this batch
+    try {
+      // Find the inventory record for this shop and product
+      const filterFormula = 'AND({ShopID} = \'' + batchData.shopId + '\', {Product} = \'' + batchData.product + '\')';
+      const inventoryResult = await airtableRequest({
+        method: 'get',
+        params: { filterByFormula: filterFormula }
+      }, `${context} - Find Inventory`);
+      
+      if (inventoryResult.records.length > 0) {
+        const inventoryRecord = inventoryResult.records[0];
+        console.log(`[${context}] Found inventory record ${inventoryRecord.id}, linking to batch`);
+        
+        // Update the inventory record to link to the new batch
+        const inventoryUpdateData = {
+          fields: {
+            Batches: [result.id]  // Link to the new batch
+          }
+        };
+        
+        await airtableRequest({
+          method: 'patch',
+          url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_NAME}/${inventoryRecord.id}`,
+          data: inventoryUpdateData
+        }, `${context} - Link Batch to Inventory`);
+        
+        console.log(`[${context}] Successfully linked batch to inventory record`);
+      }
+    } catch (linkError) {
+      console.warn(`[${context}] Warning: Could not link batch to inventory:`, linkError.message);
+      // Don't fail the whole operation if linking fails
+    }
+    
     return { success: true, id: result.id, compositeKey };
   } catch (error) {
     logError(context, error);
