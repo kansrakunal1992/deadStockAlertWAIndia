@@ -539,20 +539,28 @@ async function updateBatchQuantityByCompositeKey(compositeKey, quantityChange, u
     let batch = await getBatchByCompositeKey(compositeKey);
     
     if (!batch) {
+      console.log(`[${context}] Batch not found by composite key, recreating...`);
       return await recreateBatchAndUpdate(compositeKey, quantityChange, unit, context);
     }
     
+    console.log(`[${context}] Found batch by composite key, ID: ${batch.id}`);
+    
     // Try to update the batch
     try {
-      return await updateBatchQuantity(batch.id, quantityChange, unit);
+      console.log(`[${context}] Attempting to update batch ${batch.id}`);
+      const result = await updateBatchQuantity(batch.id, quantityChange, unit);
+      console.log(`[${context}] Successfully updated batch ${batch.id}`);
+      return result;
     } catch (updateError) {
       console.error(`[${context}] Failed to update batch ${batch.id}:`, updateError.message);
       
-      // If update failed because batch was deleted, recreate it
-      if (updateError.message.includes('Batch record not found')) {
+      // Check if it's a "not found" error
+      if (updateError.message.includes('not found') || updateError.message.includes('404')) {
+        console.log(`[${context}] Batch appears to be deleted, recreating...`);
         return await recreateBatchAndUpdate(compositeKey, quantityChange, unit, context);
       }
       
+      // For other errors, return the error
       return {
         success: false,
         error: updateError.message,
@@ -571,10 +579,11 @@ async function updateBatchQuantityByCompositeKey(compositeKey, quantityChange, u
 
 // Helper function to recreate batch and update it
 async function recreateBatchAndUpdate(compositeKey, quantityChange, unit, context) {
-  console.log(`[${context}] Attempting to recreate batch for composite key: ${compositeKey}`);
+  console.log(`[${context}] Starting batch recreation for composite key: ${compositeKey}`);
   
   const parts = compositeKey.split('|');
   if (parts.length !== 3) {
+    console.error(`[${context}] Invalid composite key format: ${compositeKey}`);
     return {
       success: false,
       error: 'Invalid composite key format',
@@ -584,47 +593,67 @@ async function recreateBatchAndUpdate(compositeKey, quantityChange, unit, contex
   
   const [shopId, product, purchaseDate] = parts;
   
-  // Create a new batch record
-  const recreateResult = await createBatchRecord({
-    shopId,
-    product,
-    quantity: 0, // Start with 0
-    unit,
-    purchaseDate
-  });
-  
-  if (!recreateResult.success) {
-    return {
-      success: false,
-      error: 'Failed to recreate batch',
-      compositeKey
-    };
-  }
-  
-  // Get the newly created batch
-  const newBatch = await getBatchByCompositeKey(compositeKey);
-  if (!newBatch) {
-    return {
-      success: false,
-      error: 'Failed to retrieve recreated batch',
-      compositeKey
-    };
-  }
-  
-  console.log(`[${context}] Successfully recreated batch with ID: ${newBatch.id}`);
-  
-  // Update the new batch quantity
   try {
-    const updateResult = await updateBatchQuantity(newBatch.id, quantityChange, unit);
-    return {
-      ...updateResult,
-      recreated: true
-    };
-  } catch (updateError) {
-    console.error(`[${context}] Failed to update recreated batch:`, updateError.message);
+    console.log(`[${context}] Creating new batch record...`);
+    // Create a new batch record
+    const recreateResult = await createBatchRecord({
+      shopId,
+      product,
+      quantity: 0, // Start with 0
+      unit,
+      purchaseDate
+    });
+    
+    if (!recreateResult.success) {
+      console.error(`[${context}] Failed to create batch: ${recreateResult.error}`);
+      return {
+        success: false,
+        error: `Failed to recreate batch: ${recreateResult.error}`,
+        compositeKey
+      };
+    }
+    
+    console.log(`[${context}] Batch created with ID: ${recreateResult.id}`);
+    
+    // Wait a moment for Airtable to process the creation
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Get the newly created batch
+    console.log(`[${context}] Retrieving newly created batch...`);
+    const newBatch = await getBatchByCompositeKey(compositeKey);
+    if (!newBatch) {
+      console.error(`[${context}] Could not retrieve recreated batch`);
+      return {
+        success: false,
+        error: 'Failed to retrieve recreated batch',
+        compositeKey
+      };
+    }
+    
+    console.log(`[${context}] Retrieved new batch with ID: ${newBatch.id}`);
+    
+    // Update the new batch quantity
+    console.log(`[${context}] Updating recreated batch quantity...`);
+    try {
+      const updateResult = await updateBatchQuantity(newBatch.id, quantityChange, unit);
+      console.log(`[${context}] Successfully updated recreated batch`);
+      return {
+        ...updateResult,
+        recreated: true
+      };
+    } catch (updateError) {
+      console.error(`[${context}] Failed to update recreated batch:`, updateError.message);
+      return {
+        success: false,
+        error: `Failed to update recreated batch: ${updateError.message}`,
+        compositeKey
+      };
+    }
+  } catch (error) {
+    console.error(`[${context}] Error during batch recreation:`, error.message);
     return {
       success: false,
-      error: `Failed to update recreated batch: ${updateError.message}`,
+      error: `Batch recreation failed: ${error.message}`,
       compositeKey
     };
   }
