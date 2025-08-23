@@ -796,8 +796,23 @@ if (isSale) {
   const batches = await getBatchRecords(shopId, product);
   if (batches.length > 0) {
     // Use the oldest batch (FIFO - First In, First Out)
-    const oldestBatch = batches[batches.length - 1];
-    selectedBatchCompositeKey = oldestBatch.fields.CompositeKey;
+
+    // Filter out batches with zero or undefined quantity
+const validBatches = batches.filter(batch => {
+  const qty = batch.fields.Quantity ?? 0;
+  return qty > 0;
+});
+
+if (validBatches.length > 0) {
+  const oldestValidBatch = validBatches[validBatches.length - 1];
+  selectedBatchCompositeKey = oldestValidBatch.fields.CompositeKey;
+  console.log(`[Update ${shopId} - ${product}] Selected valid batch with composite key: ${selectedBatchCompositeKey}`);
+} else {
+  console.warn(`[Update ${shopId} - ${product}] No valid batch with quantity > 0 found`);
+  selectedBatchCompositeKey = null;
+}
+
+    
     console.log(`[Update ${shopId} - ${product}] Selected batch with composite key: ${selectedBatchCompositeKey}`);
     console.log(`[Update ${shopId} - ${product}] Batch details:`, JSON.stringify(oldestBatch.fields));
     
