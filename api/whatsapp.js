@@ -814,7 +814,7 @@ if (validBatches.length > 0) {
 
     
     console.log(`[Update ${shopId} - ${product}] Selected batch with composite key: ${selectedBatchCompositeKey}`);
-    console.log(`[Update ${shopId} - ${product}] Batch details:`, JSON.stringify(oldestBatch.fields));
+    console.log(`[Update ${shopId} - ${product}] Batch details:`, JSON.stringify(oldestValidBatch.fields));
     
     // Verify the batch exists before proceeding
     const selectedBatch = await getBatchByCompositeKey(selectedBatchCompositeKey);
