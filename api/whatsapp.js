@@ -1009,7 +1009,7 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
             content: `Translate this message to ${languageCode}: "${message}"`
           }
         ],
-        max_tokens: 200,
+        max_tokens: 1000,
         temperature: 0.3
       },
       {
