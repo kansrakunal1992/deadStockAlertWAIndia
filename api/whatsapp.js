@@ -807,6 +807,7 @@ if (validBatches.length > 0) {
   const oldestValidBatch = validBatches[validBatches.length - 1];
   selectedBatchCompositeKey = oldestValidBatch.fields.CompositeKey;
   console.log(`[Update ${shopId} - ${product}] Selected valid batch with composite key: ${selectedBatchCompositeKey}`);
+  console.log(`[Update ${shopId} - ${product}] Batch details:`, JSON.stringify(oldestValidBatch.fields));
 } else {
   console.warn(`[Update ${shopId} - ${product}] No valid batch with quantity > 0 found`);
   selectedBatchCompositeKey = null;
@@ -814,7 +815,7 @@ if (validBatches.length > 0) {
 
     
     console.log(`[Update ${shopId} - ${product}] Selected batch with composite key: ${selectedBatchCompositeKey}`);
-    console.log(`[Update ${shopId} - ${product}] Batch details:`, JSON.stringify(oldestValidBatch.fields));
+    
     
     // Verify the batch exists before proceeding
     const selectedBatch = await getBatchByCompositeKey(selectedBatchCompositeKey);
