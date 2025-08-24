@@ -85,7 +85,37 @@ const products = [
   'chili', 'मिर्च', 'pepper', 'काली मिर्च', 'cardamom', 'इलायची',
   // Packaged goods
   'packets', 'पैकेट', 'boxes', 'बॉक्स', 'bags', 'बैग्स',
-  'biscuits', 'बिस्कुट', 'chips', 'soap', 'साबुन', 'detergent', 'डिटर्जेंट'
+  'biscuits', 'बिस्कुट', 'chips', 'soap', 'साबुन', 'detergent', 'डिटर्जेंट',
+  // Branded FMCG
+  'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया', 'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata', 'Oreo', 'Frooti', 'फ्रूटी', 'Sunfeast', 'Marie Gold', 'Good Day', 'Bournvita', 'Complan', 'Horlicks', 'Boost', 'Real Juice', 'Slice', 'Maaza', 'Pepsi', 'Coca-Cola', 'Sprite', 'Thums Up', 'Limca', 'Kinley', 'Bisleri', 'Aquafina', 'Appy Fizz',
+  // Groceries
+  'flour', 'आटा', 'maida', 'मैदा', 'besan', 'बेसन', 'sugar', 'चीनी', 'salt', 'नमक', 'rice', 'चावल', 'wheat', 'गेहूं', 'dal', 'दाल', 'moong dal', 'मूंग दाल', 'masoor dal', 'मसूर दाल', 'chana dal', 'चना दाल', 'rajma', 'राजमा', 'soybean', 'सोयाबीन', 'poha', 'पोहा', 'suji', 'सूजी', 'rava', 'रवा', 'sabudana', 'साबूदाना',
+  // Vegetables
+  'potato', 'आलू', 'onion', 'प्याज', 'tomato', 'टमाटर', 'carrot', 'गाजर', 'cabbage', 'पत्ता गोभी', 'cauliflower', 'फूलगोभी', 'spinach', 'पालक', 'brinjal', 'बैंगन', 'ladyfinger', 'भिंडी', 'capsicum', 'शिमला मिर्च', 'green chili', 'हरी मिर्च', 'garlic', 'लहसुन', 'ginger', 'अदरक',
+  // Fruits
+  'apple', 'सेब', 'banana', 'केला', 'orange', 'संतरा', 'mango', 'आम', 'grapes', 'अंगूर', 'papaya', 'पपीता', 'watermelon', 'तरबूज', 'muskmelon', 'खरबूजा', 'guava', 'अमरूद', 'pomegranate', 'अनार', 'lemon', 'नींबू',
+  // Dairy
+  'milk', 'दूध', 'curd', 'दही', 'yogurt', 'butter', 'मक्खन', 'cheese', 'पनीर', 'ghee', 'घी', 'cream', 'मलाई', 'lassi', 'लस्सी', 'buttermilk', 'छाछ',
+  // Spices
+  'turmeric', 'हल्दी', 'cumin', 'जीरा', 'coriander', 'धनिया', 'chili powder', 'मिर्च पाउडर', 'garam masala', 'गरम मसाला', 'asafoetida', 'हींग', 'mustard seeds', 'सरसों', 'fenugreek', 'मेथी', 'cardamom', 'इलायची', 'cloves', 'लौंग', 'black pepper', 'काली मिर्च', 'bay leaf', 'तेज पत्ता',
+  // Packaged goods
+  'packets', 'पैकेट', 'boxes', 'बॉक्स', 'bags', 'बैग्स', 'biscuits', 'बिस्कुट', 'chips', 'soap', 'साबुन', 'detergent', 'डिटर्जेंट', 'shampoo', 'शैम्पू', 'toothpaste', 'टूथपेस्ट', 'toothbrush', 'टूथब्रश', 'face wash', 'फेस वॉश', 'handwash', 'हैंडवॉश', 'sanitizer', 'सेनेटाइज़र',
+  // Household
+  'phenyl', 'फिनाइल', 'harpic', 'हार्पिक', 'lizol', 'लिज़ोल', 'matchbox', 'माचिस', 'mosquito coil', 'मच्छर अगरबत्ती', 'mosquito repellent', 'मच्छर भगाने वाला', 'tissue paper', 'टिशू पेपर', 'napkin', 'नैपकिन', 'garbage bag', 'कचरा बैग',
+  // Baby & Personal Care
+  'diapers', 'डायपर', 'baby powder', 'बेबी पाउडर', 'baby lotion', 'बेबी लोशन', 'face cream', 'फेस क्रीम', 'body lotion', 'बॉडी लोशन', 'hair oil', 'हेयर ऑयल', 'comb', 'कंघी', 'razor', 'रेज़र', 'shaving cream', 'शेविंग क्रीम',
+  // Beverages
+  'tea', 'चाय', 'coffee', 'कॉफी', 'green tea', 'ग्रीन टी', 'black tea', 'ब्लैक टी', 'cold drink', 'कोल्ड ड्रिंक', 'energy drink', 'एनर्जी ड्रिंक',
+  // Snacks
+  'namkeen', 'नमकीन', 'bhujia', 'भुजिया', 'sev', 'सेव', 'chakli', 'चकली', 'murukku', 'मुरुक्कु', 'mixture', 'मिक्चर', 'kurkure', 'कुर्कुरे', 'lays', 'लेज़', 'bingo', 'बिंगो',
+  // Frozen & Ready-to-eat
+  'frozen peas', 'फ्रोजन मटर', 'frozen corn', 'फ्रोजन कॉर्न', 'ready-to-eat meals', 'तैयार भोजन', 'instant noodles', 'इंस्टेंट नूडल्स', 'instant soup', 'इंस्टेंट सूप',
+  // Bakery
+  'bread', 'ब्रेड', 'bun', 'बन', 'cake', 'केक', 'pastry', 'पेस्ट्री', 'rusk', 'रस्क',
+  // Condiments
+  'ketchup', 'केचप', 'mayonnaise', 'मेयोनेज़', 'sauce', 'सॉस', 'pickle', 'अचार', 'jam', 'जैम', 'honey', 'शहद',
+  // Others
+  'ice cream', 'आइसक्रीम', 'chocolate', 'चॉकलेट', 'candy', 'कैंडी', 'mint', 'मिंट', 'mouth freshener', 'माउथ फ्रेशनर'  
 ];
 
 // Number words mapping
@@ -295,9 +325,15 @@ async function detectLanguageWithFallback(text, from, requestId) {
     const lowerText = text.toLowerCase();
     let detectedLanguage = 'en'; // Default to English
     // Check for specific language scripts first
-    if (/[\u0900-\u097F]/.test(text)) { // Devanagari script (Hindi, Marathi, Nepali, etc.)
-      detectedLanguage = 'hi';
-    } else if (/[\u0980-\u09FF]/.test(text)) { // Bengali script
+    if (/[\u0900-\u097F]/.test(text)) {
+  const englishKeywords = ['milk', 'sold', 'purchased', 'bought', 'Oreo', 'Frooti', 'Maggi', 'Amul'];
+  if (englishKeywords.some(word => text.toLowerCase().includes(word.toLowerCase()))) {
+    detectedLanguage = 'en';
+  } else {
+    detectedLanguage = 'hi';
+  }
+}
+    else if (/[\u0980-\u09FF]/.test(text)) { // Bengali script
       detectedLanguage = 'bn';
     } else if (/[\u0B80-\u0BFF]/.test(text)) { // Tamil script
       detectedLanguage = 'ta';
@@ -424,7 +460,8 @@ async function translateProductName(productName, requestId) {
       'तेल': 'oil', 'tel': 'oil',
       'मक्खन': 'butter', 'makkhan': 'butter',
       'दही': 'curd', 'dahi': 'curd',
-      'पनीर': 'cheese', 'paneer': 'cheese'
+      'पनीर': 'cheese', 'paneer': 'cheese',
+      'फ्रूटी': 'Frooti', 'frooti': 'Frooti'
     };
     const lowerProductName = productName.toLowerCase();
     if (hindiToEnglish[lowerProductName]) {
@@ -1179,7 +1216,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       };
     }
     // Add switch option in completion messages
-    baseMessage += `\n\nTo switch input method, reply "switch to text" or "switch to voice".`;
+    baseMessage += `\n\nYou can reply with a voice or text message. Examples:\n• Milk purchased - 5 litres\n• Oreo Biscuits sold - 9 packets\nWe'll automatically detect your input type.`;
     // Add reset option
     baseMessage += `\nTo reset the flow, reply "reset".`;
     // Translate the entire message to user's preferred language
@@ -1214,7 +1251,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
 async function confirmTranscript(transcript, from, detectedLanguage, requestId) {
   const response = new twilio.twiml.MessagingResponse();
   await sendSystemMessage(
-    `I heard: "${transcript}". Is this correct? Please reply with "yes" to confirm or "no" to try again.`,
+    `I heard: "${transcript}". Is this correct? You can reply with "yes" or "no", either by voice or text.`
     from,
     detectedLanguage,
     requestId,
@@ -1270,10 +1307,61 @@ function isBatchSelectionResponse(message) {
 function isExpiryDateUpdate(message) {
   const hasDateFormat = message.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/) ||
                         message.match(/\d{1,2}\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}/i);
-  const products = ['Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
-    'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata',
-    'flour', 'आटा', 'sugar', 'चीनी', 'packets', 'पैकेट',
-    'potato', 'आलू', 'onion', 'प्याज', 'tomato', 'टमाटर']; // product list
+  const products = [
+  // Branded items
+  'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
+  'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata',
+  'Oreo', 'Sunfeast', 'Good Day', 'Marie Gold',
+  // Basic groceries
+  'flour', 'आटा', 'sugar', 'चीनी', 'salt', 'नमक',
+  'rice', 'चावल', 'wheat', 'गेहूं', 'oil', 'तेल',
+  // Vegetables
+  'potato', 'आलू', 'potatoes', 'onion', 'प्याज', 'onions',
+  'tomato', 'टमाटर', 'tomatoes', 'carrot', 'गाजर', 'carrots',
+  'cabbage', 'पत्ता गोभी', 'cauliflower', 'फूलगोभी', 'spinach', 'पालक',
+  // Fruits
+  'apple', 'सेब', 'apples', 'banana', 'केला', 'bananas',
+  'orange', 'संतरा', 'oranges', 'mango', 'आम', 'mangoes',
+  // Dairy
+  'milk', 'दूध', 'curd', 'दही', 'yogurt', 'butter', 'मक्खन',
+  'cheese', 'पनीर', 'ghee', 'घी', 'cream', 'मलाई',
+  // Spices
+  'turmeric', 'हल्दी', 'cumin', 'जीरा', 'coriander', 'धनिया',
+  'chili', 'मिर्च', 'pepper', 'काली मिर्च', 'cardamom', 'इलायची',
+  // Packaged goods
+  'packets', 'पैकेट', 'boxes', 'बॉक्स', 'bags', 'बैग्स',
+  'biscuits', 'बिस्कुट', 'chips', 'soap', 'साबुन', 'detergent', 'डिटर्जेंट',
+  // Branded FMCG
+  'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया', 'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata', 'Oreo', 'Frooti', 'फ्रूटी', 'Sunfeast', 'Marie Gold', 'Good Day', 'Bournvita', 'Complan', 'Horlicks', 'Boost', 'Real Juice', 'Slice', 'Maaza', 'Pepsi', 'Coca-Cola', 'Sprite', 'Thums Up', 'Limca', 'Kinley', 'Bisleri', 'Aquafina', 'Appy Fizz',
+  // Groceries
+  'flour', 'आटा', 'maida', 'मैदा', 'besan', 'बेसन', 'sugar', 'चीनी', 'salt', 'नमक', 'rice', 'चावल', 'wheat', 'गेहूं', 'dal', 'दाल', 'moong dal', 'मूंग दाल', 'masoor dal', 'मसूर दाल', 'chana dal', 'चना दाल', 'rajma', 'राजमा', 'soybean', 'सोयाबीन', 'poha', 'पोहा', 'suji', 'सूजी', 'rava', 'रवा', 'sabudana', 'साबूदाना',
+  // Vegetables
+  'potato', 'आलू', 'onion', 'प्याज', 'tomato', 'टमाटर', 'carrot', 'गाजर', 'cabbage', 'पत्ता गोभी', 'cauliflower', 'फूलगोभी', 'spinach', 'पालक', 'brinjal', 'बैंगन', 'ladyfinger', 'भिंडी', 'capsicum', 'शिमला मिर्च', 'green chili', 'हरी मिर्च', 'garlic', 'लहसुन', 'ginger', 'अदरक',
+  // Fruits
+  'apple', 'सेब', 'banana', 'केला', 'orange', 'संतरा', 'mango', 'आम', 'grapes', 'अंगूर', 'papaya', 'पपीता', 'watermelon', 'तरबूज', 'muskmelon', 'खरबूजा', 'guava', 'अमरूद', 'pomegranate', 'अनार', 'lemon', 'नींबू',
+  // Dairy
+  'milk', 'दूध', 'curd', 'दही', 'yogurt', 'butter', 'मक्खन', 'cheese', 'पनीर', 'ghee', 'घी', 'cream', 'मलाई', 'lassi', 'लस्सी', 'buttermilk', 'छाछ',
+  // Spices
+  'turmeric', 'हल्दी', 'cumin', 'जीरा', 'coriander', 'धनिया', 'chili powder', 'मिर्च पाउडर', 'garam masala', 'गरम मसाला', 'asafoetida', 'हींग', 'mustard seeds', 'सरसों', 'fenugreek', 'मेथी', 'cardamom', 'इलायची', 'cloves', 'लौंग', 'black pepper', 'काली मिर्च', 'bay leaf', 'तेज पत्ता',
+  // Packaged goods
+  'packets', 'पैकेट', 'boxes', 'बॉक्स', 'bags', 'बैग्स', 'biscuits', 'बिस्कुट', 'chips', 'soap', 'साबुन', 'detergent', 'डिटर्जेंट', 'shampoo', 'शैम्पू', 'toothpaste', 'टूथपेस्ट', 'toothbrush', 'टूथब्रश', 'face wash', 'फेस वॉश', 'handwash', 'हैंडवॉश', 'sanitizer', 'सेनेटाइज़र',
+  // Household
+  'phenyl', 'फिनाइल', 'harpic', 'हार्पिक', 'lizol', 'लिज़ोल', 'matchbox', 'माचिस', 'mosquito coil', 'मच्छर अगरबत्ती', 'mosquito repellent', 'मच्छर भगाने वाला', 'tissue paper', 'टिशू पेपर', 'napkin', 'नैपकिन', 'garbage bag', 'कचरा बैग',
+  // Baby & Personal Care
+  'diapers', 'डायपर', 'baby powder', 'बेबी पाउडर', 'baby lotion', 'बेबी लोशन', 'face cream', 'फेस क्रीम', 'body lotion', 'बॉडी लोशन', 'hair oil', 'हेयर ऑयल', 'comb', 'कंघी', 'razor', 'रेज़र', 'shaving cream', 'शेविंग क्रीम',
+  // Beverages
+  'tea', 'चाय', 'coffee', 'कॉफी', 'green tea', 'ग्रीन टी', 'black tea', 'ब्लैक टी', 'cold drink', 'कोल्ड ड्रिंक', 'energy drink', 'एनर्जी ड्रिंक',
+  // Snacks
+  'namkeen', 'नमकीन', 'bhujia', 'भुजिया', 'sev', 'सेव', 'chakli', 'चकली', 'murukku', 'मुरुक्कु', 'mixture', 'मिक्चर', 'kurkure', 'कुर्कुरे', 'lays', 'लेज़', 'bingo', 'बिंगो',
+  // Frozen & Ready-to-eat
+  'frozen peas', 'फ्रोजन मटर', 'frozen corn', 'फ्रोजन कॉर्न', 'ready-to-eat meals', 'तैयार भोजन', 'instant noodles', 'इंस्टेंट नूडल्स', 'instant soup', 'इंस्टेंट सूप',
+  // Bakery
+  'bread', 'ब्रेड', 'bun', 'बन', 'cake', 'केक', 'pastry', 'पेस्ट्री', 'rusk', 'रस्क',
+  // Condiments
+  'ketchup', 'केचप', 'mayonnaise', 'मेयोनेज़', 'sauce', 'सॉस', 'pickle', 'अचार', 'jam', 'जैम', 'honey', 'शहद',
+  // Others
+  'ice cream', 'आइसक्रीम', 'chocolate', 'चॉकलेट', 'candy', 'कैंडी', 'mint', 'मिंट', 'mouth freshener', 'माउथ फ्रेशनर'  
+];
   const hasProduct = products.some(p => message.toLowerCase().includes(p.toLowerCase()));
   return hasDateFormat && hasProduct;
 }
@@ -1286,11 +1374,60 @@ async function handleBatchSelectionResponse(body, from, response, requestId, lan
     const lowerBody = body.toLowerCase();
     let product = null;
     const products = [
-      'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
-      'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata',
-      'flour', 'आटा', 'sugar', 'चीनी', 'packets', 'पैकेट',
-      'potato', 'आलू', 'onion', 'प्याज', 'tomato', 'टमाटर'
-    ];
+  // Branded items
+  'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया',
+  'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata',
+  'Oreo', 'Sunfeast', 'Good Day', 'Marie Gold',
+  // Basic groceries
+  'flour', 'आटा', 'sugar', 'चीनी', 'salt', 'नमक',
+  'rice', 'चावल', 'wheat', 'गेहूं', 'oil', 'तेल',
+  // Vegetables
+  'potato', 'आलू', 'potatoes', 'onion', 'प्याज', 'onions',
+  'tomato', 'टमाटर', 'tomatoes', 'carrot', 'गाजर', 'carrots',
+  'cabbage', 'पत्ता गोभी', 'cauliflower', 'फूलगोभी', 'spinach', 'पालक',
+  // Fruits
+  'apple', 'सेब', 'apples', 'banana', 'केला', 'bananas',
+  'orange', 'संतरा', 'oranges', 'mango', 'आम', 'mangoes',
+  // Dairy
+  'milk', 'दूध', 'curd', 'दही', 'yogurt', 'butter', 'मक्खन',
+  'cheese', 'पनीर', 'ghee', 'घी', 'cream', 'मलाई',
+  // Spices
+  'turmeric', 'हल्दी', 'cumin', 'जीरा', 'coriander', 'धनिया',
+  'chili', 'मिर्च', 'pepper', 'काली मिर्च', 'cardamom', 'इलायची',
+  // Packaged goods
+  'packets', 'पैकेट', 'boxes', 'बॉक्स', 'bags', 'बैग्स',
+  'biscuits', 'बिस्कुट', 'chips', 'soap', 'साबुन', 'detergent', 'डिटर्जेंट',
+  // Branded FMCG
+  'Parle-G', 'पारले-जी', 'Britannia', 'ब्रिटानिया', 'Maggi', 'Nestle', 'Dabur', 'Amul', 'Tata', 'Oreo', 'Frooti', 'फ्रूटी', 'Sunfeast', 'Marie Gold', 'Good Day', 'Bournvita', 'Complan', 'Horlicks', 'Boost', 'Real Juice', 'Slice', 'Maaza', 'Pepsi', 'Coca-Cola', 'Sprite', 'Thums Up', 'Limca', 'Kinley', 'Bisleri', 'Aquafina', 'Appy Fizz',
+  // Groceries
+  'flour', 'आटा', 'maida', 'मैदा', 'besan', 'बेसन', 'sugar', 'चीनी', 'salt', 'नमक', 'rice', 'चावल', 'wheat', 'गेहूं', 'dal', 'दाल', 'moong dal', 'मूंग दाल', 'masoor dal', 'मसूर दाल', 'chana dal', 'चना दाल', 'rajma', 'राजमा', 'soybean', 'सोयाबीन', 'poha', 'पोहा', 'suji', 'सूजी', 'rava', 'रवा', 'sabudana', 'साबूदाना',
+  // Vegetables
+  'potato', 'आलू', 'onion', 'प्याज', 'tomato', 'टमाटर', 'carrot', 'गाजर', 'cabbage', 'पत्ता गोभी', 'cauliflower', 'फूलगोभी', 'spinach', 'पालक', 'brinjal', 'बैंगन', 'ladyfinger', 'भिंडी', 'capsicum', 'शिमला मिर्च', 'green chili', 'हरी मिर्च', 'garlic', 'लहसुन', 'ginger', 'अदरक',
+  // Fruits
+  'apple', 'सेब', 'banana', 'केला', 'orange', 'संतरा', 'mango', 'आम', 'grapes', 'अंगूर', 'papaya', 'पपीता', 'watermelon', 'तरबूज', 'muskmelon', 'खरबूजा', 'guava', 'अमरूद', 'pomegranate', 'अनार', 'lemon', 'नींबू',
+  // Dairy
+  'milk', 'दूध', 'curd', 'दही', 'yogurt', 'butter', 'मक्खन', 'cheese', 'पनीर', 'ghee', 'घी', 'cream', 'मलाई', 'lassi', 'लस्सी', 'buttermilk', 'छाछ',
+  // Spices
+  'turmeric', 'हल्दी', 'cumin', 'जीरा', 'coriander', 'धनिया', 'chili powder', 'मिर्च पाउडर', 'garam masala', 'गरम मसाला', 'asafoetida', 'हींग', 'mustard seeds', 'सरसों', 'fenugreek', 'मेथी', 'cardamom', 'इलायची', 'cloves', 'लौंग', 'black pepper', 'काली मिर्च', 'bay leaf', 'तेज पत्ता',
+  // Packaged goods
+  'packets', 'पैकेट', 'boxes', 'बॉक्स', 'bags', 'बैग्स', 'biscuits', 'बिस्कुट', 'chips', 'soap', 'साबुन', 'detergent', 'डिटर्जेंट', 'shampoo', 'शैम्पू', 'toothpaste', 'टूथपेस्ट', 'toothbrush', 'टूथब्रश', 'face wash', 'फेस वॉश', 'handwash', 'हैंडवॉश', 'sanitizer', 'सेनेटाइज़र',
+  // Household
+  'phenyl', 'फिनाइल', 'harpic', 'हार्पिक', 'lizol', 'लिज़ोल', 'matchbox', 'माचिस', 'mosquito coil', 'मच्छर अगरबत्ती', 'mosquito repellent', 'मच्छर भगाने वाला', 'tissue paper', 'टिशू पेपर', 'napkin', 'नैपकिन', 'garbage bag', 'कचरा बैग',
+  // Baby & Personal Care
+  'diapers', 'डायपर', 'baby powder', 'बेबी पाउडर', 'baby lotion', 'बेबी लोशन', 'face cream', 'फेस क्रीम', 'body lotion', 'बॉडी लोशन', 'hair oil', 'हेयर ऑयल', 'comb', 'कंघी', 'razor', 'रेज़र', 'shaving cream', 'शेविंग क्रीम',
+  // Beverages
+  'tea', 'चाय', 'coffee', 'कॉफी', 'green tea', 'ग्रीन टी', 'black tea', 'ब्लैक टी', 'cold drink', 'कोल्ड ड्रिंक', 'energy drink', 'एनर्जी ड्रिंक',
+  // Snacks
+  'namkeen', 'नमकीन', 'bhujia', 'भुजिया', 'sev', 'सेव', 'chakli', 'चकली', 'murukku', 'मुरुक्कु', 'mixture', 'मिक्चर', 'kurkure', 'कुर्कुरे', 'lays', 'लेज़', 'bingo', 'बिंगो',
+  // Frozen & Ready-to-eat
+  'frozen peas', 'फ्रोजन मटर', 'frozen corn', 'फ्रोजन कॉर्न', 'ready-to-eat meals', 'तैयार भोजन', 'instant noodles', 'इंस्टेंट नूडल्स', 'instant soup', 'इंस्टेंट सूप',
+  // Bakery
+  'bread', 'ब्रेड', 'bun', 'बन', 'cake', 'केक', 'pastry', 'पेस्ट्री', 'rusk', 'रस्क',
+  // Condiments
+  'ketchup', 'केचप', 'mayonnaise', 'मेयोनेज़', 'sauce', 'सॉस', 'pickle', 'अचार', 'jam', 'जैम', 'honey', 'शहद',
+  // Others
+  'ice cream', 'आइसक्रीम', 'chocolate', 'चॉकलेट', 'candy', 'कैंडी', 'mint', 'मिंट', 'mouth freshener', 'माउथ फ्रेशनर'  
+];
     for (const p of products) {
       if (lowerBody.includes(p.toLowerCase())) {
         product = p;
