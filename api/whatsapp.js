@@ -1251,7 +1251,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
 async function confirmTranscript(transcript, from, detectedLanguage, requestId) {
   const response = new twilio.twiml.MessagingResponse();
   await sendSystemMessage(
-    `I heard: "${transcript}". Is this correct? You can reply with "yes" or "no", either by voice or text.`
+    `I heard: "${transcript}". Is this correct? You can reply with "yes" or "no", either by voice or text.',`
     from,
     detectedLanguage,
     requestId,
