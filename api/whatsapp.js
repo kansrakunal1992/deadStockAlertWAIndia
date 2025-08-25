@@ -1759,8 +1759,8 @@ async function googleTranscribe(flacBuffer, requestId) {
     const client = await auth.getClient();
     // Language priority that works well
     const languageConfigs = [
-      { languageCode: 'hi-IN', name: 'Hindi' },
       { languageCode: 'en-IN', name: 'English (India)' },
+      { languageCode: 'hi-IN', name: 'Hindi' },
       { languageCode: 'en-US', name: 'English (US)' }
     ];
     for (const langConfig of languageConfigs) {
