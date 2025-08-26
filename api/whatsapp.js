@@ -591,6 +591,7 @@ Return only valid JSON with no additional text, markdown formatting, or code blo
     }
     // Parse the JSON response
     try {
+      const normalize = str => str.toLowerCase().replace(/[^a-z0-9]/gi, '');
       const parsed = JSON.parse(content);
       let quantity = parsed.quantity || 0;
       // FIX: Ensure sales have negative quantities
@@ -604,7 +605,6 @@ Return only valid JSON with no additional text, markdown formatting, or code blo
         quantity: quantity,
         unit: parsed.unit || '',
         action: parsed.action || (quantity >= 0 ? 'purchased' : 'sold'),
-        const normalize = str => str.toLowerCase().replace(/[^a-z0-9]/gi, '');
         isKnown: products.some(p =>
         normalize(p).includes(normalize(parsed.product)) ||
         normalize(parsed.product).includes(normalize(p))
