@@ -2514,11 +2514,32 @@ const aiResponse = await axios.post('https://api.deepseek.com/v1/chat/completion
   });
  
   const aiAnswer = aiResponse.data.choices[0].message.content.trim().toLowerCase();
-  if (aiAnswer === 'yes') {
-    // confirm
-  } else if (aiAnswer === 'no') {
-    // reject
-  }
+  if (aiAnswer.includes('yes')) {
+  console.log(`[${requestId}] AI confirmed transcription`);
+  delete globalState.pendingTranscriptions[From];
+  await processConfirmedTranscription(
+    pending.transcript,
+    From,
+    pending.detectedLanguage,
+    requestId,
+    response,
+    res
+  );
+  trackResponseTime(requestStart, requestId);
+  return;
+} else if (aiAnswer.includes('no')) {
+  console.log(`[${requestId}] AI rejected transcription`);
+  delete globalState.pendingTranscriptions[From];
+  const errorMessage = await generateMultiLanguageResponse(
+    'Please try again with a clear voice message.',
+    pending.detectedLanguage,
+    requestId
+  );
+  response.message(errorMessage);
+  trackResponseTime(requestStart, requestId);
+  return res.send(response.toString());
+}
+
 }
       }
       // Check for pending product updates
