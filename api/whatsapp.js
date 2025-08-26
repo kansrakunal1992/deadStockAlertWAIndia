@@ -628,12 +628,12 @@ async function parseMultipleUpdates(transcript) {
     console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);
     const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
     if (aiUpdate && aiUpdate.product && aiUpdate.quantity !== 0) {
-      // Translate the product name
       aiUpdate.product = await translateProductName(aiUpdate.product, 'ai-parsing');
       console.log(`[AI Parsing] Successfully parsed: ${aiUpdate.quantity} ${aiUpdate.unit} of ${aiUpdate.product} (${aiUpdate.action})`);
       updates.push(aiUpdate);
       return updates;
     }
+
   } catch (error) {
     console.warn(`[AI Parsing] Failed, falling back to rule-based parsing:`, error.message);
   }
