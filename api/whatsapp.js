@@ -2659,7 +2659,7 @@ module.exports = async (req, res) => {
           return res.send(response.toString());
         }
       }
-    }
+    
     // Handle text messages
     if (Body && (NumMedia === '0' || NumMedia === 0 || !NumMedia)) {
       console.log(`[${requestId}] [1] Processing text message: "${Body}"`);
