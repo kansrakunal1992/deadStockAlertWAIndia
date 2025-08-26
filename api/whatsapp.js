@@ -2510,19 +2510,53 @@ module.exports = async (req, res) => {
       trackResponseTime(requestStart, requestId);
       return;
       } else if (noVariants.includes(lowerBody)) {
-        console.log(`[${requestId}] User rejected transcription`);
-        // Delete the pending transcription from database
-        await deletePendingTranscription(pendingResult.id);
+  console.log(`[${requestId}] User rejected transcription`);
+  // Delete the pending transcription from database
+  await deletePendingTranscription(pendingResult.id);
+  
+  // Parse the transcript to get update details
+  try {
+    const updates = await parseMultipleUpdates(pendingResult.transcript);
+    if (updates.length > 0) {
+      // Take the first update (assuming one product per message for correction)
+      const update = updates[0];
       
+      // Store in globalState.pendingProductUpdates temporarily
+      if (!globalState.pendingProductUpdates) {
+        globalState.pendingProductUpdates = {};
+      }
+      globalState.pendingProductUpdates[From] = {
+        update,
+        detectedLanguage: pending.detectedLanguage,
+        timestamp: Date.now()
+      };
+      
+      // Show correction options
+      const correctionResponse = await confirmProduct(update, From, pending.detectedLanguage, requestId);
+      return res.send(correctionResponse);
+    } else {
+      // If parsing failed, ask to retry
       const errorMessage = await generateMultiLanguageResponse(
         'Please try again with a clear voice message.',
         pending.detectedLanguage,
         requestId
       );
       response.message(errorMessage);
-      trackResponseTime(requestStart, requestId);
       return res.send(response.toString());
-      } else {
+    }
+  } catch (parseError) {
+    console.error(`[${requestId}] Error parsing transcript for correction:`, parseError.message);
+    // If parsing failed, ask to retry
+    const errorMessage = await generateMultiLanguageResponse(
+      'Please try again with a clear voice message.',
+      pending.detectedLanguage,
+      requestId
+    );
+    response.message(errorMessage);
+    return res.send(response.toString());
+  }
+}
+      else {
         // Fallback to AI
         try {
           const aiResponse = await axios.post('https://api.deepseek.com/v1/chat/completions', {
