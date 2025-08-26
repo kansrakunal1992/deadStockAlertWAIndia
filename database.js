@@ -1,4 +1,5 @@
 const axios = require('axios');
+const PENDING_TRANSCRIPTIONS_TABLE_NAME = process.env.AIRTABLE_PENDING_TRANSCRIPTIONS_TABLE_NAME || 'PendingTranscriptions';
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
 
@@ -1072,6 +1073,7 @@ async function savePendingTranscription(shopId, transcript, detectedLanguage) {
     
     const result = await airtableRequest({
       method: 'post',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PENDING_TRANSCRIPTIONS_TABLE_NAME}`,
       data: createData
     }, context);
     
@@ -1092,7 +1094,8 @@ async function getPendingTranscription(shopId) {
       params: { 
         filterByFormula: filterFormula,
         sort: [{ field: 'Timestamp', direction: 'desc' }]
-      }
+      },
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PENDING_TRANSCRIPTIONS_TABLE_NAME}`
     }, context);
     
     if (result.records.length > 0) {
@@ -1117,7 +1120,7 @@ async function deletePendingTranscription(id) {
   try {
     await airtableRequest({
       method: 'delete',
-      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/PendingTranscriptions/${id}`
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PENDING_TRANSCRIPTIONS_TABLE_NAME}/${id}`
     }, context);
     
     return { success: true };
