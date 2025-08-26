@@ -643,11 +643,16 @@ async function parseMultipleUpdates(transcript) {
   for (const sentence of sentences) {
     const trimmed = sentence.trim();
     if (trimmed) {
-      let update = parseSingleUpdate(trimmed);
-      // Translate the product name
-      update.product = await translateProductName(update.product, 'rule-parsing');
-      if (isValidInventoryUpdate(update)) {
-        updates.push(update);
+      try {
+        let update = parseSingleUpdate(trimmed);
+        if (update && update.product) {
+          update.product = await translateProductName(update.product, 'rule-parsing');
+        }
+        if (isValidInventoryUpdate(update)) {
+          updates.push(update);
+        }
+      } catch (err) {
+        console.warn(`[parseMultipleUpdates] Failed to parse sentence: "${trimmed}"`, err.message);
       }
     }
   }
