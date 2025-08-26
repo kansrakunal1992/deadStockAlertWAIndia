@@ -1,5 +1,6 @@
 const axios = require('axios');
 const PENDING_TRANSCRIPTIONS_TABLE_NAME = process.env.AIRTABLE_PENDING_TRANSCRIPTIONS_TABLE_NAME || 'PendingTranscriptions';
+const CORRECTION_STATE_TABLE_NAME = process.env.AIRTABLE_CORRECTION_STATE_TABLE_NAME || 'CorrectionState';
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
 
@@ -1130,6 +1131,80 @@ async function deletePendingTranscription(id) {
   }
 }
 
+// Add new functions for correction state management
+// Save correction state to database
+async function saveCorrectionState(shopId, correctionType, pendingUpdate, detectedLanguage) {
+  const context = `Save Correction State ${shopId}`;
+  try {
+    const createData = {
+      fields: {
+        ShopID: shopId,
+        CorrectionType: correctionType,
+        PendingUpdate: JSON.stringify(pendingUpdate),
+        DetectedLanguage: detectedLanguage,
+        Timestamp: new Date().toISOString()
+      }
+    };
+    
+    const result = await airtableRequest({
+      method: 'post',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/CorrectionState`,
+      data: createData
+    }, context);
+    
+    return { success: true, id: result.id };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get correction state for a shop
+async function getCorrectionState(shopId) {
+  const context = `Get Correction State ${shopId}`;
+  try {
+    const filterFormula = `{ShopID} = '${shopId}'`;
+    const result = await airtableRequest({
+      method: 'get',
+      params: { 
+        filterByFormula: filterFormula,
+        sort: [{ field: 'Timestamp', direction: 'desc' }]
+      },
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/CorrectionState`
+    }, context);
+    
+    if (result.records.length > 0) {
+      const record = result.records[0];
+      return {
+        success: true,
+        id: record.id,
+        correctionType: record.fields.CorrectionType,
+        pendingUpdate: JSON.parse(record.fields.PendingUpdate),
+        detectedLanguage: record.fields.DetectedLanguage
+      };
+    }
+    
+    return { success: true, correctionState: null };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Delete correction state
+async function deleteCorrectionState(id) {
+  const context = `Delete Correction State ${id}`;
+  try {
+    await airtableRequest({
+      method: 'delete',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/CorrectionState/${id}`
+    }, context);
+    return { success: true };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
 
 module.exports = {
   updateInventory,
@@ -1153,5 +1228,8 @@ module.exports = {
   updateBatchQuantityByCompositeKey,
   savePendingTranscription,    // Add this
   getPendingTranscription,     // Add this
-  deletePendingTranscription   // Add this
+  deletePendingTranscription,
+  saveCorrectionState,    // Add this
+  getCorrectionState,     // Add this
+  deleteCorrectionState   // Add this
 };
