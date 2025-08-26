@@ -593,7 +593,25 @@ Return only valid JSON with no additional text, markdown formatting, or code blo
     try {
       const normalize = str => str.toLowerCase().replace(/[^a-z0-9]/gi, '');
       const parsed = JSON.parse(content);
-      let quantity = parsed.quantity || 0;
+      const updatesArray = Array.isArray(parsed) ? parsed : [parsed];
+      
+      return updatesArray.map(update => {
+        let quantity = update.quantity ?? 0;
+        if (update.action === 'sold') quantity = -Math.abs(quantity);
+        else quantity = Math.abs(quantity);
+      
+        return {
+          product: update.product ?? '',
+          quantity,
+          unit: update.unit ?? '',
+          action: update.action ?? (quantity >= 0 ? 'purchased' : 'sold'),
+          isKnown: products.some(p =>
+            normalize(p).includes(normalize(update.product)) ||
+            normalize(update.product).includes(normalize(p))
+          )
+        };
+      });
+
       // FIX: Ensure sales have negative quantities
       if (parsed.action === 'sold') {
         quantity = -Math.abs(quantity);
