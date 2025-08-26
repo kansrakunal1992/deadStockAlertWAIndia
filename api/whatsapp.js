@@ -474,6 +474,19 @@ async function translateProductName(productName, requestId) {
       });
       return translated;
     }
+    const fuzzyMap = {
+  'fruity': 'Frooti',
+  'fruti': 'Frooti',
+  'parleg': 'Parle-G',
+  'oreo': 'Oreo'
+};
+ 
+const normalize = str => str.toLowerCase().replace(/[^a-z0-9]/gi, '');
+const normalizedName = normalize(productName);
+ 
+if (fuzzyMap[normalizedName]) {
+  return fuzzyMap[normalizedName];
+}
     // Try to translate using AI
     try {
       const response = await axios.post(
@@ -591,10 +604,11 @@ Return only valid JSON with no additional text, markdown formatting, or code blo
         quantity: quantity,
         unit: parsed.unit || '',
         action: parsed.action || (quantity >= 0 ? 'purchased' : 'sold'),
+        const normalize = str => str.toLowerCase().replace(/[^a-z0-9]/gi, '');
         isKnown: products.some(p =>
-          (parsed.product && p.toLowerCase().includes(parsed.product.toLowerCase())) ||
-          (parsed.product && parsed.product.toLowerCase().includes(p.toLowerCase()))
-        )
+        normalize(p).includes(normalize(parsed.product)) ||
+        normalize(parsed.product).includes(normalize(p))
+      )
       };
     } catch (parseError) {
       console.error(`[${requestId}] Failed to parse AI response as JSON:`, parseError.message);
@@ -664,6 +678,7 @@ function extractProduct(transcript) {
 
 // Improved parse single update with proper action detection and unit handling
 function parseSingleUpdate(transcript) {
+  const normalize = str => str.toLowerCase().replace(/[^a-z0-9]/gi, '');
   // Try to extract product name more flexibly
   let product = extractProduct(transcript);
   let quantity = 0;
@@ -722,8 +737,9 @@ function parseSingleUpdate(transcript) {
     quantity: finalQuantity,
     unit,
     action,
-    isKnown: products.some(p => product.toLowerCase().includes(p.toLowerCase()) ||
-      p.toLowerCase().includes(product.toLowerCase()))
+isKnown: products.some(p =>
+  normalize(p).includes(normalize(parsed.product)) ||
+  normalize(parsed.product).includes(normalize(p)))
   };
 }
 
@@ -1270,12 +1286,18 @@ async function confirmTranscript(transcript, from, detectedLanguage, requestId) 
 async function confirmProduct(update, from, detectedLanguage, requestId) {
   const response = new twilio.twiml.MessagingResponse();
   await sendSystemMessage(
-    `I heard you want to update: "${update.quantity > 0 ? '+' : ''}${update.quantity} ${update.product}" (${update.action}). Is this correct? Please reply with "yes" to confirm or "no" to try again.`,
-    from,
-    detectedLanguage,
-    requestId,
-    response
-  );
+  `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
+Is this correct?  
+Reply with:  
+1 – Product is wrong  
+2 – Quantity is wrong  
+3 – Action is wrong  
+4 – All wrong, I’ll type it instead`,
+  from,
+  detectedLanguage,
+  requestId,
+  response
+);
   // Store the update temporarily
   globalState.pendingProductUpdates[from] = {
     update,
@@ -2025,6 +2047,26 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     console.log(`[${requestId}] [1] Parsing text message: "${Body}"`);
     // Check for common greetings with improved detection
     const lowerBody = Body.toLowerCase();
+    if (['1', '2', '3', '4'].includes(Body.trim())) {
+  const pending = globalState.pendingProductUpdates[From];
+  if (!pending) return;
+  switch (Body.trim()) {
+    case '1':
+      await sendSystemMessage('Please type the correct product name.', From, pending.detectedLanguage, requestId, response);
+      break;
+    case '2':
+      await sendSystemMessage('Please type the correct quantity and unit.', From, pending.detectedLanguage, requestId, response);
+      break;
+    case '3':
+      await sendSystemMessage('Please specify if it was purchased, sold, or remaining.', From, pending.detectedLanguage, requestId, response);
+      break;
+    case '4':
+      await sendSystemMessage('Please type the full update. Example: "Milk purchased - 5 litres"', From, pending.detectedLanguage, requestId, response);
+      break;
+  }
+  return res.send(response.toString());
+}
+
     let isGreeting = false;
     let greetingLang = 'en';
     // Use improved greeting detection
@@ -2420,31 +2462,40 @@ module.exports = async (req, res) => {
       // Check for pending transcriptions
       if (globalState.pendingTranscriptions[From]) {
         const pending = globalState.pendingTranscriptions[From];
-        if (Body.toLowerCase() === 'yes') {
-          console.log(`[${requestId}] User confirmed transcription: "${pending.transcript}"`);
-          await processConfirmedTranscription(
-            pending.transcript,
-            From,
-            pending.detectedLanguage,
-            requestId,
-            response,
-            res
-          );
-          delete globalState.pendingTranscriptions[From];
-          trackResponseTime(requestStart, requestId);
-          return;
-        } else {
-          console.log(`[${requestId}] User rejected transcription`);
-          const errorMessage = await generateMultiLanguageResponse(
-            'Please try again with a clear voice message.',
-            pending.detectedLanguage,
-            requestId
-          );
-          response.message(errorMessage);
-          delete globalState.pendingTranscriptions[From];
-          trackResponseTime(requestStart, requestId);
-          return res.send(response.toString());
-        }
+        const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
+const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
+ 
+const lowerBody = Body.toLowerCase();
+ 
+if (yesVariants.includes(lowerBody)) {
+  // confirm
+} else if (noVariants.includes(lowerBody)) {
+  // reject
+} else {
+  // fallback to AI
+const aiResponse = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+    model: "deepseek-chat",
+    messages: [
+      { role: "system", content: "Is the following message a confirmation (yes) or rejection (no)? Reply only with 'yes' or 'no'." },
+      { role: "user", content: Body }
+    ],
+    max_tokens: 5,
+    temperature: 0.1
+  }, {
+    headers: {
+      'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    timeout: 5000
+  });
+ 
+  const aiAnswer = aiResponse.data.choices[0].message.content.trim().toLowerCase();
+  if (aiAnswer === 'yes') {
+    // confirm
+  } else if (aiAnswer === 'no') {
+    // reject
+  }
+}
       }
       // Check for pending product updates
       if (globalState.pendingProductUpdates && globalState.pendingProductUpdates[From]) {
