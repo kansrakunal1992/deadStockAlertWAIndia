@@ -19,7 +19,10 @@ const {
   updateBatchQuantityByCompositeKey,
   savePendingTranscription,    // Add this
   getPendingTranscription,     // Add this
-  deletePendingTranscription   // Add this
+  deletePendingTranscription,
+  saveCorrectionState,    // Add this
+  getCorrectionState,     // Add this
+  deleteCorrectionState   // Add this
 } = require('../database');
 
 // Performance tracking
@@ -202,6 +205,75 @@ function formatDateForAirtable(date) {
     }
   }
   return null;
+}
+
+// Handle correction responses
+const shopId = From.replace('whatsapp:', '');
+const correctionStateResult = await getCorrectionState(shopId);
+if (correctionStateResult.success && correctionStateResult.correctionState) {
+  const correctionState = correctionStateResult.correctionState;
+  const correctionType = correctionState.correctionType;
+  const pendingUpdate = correctionState.pendingUpdate;
+  const detectedLanguage = correctionState.detectedLanguage;
+  
+  console.log(`[${requestId}] Processing correction for: ${correctionType}`);
+  
+  if (!Body || Body.trim() === '') {
+    await sendSystemMessage('Please provide the correction information.', From, detectedLanguage, requestId, response);
+    return res.send(response.toString());
+  }
+  
+  try {
+    // Create the corrected update based on the correction type
+    let correctedUpdate = { ...pendingUpdate };
+    
+    switch (correctionType) {
+      case 'product':
+        correctedUpdate.product = Body.trim();
+        break;
+        
+      case 'quantity':
+        // Parse the quantity from the user's response
+        const quantityUpdate = await parseMultipleUpdates(Body);
+        if (quantityUpdate.length > 0) {
+          correctedUpdate.quantity = quantityUpdate[0].quantity;
+          correctedUpdate.unit = quantityUpdate[0].unit;
+        }
+        break;
+        
+      case 'action':
+        const lowerBody = Body.toLowerCase();
+        if (lowerBody.includes('purchased') || lowerBody.includes('bought') || lowerBody.includes('buy')) {
+          correctedUpdate.action = 'purchased';
+        } else if (lowerBody.includes('sold') || lowerBody.includes('sale')) {
+          correctedUpdate.action = 'sold';
+        } else if (lowerBody.includes('remaining') || lowerBody.includes('left')) {
+          correctedUpdate.action = 'remaining';
+        }
+        break;
+        
+      case 'all':
+        // Parse the entire update from the user's response
+        const fullUpdate = await parseMultipleUpdates(Body);
+        if (fullUpdate.length > 0) {
+          correctedUpdate = fullUpdate[0];
+        }
+        break;
+    }
+    
+    // Delete the correction state from database
+    await deleteCorrectionState(correctionStateResult.id);
+    
+    // Confirm the corrected update
+    const confirmationResponse = await confirmProduct(correctedUpdate, From, detectedLanguage, requestId);
+    
+    return res.send(confirmationResponse);
+    
+  } catch (error) {
+    console.error(`[${requestId}] Error processing correction:`, error.message);
+    await sendSystemMessage('Error processing correction. Please try again.', From, detectedLanguage, requestId, response);
+    return res.send(response.toString());
+  }
 }
 
 // Helper function to format date for display (DD/MM/YYYY HH:MM)
@@ -2066,23 +2138,38 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     console.log(`[${requestId}] [1] Parsing text message: "${Body}"`);
     // Check for common greetings with improved detection
     const lowerBody = Body.toLowerCase();
-    if (['1', '2', '3', '4'].includes(Body.trim())) {
+    // Handle numeric responses for product correction
+if (['1', '2', '3', '4'].includes(Body.trim())) {
   const pending = globalState.pendingProductUpdates[From];
   if (!pending) return;
+  
+  let correctionType = '';
+  let correctionMessage = '';
+  
   switch (Body.trim()) {
     case '1':
-      await sendSystemMessage('Please type the correct product name.', From, pending.detectedLanguage, requestId, response);
+      correctionType = 'product';
+      correctionMessage = 'Please type the correct product name.';
       break;
     case '2':
-      await sendSystemMessage('Please type the correct quantity and unit.', From, pending.detectedLanguage, requestId, response);
+      correctionType = 'quantity';
+      correctionMessage = 'Please type the correct quantity and unit. Example: "5 packets"';
       break;
     case '3':
-      await sendSystemMessage('Please specify if it was purchased, sold, or remaining.', From, pending.detectedLanguage, requestId, response);
+      correctionType = 'action';
+      correctionMessage = 'Please specify if it was purchased, sold, or remaining.';
       break;
     case '4':
-      await sendSystemMessage('Please type the full update. Example: "Milk purchased - 5 litres"', From, pending.detectedLanguage, requestId, response);
+      correctionType = 'all';
+      correctionMessage = 'Please type the full update. Example: "Milk purchased - 5 litres"';
       break;
   }
+  
+  // Save correction state to database
+  const shopId = From.replace('whatsapp:', '');
+  await saveCorrectionState(shopId, correctionType, pending.update, pending.detectedLanguage);
+  
+  await sendSystemMessage(correctionMessage, From, pending.detectedLanguage, requestId, response);
   return res.send(response.toString());
 }
 
