@@ -1057,6 +1057,77 @@ async function batchUpdateInventory(updates) {
   }
 }
 
+// Save pending transcription to database
+async function savePendingTranscription(shopId, transcript, detectedLanguage) {
+  const context = `Save Pending Transcription ${shopId}`;
+  try {
+    const createData = {
+      fields: {
+        ShopID: shopId,
+        Transcript: transcript,
+        DetectedLanguage: detectedLanguage,
+        Timestamp: new Date().toISOString()
+      }
+    };
+    
+    const result = await airtableRequest({
+      method: 'post',
+      data: createData
+    }, context);
+    
+    return { success: true, id: result.id };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get pending transcription for a shop
+async function getPendingTranscription(shopId) {
+  const context = `Get Pending Transcription ${shopId}`;
+  try {
+    const filterFormula = `{ShopID} = '${shopId}'`;
+    const result = await airtableRequest({
+      method: 'get',
+      params: { 
+        filterByFormula: filterFormula,
+        sort: [{ field: 'Timestamp', direction: 'desc' }]
+      }
+    }, context);
+    
+    if (result.records.length > 0) {
+      return {
+        success: true,
+        transcript: result.records[0].fields.Transcript,
+        detectedLanguage: result.records[0].fields.DetectedLanguage,
+        id: result.records[0].id
+      };
+    }
+    
+    return { success: true, transcript: null };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Delete pending transcription
+async function deletePendingTranscription(id) {
+  const context = `Delete Pending Transcription ${id}`;
+  try {
+    await airtableRequest({
+      method: 'delete',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/PendingTranscriptions/${id}`
+    }, context);
+    
+    return { success: true };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+
 module.exports = {
   updateInventory,
   testConnection,
@@ -1076,6 +1147,8 @@ module.exports = {
   getShopSalesRecords,
   batchUpdateInventory,
   getBatchByCompositeKey,           // Add this
-  updateBatchQuantityByCompositeKey
-  
+  updateBatchQuantityByCompositeKey,
+  savePendingTranscription,    // Add this
+  getPendingTranscription,     // Add this
+  deletePendingTranscription   // Add this
 };
