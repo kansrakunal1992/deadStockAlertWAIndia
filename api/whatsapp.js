@@ -738,14 +738,15 @@ function parseSingleUpdate(transcript) {
     finalQuantity = Math.abs(quantity);
   }
   return {
-    product,
-    quantity: finalQuantity,
-    unit,
-    action,
-isKnown: products.some(p =>
-  normalize(p).includes(normalize(parsed.product)) ||
-  normalize(parsed.product).includes(normalize(p)))
-  };
+  product,
+  quantity: finalQuantity,
+  unit,
+  action,
+  isKnown: products.some(p =>
+    normalize(p).includes(normalize(product)) ||
+    normalize(product).includes(normalize(p))
+  )
+};
 }
 
 // Validate if transcript is an inventory update - now allows unknown products
