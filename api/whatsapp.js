@@ -207,74 +207,6 @@ function formatDateForAirtable(date) {
   return null;
 }
 
-// Handle correction responses
-const shopId = From.replace('whatsapp:', '');
-const correctionStateResult = await getCorrectionState(shopId);
-if (correctionStateResult.success && correctionStateResult.correctionState) {
-  const correctionState = correctionStateResult.correctionState;
-  const correctionType = correctionState.correctionType;
-  const pendingUpdate = correctionState.pendingUpdate;
-  const detectedLanguage = correctionState.detectedLanguage;
-  
-  console.log(`[${requestId}] Processing correction for: ${correctionType}`);
-  
-  if (!Body || Body.trim() === '') {
-    await sendSystemMessage('Please provide the correction information.', From, detectedLanguage, requestId, response);
-    return res.send(response.toString());
-  }
-  
-  try {
-    // Create the corrected update based on the correction type
-    let correctedUpdate = { ...pendingUpdate };
-    
-    switch (correctionType) {
-      case 'product':
-        correctedUpdate.product = Body.trim();
-        break;
-        
-      case 'quantity':
-        // Parse the quantity from the user's response
-        const quantityUpdate = await parseMultipleUpdates(Body);
-        if (quantityUpdate.length > 0) {
-          correctedUpdate.quantity = quantityUpdate[0].quantity;
-          correctedUpdate.unit = quantityUpdate[0].unit;
-        }
-        break;
-        
-      case 'action':
-        const lowerBody = Body.toLowerCase();
-        if (lowerBody.includes('purchased') || lowerBody.includes('bought') || lowerBody.includes('buy')) {
-          correctedUpdate.action = 'purchased';
-        } else if (lowerBody.includes('sold') || lowerBody.includes('sale')) {
-          correctedUpdate.action = 'sold';
-        } else if (lowerBody.includes('remaining') || lowerBody.includes('left')) {
-          correctedUpdate.action = 'remaining';
-        }
-        break;
-        
-      case 'all':
-        // Parse the entire update from the user's response
-        const fullUpdate = await parseMultipleUpdates(Body);
-        if (fullUpdate.length > 0) {
-          correctedUpdate = fullUpdate[0];
-        }
-        break;
-    }
-    
-    // Delete the correction state from database
-    await deleteCorrectionState(correctionStateResult.id);
-    
-    // Confirm the corrected update
-    const confirmationResponse = await confirmProduct(correctedUpdate, From, detectedLanguage, requestId);
-    
-    return res.send(confirmationResponse);
-    
-  } catch (error) {
-    console.error(`[${requestId}] Error processing correction:`, error.message);
-    await sendSystemMessage('Error processing correction. Please try again.', From, detectedLanguage, requestId, response);
-    return res.send(response.toString());
-  }
-}
 
 // Helper function to format date for display (DD/MM/YYYY HH:MM)
 function formatDateForDisplay(date) {
@@ -2373,6 +2305,76 @@ module.exports = async (req, res) => {
       return;
     }
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
+
+    // Handle correction responses
+    const shopId = From.replace('whatsapp:', '');
+    const correctionStateResult = await getCorrectionState(shopId);
+    if (correctionStateResult.success && correctionStateResult.correctionState) {
+      const correctionState = correctionStateResult.correctionState;
+      const correctionType = correctionState.correctionType;
+      const pendingUpdate = correctionState.pendingUpdate;
+      const detectedLanguage = correctionState.detectedLanguage;
+      
+      console.log(`[${requestId}] Processing correction for: ${correctionType}`);
+      
+      if (!Body || Body.trim() === '') {
+        await sendSystemMessage('Please provide the correction information.', From, detectedLanguage, requestId, response);
+        return res.send(response.toString());
+      }
+      
+      try {
+        // Create the corrected update based on the correction type
+        let correctedUpdate = { ...pendingUpdate };
+        
+        switch (correctionType) {
+          case 'product':
+            correctedUpdate.product = Body.trim();
+            break;
+            
+          case 'quantity':
+            // Parse the quantity from the user's response
+            const quantityUpdate = await parseMultipleUpdates(Body);
+            if (quantityUpdate.length > 0) {
+              correctedUpdate.quantity = quantityUpdate[0].quantity;
+              correctedUpdate.unit = quantityUpdate[0].unit;
+            }
+            break;
+            
+          case 'action':
+            const lowerBody = Body.toLowerCase();
+            if (lowerBody.includes('purchased') || lowerBody.includes('bought') || lowerBody.includes('buy')) {
+              correctedUpdate.action = 'purchased';
+            } else if (lowerBody.includes('sold') || lowerBody.includes('sale')) {
+              correctedUpdate.action = 'sold';
+            } else if (lowerBody.includes('remaining') || lowerBody.includes('left')) {
+              correctedUpdate.action = 'remaining';
+            }
+            break;
+            
+          case 'all':
+            // Parse the entire update from the user's response
+            const fullUpdate = await parseMultipleUpdates(Body);
+            if (fullUpdate.length > 0) {
+              correctedUpdate = fullUpdate[0];
+            }
+            break;
+        }
+        
+        // Delete the correction state from database
+        await deleteCorrectionState(correctionStateResult.id);
+        
+        // Confirm the corrected update
+        const confirmationResponse = await confirmProduct(correctedUpdate, From, detectedLanguage, requestId);
+        
+        return res.send(confirmationResponse);
+        
+      } catch (error) {
+        console.error(`[${requestId}] Error processing correction:`, error.message);
+        await sendSystemMessage('Error processing correction. Please try again.', From, detectedLanguage, requestId, response);
+        return res.send(response.toString());
+      }
+    }
+    
     // Log the received values for debugging
     console.log(`[${requestId}] Received values:`, {
       NumMedia: typeof NumMedia,
