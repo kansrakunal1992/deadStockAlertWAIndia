@@ -2313,8 +2313,6 @@ module.exports = async (req, res) => {
     }
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
 
-    const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
-
 // Handle correction responses - check if user is in correction flow
 const shopId = From.replace('whatsapp:', '');
 const correctionStateResult = await getCorrectionState(shopId);
