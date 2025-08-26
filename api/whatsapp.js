@@ -16,7 +16,10 @@ const {
   updateBatchQuantity,
   batchUpdateInventory,
   getBatchByCompositeKey,           // Add this
-  updateBatchQuantityByCompositeKey
+  updateBatchQuantityByCompositeKey,
+  savePendingTranscription,    // Add this
+  getPendingTranscription,     // Add this
+  deletePendingTranscription   // Add this
 } = require('../database');
 
 // Performance tracking
@@ -52,7 +55,6 @@ const regexPatterns = {
 // Global storage with cleanup mechanism
 const globalState = {
   userPreferences: {},
-  pendingTranscriptions: {},
   pendingProductUpdates: {},
   conversationState: {},
   lastCleanup: Date.now()
@@ -293,13 +295,7 @@ function cleanupCaches() {
         }
       }
     }
-    if (globalState.pendingTranscriptions) {
-      for (const [from, pending] of Object.entries(globalState.pendingTranscriptions)) {
-        if (now - (pending.timestamp || 0) > FIVE_MINUTES) {
-          delete globalState.pendingTranscriptions[from];
-        }
-      }
-    }
+    
     if (globalState.pendingProductUpdates) {
       for (const [from, pending] of Object.entries(globalState.pendingProductUpdates)) {
         if (now - (pending.timestamp || 0) > FIVE_MINUTES) {
@@ -1297,12 +1293,11 @@ async function confirmTranscript(transcript, from, detectedLanguage, requestId) 
     requestId,
     response
   );
-  // Store the transcript temporarily
-  globalState.pendingTranscriptions[from] = {
-    transcript,
-    detectedLanguage,
-    timestamp: Date.now()
-  };
+  
+  // Save to database
+  const shopId = from.replace('whatsapp:', '');
+  await savePendingTranscription(shopId, transcript, detectedLanguage);
+  
   return response.toString();
 }
 
@@ -2482,66 +2477,122 @@ module.exports = async (req, res) => {
     }
     // Handle confirmation responses
     if (Body && (Body.toLowerCase() === 'yes' || Body.toLowerCase() === 'no')) {
-      console.log(`[${requestId}] Message appears to be a confirmation response: "${Body}"`);
-      // Check for pending transcriptions
-      if (globalState.pendingTranscriptions[From]) {
-        const pending = globalState.pendingTranscriptions[From];
-        const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
-const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
- 
-const lowerBody = Body.toLowerCase();
- 
-if (yesVariants.includes(lowerBody)) {
-  // confirm
-} else if (noVariants.includes(lowerBody)) {
-  // reject
-} else {
-  // fallback to AI
-const aiResponse = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-    model: "deepseek-chat",
-    messages: [
-      { role: "system", content: "Is the following message a confirmation (yes) or rejection (no)? Reply only with 'yes' or 'no'." },
-      { role: "user", content: Body }
-    ],
-    max_tokens: 5,
-    temperature: 0.1
-  }, {
-    headers: {
-      'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-      'Content-Type': 'application/json'
-    },
-    timeout: 5000
-  });
- 
-  const aiAnswer = aiResponse.data.choices[0].message.content.trim().toLowerCase();
-  if (aiAnswer.includes('yes')) {
-  console.log(`[${requestId}] AI confirmed transcription`);
-  delete globalState.pendingTranscriptions[From];
-  await processConfirmedTranscription(
-    pending.transcript,
-    From,
-    pending.detectedLanguage,
-    requestId,
-    response,
-    res
-  );
-  trackResponseTime(requestStart, requestId);
-  return;
-} else if (aiAnswer.includes('no')) {
-  console.log(`[${requestId}] AI rejected transcription`);
-  delete globalState.pendingTranscriptions[From];
-  const errorMessage = await generateMultiLanguageResponse(
-    'Please try again with a clear voice message.',
-    pending.detectedLanguage,
-    requestId
-  );
-  response.message(errorMessage);
-  trackResponseTime(requestStart, requestId);
-  return res.send(response.toString());
-}
-
-}
+    console.log(`[${requestId}] Message appears to be a confirmation response: "${Body}"`);
+    
+    // Get pending transcription from database
+    const shopId = From.replace('whatsapp:', '');
+    const pendingResult = await getPendingTranscription(shopId);
+    
+    if (pendingResult.success && pendingResult.transcript) {
+      const pending = {
+        transcript: pendingResult.transcript,
+        detectedLanguage: pendingResult.detectedLanguage
+      };
+    
+    const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
+    const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
+    
+    const lowerBody = Body.toLowerCase();
+    
+    if (yesVariants.includes(lowerBody)) {
+      console.log(`[${requestId}] User confirmed transcription`);
+      // Delete the pending transcription from database
+      await deletePendingTranscription(pendingResult.id);
+      
+      await processConfirmedTranscription(
+        pending.transcript,
+        From,
+        pending.detectedLanguage,
+        requestId,
+        response,
+        res
+      );
+      trackResponseTime(requestStart, requestId);
+      return;
+      } else if (noVariants.includes(lowerBody)) {
+        console.log(`[${requestId}] User rejected transcription`);
+        // Delete the pending transcription from database
+        await deletePendingTranscription(pendingResult.id);
+      
+      const errorMessage = await generateMultiLanguageResponse(
+        'Please try again with a clear voice message.',
+        pending.detectedLanguage,
+        requestId
+      );
+      response.message(errorMessage);
+      trackResponseTime(requestStart, requestId);
+      return res.send(response.toString());
+      } else {
+        // Fallback to AI
+        try {
+          const aiResponse = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+            model: "deepseek-chat",
+            messages: [
+              { role: "system", content: "Is the following message a confirmation (yes) or rejection (no)? Reply only with 'yes' or 'no'." },
+              { role: "user", content: Body }
+            ],
+            max_tokens: 5,
+            temperature: 0.1
+          }, {
+            headers: {
+              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 5000
+          });
+          
+          const aiAnswer = aiResponse.data.choices[0].message.content.trim().toLowerCase();
+          if (aiAnswer.includes('yes')) {
+            console.log(`[${requestId}] AI confirmed transcription`);
+            // Delete the pending transcription from database
+            await deletePendingTranscription(pendingResult.id);
+            
+            await processConfirmedTranscription(
+              pending.transcript,
+              From,
+              pending.detectedLanguage,
+              requestId,
+              response,
+              res
+            );
+            trackResponseTime(requestStart, requestId);
+            return;
+          } else if (aiAnswer.includes('no')) {
+            console.log(`[${requestId}] AI rejected transcription`);
+            // Delete the pending transcription from database
+            await deletePendingTranscription(pendingResult.id);
+            
+            const errorMessage = await generateMultiLanguageResponse(
+              'Please try again with a clear voice message.',
+              pending.detectedLanguage,
+              requestId
+            );
+            response.message(errorMessage);
+            trackResponseTime(requestStart, requestId);
+            return res.send(response.toString());
+          }
+        } catch (aiError) {
+          console.error(`[${requestId}] AI confirmation check failed:`, aiError.message);
+          // Fallback to treating as rejection if AI fails
+          console.log(`[${requestId}] Treating as rejection due to AI failure`);
+          // Delete the pending transcription from database
+          await deletePendingTranscription(pendingResult.id);
+          
+          const errorMessage = await generateMultiLanguageResponse(
+            'Please try again with a clear voice message.',
+            pending.detectedLanguage,
+            requestId
+          );
+          response.message(errorMessage);
+          trackResponseTime(requestStart, requestId);
+          return res.send(response.toString());
+        }
       }
+      } else {
+        // If no pending transcription found, continue to normal processing
+        console.log(`[${requestId}] No pending transcription found for confirmation`);
+      }
+    }
       // Check for pending product updates
       if (globalState.pendingProductUpdates && globalState.pendingProductUpdates[From]) {
         const pending = globalState.pendingProductUpdates[From];
