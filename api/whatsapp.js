@@ -2417,6 +2417,10 @@ module.exports = async (req, res) => {
     // 3. Handle based on current state
     if (currentState) {
       switch (currentState.mode) {
+        case 'greeting':
+        await handleGreetingResponse(Body, From, currentState, requestId, res);
+        return;
+        
         case 'correction':
           await handleCorrectionState(Body, From, currentState, requestId, res);
           return;
@@ -2732,12 +2736,13 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       const shopId = From.replace('whatsapp:', '');
       await saveUserPreference(shopId, greetingLang);
       
-      // Send welcome message
+      // Send welcome message with examples - no input method selection
       const welcomeMessage = await generateMultiLanguageResponse(
-        `Welcome! How would you like to send your inventory update?
-Reply:
-• "1" for Voice Message
-• "2" for Text Message`,
+        `Welcome! I'm ready for your inventory update. You can send:
+          • Voice message: "5kg sugar purchased"
+          • Text message: "10 Parle-G sold"
+          
+          What would you like to update?`,
         greetingLang,
         requestId
       );
@@ -2807,6 +2812,72 @@ Reply:
   );
   
   await sendMessageViaAPI(From, defaultMessage);
+  res.send('<Response></Response>');
+}
+
+async function handleGreetingResponse(Body, From, state, requestId, res) {
+  console.log(`[${requestId}] Handling greeting response with input: "${Body}"`);
+  
+  const { greetingLang } = state.data;
+  
+  // Handle input method selection (though we're removing this requirement)
+  if (Body === '1' || Body === '2' || Body.toLowerCase() === 'voice' || Body.toLowerCase() === 'text') {
+    // Send confirmation that we're ready for input
+    const readyMessage = await generateMultiLanguageResponse(
+      `Perfect! Please send your inventory update now.`,
+      greetingLang,
+      requestId
+    );
+    
+    await sendMessageViaAPI(From, readyMessage);
+    
+    // Clear the greeting state
+    await clearUserState(From);
+    
+    res.send('<Response></Response>');
+    return;
+  }
+  
+  // If user sends something else, try to parse as inventory update
+  const updates = await parseMultipleUpdates(Body);
+  if (updates.length > 0) {
+    console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
+    
+    const shopId = From.replace('whatsapp:', '');
+    const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
+    const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+    
+    let message = '✅ Updates processed:\n\n';
+    let successCount = 0;
+    
+    for (const result of results) {
+      if (result.success) {
+        successCount++;
+        const unitText = result.unit ? ` ${result.unit}` : '';
+        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+      } else {
+        message += `• ${result.product}: Error - ${result.error}\n`;
+      }
+    }
+    
+    message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+    
+    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, formattedResponse);
+    
+    // Clear state after processing
+    await clearUserState(From);
+  } else {
+    // If not a valid update, send help message
+    const helpMessage = await generateMultiLanguageResponse(
+      `I didn't understand that. Please send an inventory update like "10 Parle-G sold".`,
+      greetingLang,
+      requestId
+    );
+    
+    await sendMessageViaAPI(From, helpMessage);
+  }
+  
   res.send('<Response></Response>');
 }
 
