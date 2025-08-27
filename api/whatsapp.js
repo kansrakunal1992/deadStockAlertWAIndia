@@ -2723,10 +2723,10 @@ if (updates.length > 0) {
     timestamp: Date.now()
   };
   
-  // ADD THIS: Save correction state to database
+  // Save correction state to database with type 'selection'
   const shopId = From.replace('whatsapp:', '');
   console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
-  const saveResult = await saveCorrectionState(shopId, 'all', update, pending.detectedLanguage);
+  const saveResult = await saveCorrectionState(shopId, 'selection', update, pending.detectedLanguage);
   
   if (saveResult.success) {
     console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
