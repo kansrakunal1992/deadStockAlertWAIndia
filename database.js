@@ -1186,6 +1186,8 @@ async function saveCorrectionState(shopId, correctionType, pendingUpdate, detect
 }
 
 // Get correction state for a shop
+// In database.js, update the getCorrectionState function:
+
 async function getCorrectionState(shopId) {
   const context = `Get Correction State ${shopId}`;
   try {
@@ -1217,20 +1219,26 @@ async function getCorrectionState(shopId) {
       return {
         success: true,
         id: record.id,
-        correctionType: record.fields.CorrectionType,
-        pendingUpdate: JSON.parse(record.fields.PendingUpdate),
-        detectedLanguage: record.fields.DetectedLanguage
+        correctionState: {  // FIX: Return the correction state as an object
+          id: record.id,
+          correctionType: record.fields.CorrectionType,
+          pendingUpdate: JSON.parse(record.fields.PendingUpdate),
+          detectedLanguage: record.fields.DetectedLanguage
+        }
       };
     }
     
     console.log(`[${context}] No correction state found`);
-    return { success: true, correctionState: null };
+    return { 
+      success: true, 
+      correctionState: null  // FIX: Explicitly return null
+    };
   } catch (error) {
     console.error(`[${context}] Error getting correction state:`, error.message);
     if (error.response) {
       console.error(`[${context}] Airtable response:`, error.response.data);
     }
-    return { success: false, error: error.message };
+    return { success: false, error: error.message, correctionState: null };
   }
 }
 
