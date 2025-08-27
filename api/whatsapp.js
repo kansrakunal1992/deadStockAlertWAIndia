@@ -2073,7 +2073,12 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     // Handle numeric responses for product correction
 if (['1', '2', '3', '4'].includes(Body.trim())) {
   const pending = globalState.pendingProductUpdates[From];
-  if (!pending) return;
+  if (!pending) {
+    console.log(`[${requestId}] No pending update found for correction response: ${Body.trim()}`);
+    return;
+  }
+  
+  console.log(`[${requestId}] Processing correction response: ${Body.trim()} for pending update:`, pending.update);
   
   let correctionType = '';
   let correctionMessage = '';
@@ -2097,9 +2102,22 @@ if (['1', '2', '3', '4'].includes(Body.trim())) {
       break;
   }
   
+  console.log(`[${requestId}] Saving correction state to database:`, {
+    shopId: From.replace('whatsapp:', ''),
+    correctionType,
+    pendingUpdate: pending.update,
+    detectedLanguage: pending.detectedLanguage
+  });
+  
   // Save correction state to database
   const shopId = From.replace('whatsapp:', '');
-  await saveCorrectionState(shopId, correctionType, pending.update, pending.detectedLanguage);
+  const saveResult = await saveCorrectionState(shopId, correctionType, pending.update, pending.detectedLanguage);
+  
+  if (saveResult.success) {
+    console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
+  } else {
+    console.error(`[${requestId}] Failed to save correction state: ${saveResult.error}`);
+  }
   
   // Send correction message via API
   const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
@@ -2315,16 +2333,28 @@ module.exports = async (req, res) => {
 
 // Handle correction responses - check if user is in correction flow
 const shopId = From.replace('whatsapp:', '');
+console.log(`[${requestId}] Checking for correction state for shop: ${shopId}`);
+
 const correctionStateResult = await getCorrectionState(shopId);
+console.log(`[${requestId}] Correction state check result:`, {
+  success: correctionStateResult.success,
+  hasCorrectionState: !!correctionStateResult.correctionState,
+  error: correctionStateResult.error
+});
+
 if (correctionStateResult.success && correctionStateResult.correctionState) {
   const correctionState = correctionStateResult.correctionState;
   const correctionType = correctionState.correctionType;
   const pendingUpdate = correctionState.pendingUpdate;
   const detectedLanguage = correctionState.detectedLanguage;
   
-  console.log(`[${requestId}] Processing correction for: ${correctionType}`);
+  console.log(`[${requestId}] Processing correction for: ${correctionType}`, {
+    pendingUpdate,
+    body: Body
+  });
   
   if (!Body || Body.trim() === '') {
+    console.log(`[${requestId}] Empty body received for correction`);
     await sendSystemMessage('Please provide the correction information.', From, detectedLanguage, requestId, response);
     return res.send(response.toString());
   }
@@ -2335,19 +2365,23 @@ if (correctionStateResult.success && correctionStateResult.correctionState) {
     
     switch (correctionType) {
       case 'product':
+        console.log(`[${requestId}] Applying product correction: "${pendingUpdate.product}" → "${Body.trim()}"`);
         correctedUpdate.product = Body.trim();
         break;
         
       case 'quantity':
+        console.log(`[${requestId}] Applying quantity correction with input: "${Body}"`);
         // Parse the quantity from the user's response
         const quantityUpdate = await parseMultipleUpdates(Body);
         if (quantityUpdate.length > 0) {
+          console.log(`[${requestId}] Parsed quantity correction:`, quantityUpdate[0]);
           correctedUpdate.quantity = quantityUpdate[0].quantity;
           correctedUpdate.unit = quantityUpdate[0].unit;
         }
         break;
         
       case 'action':
+        console.log(`[${requestId}] Applying action correction with input: "${Body}"`);
         const lowerBody = Body.toLowerCase();
         if (lowerBody.includes('purchased') || lowerBody.includes('bought') || lowerBody.includes('buy')) {
           correctedUpdate.action = 'purchased';
@@ -2356,21 +2390,34 @@ if (correctionStateResult.success && correctionStateResult.correctionState) {
         } else if (lowerBody.includes('remaining') || lowerBody.includes('left')) {
           correctedUpdate.action = 'remaining';
         }
+        console.log(`[${requestId}] Updated action to: ${correctedUpdate.action}`);
         break;
         
       case 'all':
+        console.log(`[${requestId}] Applying full correction with input: "${Body}"`);
         // Parse the entire update from the user's response
         const fullUpdate = await parseMultipleUpdates(Body);
         if (fullUpdate.length > 0) {
+          console.log(`[${requestId}] Parsed full correction:`, fullUpdate[0]);
           correctedUpdate = fullUpdate[0];
         }
         break;
     }
     
+    console.log(`[${requestId}] Final corrected update:`, correctedUpdate);
+    
     // Delete the correction state from database
-    await deleteCorrectionState(correctionStateResult.id);
+    console.log(`[${requestId}] Deleting correction state with ID: ${correctionStateResult.id}`);
+    const deleteResult = await deleteCorrectionState(correctionStateResult.id);
+    
+    if (deleteResult.success) {
+      console.log(`[${requestId}] Successfully deleted correction state`);
+    } else {
+      console.error(`[${requestId}] Failed to delete correction state: ${deleteResult.error}`);
+    }
     
     // Confirm the corrected update
+    console.log(`[${requestId}] Confirming corrected update`);
     const confirmationResponse = await confirmProduct(correctedUpdate, From, detectedLanguage, requestId);
     
     return res.send(confirmationResponse);
