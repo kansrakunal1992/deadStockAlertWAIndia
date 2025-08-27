@@ -2872,18 +2872,7 @@ Reply with:
         return res.send(response.toString());
       }
     }
-          catch (parseError) {
-            console.error(`[${requestId}] Error parsing transcript for correction:`, parseError.message);
-            // If parsing failed, ask to retry
-            const errorMessage = await generateMultiLanguageResponse(
-              'Please try again with a clear voice message.',
-              pending.detectedLanguage,
-              requestId
-            );
-            response.message(errorMessage);
-            return res.send(response.toString());
-          }
-        }
+          
       } else {
         console.log(`[${requestId}] No pending transcription or correction state found for confirmation`);
         
