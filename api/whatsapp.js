@@ -22,8 +22,7 @@ const {
   deletePendingTranscription,
   saveCorrectionState,    // Add this
   getCorrectionState,     // Add this
-  deleteCorrectionState,
-  confirmCorrectedUpdate
+  deleteCorrectionState
 } = require('../database');
 
 // Performance tracking
