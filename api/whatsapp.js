@@ -189,44 +189,28 @@ const greetings = {
 const STATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const RESET_COMMANDS = ['reset', 'start over', 'restart', 'cancel', 'exit', 'stop', 'hello', 'hi', 'namaste'];
 
-function getUserState(from) {
-  if (!globalState.userStates) {
-    globalState.userStates = {};
-  }
-  
-  const state = globalState.userStates[from];
-  if (!state) {
-    return null;
-  }
-  
-  // Check if state expired
-  if (Date.now() - state.timestamp > STATE_TIMEOUT) {
-    console.log(`[State] Expired state for ${from}: ${state.mode}`);
-    delete globalState.userStates[from];
-    return null;
-  }
-  
+async function getUserState(from) {
+  const shopId = from.replace('whatsapp:', '');
+  const state = await getUserStateFromDB(shopId);
   return state;
 }
 
-function setUserState(from, mode, data = {}) {
-  if (!globalState.userStates) {
-    globalState.userStates = {};
+async function setUserState(from, mode, data = {}) {
+  const shopId = from.replace('whatsapp:', '');
+  const result = await saveUserStateToDB(shopId, mode, data);
+  if (result.success) {
+    console.log(`[State] Set state for ${from}: ${mode}`);
+  } else {
+    console.error(`[State] Failed to set state for ${from}: ${result.error}`);
   }
-  
-  globalState.userStates[from] = {
-    mode,
-    data,
-    timestamp: Date.now()
-  };
-  
-  console.log(`[State] Set state for ${from}: ${mode}`);
 }
 
-function clearUserState(from) {
-  if (globalState.userStates && globalState.userStates[from]) {
+async function clearUserState(from) {
+  const shopId = from.replace('whatsapp:', '');
+  const state = await getUserStateFromDB(shopId);
+  if (state && state.id) {
+    await deleteUserStateFromDB(state.id);
     console.log(`[State] Cleared state for ${from}`);
-    delete globalState.userStates[from];
   }
 }
 
@@ -2391,7 +2375,7 @@ module.exports = async (req, res) => {
       console.log(`[${requestId}] Explicit reset command detected: "${Body}"`);
       
       // Clear ALL states
-      clearUserState(From);
+      await clearUserState(From);
       if (globalState.conversationState && globalState.conversationState[From]) {
         delete globalState.conversationState[From];
       }
@@ -2495,7 +2479,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
     
     // Clear correction state
     await deleteCorrectionState(correctionState.id);
-    clearUserState(From);
+    await clearUserState(From);
     
     const exitMessage = await generateMultiLanguageResponse(
       'Correction cancelled. You can start fresh with a new inventory update.',
@@ -2544,7 +2528,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
       
       if (updateResult.success) {
         // Update user state
-        setUserState(From, 'correction', {
+        await setUserState(From, 'correction', {
           correctionState: {
             ...correctionState,
             correctionType: newCorrectionType,
@@ -2656,7 +2640,7 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
     
     // Clean up
     await deleteCorrectionState(originalCorrectionId);
-    clearUserState(From);
+    await clearUserState(From);
     
   } else if (noVariants.includes(Body.toLowerCase())) {
     // Go back to correction selection
@@ -2673,7 +2657,7 @@ Reply with:
     
     // Update correction state back to selection
     await saveCorrectionState(shopId, 'selection', correctedUpdate, detectedLanguage);
-    setUserState(From, 'correction', {
+    await setUserState(From, 'correction', {
       correctionState: {
         correctionType: 'selection',
         pendingUpdate: correctedUpdate,
@@ -2725,7 +2709,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
   await sendMessageViaAPI(From, formattedResponse);
   
   // Clear state after processing
-  clearUserState(From);
+  await clearUserState(From);
   
   res.send('<Response></Response>');
 }
@@ -2803,7 +2787,7 @@ Reply:
       await sendMessageViaAPI(From, formattedResponse);
       
       // Clear state after processing
-      clearUserState(From);
+      await clearUserState(From);
       
       res.send('<Response></Response>');
       return;
