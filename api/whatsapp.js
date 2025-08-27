@@ -3071,6 +3071,7 @@ if (Body && (Body.toLowerCase() === 'yes' || Body.toLowerCase() === 'no')) {
       }
       response.message(welcomeMessage);
     }
+}
   } catch (error) {
     console.error(`[${requestId}] Processing Error:`, error.message);
     const errorMessage = await generateMultiLanguageResponse(
