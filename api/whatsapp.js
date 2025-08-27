@@ -185,6 +185,51 @@ const greetings = {
   'zh': ['你好', '嗨']
 };
 
+// State management constants and functions
+const STATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+const RESET_COMMANDS = ['reset', 'start over', 'restart', 'cancel', 'exit', 'stop', 'hello', 'hi', 'namaste'];
+
+function getUserState(from) {
+  if (!globalState.userStates) {
+    globalState.userStates = {};
+  }
+  
+  const state = globalState.userStates[from];
+  if (!state) {
+    return null;
+  }
+  
+  // Check if state expired
+  if (Date.now() - state.timestamp > STATE_TIMEOUT) {
+    console.log(`[State] Expired state for ${from}: ${state.mode}`);
+    delete globalState.userStates[from];
+    return null;
+  }
+  
+  return state;
+}
+
+function setUserState(from, mode, data = {}) {
+  if (!globalState.userStates) {
+    globalState.userStates = {};
+  }
+  
+  globalState.userStates[from] = {
+    mode,
+    data,
+    timestamp: Date.now()
+  };
+  
+  console.log(`[State] Set state for ${from}: ${mode}`);
+}
+
+function clearUserState(from) {
+  if (globalState.userStates && globalState.userStates[from]) {
+    console.log(`[State] Cleared state for ${from}`);
+    delete globalState.userStates[from];
+  }
+}
+
 // Helper function to format dates for Airtable (YYYY-MM-DDTHH:mm:ss.sssZ)
 function formatDateForAirtable(date) {
   if (date instanceof Date) {
@@ -2322,716 +2367,96 @@ module.exports = async (req, res) => {
   const requestStart = Date.now();
   const response = new twilio.twiml.MessagingResponse();
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  
   try {
     // Add request ID to the request object for logging
     req.requestId = requestId;
+    
     // Clean up caches periodically
     cleanupCaches();
+    
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
       return;
     }
+    
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
-    
-    // Log the received values for debugging
-    console.log(`[${requestId}] Received values:`, {
-      NumMedia: typeof NumMedia,
-      NumMediaValue: NumMedia,
-      Body: typeof Body,
-      BodyValue: Body
-    });
-    
-    // Check for user preference
-    let userPreference = 'voice'; // Default to voice
-    if (globalState.userPreferences[From]) {
-      userPreference = globalState.userPreferences[From];
-      console.log(`[${requestId}] User preference: ${userPreference}`);
-    }
-    
-    // Check conversation state
-    let conversationState = null;
-    if (globalState.conversationState && globalState.conversationState[From]) {
-      conversationState = globalState.conversationState[From];
-      console.log(`[${requestId}] Conversation state:`, conversationState);
-    }
-    
-    // 1. Handle button responses FIRST
-    if (ButtonText) {
-      console.log(`[${requestId}] Button clicked: ${ButtonText}`);
-      // Store user preference
-      if (!globalState.userPreferences) {
-        globalState.userPreferences = {};
-      }
-      // Determine the user's language - don't re-detect for button clicks
-      let detectedLanguage = 'en';
-      if (conversationState && conversationState.language) {
-        detectedLanguage = conversationState.language;
-        console.log(`[${requestId}] Using language from conversation state: ${detectedLanguage}`);
-      } else if (From) {
-        try {
-          const shopId = From.replace('whatsapp:', '');
-          const userPref = await getUserPreference(shopId);
-          if (userPref.success) {
-            detectedLanguage = userPref.language;
-            console.log(`[${requestId}] Using language from user preference: ${detectedLanguage}`);
-          }
-        } catch (error) {
-          console.warn(`[${requestId}] Failed to get user preference:`, error.message);
-        }
-      }
-      
-      // Set input method preference based on button text
-      if (ButtonText === 'Voice Message' || ButtonText === 'voice_input') {
-        globalState.userPreferences[From] = 'voice';
-        const voiceMessage = await generateMultiLanguageResponse(
-          '🎤 Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
-          detectedLanguage,
-          requestId
-        );
-        response.message(voiceMessage);
-      } else if (ButtonText === 'Text Message' || ButtonText === 'text_input') {
-        globalState.userPreferences[From] = 'text';
-        const textMessage = await generateMultiLanguageResponse(
-          '📝 Please type your inventory update. Example: "10 Parle-G sold"',
-          detectedLanguage,
-          requestId
-        );
-        response.message(textMessage);
-      }
-      trackResponseTime(requestStart, requestId);
-      return res.send(response.toString());
-    }
-    
-    // 2. Handle text-based selection responses
-    if (Body && (Body === '1' || Body === '2' || Body.toLowerCase() === 'voice' || Body.toLowerCase() === 'text')) {
-      console.log(`[${requestId}] Text-based selection: "${Body}"`);
-      // Store user preference for input method
-      if (!globalState.userPreferences) {
-        globalState.userPreferences = {};
-      }
-      // Determine the user's language - don't re-detect for simple selections
-      let detectedLanguage = 'en';
-      if (conversationState && conversationState.language) {
-        detectedLanguage = conversationState.language;
-        console.log(`[${requestId}] Using language from conversation state: ${detectedLanguage}`);
-      } else if (From) {
-        try {
-          const shopId = From.replace('whatsapp:', '');
-          const userPref = await getUserPreference(shopId);
-          if (userPref.success) {
-            detectedLanguage = userPref.language;
-            console.log(`[${requestId}] Using language from user preference: ${detectedLanguage}`);
-          }
-        } catch (error) {
-          console.warn(`[${requestId}] Failed to get user preference:`, error.message);
-        }
-      }
-      
-      // Set input method preference based on response
-      if (Body === '1' || Body.toLowerCase() === 'voice') {
-        globalState.userPreferences[From] = 'voice';
-        const voiceMessage = await generateMultiLanguageResponse(
-          '🎤 Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
-          detectedLanguage,
-          requestId
-        );
-        response.message(voiceMessage);
-      } else if (Body === '2' || Body.toLowerCase() === 'text') {
-        globalState.userPreferences[From] = 'text';
-        const textMessage = await generateMultiLanguageResponse(
-          '📝 Please type your inventory update. Example: "10 Parle-G sold"',
-          detectedLanguage,
-          requestId
-        );
-        response.message(textMessage);
-      }
-      trackResponseTime(requestStart, requestId);
-      return res.send(response.toString());
-    }
-    
-    // 3. Handle input method switch commands
-    if (Body) {
-      const lowerBody = Body.toLowerCase();
-      
-      // Check for reset commands
-      if (resetCommands.some(cmd => lowerBody.includes(cmd))) {
-        console.log(`[${requestId}] User requested reset`);
-        // Clear conversation state
-        if (globalState.conversationState && globalState.conversationState[From]) {
-          delete globalState.conversationState[From];
-        }
-        // Detect language for response
-        let detectedLanguage = 'en';
-        try {
-          detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
-        } catch (error) {
-          console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-        }
-        const resetMessage = await generateMultiLanguageResponse(
-          'Flow has been reset. How would you like to send your inventory update?',
-          detectedLanguage,
-          requestId
-        );
-        response.message(resetMessage);
-        trackResponseTime(requestStart, requestId);
-        return res.send(response.toString());
-      }
-      
-      // Check for switch commands
-      if (lowerBody.includes('switch to text') || lowerBody.includes('change to text') || lowerBody.includes('use text')) {
-        console.log(`[${requestId}] User switching to text input`);
-        // Store user preference
-        if (!globalState.userPreferences) {
-          globalState.userPreferences = {};
-        }
-        globalState.userPreferences[From] = 'text';
-        // Detect language for response
-        let detectedLanguage = 'en';
-        try {
-          detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
-        } catch (error) {
-          console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-        }
-        const switchMessage = await generateMultiLanguageResponse(
-          '✅ Switched to text input. Please type your inventory update. Example: "10 Parle-G sold"',
-          detectedLanguage,
-          requestId
-        );
-        response.message(switchMessage);
-        trackResponseTime(requestStart, requestId);
-        return res.send(response.toString());
-      }
-      
-      if (lowerBody.includes('switch to voice') || lowerBody.includes('change to voice') || lowerBody.includes('use voice')) {
-        console.log(`[${requestId}] User switching to voice input`);
-        // Store user preference
-        if (!globalState.userPreferences) {
-          globalState.userPreferences = {};
-        }
-        globalState.userPreferences[From] = 'voice';
-        // Detect language for response
-        let detectedLanguage = 'en';
-        try {
-          detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
-        } catch (error) {
-          console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-        }
-        const switchMessage = await generateMultiLanguageResponse(
-          '✅ Switched to voice input. Please send a voice message with your inventory update. Example: "10 Parle-G sold"',
-          detectedLanguage,
-          requestId
-        );
-        response.message(switchMessage);
-        trackResponseTime(requestStart, requestId);
-        return res.send(response.toString());
-      }
-    }
-    
-    // 4. NOW check for correction responses - AFTER basic input handling
     const shopId = From.replace('whatsapp:', '');
-    console.log(`[${requestId}] Checking for correction state for shop: ${shopId}`);
-    const correctionStateResult = await getCorrectionState(shopId);
-    console.log(`[${requestId}] Correction state check result:`, {
-      success: correctionStateResult.success,
-      hasCorrectionState: !!correctionStateResult.correctionState,
-      error: correctionStateResult.error
-    });
     
-    if (correctionStateResult.success && correctionStateResult.correctionState) {
-      const correctionState = correctionStateResult.correctionState;
-      const correctionType = correctionState.correctionType;
-      const pendingUpdate = correctionState.pendingUpdate;
-      const detectedLanguage = correctionState.detectedLanguage;
+    // STATE-AWARE PROCESSING START
+    // ============================
+    
+    // 1. Handle explicit reset commands FIRST (highest priority)
+    if (Body && RESET_COMMANDS.some(cmd => Body.toLowerCase().includes(cmd))) {
+      console.log(`[${requestId}] Explicit reset command detected: "${Body}"`);
       
-      console.log(`[${requestId}] Processing correction for: ${correctionType}`, {
-        pendingUpdate,
-        body: Body
-      });
-      
-      if (!Body || Body.trim() === '') {
-        console.log(`[${requestId}] Empty body received for correction`);
-        await sendSystemMessage('Please provide the correction information.', From, detectedLanguage, requestId, response);
-        return res.send(response.toString());
+      // Clear ALL states
+      clearUserState(From);
+      if (globalState.conversationState && globalState.conversationState[From]) {
+        delete globalState.conversationState[From];
+      }
+      if (globalState.pendingProductUpdates && globalState.pendingProductUpdates[From]) {
+        delete globalState.pendingProductUpdates[From];
       }
       
-      // Check if this is the initial selection (1, 2, 3, or 4)
-          if (['1', '2', '3', '4'].includes(Body.trim())) {
-      console.log(`[${requestId}] User selected correction option: ${Body.trim()}`);
-      
-      let newCorrectionType = '';
-      let followUpMessage = '';
-      
-      switch (Body.trim()) {
-        case '1':
-          newCorrectionType = 'product';
-          followUpMessage = 'Please type the correct product name.';
-          break;
-        case '2':
-          newCorrectionType = 'quantity';
-          followUpMessage = 'Please type the correct quantity and unit. Example: "5 packets"';
-          break;
-        case '3':
-          newCorrectionType = 'action';
-          followUpMessage = 'Please specify if it was purchased, sold, or remaining.';
-          break;
-        case '4':
-          newCorrectionType = 'all';
-          followUpMessage = 'Please type the full update. Example: "Milk purchased - 5 litres"';
-          break;
-      }
-      
-      console.log(`[${requestId}] Updating correction state to: ${newCorrectionType}`);
-      
-      // Update the correction state with the new type
-      const updateResult = await saveCorrectionState(shopId, newCorrectionType, pendingUpdate, detectedLanguage);
-      
-      if (updateResult.success) {
-        console.log(`[${requestId}] Successfully updated correction state with ID: ${updateResult.id}`);
-      } else {
-        console.error(`[${requestId}] Failed to update correction state: ${updateResult.error}`);
-      }
-      
-      // Send the follow-up message via Twilio API for reliable delivery
-      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-      const translatedMessage = await generateMultiLanguageResponse(followUpMessage, detectedLanguage, requestId);
-      
+      // Clear correction state from database
       try {
-        await client.messages.create({
-          body: translatedMessage,
-          from: process.env.TWILIO_WHATSAPP_NUMBER,
-          to: From
-        });
-        console.log(`[${requestId}] Follow-up message sent successfully`);
+        const correctionStateResult = await getCorrectionState(shopId);
+        if (correctionStateResult.success && correctionStateResult.correctionState) {
+          await deleteCorrectionState(correctionStateResult.correctionState.id);
+          console.log(`[${requestId}] Cleared correction state during reset`);
+        }
       } catch (error) {
-        console.error(`[${requestId}] Failed to send follow-up message:`, error.message);
+        console.warn(`[${requestId}] Failed to clear correction state:`, error.message);
       }
       
-      // Return empty response since we sent via API
+      // Send reset confirmation
+      const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
+      const resetMessage = await generateMultiLanguageResponse(
+        'Flow has been reset. How would you like to send your inventory update?',
+        detectedLanguage,
+        requestId
+      );
+      
+      await sendMessageViaAPI(From, resetMessage);
       res.send('<Response></Response>');
       return;
     }
-      
-      // If we get here, it's the actual correction data (not the initial selection)
-      console.log(`[${requestId}] Processing actual correction data: "${Body}"`);
-      try {
-        // Create the corrected update based on the correction type
-        let correctedUpdate = { ...pendingUpdate };
-        
-        switch (correctionType) {
-          case 'product':
-            console.log(`[${requestId}] Applying product correction: "${pendingUpdate.product}" → "${Body.trim()}"`);
-            correctedUpdate.product = Body.trim();
-            break;
-            
-          case 'quantity':
-            console.log(`[${requestId}] Applying quantity correction with input: "${Body}"`);
-            // Parse the quantity from the user's response
-            const quantityUpdate = await parseMultipleUpdates(Body);
-            if (quantityUpdate.length > 0) {
-              console.log(`[${requestId}] Parsed quantity correction:`, quantityUpdate[0]);
-              correctedUpdate.quantity = quantityUpdate[0].quantity;
-              correctedUpdate.unit = quantityUpdate[0].unit;
-            }
-            break;
-            
-          case 'action':
-            console.log(`[${requestId}] Applying action correction with input: "${Body}"`);
-            const lowerBody = Body.toLowerCase();
-            if (lowerBody.includes('purchased') || lowerBody.includes('bought') || lowerBody.includes('buy')) {
-              correctedUpdate.action = 'purchased';
-            } else if (lowerBody.includes('sold') || lowerBody.includes('sale')) {
-              correctedUpdate.action = 'sold';
-            } else if (lowerBody.includes('remaining') || lowerBody.includes('left')) {
-              correctedUpdate.action = 'remaining';
-            }
-            console.log(`[${requestId}] Updated action to: ${correctedUpdate.action}`);
-            break;
-            
-          case 'all':
-            console.log(`[${requestId}] Applying full correction with input: "${Body}"`);
-            // Parse the entire update from the user's response
-            const fullUpdate = await parseMultipleUpdates(Body);
-            if (fullUpdate.length > 0) {
-              console.log(`[${requestId}] Parsed full correction:`, fullUpdate[0]);
-              correctedUpdate = fullUpdate[0];
-            }
-            break;
-        }
-        
-        console.log(`[${requestId}] Final corrected update:`, correctedUpdate);
-        
-        
-        // Confirm the corrected update
-        console.log(`[${requestId}] Confirming corrected update`);
-        const confirmationResponse = await confirmCorrectedUpdate(correctedUpdate, From, detectedLanguage, requestId);
-        return res.send(confirmationResponse);
-        
-      } catch (error) {
-        console.error(`[${requestId}] Error processing correction:`, error.message);
-        await sendSystemMessage('Error processing correction. Please try again.', From, detectedLanguage, requestId, response);
-        return res.send(response.toString());
-      }
-    }
     
-    // 5. Handle confirmation responses (yes/no)
-    if (Body && (Body.toLowerCase() === 'yes' || Body.toLowerCase() === 'no')) {
-      console.log(`[${requestId}] Message appears to be a confirmation response: "${Body}"`);
-      
-      const lowerBody = Body.toLowerCase();
-      const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
-      const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
-      
-      // First check for correction state in database
-      const correctionStateResult = await getCorrectionState(shopId);
-      
-      if (correctionStateResult.success && correctionStateResult.correctionState) {
-        const correctionState = correctionStateResult.correctionState;
-        const pendingUpdate = correctionState.pendingUpdate;
-        const detectedLanguage = correctionState.detectedLanguage;
-        
-        if (yesVariants.includes(lowerBody)) {
-          console.log(`[${requestId}] User confirmed corrected update`);
-          
-          // Process the confirmed update
-          const results = await updateMultipleInventory(shopId, [pendingUpdate], detectedLanguage);
-          
-          let message = '✅ Update processed:\n\n';
-          let successCount = 0;
-          let hasSales = false;
-          
-          for (const result of results) {
-            if (result.success) {
-              successCount++;
-              const unitText = result.unit ? ` ${result.unit}` : '';
-              
-              // Format based on action type
-              if (result.action === 'purchased') {
-                message += `• ${result.product}: ${result.quantity} ${unitText} purchased (Stock: ${result.newQuantity}${unitText})\n`;
-                if (result.batchDate) {
-                  message += ` Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
-                }
-              } else if (result.action === 'sold') {
-                message += `• ${result.product}: ${Math.abs(result.quantity)} ${unitText} sold (Stock: ${result.newQuantity}${unitText})\n`;
-                hasSales = true;
-              } else if (result.action === 'remaining') {
-                message += `• ${result.product}: ${result.quantity} ${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
-              }
-            } else {
-              message += `• ${result.product}: Error - ${result.error}\n`;
-            }
-          }
-          
-          message += `\n✅ Successfully updated ${successCount} of 1 item`;
-          
-          if (hasSales) {
-            message += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
-            // Set conversation state to await batch selection
-            if (!globalState.conversationState) {
-              globalState.conversationState = {};
-            }
-            globalState.conversationState[From] = {
-              state: 'awaiting_batch_selection',
-              language: detectedLanguage,
-              timestamp: Date.now()
-            };
-          }
-          
-          // Add switch option in completion messages
-          message += `\n\nTo switch input method, reply "switch to text" or "switch to voice".`;
-          // Add reset option
-          message += `\nTo reset the flow, reply "reset".`;
-          
-          const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
-          response.message(formattedResponse);
-          
-          // Delete the correction state AFTER successful processing
-          console.log(`[${requestId}] Deleting correction state with ID: ${correctionStateResult.correctionState.id}`);
-          const deleteResult = await deleteCorrectionState(correctionStateResult.correctionState.id);
-          
-          if (deleteResult.success) {
-            console.log(`[${requestId}] Successfully deleted correction state`);
-          } else {
-            console.error(`[${requestId}] Failed to delete correction state: ${deleteResult.error}`);
-          }
-          
-          trackResponseTime(requestStart, requestId);
-          return res.send(response.toString());
-          
-        } else if (noVariants.includes(lowerBody)) {
-          console.log(`[${requestId}] User rejected corrected update`);
-          
-          // Delete the correction state
-          console.log(`[${requestId}] Deleting correction state with ID: ${correctionStateResult.correctionState.id}`);
-          const deleteResult = await deleteCorrectionState(correctionStateResult.correctionState.id);
-          
-          if (deleteResult.success) {
-            console.log(`[${requestId}] Successfully deleted correction state`);
-          } else {
-            console.error(`[${requestId}] Failed to delete correction state: ${deleteResult.error}`);
-          }
-          
-          const errorMessage = await generateMultiLanguageResponse(
-            'Please try again with a clear message.',
-            detectedLanguage,
-            requestId
-          );
-          response.message(errorMessage);
-          
-          trackResponseTime(requestStart, requestId);
-          return res.send(response.toString());
-        }
-      }
-      
-      // If no correction state, check for pending transcription
-      const pendingResult = await getPendingTranscription(shopId);
-      
-      if (pendingResult.success && pendingResult.transcript) {
-        const pending = {
-          transcript: pendingResult.transcript,
-          detectedLanguage: pendingResult.detectedLanguage
-        };
-        
-        if (yesVariants.includes(lowerBody)) {
-          console.log(`[${requestId}] User confirmed transcription`);
-          // Delete the pending transcription from database
-          await deletePendingTranscription(pendingResult.id);
-          
-          await processConfirmedTranscription(
-            pending.transcript,
-            From,
-            pending.detectedLanguage,
-            requestId,
-            response,
-            res
-          );
-          trackResponseTime(requestStart, requestId);
+    // 2. Get current user state
+    const currentState = getUserState(From);
+    console.log(`[${requestId}] Current state for ${From}:`, currentState ? currentState.mode : 'none');
+    
+    // 3. Handle based on current state
+    if (currentState) {
+      switch (currentState.mode) {
+        case 'correction':
+          await handleCorrectionState(Body, From, currentState, requestId, res);
           return;
-        } else 
-              if (noVariants.includes(lowerBody)) {
-      console.log(`[${requestId}] User rejected transcription`);
-      // Delete the pending transcription from database
-      await deletePendingTranscription(pendingResult.id);
-      
-      // Parse the transcript to get update details
-      try {
-        const updates = await parseMultipleUpdates(pendingResult.transcript);
-        if (updates.length > 0) {
-          // Take the first update (assuming one product per message for correction)
-          const update = updates[0];
           
-          // Save correction state to database with type 'selection'
-          console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
-          const saveResult = await saveCorrectionState(shopId, 'selection', update, pending.detectedLanguage);
-          
-          if (saveResult.success) {
-            console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
-          } else {
-            console.error(`[${requestId}] Failed to save correction state: ${saveResult.error}`);
-          }
-          
-          // Show correction options via API for reliable delivery
-          const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-          const correctionMessage = `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
-Is this correct?  
-Reply with:
-1 – Product is wrong
-2 – Quantity is wrong
-3 – Action is wrong
-4 – All wrong, I'll type it instead`;
-          
-          const translatedMessage = await generateMultiLanguageResponse(correctionMessage, pending.detectedLanguage, requestId);
-          
-          await client.messages.create({
-            body: translatedMessage,
-            from: process.env.TWILIO_WHATSAPP_NUMBER,
-            to: From
-          });
-          
-          // Return empty response since we sent via API
-          res.send('<Response></Response>');
+        case 'confirmation':
+          await handleConfirmationState(Body, From, currentState, requestId, res);
           return;
-        } else {
-          // If parsing failed, ask to retry
-          const errorMessage = await generateMultiLanguageResponse(
-            'Please try again with a clear voice message.',
-            pending.detectedLanguage,
-            requestId
-          );
-          response.message(errorMessage);
-          return res.send(response.toString());
-        }
-      } catch (parseError) {
-        console.error(`[${requestId}] Error parsing transcript for correction:`, parseError.message);
-        // If parsing failed, ask to retry
-        const errorMessage = await generateMultiLanguageResponse(
-          'Please try again with a clear voice message.',
-          pending.detectedLanguage,
-          requestId
-        );
-        response.message(errorMessage);
-        return res.send(response.toString());
-      }
-    }
           
-      } else {
-        console.log(`[${requestId}] No pending transcription or correction state found for confirmation`);
-        
-        // If we get here, the user said "yes" but there's nothing to confirm
-        const errorMessage = await generateMultiLanguageResponse(
-          'Sorry, I don\'t have anything to confirm. Please send a new update.',
-          'en',
-          requestId
-        );
-        response.message(errorMessage);
-        trackResponseTime(requestStart, requestId);
-        return res.send(response.toString());
+        case 'inventory':
+          await handleInventoryState(Body, From, currentState, requestId, res);
+          return;
       }
     }
     
-    // 6. Check for pending product updates
-    if (globalState.pendingProductUpdates && globalState.pendingProductUpdates[From]) {
-      const pending = globalState.pendingProductUpdates[From];
-      if (Body.toLowerCase() === 'yes') {
-        console.log(`[${requestId}] User confirmed product update: "${pending.update.product}"`);
-        // Process the confirmed update
-        const results = await updateMultipleInventory(shopId, [pending.update], pending.detectedLanguage);
-        
-        let message = '✅ Update processed:\n\n';
-        let successCount = 0;
-        let hasSales = false;
-        
-        for (const result of results) {
-          if (result.success) {
-            successCount++;
-            const unitText = result.unit ? ` ${result.unit}` : '';
-            // Format based on action type
-            if (result.action === 'purchased') {
-              message += `• ${result.product}: ${result.quantity} ${unitText} purchased (Stock: ${result.newQuantity}${unitText})\n`;
-              if (result.batchDate) {
-                message += ` Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
-              }
-            } else if (result.action === 'sold') {
-              message += `• ${result.product}: ${Math.abs(result.quantity)} ${unitText} sold (Stock: ${result.newQuantity}${unitText})\n`;
-              hasSales = true;
-            } else if (result.action === 'remaining') {
-              message += `• ${result.product}: ${result.quantity} ${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
-            }
-          } else {
-            message += `• ${result.product}: Error - ${result.error}\n`;
-          }
-        }
-        
-        message += `\n✅ Successfully updated ${successCount} of 1 item`;
-        
-        if (hasSales) {
-          message += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
-          // Set conversation state to await batch selection
-          if (!globalState.conversationState) {
-            globalState.conversationState = {};
-          }
-          globalState.conversationState[From] = {
-            state: 'awaiting_batch_selection',
-            language: pending.detectedLanguage,
-            timestamp: Date.now()
-          };
-        }
-        
-        // Add switch option in completion messages
-        message += `\n\nTo switch input method, reply "switch to text" or "switch to voice".`;
-        // Add reset option
-        message += `\nTo reset the flow, reply "reset".`;
-        
-        const formattedResponse = await generateMultiLanguageResponse(message, pending.detectedLanguage, requestId);
-        response.message(formattedResponse);
-        delete globalState.pendingProductUpdates[From];
-        trackResponseTime(requestStart, requestId);
-        return res.send(response.toString());
-      } else {
-        console.log(`[${requestId}] User rejected product update`);
-        const errorMessage = await generateMultiLanguageResponse(
-          'Please try again with a clear message.',
-          pending.detectedLanguage,
-          requestId
-        );
-        response.message(errorMessage);
-        delete globalState.pendingProductUpdates[From];
-        trackResponseTime(requestStart, requestId);
-        return res.send(response.toString());
-      }
-    }
-    
-    // 7. Handle text messages
-    if (Body && (NumMedia === '0' || NumMedia === 0 || !NumMedia)) {
-      console.log(`[${requestId}] [1] Processing text message: "${Body}"`);
-      // Send immediate response and process asynchronously
-      response.message('Processing your message...');
-      res.send(response.toString());
-      // Process text asynchronously
-      processTextMessageAsync(Body, From, requestId, conversationState)
-        .catch(error => {
-          console.error(`[${requestId}] Error in async text processing:`, error);
-        });
-      trackResponseTime(requestStart, requestId);
-      return;
-    }
-    
-    // 8. Handle voice messages
-    if (NumMedia && MediaUrl0 && (NumMedia !== '0' && NumMedia !== 0)) {
-      // Send immediate response
-      response.message('Processing your voice message...');
-      res.send(response.toString());
-      // Process audio asynchronously
-      processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState)
-        .catch(error => {
-          console.error(`[${requestId}] Error in async voice processing:`, error);
-        });
-      trackResponseTime(requestStart, requestId);
-      return;
-    } else if (SpeechResult) {
-      console.log(`[${requestId}] [1] Using Twilio transcription`);
-      response.message(`🔊 (Twilio): "${SpeechResult}"`);
-    } else {
-      console.log(`[${requestId}] [1] No media received`);
-      let detectedLanguage = conversationState ? conversationState.language : 'en';
-      try {
-        detectedLanguage = await detectLanguageWithFallback(Body || "", From, requestId);
-        console.log(`[${requestId}] Detected language for welcome message: ${detectedLanguage}`);
-      } catch (error) {
-        console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-        detectedLanguage = 'en';
-      }
-      
-      let welcomeMessage;
-      if (userPreference === 'voice') {
-        welcomeMessage = await generateMultiLanguageResponse(
-          '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to text input, reply "switch to text".',
-          detectedLanguage,
-          requestId
-        );
-      } else {
-        welcomeMessage = await generateMultiLanguageResponse(
-          '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to voice input, reply "switch to voice".',
-          detectedLanguage,
-          requestId
-        );
-      }
-      response.message(welcomeMessage);
-    }
+    // 4. No active state - process as new interaction
+    await handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res);
     
   } catch (error) {
     console.error(`[${requestId}] Processing Error:`, error.message);
     const errorMessage = await generateMultiLanguageResponse(
-      'System error. Please try again with a clear voice message.',
+      'System error. Please try again with a clear message.',
       'en',
       requestId
     );
     response.message(errorMessage);
+    res.send(response.toString());
   }
-  
-  console.log(`[${requestId}] Sending TwiML response`);
-  res.setHeader('Content-Type', 'text/xml');
-  trackResponseTime(requestStart, requestId);
-  res.send(response.toString());
 };
 
 // Simple confirmation function for corrected updates
@@ -3056,6 +2481,344 @@ Reply with "yes" or "no".`;
   };
   
   return response.toString();
+}
+
+async function handleCorrectionState(Body, From, state, requestId, res) {
+  console.log(`[${requestId}] Handling correction state with input: "${Body}"`);
+  
+  const shopId = From.replace('whatsapp:', '');
+  const correctionState = state.data.correctionState;
+  
+  // Check if user is trying to exit correction mode
+  if (Body && ['exit', 'cancel', 'reset', 'start over'].some(cmd => Body.toLowerCase().includes(cmd))) {
+    console.log(`[${requestId}] User exiting correction mode`);
+    
+    // Clear correction state
+    await deleteCorrectionState(correctionState.id);
+    clearUserState(From);
+    
+    const exitMessage = await generateMultiLanguageResponse(
+      'Correction cancelled. You can start fresh with a new inventory update.',
+      correctionState.detectedLanguage,
+      requestId
+    );
+    
+    await sendMessageViaAPI(From, exitMessage);
+    res.send('<Response></Response>');
+    return;
+  }
+  
+  // Process correction based on type
+  if (correctionState.correctionType === 'selection') {
+    // Handle 1,2,3,4 selection
+    if (['1', '2', '3', '4'].includes(Body.trim())) {
+      let newCorrectionType = '';
+      let followUpMessage = '';
+      
+      switch (Body.trim()) {
+        case '1':
+          newCorrectionType = 'product';
+          followUpMessage = 'Please type the correct product name.';
+          break;
+        case '2':
+          newCorrectionType = 'quantity';
+          followUpMessage = 'Please type the correct quantity and unit. Example: "5 packets"';
+          break;
+        case '3':
+          newCorrectionType = 'action';
+          followUpMessage = 'Please specify if it was purchased, sold, or remaining.';
+          break;
+        case '4':
+          newCorrectionType = 'all';
+          followUpMessage = 'Please type the full update. Example: "Milk purchased - 5 litres"';
+          break;
+      }
+      
+      // Update correction state
+      const updateResult = await saveCorrectionState(
+        shopId, 
+        newCorrectionType, 
+        correctionState.pendingUpdate, 
+        correctionState.detectedLanguage
+      );
+      
+      if (updateResult.success) {
+        // Update user state
+        setUserState(From, 'correction', {
+          correctionState: {
+            ...correctionState,
+            correctionType: newCorrectionType,
+            id: updateResult.id
+          }
+        });
+        
+        const translatedMessage = await generateMultiLanguageResponse(
+          followUpMessage,
+          correctionState.detectedLanguage,
+          requestId
+        );
+        
+        await sendMessageViaAPI(From, translatedMessage);
+      }
+    } else {
+      // Invalid selection
+      const errorMessage = await generateMultiLanguageResponse(
+        'Please reply with 1, 2, 3, or 4. Or type "exit" to cancel.',
+        correctionState.detectedLanguage,
+        requestId
+      );
+      
+      await sendMessageViaAPI(From, errorMessage);
+    }
+  } else {
+    // Handle actual correction data (product name, quantity, etc.)
+    let correctedUpdate = { ...correctionState.pendingUpdate };
+    
+    switch (correctionState.correctionType) {
+      case 'product':
+        correctedUpdate.product = Body.trim();
+        break;
+      case 'quantity':
+        const quantityUpdate = await parseMultipleUpdates(Body);
+        if (quantityUpdate.length > 0) {
+          correctedUpdate.quantity = quantityUpdate[0].quantity;
+          correctedUpdate.unit = quantityUpdate[0].unit;
+        }
+        break;
+      case 'action':
+        const lowerBody = Body.toLowerCase();
+        if (lowerBody.includes('purchased') || lowerBody.includes('bought')) {
+          correctedUpdate.action = 'purchased';
+        } else if (lowerBody.includes('sold')) {
+          correctedUpdate.action = 'sold';
+        } else if (lowerBody.includes('remaining')) {
+          correctedUpdate.action = 'remaining';
+        }
+        break;
+      case 'all':
+        const fullUpdate = await parseMultipleUpdates(Body);
+        if (fullUpdate.length > 0) {
+          correctedUpdate = fullUpdate[0];
+        }
+        break;
+    }
+    
+    // Move to confirmation state
+    setUserState(From, 'confirmation', {
+      correctedUpdate,
+      detectedLanguage: correctionState.detectedLanguage,
+      originalCorrectionId: correctionState.id
+    });
+    
+    const confirmationMessage = await generateMultiLanguageResponse(
+      `I heard: "${correctedUpdate.quantity} ${correctedUpdate.unit} of ${correctedUpdate.product}" (${correctedUpdate.action}).  
+Is this correct? Reply with "yes" or "no".`,
+      correctionState.detectedLanguage,
+      requestId
+    );
+    
+    await sendMessageViaAPI(From, confirmationMessage);
+  }
+  
+  res.send('<Response></Response>');
+}
+
+async function handleConfirmationState(Body, From, state, requestId, res) {
+  console.log(`[${requestId}] Handling confirmation state with input: "${Body}"`);
+  
+  const { correctedUpdate, detectedLanguage, originalCorrectionId } = state.data;
+  const shopId = From.replace('whatsapp:', '');
+  
+  const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
+  const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
+  
+  if (yesVariants.includes(Body.toLowerCase())) {
+    // Process the confirmed update
+    const results = await updateMultipleInventory(shopId, [correctedUpdate], detectedLanguage);
+    
+    let message = '✅ Update processed:\n\n';
+    let successCount = 0;
+    
+    for (const result of results) {
+      if (result.success) {
+        successCount++;
+        const unitText = result.unit ? ` ${result.unit}` : '';
+        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+      } else {
+        message += `• ${result.product}: Error - ${result.error}\n`;
+      }
+    }
+    
+    message += `\n✅ Successfully updated ${successCount} of 1 item`;
+    
+    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, formattedResponse);
+    
+    // Clean up
+    await deleteCorrectionState(originalCorrectionId);
+    clearUserState(From);
+    
+  } else if (noVariants.includes(Body.toLowerCase())) {
+    // Go back to correction selection
+    const correctionMessage = await generateMultiLanguageResponse(
+      `Please try again. What needs to be corrected?
+Reply with:
+1 – Product is wrong
+2 – Quantity is wrong
+3 – Action is wrong
+4 – All wrong, I'll type it instead`,
+      detectedLanguage,
+      requestId
+    );
+    
+    // Update correction state back to selection
+    await saveCorrectionState(shopId, 'selection', correctedUpdate, detectedLanguage);
+    setUserState(From, 'correction', {
+      correctionState: {
+        correctionType: 'selection',
+        pendingUpdate: correctedUpdate,
+        detectedLanguage,
+        id: originalCorrectionId
+      }
+    });
+    
+    await sendMessageViaAPI(From, correctionMessage);
+  } else {
+    // Invalid response
+    const errorMessage = await generateMultiLanguageResponse(
+      'Please reply with "yes" or "no".',
+      detectedLanguage,
+      requestId
+    );
+    
+    await sendMessageViaAPI(From, errorMessage);
+  }
+  
+  res.send('<Response></Response>');
+}
+
+async function handleInventoryState(Body, From, state, requestId, res) {
+  console.log(`[${requestId}] Handling inventory state with input: "${Body}"`);
+  
+  const { updates, detectedLanguage } = state.data;
+  const shopId = From.replace('whatsapp:', '');
+  
+  // Process the updates
+  const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+  
+  let message = '✅ Updates processed:\n\n';
+  let successCount = 0;
+  
+  for (const result of results) {
+    if (result.success) {
+      successCount++;
+      const unitText = result.unit ? ` ${result.unit}` : '';
+      message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+    } else {
+      message += `• ${result.product}: Error - ${result.error}\n`;
+    }
+  }
+  
+  message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+  
+  const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+  await sendMessageViaAPI(From, formattedResponse);
+  
+  // Clear state after processing
+  clearUserState(From);
+  
+  res.send('<Response></Response>');
+}
+
+async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {
+  console.log(`[${requestId}] Handling new interaction`);
+  
+  // Check for greetings
+  if (Body) {
+    const greetingLang = detectGreetingLanguage(Body);
+    if (greetingLang) {
+      console.log(`[${requestId}] Detected greeting in language: ${greetingLang}`);
+      
+      // Save user preference
+      const shopId = From.replace('whatsapp:', '');
+      await saveUserPreference(shopId, greetingLang);
+      
+      // Send welcome message
+      const welcomeMessage = await generateMultiLanguageResponse(
+        `Welcome! How would you like to send your inventory update?
+Reply:
+• "1" for Voice Message
+• "2" for Text Message`,
+        greetingLang,
+        requestId
+      );
+      
+      await sendMessageViaAPI(From, welcomeMessage);
+      res.send('<Response></Response>');
+      return;
+    }
+  }
+  
+  // Handle voice messages
+  if (NumMedia && MediaUrl0 && (NumMedia !== '0' && NumMedia !== 0)) {
+    // Process voice asynchronously
+    res.send('<Response><Message>Processing your voice message...</Message></Response>');
+    processVoiceMessageAsync(MediaUrl0, From, requestId, null)
+      .catch(error => {
+        console.error(`[${requestId}] Error in async voice processing:`, error);
+      });
+    return;
+  }
+  
+  // Handle text messages
+  if (Body) {
+    // Try to parse as inventory update
+    const updates = await parseMultipleUpdates(Body);
+    if (updates.length > 0) {
+      console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
+      
+      // Set user state to inventory mode
+      const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
+      setUserState(From, 'inventory', { updates, detectedLanguage });
+      
+      // Process the updates
+      const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+      
+      let message = '✅ Updates processed:\n\n';
+      let successCount = 0;
+      
+      for (const result of results) {
+        if (result.success) {
+          successCount++;
+          const unitText = result.unit ? ` ${result.unit}` : '';
+          message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+        } else {
+          message += `• ${result.product}: Error - ${result.error}\n`;
+        }
+      }
+      
+      message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+      
+      const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, formattedResponse);
+      
+      // Clear state after processing
+      clearUserState(From);
+      
+      res.send('<Response></Response>');
+      return;
+    }
+  }
+  
+  // Default response for unrecognized input
+  const defaultMessage = await generateMultiLanguageResponse(
+    'Please send an inventory update like "10 Parle-G sold" or start with "Hello" for options.',
+    'en',
+    requestId
+  );
+  
+  await sendMessageViaAPI(From, defaultMessage);
+  res.send('<Response></Response>');
 }
 
 // Log performance metrics periodically
