@@ -1140,7 +1140,8 @@ async function saveCorrectionState(shopId, correctionType, pendingUpdate, detect
       shopId,
       correctionType,
       pendingUpdate,
-      detectedLanguage
+      detectedLanguage,
+      tableName: CORRECTION_STATE_TABLE_NAME
     });
     
     const createData = {
@@ -1154,6 +1155,8 @@ async function saveCorrectionState(shopId, correctionType, pendingUpdate, detect
     };
     
     console.log(`[${context}] Data to be saved:`, createData);
+    console.log(`[${context}] Using table: ${CORRECTION_STATE_TABLE_NAME}`);
+    console.log(`[${context}] Full URL: https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${CORRECTION_STATE_TABLE_NAME}`);
     
     const result = await airtableRequest({
       method: 'post',
@@ -1161,12 +1164,22 @@ async function saveCorrectionState(shopId, correctionType, pendingUpdate, detect
       data: createData
     }, context);
     
+    console.log(`[${context}] Airtable API response:`, result);
     console.log(`[${context}] Successfully saved correction state with ID: ${result.id}`);
+    
     return { success: true, id: result.id };
   } catch (error) {
     console.error(`[${context}] Error saving correction state:`, error.message);
     if (error.response) {
-      console.error(`[${context}] Airtable response:`, error.response.data);
+      console.error(`[${context}] Airtable response status:`, error.response.status);
+      console.error(`[${context}] Airtable response data:`, error.response.data);
+    }
+    if (error.config) {
+      console.error(`[${context}] Request config:`, {
+        url: error.config.url,
+        method: error.config.method,
+        headers: error.config.headers
+      });
     }
     return { success: false, error: error.message };
   }
