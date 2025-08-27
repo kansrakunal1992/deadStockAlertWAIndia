@@ -2494,75 +2494,74 @@ if (correctionStateResult.success && correctionStateResult.correctionState) {
   }
   
   // If we get here, it's the actual correction data (not the initial selection)
-  console.log(`[${requestId}] Processing actual correction data: "${Body}"`);
+console.log(`[${requestId}] Processing actual correction data: "${Body}"`);
+
+try {
+  // Create the corrected update based on the correction type
+  let correctedUpdate = { ...pendingUpdate };
   
-  try {
-    // Create the corrected update based on the correction type
-    let correctedUpdate = { ...pendingUpdate };
-    
-    switch (correctionType) {
-      case 'product':
-        console.log(`[${requestId}] Applying product correction: "${pendingUpdate.product}" → "${Body.trim()}"`);
-        correctedUpdate.product = Body.trim();
-        break;
-        
-      case 'quantity':
-        console.log(`[${requestId}] Applying quantity correction with input: "${Body}"`);
-        // Parse the quantity from the user's response
-        const quantityUpdate = await parseMultipleUpdates(Body);
-        if (quantityUpdate.length > 0) {
-          console.log(`[${requestId}] Parsed quantity correction:`, quantityUpdate[0]);
-          correctedUpdate.quantity = quantityUpdate[0].quantity;
-          correctedUpdate.unit = quantityUpdate[0].unit;
-        }
-        break;
-        
-      case 'action':
-        console.log(`[${requestId}] Applying action correction with input: "${Body}"`);
-        const lowerBody = Body.toLowerCase();
-        if (lowerBody.includes('purchased') || lowerBody.includes('bought') || lowerBody.includes('buy')) {
-          correctedUpdate.action = 'purchased';
-        } else if (lowerBody.includes('sold') || lowerBody.includes('sale')) {
-          correctedUpdate.action = 'sold';
-        } else if (lowerBody.includes('remaining') || lowerBody.includes('left')) {
-          correctedUpdate.action = 'remaining';
-        }
-        console.log(`[${requestId}] Updated action to: ${correctedUpdate.action}`);
-        break;
-        
-      case 'all':
-        console.log(`[${requestId}] Applying full correction with input: "${Body}"`);
-        // Parse the entire update from the user's response
-        const fullUpdate = await parseMultipleUpdates(Body);
-        if (fullUpdate.length > 0) {
-          console.log(`[${requestId}] Parsed full correction:`, fullUpdate[0]);
-          correctedUpdate = fullUpdate[0];
-        }
-        break;
-    }
-    
-    console.log(`[${requestId}] Final corrected update:`, correctedUpdate);
-    
-    // Delete the correction state from database
-    console.log(`[${requestId}] Deleting correction state with ID: ${correctionStateResult.correctionState.id}`);
-    const deleteResult = await deleteCorrectionState(correctionStateResult.correctionState.id);
-    
-    if (deleteResult.success) {
-      console.log(`[${requestId}] Successfully deleted correction state`);
-    } else {
-      console.error(`[${requestId}] Failed to delete correction state: ${deleteResult.error}`);
-    }
-    
-    // Confirm the corrected update
-    console.log(`[${requestId}] Confirming corrected update`);
-    const confirmationResponse = await confirmCorrectedUpdate(correctedUpdate, From, detectedLanguage, requestId);
-    return res.send(confirmationResponse);
-    
-  } catch (error) {
-    console.error(`[${requestId}] Error processing correction:`, error.message);
-    await sendSystemMessage('Error processing correction. Please try again.', From, detectedLanguage, requestId, response);
-    return res.send(response.toString());
+  switch (correctionType) {
+    case 'product':
+      console.log(`[${requestId}] Applying product correction: "${pendingUpdate.product}" → "${Body.trim()}"`);
+      correctedUpdate.product = Body.trim();
+      break;
+      
+    case 'quantity':
+      console.log(`[${requestId}] Applying quantity correction with input: "${Body}"`);
+      // Parse the quantity from the user's response
+      const quantityUpdate = await parseMultipleUpdates(Body);
+      if (quantityUpdate.length > 0) {
+        console.log(`[${requestId}] Parsed quantity correction:`, quantityUpdate[0]);
+        correctedUpdate.quantity = quantityUpdate[0].quantity;
+        correctedUpdate.unit = quantityUpdate[0].unit;
+      }
+      break;
+      
+    case 'action':
+      console.log(`[${requestId}] Applying action correction with input: "${Body}"`);
+      const lowerBody = Body.toLowerCase();
+      if (lowerBody.includes('purchased') || lowerBody.includes('bought') || lowerBody.includes('buy')) {
+        correctedUpdate.action = 'purchased';
+      } else if (lowerBody.includes('sold') || lowerBody.includes('sale')) {
+        correctedUpdate.action = 'sold';
+      } else if (lowerBody.includes('remaining') || lowerBody.includes('left')) {
+        correctedUpdate.action = 'remaining';
+      }
+      console.log(`[${requestId}] Updated action to: ${correctedUpdate.action}`);
+      break;
+      
+    case 'all':
+      console.log(`[${requestId}] Applying full correction with input: "${Body}"`);
+      // Parse the entire update from the user's response
+      const fullUpdate = await parseMultipleUpdates(Body);
+      if (fullUpdate.length > 0) {
+        console.log(`[${requestId}] Parsed full correction:`, fullUpdate[0]);
+        correctedUpdate = fullUpdate[0];
+      }
+      break;
   }
+  
+  console.log(`[${requestId}] Final corrected update:`, correctedUpdate);
+  
+  // UPDATE the correction state with corrected data instead of deleting it
+  console.log(`[${requestId}] Updating correction state with corrected data`);
+  const updateResult = await saveCorrectionState(shopId, 'confirmed', correctedUpdate, detectedLanguage);
+  
+  if (updateResult.success) {
+    console.log(`[${requestId}] Successfully updated correction state with ID: ${updateResult.id}`);
+  } else {
+    console.error(`[${requestId}] Failed to update correction state: ${updateResult.error}`);
+  }
+  
+  // Confirm the corrected update
+  console.log(`[${requestId}] Confirming corrected update`);
+  const confirmationResponse = await confirmCorrectedUpdate(correctedUpdate, From, detectedLanguage, requestId);
+  return res.send(confirmationResponse);
+  
+} catch (error) {
+  console.error(`[${requestId}] Error processing correction:`, error.message);
+  await sendSystemMessage('Error processing correction. Please try again.', From, detectedLanguage, requestId, response);
+  return res.send(response.toString());
 }
     
     // Log the received values for debugging
@@ -2754,172 +2753,202 @@ if (correctionStateResult.success && correctionStateResult.correctionState) {
         return res.send(response.toString());
       }
     }
-    // Handle confirmation responses
-    if (Body && (Body.toLowerCase() === 'yes' || Body.toLowerCase() === 'no')) {
+
+  // Handle confirmation responses
+if (Body && (Body.toLowerCase() === 'yes' || Body.toLowerCase() === 'no')) {
     console.log(`[${requestId}] Message appears to be a confirmation response: "${Body}"`);
     
-    // Get pending transcription from database
     const shopId = From.replace('whatsapp:', '');
-    const pendingResult = await getPendingTranscription(shopId);
-    
-    if (pendingResult.success && pendingResult.transcript) {
-      const pending = {
-        transcript: pendingResult.transcript,
-        detectedLanguage: pendingResult.detectedLanguage
-      };
-    
+    const lowerBody = Body.toLowerCase();
     const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
     const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
     
-    const lowerBody = Body.toLowerCase();
+    // First check for correction state in database
+    const correctionStateResult = await getCorrectionState(shopId);
     
-    if (yesVariants.includes(lowerBody)) {
-      console.log(`[${requestId}] User confirmed transcription`);
-      // Delete the pending transcription from database
-      await deletePendingTranscription(pendingResult.id);
-      
-      await processConfirmedTranscription(
-        pending.transcript,
-        From,
-        pending.detectedLanguage,
-        requestId,
-        response,
-        res
-      );
-      trackResponseTime(requestStart, requestId);
-      return;
-      } else if (noVariants.includes(lowerBody)) {
-  console.log(`[${requestId}] User rejected transcription`);
-  // Delete the pending transcription from database
-  await deletePendingTranscription(pendingResult.id);
-  
-  // Parse the transcript to get update details
-  try {
-    // In whatsapp.js, in the section that handles the "No" response:
-
-// After parsing the transcript:
-const updates = await parseMultipleUpdates(pendingResult.transcript);
-if (updates.length > 0) {
-  // Take the first update (assuming one product per message for correction)
-  const update = updates[0];
-  
-  // Store in globalState.pendingProductUpdates temporarily
-  if (!globalState.pendingProductUpdates) {
-    globalState.pendingProductUpdates = {};
-  }
-  globalState.pendingProductUpdates[From] = {
-    update,
-    detectedLanguage: pending.detectedLanguage,
-    timestamp: Date.now()
-  };
-  
-  // Save correction state to database with type 'selection'
-  const shopId = From.replace('whatsapp:', '');
-  console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
-  const saveResult = await saveCorrectionState(shopId, 'selection', update, pending.detectedLanguage);
-  
-  if (saveResult.success) {
-    console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
-  } else {
-    console.error(`[${requestId}] Failed to save correction state: ${saveResult.error}`);
-  }
-  
-  // Show correction options
-  const correctionResponse = await confirmProduct(update, From, pending.detectedLanguage, requestId);
-  return res.send(correctionResponse);
-} else {
-      // If parsing failed, ask to retry
-      const errorMessage = await generateMultiLanguageResponse(
-        'Please try again with a clear voice message.',
-        pending.detectedLanguage,
-        requestId
-      );
-      response.message(errorMessage);
-      return res.send(response.toString());
+    if (correctionStateResult.success && correctionStateResult.correctionState) {
+        const correctionState = correctionStateResult.correctionState;
+        const pendingUpdate = correctionState.pendingUpdate;
+        const detectedLanguage = correctionState.detectedLanguage;
+        
+        if (yesVariants.includes(lowerBody)) {
+            console.log(`[${requestId}] User confirmed corrected update`);
+            
+            // Process the confirmed update
+            const results = await updateMultipleInventory(shopId, [pendingUpdate], detectedLanguage);
+            
+            let message = '✅ Update processed:\n\n';
+            let successCount = 0;
+            let hasSales = false;
+            
+            for (const result of results) {
+                if (result.success) {
+                    successCount++;
+                    const unitText = result.unit ? ` ${result.unit}` : '';
+                    
+                    // Format based on action type
+                    if (result.action === 'purchased') {
+                        message += `• ${result.product}: ${result.quantity} ${unitText} purchased (Stock: ${result.newQuantity}${unitText})\n`;
+                        if (result.batchDate) {
+                            message += ` Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
+                        }
+                    } else if (result.action === 'sold') {
+                        message += `• ${result.product}: ${Math.abs(result.quantity)} ${unitText} sold (Stock: ${result.newQuantity}${unitText})\n`;
+                        hasSales = true;
+                    } else if (result.action === 'remaining') {
+                        message += `• ${result.product}: ${result.quantity} ${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
+                    }
+                } else {
+                    message += `• ${result.product}: Error - ${result.error}\n`;
+                }
+            }
+            
+            message += `\n✅ Successfully updated ${successCount} of 1 item`;
+            
+            if (hasSales) {
+                message += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
+                // Set conversation state to await batch selection
+                if (!globalState.conversationState) {
+                    globalState.conversationState = {};
+                }
+                globalState.conversationState[From] = {
+                    state: 'awaiting_batch_selection',
+                    language: detectedLanguage,
+                    timestamp: Date.now()
+                };
+            }
+            
+            // Add switch option in completion messages
+            message += `\n\nTo switch input method, reply "switch to text" or "switch to voice".`;
+            // Add reset option
+            message += `\nTo reset the flow, reply "reset".`;
+            
+            const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+            response.message(formattedResponse);
+            
+            // Delete the correction state AFTER successful processing
+            console.log(`[${requestId}] Deleting correction state with ID: ${correctionStateResult.correctionState.id}`);
+            const deleteResult = await deleteCorrectionState(correctionStateResult.correctionState.id);
+            
+            if (deleteResult.success) {
+                console.log(`[${requestId}] Successfully deleted correction state`);
+            } else {
+                console.error(`[${requestId}] Failed to delete correction state: ${deleteResult.error}`);
+            }
+            
+            trackResponseTime(requestStart, requestId);
+            return res.send(response.toString());
+            
+        } else if (noVariants.includes(lowerBody)) {
+            console.log(`[${requestId}] User rejected corrected update`);
+            
+            // Delete the correction state
+            console.log(`[${requestId}] Deleting correction state with ID: ${correctionStateResult.correctionState.id}`);
+            const deleteResult = await deleteCorrectionState(correctionStateResult.correctionState.id);
+            
+            if (deleteResult.success) {
+                console.log(`[${requestId}] Successfully deleted correction state`);
+            } else {
+                console.error(`[${requestId}] Failed to delete correction state: ${deleteResult.error}`);
+            }
+            
+            const errorMessage = await generateMultiLanguageResponse(
+                'Please try again with a clear message.',
+                detectedLanguage,
+                requestId
+            );
+            response.message(errorMessage);
+            
+            trackResponseTime(requestStart, requestId);
+            return res.send(response.toString());
+        }
     }
-  } catch (parseError) {
-    console.error(`[${requestId}] Error parsing transcript for correction:`, parseError.message);
-    // If parsing failed, ask to retry
-    const errorMessage = await generateMultiLanguageResponse(
-      'Please try again with a clear voice message.',
-      pending.detectedLanguage,
-      requestId
-    );
-    response.message(errorMessage);
-    return res.send(response.toString());
-  }
-}
-      else {
-        // Fallback to AI
-        try {
-          const aiResponse = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-            model: "deepseek-chat",
-            messages: [
-              { role: "system", content: "Is the following message a confirmation (yes) or rejection (no)? Reply only with 'yes' or 'no'." },
-              { role: "user", content: Body }
-            ],
-            max_tokens: 5,
-            temperature: 0.1
-          }, {
-            headers: {
-              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-              'Content-Type': 'application/json'
-            },
-            timeout: 5000
-          });
-          
-          const aiAnswer = aiResponse.data.choices[0].message.content.trim().toLowerCase();
-          if (aiAnswer.includes('yes')) {
-            console.log(`[${requestId}] AI confirmed transcription`);
+    
+    // If no correction state, check for pending transcription
+    const pendingResult = await getPendingTranscription(shopId);
+    
+    if (pendingResult.success && pendingResult.transcript) {
+        const pending = {
+            transcript: pendingResult.transcript,
+            detectedLanguage: pendingResult.detectedLanguage
+        };
+        
+        if (yesVariants.includes(lowerBody)) {
+            console.log(`[${requestId}] User confirmed transcription`);
             // Delete the pending transcription from database
             await deletePendingTranscription(pendingResult.id);
             
             await processConfirmedTranscription(
-              pending.transcript,
-              From,
-              pending.detectedLanguage,
-              requestId,
-              response,
-              res
+                pending.transcript,
+                From,
+                pending.detectedLanguage,
+                requestId,
+                response,
+                res
             );
             trackResponseTime(requestStart, requestId);
             return;
-          } else if (aiAnswer.includes('no')) {
-            console.log(`[${requestId}] AI rejected transcription`);
+        } else if (noVariants.includes(lowerBody)) {
+            console.log(`[${requestId}] User rejected transcription`);
             // Delete the pending transcription from database
             await deletePendingTranscription(pendingResult.id);
             
-            const errorMessage = await generateMultiLanguageResponse(
-              'Please try again with a clear voice message.',
-              pending.detectedLanguage,
-              requestId
-            );
-            response.message(errorMessage);
-            trackResponseTime(requestStart, requestId);
-            return res.send(response.toString());
-          }
-        } catch (aiError) {
-          console.error(`[${requestId}] AI confirmation check failed:`, aiError.message);
-          // Fallback to treating as rejection if AI fails
-          console.log(`[${requestId}] Treating as rejection due to AI failure`);
-          // Delete the pending transcription from database
-          await deletePendingTranscription(pendingResult.id);
-          
-          const errorMessage = await generateMultiLanguageResponse(
-            'Please try again with a clear voice message.',
-            pending.detectedLanguage,
-            requestId
-          );
-          response.message(errorMessage);
-          trackResponseTime(requestStart, requestId);
-          return res.send(response.toString());
+            // Parse the transcript to get update details
+            try {
+                const updates = await parseMultipleUpdates(pendingResult.transcript);
+                if (updates.length > 0) {
+                    // Take the first update (assuming one product per message for correction)
+                    const update = updates[0];
+                    
+                    // Save correction state to database with type 'selection'
+                    console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
+                    const saveResult = await saveCorrectionState(shopId, 'selection', update, pending.detectedLanguage);
+                    
+                    if (saveResult.success) {
+                        console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
+                    } else {
+                        console.error(`[${requestId}] Failed to save correction state: ${saveResult.error}`);
+                    }
+                    
+                    // Show correction options
+                    const correctionResponse = await confirmProduct(update, From, pending.detectedLanguage, requestId);
+                    return res.send(correctionResponse);
+                } else {
+                    // If parsing failed, ask to retry
+                    const errorMessage = await generateMultiLanguageResponse(
+                        'Please try again with a clear voice message.',
+                        pending.detectedLanguage,
+                        requestId
+                    );
+                    response.message(errorMessage);
+                    return res.send(response.toString());
+                }
+            } catch (parseError) {
+                console.error(`[${requestId}] Error parsing transcript for correction:`, parseError.message);
+                // If parsing failed, ask to retry
+                const errorMessage = await generateMultiLanguageResponse(
+                    'Please try again with a clear voice message.',
+                    pending.detectedLanguage,
+                    requestId
+                );
+                response.message(errorMessage);
+                return res.send(response.toString());
+            }
         }
-      }
-      } else {
-        // If no pending transcription found, continue to normal processing
-        console.log(`[${requestId}] No pending transcription found for confirmation`);
-      }
+    } else {
+        console.log(`[${requestId}] No pending transcription or correction state found for confirmation`);
+        
+        // If we get here, the user said "yes" but there's nothing to confirm
+        const errorMessage = await generateMultiLanguageResponse(
+            'Sorry, I don\'t have anything to confirm. Please send a new update.',
+            'en',
+            requestId
+        );
+        response.message(errorMessage);
+        trackResponseTime(requestStart, requestId);
+        return res.send(response.toString());
     }
+}
       // Check for pending product updates
       if (globalState.pendingProductUpdates && globalState.pendingProductUpdates[From]) {
         const pending = globalState.pendingProductUpdates[From];
