@@ -282,3 +282,49 @@ process.on('exit', () => {
   console.log('Server process exiting');
 });
 
+// Add this to your server.js or a separate test file
+app.get('/test-correction-state', async (req, res) => {
+  const shopId = req.query.shopId || 'test-shop';
+  
+  console.log(`[Test] Testing correction state operations for shop: ${shopId}`);
+  
+  // Test saving correction state
+  const testUpdate = {
+    product: 'Test Product',
+    quantity: 5,
+    unit: 'packets',
+    action: 'purchased'
+  };
+  
+  const saveResult = await saveCorrectionState(shopId, 'product', testUpdate, 'en');
+  console.log(`[Test] Save result:`, saveResult);
+  
+  if (!saveResult.success) {
+    return res.status(500).json({ error: 'Failed to save correction state', details: saveResult.error });
+  }
+  
+  // Test getting correction state
+  const getResult = await getCorrectionState(shopId);
+  console.log(`[Test] Get result:`, getResult);
+  
+  if (!getResult.success) {
+    return res.status(500).json({ error: 'Failed to get correction state', details: getResult.error });
+  }
+  
+  // Test deleting correction state
+  const deleteResult = await deleteCorrectionState(saveResult.id);
+  console.log(`[Test] Delete result:`, deleteResult);
+  
+  if (!deleteResult.success) {
+    return res.status(500).json({ error: 'Failed to delete correction state', details: deleteResult.error });
+  }
+  
+  res.json({
+    success: true,
+    message: 'All correction state operations successful',
+    saveResult,
+    getResult,
+    deleteResult
+  });
+});
+
