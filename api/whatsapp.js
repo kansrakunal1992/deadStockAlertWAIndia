@@ -2555,46 +2555,61 @@ module.exports = async (req, res) => {
       }
       
       // Check if this is the initial selection (1, 2, 3, or 4)
-      if (['1', '2', '3', '4'].includes(Body.trim())) {
-        console.log(`[${requestId}] User selected correction option: ${Body.trim()}`);
-        
-        let newCorrectionType = '';
-        let followUpMessage = '';
-        
-        switch (Body.trim()) {
-          case '1':
-            newCorrectionType = 'product';
-            followUpMessage = 'Please type the correct product name.';
-            break;
-          case '2':
-            newCorrectionType = 'quantity';
-            followUpMessage = 'Please type the correct quantity and unit. Example: "5 packets"';
-            break;
-          case '3':
-            newCorrectionType = 'action';
-            followUpMessage = 'Please specify if it was purchased, sold, or remaining.';
-            break;
-          case '4':
-            newCorrectionType = 'all';
-            followUpMessage = 'Please type the full update. Example: "Milk purchased - 5 litres"';
-            break;
-        }
-        
-        console.log(`[${requestId}] Updating correction state to: ${newCorrectionType}`);
-        
-        // Update the correction state with the new type
-        const updateResult = await saveCorrectionState(shopId, newCorrectionType, pendingUpdate, detectedLanguage);
-        
-        if (updateResult.success) {
-          console.log(`[${requestId}] Successfully updated correction state with ID: ${updateResult.id}`);
-        } else {
-          console.error(`[${requestId}] Failed to update correction state: ${updateResult.error}`);
-        }
-        
-        // Send the follow-up message
-        await sendSystemMessage(followUpMessage, From, detectedLanguage, requestId, response);
-        return res.send(response.toString());
+          if (['1', '2', '3', '4'].includes(Body.trim())) {
+      console.log(`[${requestId}] User selected correction option: ${Body.trim()}`);
+      
+      let newCorrectionType = '';
+      let followUpMessage = '';
+      
+      switch (Body.trim()) {
+        case '1':
+          newCorrectionType = 'product';
+          followUpMessage = 'Please type the correct product name.';
+          break;
+        case '2':
+          newCorrectionType = 'quantity';
+          followUpMessage = 'Please type the correct quantity and unit. Example: "5 packets"';
+          break;
+        case '3':
+          newCorrectionType = 'action';
+          followUpMessage = 'Please specify if it was purchased, sold, or remaining.';
+          break;
+        case '4':
+          newCorrectionType = 'all';
+          followUpMessage = 'Please type the full update. Example: "Milk purchased - 5 litres"';
+          break;
       }
+      
+      console.log(`[${requestId}] Updating correction state to: ${newCorrectionType}`);
+      
+      // Update the correction state with the new type
+      const updateResult = await saveCorrectionState(shopId, newCorrectionType, pendingUpdate, detectedLanguage);
+      
+      if (updateResult.success) {
+        console.log(`[${requestId}] Successfully updated correction state with ID: ${updateResult.id}`);
+      } else {
+        console.error(`[${requestId}] Failed to update correction state: ${updateResult.error}`);
+      }
+      
+      // Send the follow-up message via Twilio API for reliable delivery
+      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+      const translatedMessage = await generateMultiLanguageResponse(followUpMessage, detectedLanguage, requestId);
+      
+      try {
+        await client.messages.create({
+          body: translatedMessage,
+          from: process.env.TWILIO_WHATSAPP_NUMBER,
+          to: From
+        });
+        console.log(`[${requestId}] Follow-up message sent successfully`);
+      } catch (error) {
+        console.error(`[${requestId}] Failed to send follow-up message:`, error.message);
+      }
+      
+      // Return empty response since we sent via API
+      res.send('<Response></Response>');
+      return;
+    }
       
       // If we get here, it's the actual correction data (not the initial selection)
       console.log(`[${requestId}] Processing actual correction data: "${Body}"`);
@@ -2645,15 +2660,6 @@ module.exports = async (req, res) => {
         
         console.log(`[${requestId}] Final corrected update:`, correctedUpdate);
         
-        // UPDATE the correction state with corrected data instead of deleting it
-        console.log(`[${requestId}] Updating correction state with corrected data`);
-        const updateResult = await saveCorrectionState(shopId, 'confirmed', correctedUpdate, detectedLanguage);
-        
-        if (updateResult.success) {
-          console.log(`[${requestId}] Successfully updated correction state with ID: ${updateResult.id}`);
-        } else {
-          console.error(`[${requestId}] Failed to update correction state: ${updateResult.error}`);
-        }
         
         // Confirm the corrected update
         console.log(`[${requestId}] Confirming corrected update`);
@@ -2800,42 +2806,73 @@ module.exports = async (req, res) => {
           );
           trackResponseTime(requestStart, requestId);
           return;
-        } else if (noVariants.includes(lowerBody)) {
-          console.log(`[${requestId}] User rejected transcription`);
-          // Delete the pending transcription from database
-          await deletePendingTranscription(pendingResult.id);
+        } else 
+              if (noVariants.includes(lowerBody)) {
+      console.log(`[${requestId}] User rejected transcription`);
+      // Delete the pending transcription from database
+      await deletePendingTranscription(pendingResult.id);
+      
+      // Parse the transcript to get update details
+      try {
+        const updates = await parseMultipleUpdates(pendingResult.transcript);
+        if (updates.length > 0) {
+          // Take the first update (assuming one product per message for correction)
+          const update = updates[0];
           
-          // Parse the transcript to get update details
-          try {
-            const updates = await parseMultipleUpdates(pendingResult.transcript);
-            if (updates.length > 0) {
-              // Take the first update (assuming one product per message for correction)
-              const update = updates[0];
-              
-              // Save correction state to database with type 'selection'
-              console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
-              const saveResult = await saveCorrectionState(shopId, 'selection', update, pending.detectedLanguage);
-              
-              if (saveResult.success) {
-                console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
-              } else {
-                console.error(`[${requestId}] Failed to save correction state: ${saveResult.error}`);
-              }
-              
-              // Show correction options
-              const correctionResponse = await confirmProduct(update, From, pending.detectedLanguage, requestId);
-              return res.send(correctionResponse);
-            } else {
-              // If parsing failed, ask to retry
-              const errorMessage = await generateMultiLanguageResponse(
-                'Please try again with a clear voice message.',
-                pending.detectedLanguage,
-                requestId
-              );
-              response.message(errorMessage);
-              return res.send(response.toString());
-            }
-          } catch (parseError) {
+          // Save correction state to database with type 'selection'
+          console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
+          const saveResult = await saveCorrectionState(shopId, 'selection', update, pending.detectedLanguage);
+          
+          if (saveResult.success) {
+            console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
+          } else {
+            console.error(`[${requestId}] Failed to save correction state: ${saveResult.error}`);
+          }
+          
+          // Show correction options via API for reliable delivery
+          const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+          const correctionMessage = `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
+Is this correct?  
+Reply with:
+1 – Product is wrong
+2 – Quantity is wrong
+3 – Action is wrong
+4 – All wrong, I'll type it instead`;
+          
+          const translatedMessage = await generateMultiLanguageResponse(correctionMessage, pending.detectedLanguage, requestId);
+          
+          await client.messages.create({
+            body: translatedMessage,
+            from: process.env.TWILIO_WHATSAPP_NUMBER,
+            to: From
+          });
+          
+          // Return empty response since we sent via API
+          res.send('<Response></Response>');
+          return;
+        } else {
+          // If parsing failed, ask to retry
+          const errorMessage = await generateMultiLanguageResponse(
+            'Please try again with a clear voice message.',
+            pending.detectedLanguage,
+            requestId
+          );
+          response.message(errorMessage);
+          return res.send(response.toString());
+        }
+      } catch (parseError) {
+        console.error(`[${requestId}] Error parsing transcript for correction:`, parseError.message);
+        // If parsing failed, ask to retry
+        const errorMessage = await generateMultiLanguageResponse(
+          'Please try again with a clear voice message.',
+          pending.detectedLanguage,
+          requestId
+        );
+        response.message(errorMessage);
+        return res.send(response.toString());
+      }
+    }
+          catch (parseError) {
             console.error(`[${requestId}] Error parsing transcript for correction:`, parseError.message);
             // If parsing failed, ask to retry
             const errorMessage = await generateMultiLanguageResponse(
