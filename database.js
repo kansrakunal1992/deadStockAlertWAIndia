@@ -1136,6 +1136,13 @@ async function deletePendingTranscription(id) {
 async function saveCorrectionState(shopId, correctionType, pendingUpdate, detectedLanguage) {
   const context = `Save Correction State ${shopId}`;
   try {
+    console.log(`[${context}] Starting to save correction state:`, {
+      shopId,
+      correctionType,
+      pendingUpdate,
+      detectedLanguage
+    });
+    
     const createData = {
       fields: {
         ShopID: shopId,
@@ -1146,15 +1153,21 @@ async function saveCorrectionState(shopId, correctionType, pendingUpdate, detect
       }
     };
     
+    console.log(`[${context}] Data to be saved:`, createData);
+    
     const result = await airtableRequest({
       method: 'post',
       url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/CorrectionState`,
       data: createData
     }, context);
     
+    console.log(`[${context}] Successfully saved correction state with ID: ${result.id}`);
     return { success: true, id: result.id };
   } catch (error) {
-    logError(context, error);
+    console.error(`[${context}] Error saving correction state:`, error.message);
+    if (error.response) {
+      console.error(`[${context}] Airtable response:`, error.response.data);
+    }
     return { success: false, error: error.message };
   }
 }
@@ -1163,7 +1176,11 @@ async function saveCorrectionState(shopId, correctionType, pendingUpdate, detect
 async function getCorrectionState(shopId) {
   const context = `Get Correction State ${shopId}`;
   try {
+    console.log(`[${context}] Starting to get correction state for shop: ${shopId}`);
+    
     const filterFormula = `{ShopID} = '${shopId}'`;
+    console.log(`[${context}] Using filter formula: ${filterFormula}`);
+    
     const result = await airtableRequest({
       method: 'get',
       params: { 
@@ -1173,8 +1190,17 @@ async function getCorrectionState(shopId) {
       url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/CorrectionState`
     }, context);
     
+    console.log(`[${context}] Airtable returned ${result.records.length} records`);
+    
     if (result.records.length > 0) {
       const record = result.records[0];
+      console.log(`[${context}] Found correction state:`, {
+        id: record.id,
+        correctionType: record.fields.CorrectionType,
+        pendingUpdate: record.fields.PendingUpdate,
+        detectedLanguage: record.fields.DetectedLanguage
+      });
+      
       return {
         success: true,
         id: record.id,
@@ -1184,9 +1210,13 @@ async function getCorrectionState(shopId) {
       };
     }
     
+    console.log(`[${context}] No correction state found`);
     return { success: true, correctionState: null };
   } catch (error) {
-    logError(context, error);
+    console.error(`[${context}] Error getting correction state:`, error.message);
+    if (error.response) {
+      console.error(`[${context}] Airtable response:`, error.response.data);
+    }
     return { success: false, error: error.message };
   }
 }
@@ -1195,13 +1225,20 @@ async function getCorrectionState(shopId) {
 async function deleteCorrectionState(id) {
   const context = `Delete Correction State ${id}`;
   try {
+    console.log(`[${context}] Starting to delete correction state with ID: ${id}`);
+    
     await airtableRequest({
       method: 'delete',
       url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/CorrectionState/${id}`
     }, context);
+    
+    console.log(`[${context}] Successfully deleted correction state`);
     return { success: true };
   } catch (error) {
-    logError(context, error);
+    console.error(`[${context}] Error deleting correction state:`, error.message);
+    if (error.response) {
+      console.error(`[${context}] Airtable response:`, error.response.data);
+    }
     return { success: false, error: error.message };
   }
 }
