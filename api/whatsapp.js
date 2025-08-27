@@ -22,7 +22,8 @@ const {
   deletePendingTranscription,
   saveCorrectionState,    // Add this
   getCorrectionState,     // Add this
-  deleteCorrectionState   // Add this
+  deleteCorrectionState,
+  confirmCorrectedUpdate
 } = require('../database');
 
 // Performance tracking
@@ -1311,22 +1312,24 @@ async function confirmProduct(update, from, detectedLanguage, requestId) {
   await sendSystemMessage(
   `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
 Is this correct?  
-Reply with:  
-1 – Product is wrong  
-2 – Quantity is wrong  
-3 – Action is wrong  
-4 – All wrong, I’ll type it instead`,
+Reply with:
+1 – Product is wrong
+2 – Quantity is wrong
+3 – Action is wrong
+4 – All wrong, I'll type it instead`,
   from,
   detectedLanguage,
   requestId,
   response
 );
+  
   // Store the update temporarily
   globalState.pendingProductUpdates[from] = {
     update,
     detectedLanguage,
     timestamp: Date.now()
   };
+  
   return response.toString();
 }
 
@@ -2331,6 +2334,95 @@ module.exports = async (req, res) => {
     }
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
 
+    // Check for corrected update confirmation
+    if (globalState.correctedUpdates && globalState.correctedUpdates[From]) {
+      const pending = globalState.correctedUpdates[From];
+      const lowerBody = Body.toLowerCase();
+      
+      // Check if this is a yes/no response
+      const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
+      const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
+      
+      if (yesVariants.includes(lowerBody)) {
+        console.log(`[${requestId}] User confirmed corrected update`);
+        
+        // Process the confirmed update
+        const shopId = From.replace('whatsapp:', '');
+        const results = await updateMultipleInventory(shopId, [pending.update], pending.detectedLanguage);
+        
+        let message = '✅ Update processed:\n\n';
+        let successCount = 0;
+        let hasSales = false;
+        
+        for (const result of results) {
+          if (result.success) {
+            successCount++;
+            const unitText = result.unit ? ` ${result.unit}` : '';
+            
+            // Format based on action type
+            if (result.action === 'purchased') {
+              message += `• ${result.product}: ${result.quantity} ${unitText} purchased (Stock: ${result.newQuantity}${unitText})\n`;
+              if (result.batchDate) {
+                message += ` Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
+              }
+            } else if (result.action === 'sold') {
+              message += `• ${result.product}: ${Math.abs(result.quantity)} ${unitText} sold (Stock: ${result.newQuantity}${unitText})\n`;
+              hasSales = true;
+            } else if (result.action === 'remaining') {
+              message += `• ${result.product}: ${result.quantity} ${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
+            }
+          } else {
+            message += `• ${result.product}: Error - ${result.error}\n`;
+          }
+        }
+        
+        message += `\n✅ Successfully updated ${successCount} of 1 item`;
+        
+        if (hasSales) {
+          message += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
+          // Set conversation state to await batch selection
+          if (!globalState.conversationState) {
+            globalState.conversationState = {};
+          }
+          globalState.conversationState[From] = {
+            state: 'awaiting_batch_selection',
+            language: pending.detectedLanguage,
+            timestamp: Date.now()
+          };
+        }
+        
+        // Add switch option in completion messages
+        message += `\n\nTo switch input method, reply "switch to text" or "switch to voice".`;
+        // Add reset option
+        message += `\nTo reset the flow, reply "reset".`;
+        
+        const formattedResponse = await generateMultiLanguageResponse(message, pending.detectedLanguage, requestId);
+        response.message(formattedResponse);
+        
+        // Clean up
+        delete globalState.correctedUpdates[From];
+        
+        trackResponseTime(requestStart, requestId);
+        return res.send(response.toString());
+        
+      } else if (noVariants.includes(lowerBody)) {
+        console.log(`[${requestId}] User rejected corrected update`);
+        
+        const errorMessage = await generateMultiLanguageResponse(
+          'Please try again with a clear message.',
+          pending.detectedLanguage,
+          requestId
+        );
+        response.message(errorMessage);
+        
+        // Clean up
+        delete globalState.correctedUpdates[From];
+        
+        trackResponseTime(requestStart, requestId);
+        return res.send(response.toString());
+      }
+    }
+    
 // Handle correction responses - check if user is in correction flow
 const shopId = From.replace('whatsapp:', '');
 console.log(`[${requestId}] Checking for correction state for shop: ${shopId}`);
@@ -2464,8 +2556,7 @@ if (correctionStateResult.success && correctionStateResult.correctionState) {
     
     // Confirm the corrected update
     console.log(`[${requestId}] Confirming corrected update`);
-    const confirmationResponse = await confirmProduct(correctedUpdate, From, detectedLanguage, requestId);
-    
+    const confirmationResponse = await confirmCorrectedUpdate(correctedUpdate, From, detectedLanguage, requestId);
     return res.send(confirmationResponse);
     
   } catch (error) {
@@ -2966,6 +3057,30 @@ if (updates.length > 0) {
   trackResponseTime(requestStart, requestId);
   res.send(response.toString());
 };
+
+// Simple confirmation function for corrected updates
+async function confirmCorrectedUpdate(update, from, detectedLanguage, requestId) {
+  const response = new twilio.twiml.MessagingResponse();
+  
+  const confirmationMessage = `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
+Is this correct?  
+Reply with "yes" or "no".`;
+  
+  await sendSystemMessage(confirmationMessage, from, detectedLanguage, requestId, response);
+  
+  // Store the update temporarily in global state with a different key
+  const shopId = from.replace('whatsapp:', '');
+  if (!globalState.correctedUpdates) {
+    globalState.correctedUpdates = {};
+  }
+  globalState.correctedUpdates[shopId] = {
+    update,
+    detectedLanguage,
+    timestamp: Date.now()
+  };
+  
+  return response.toString();
+}
 
 // Log performance metrics periodically
 setInterval(() => {
