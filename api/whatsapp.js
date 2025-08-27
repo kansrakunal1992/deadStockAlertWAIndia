@@ -22,7 +22,10 @@ const {
   deletePendingTranscription,
   saveCorrectionState,    // Add this
   getCorrectionState,     // Add this
-  deleteCorrectionState
+  deleteCorrectionState,
+  saveUserStateToDB,
+  getUserStateFromDB,
+  deleteUserStateFromDB
 } = require('../database');
 
 // Performance tracking
@@ -2716,6 +2719,8 @@ async function handleInventoryState(Body, From, state, requestId, res) {
 
 async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {
   console.log(`[${requestId}] Handling new interaction`);
+  const shopId = From.replace('whatsapp:', '');
+
   
   // Check for greetings
   if (Body) {
