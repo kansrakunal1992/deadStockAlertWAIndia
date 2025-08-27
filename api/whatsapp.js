@@ -478,10 +478,15 @@ async function translateProductName(productName, requestId) {
       console.log(`[${requestId}] Using cached product translation: "${productName}" → "${cached.translation}"`);
       return cached.translation;
     }
-    // First check if it's already a known product in English
-    if (products.some(p => p.toLowerCase() === productName.toLowerCase())) {
-      return productName;
+    
+    // First, extract just the product name
+    const cleanProduct = extractProductName(productName);
+    
+    // Check if it's already a known product in English
+    if (products.some(p => p.toLowerCase() === cleanProduct.toLowerCase())) {
+      return cleanProduct;
     }
+    
     // Direct Hindi to English mappings for common products
     const hindiToEnglish = {
       'चीनी': 'sugar', 'cheeni': 'sugar',
@@ -495,10 +500,11 @@ async function translateProductName(productName, requestId) {
       'पनीर': 'cheese', 'paneer': 'cheese',
       'फ्रूटी': 'Frooti', 'frooti': 'Frooti'
     };
-    const lowerProductName = productName.toLowerCase();
+    
+    const lowerProductName = cleanProduct.toLowerCase();
     if (hindiToEnglish[lowerProductName]) {
       const translated = hindiToEnglish[lowerProductName];
-      console.log(`[${requestId}] Translated product (mapping): "${productName}" → "${translated}"`);
+      console.log(`[${requestId}] Translated product (mapping): "${cleanProduct}" → "${translated}"`);
       // Cache the result
       productTranslationCache.set(cacheKey, {
         translation: translated,
@@ -506,19 +512,21 @@ async function translateProductName(productName, requestId) {
       });
       return translated;
     }
+    
     const fuzzyMap = {
-  'fruity': 'Frooti',
-  'fruti': 'Frooti',
-  'parleg': 'Parle-G',
-  'oreo': 'Oreo'
-};
- 
-const normalize = str => str.toLowerCase().replace(/[^a-z0-9]/gi, '');
-const normalizedName = normalize(productName);
- 
-if (fuzzyMap[normalizedName]) {
-  return fuzzyMap[normalizedName];
-}
+      'fruity': 'Frooti',
+      'fruti': 'Frooti',
+      'parleg': 'Parle-G',
+      'oreo': 'Oreo'
+    };
+    
+    const normalize = str => str.toLowerCase().replace(/[^a-z0-9]/gi, '');
+    const normalizedName = normalize(cleanProduct);
+    
+    if (fuzzyMap[normalizedName]) {
+      return fuzzyMap[normalizedName];
+    }
+    
     // Try to translate using AI
     try {
       const response = await axios.post(
@@ -532,7 +540,7 @@ if (fuzzyMap[normalizedName]) {
             },
             {
               role: "user",
-              content: productName
+              content: cleanProduct
             }
           ],
           max_tokens: 50,
@@ -546,8 +554,10 @@ if (fuzzyMap[normalizedName]) {
           timeout: 5000
         }
       );
+      
       const translated = response.data.choices[0].message.content.trim();
-      console.log(`[${requestId}] Translated product (AI): "${productName}" → "${translated}"`);
+      console.log(`[${requestId}] Translated product (AI): "${cleanProduct}" → "${translated}"`);
+      
       // Check if the translated product is in our known products list
       if (products.some(p => p.toLowerCase() === translated.toLowerCase())) {
         // Cache the result
@@ -557,11 +567,12 @@ if (fuzzyMap[normalizedName]) {
         });
         return translated;
       }
-      // If not found, return original
-      return productName;
+      
+      // If not found, return the cleaned product name
+      return cleanProduct;
     } catch (error) {
       console.warn(`[${requestId}] AI product translation failed:`, error.message);
-      return productName;
+      return cleanProduct;
     }
   } catch (error) {
     console.warn(`[${requestId}] Product translation failed:`, error.message);
@@ -581,7 +592,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
             role: "system",
             content: `You are an inventory parsing assistant. Extract inventory information from the user's message and return it in JSON format.
 Extract the following fields:
-1. product: The name of the product (e.g., "Parle-G biscuits", "sugar", "milk")
+1. product: The name of the product (e.g., "Parle-G", "sugar", "milk") - ONLY the product name, no quantities or units
 2. quantity: The numerical quantity (as a number)
 3. unit: The unit of measurement (e.g., "packets", "kg", "liters", "pieces")
 4. action: The action being performed ("purchased", "sold", "remaining")
@@ -607,23 +618,25 @@ Return only valid JSON with no additional text, markdown formatting, or code blo
       },
       {
         headers: {
-          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          'Authorization': `Bearer ${process.env.DEPSEEK_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 10000 // Increased timeout
+        timeout: 10000
       }
     );
+    
     let content = response.data.choices[0].message.content.trim();
     console.log(`[${requestId}] AI parsing result: ${content}`);
+    
     // Clean up the response to remove markdown code blocks if present
     if (content.startsWith('```json')) {
       content = content.replace(/```json\n?/, '').replace(/\n?```$/, '');
     } else if (content.startsWith('```')) {
       content = content.replace(/```\n?/, '').replace(/\n?```$/, '');
     }
+    
     // Parse the JSON response
     try {
-      const normalize = str => str.toLowerCase().replace(/[^a-z0-9]/gi, '');
       const parsed = JSON.parse(content);
       const updatesArray = Array.isArray(parsed) ? parsed : [parsed];
       
@@ -633,33 +646,16 @@ Return only valid JSON with no additional text, markdown formatting, or code blo
         else quantity = Math.abs(quantity);
       
         return {
-          product: update.product ?? '',
+          product: extractProductName(update.product || ''),  // Extract clean product name
           quantity,
-          unit: update.unit ?? '',
-          action: update.action ?? (quantity >= 0 ? 'purchased' : 'sold'),
+          unit: update.unit || '',
+          action: update.action || (quantity >= 0 ? 'purchased' : 'sold'),
           isKnown: products.some(p =>
             normalize(p).includes(normalize(update.product)) ||
             normalize(update.product).includes(normalize(p))
           )
         };
       });
-
-      // FIX: Ensure sales have negative quantities
-      if (parsed.action === 'sold') {
-        quantity = -Math.abs(quantity);
-      } else if (parsed.action === 'purchased') {
-        quantity = Math.abs(quantity);
-      }
-      return {
-        product: parsed.product || '',
-        quantity: quantity,
-        unit: parsed.unit || '',
-        action: parsed.action || (quantity >= 0 ? 'purchased' : 'sold'),
-        isKnown: products.some(p =>
-        normalize(p).includes(normalize(parsed.product)) ||
-        normalize(parsed.product).includes(normalize(p))
-      )
-      };
     } catch (parseError) {
       console.error(`[${requestId}] Failed to parse AI response as JSON:`, parseError.message);
       return null;
@@ -673,17 +669,20 @@ Return only valid JSON with no additional text, markdown formatting, or code blo
 // Parse multiple inventory updates from transcript
 async function parseMultipleUpdates(transcript) {
   const updates = [];
+  
   // Try AI-based parsing first
   try {
     console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);
     const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
     if (aiUpdate && aiUpdate.product && aiUpdate.quantity !== 0) {
-      aiUpdate.product = await translateProductName(aiUpdate.product, 'ai-parsing');
+      // Extract just the product name before translation
+      const cleanProduct = extractProductName(aiUpdate.product);
+      aiUpdate.product = cleanProduct;
+      
       console.log(`[AI Parsing] Successfully parsed: ${aiUpdate.quantity} ${aiUpdate.unit} of ${aiUpdate.product} (${aiUpdate.action})`);
       updates.push(aiUpdate);
       return updates;
     }
-
   } catch (error) {
     console.warn(`[AI Parsing] Failed, falling back to rule-based parsing:`, error.message);
   }
@@ -1963,6 +1962,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     // Save user preference
     const shopId = From.replace('whatsapp:', '');
     await saveUserPreference(shopId, detectedLanguage);
+    
     // Check if we're awaiting batch selection
     if (conversationState && conversationState.state === 'awaiting_batch_selection') {
       console.log(`[${requestId}] Awaiting batch selection response from voice`);
@@ -1979,13 +1979,24 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         return;
       }
     }
+    
     // Confidence-based confirmation
     const CONFIDENCE_THRESHOLD = 0.8;
     if (confidence < CONFIDENCE_THRESHOLD) {
       console.log(`[${requestId}] [5.5] Low confidence (${confidence}), requesting confirmation...`);
+      
+      // FIX: Set confirmation state before sending the request
+      await setUserState(From, 'confirmation', {
+        pendingTranscript: cleanTranscript,
+        detectedLanguage,
+        confidence,
+        type: 'voice_confirmation'
+      });
+      
       // Send confirmation request via Twilio API
       const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
       const confirmationResponse = await confirmTranscript(cleanTranscript, From, detectedLanguage, requestId);
+      
       // Extract just the message body from the TwiML
       let messageBody;
       try {
@@ -2002,45 +2013,59 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         console.error(`[${requestId}] Error extracting message body:`, error);
         messageBody = "Please confirm the transcription.";
       }
+      
       await client.messages.create({
         body: messageBody,
         from: process.env.TWILIO_WHATSAPP_NUMBER,
         to: From
       });
+      return;
     } else {
       console.log(`[${requestId}] [5.5] High confidence (${confidence}), proceeding without confirmation...`);
       // Parse the transcript
       const updates = await parseMultipleUpdates(cleanTranscript);
-      // Check if any updates are for unknown products
-      const unknownProducts = updates.filter(u => !u.isKnown);
-      if (unknownProducts.length > 0) {
-        console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
-        // Confirm the first unknown product via Twilio API
-        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-        const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
-        // Extract just the message body from the TwiML
-        let messageBody;
-        try {
-          const bodyMatch = confirmationResponse.match(/<Body>([^<]+)<\/Body>/);
-          if (bodyMatch && bodyMatch[1]) {
-            messageBody = bodyMatch[1];
-          } else {
-            // Fallback: If regex fails, try to get the message directly
-            messageBody = confirmationResponse.toString();
-            // Remove TwiML tags if present
-            messageBody = messageBody.replace(/<[^>]*>/g, '').trim();
-          }
-        } catch (error) {
-          console.error(`[${requestId}] Error extracting message body:`, error);
-          messageBody = "Please confirm the product update.";
+    // Check if any updates are for unknown products
+    const unknownProducts = updates.filter(u => !u.isKnown);
+    if (unknownProducts.length > 0) {
+      console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
+      
+      // FIX: Set confirmation state before sending the request
+      await setUserState(From, 'confirmation', {
+        pendingTranscript: cleanTranscript,
+        detectedLanguage,
+        confidence: 1.0, // High confidence since we're confirming product
+        type: 'product_confirmation',
+        unknownProducts
+      });
+      
+      // Confirm the first unknown product via Twilio API
+      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+      const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
+      
+      // Extract just the message body from the TwiML
+      let messageBody;
+      try {
+        const bodyMatch = confirmationResponse.match(/<Body>([^<]+)<\/Body>/);
+        if (bodyMatch && bodyMatch[1]) {
+          messageBody = bodyMatch[1];
+        } else {
+          // Fallback: If regex fails, try to get the message directly
+          messageBody = confirmationResponse.toString();
+          // Remove TwiML tags if present
+          messageBody = messageBody.replace(/<[^>]*>/g, '').trim();
         }
-        await client.messages.create({
-          body: messageBody,
-          from: process.env.TWILIO_WHATSAPP_NUMBER,
-          to: From
-        });
-        return;
+      } catch (error) {
+        console.error(`[${requestId}] Error extracting message body:`, error);
+        messageBody = "Please confirm the product update.";
       }
+      
+      await client.messages.create({
+        body: messageBody,
+        from: process.env.TWILIO_WHATSAPP_NUMBER,
+        to: From
+      });
+      return;
+    }
       // Process the transcription and send result via Twilio API
       const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
       // Create a mock response object for processConfirmedTranscription
@@ -2102,68 +2127,78 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
 async function processTextMessageAsync(Body, From, requestId, conversationState) {
   try {
     console.log(`[${requestId}] [1] Parsing text message: "${Body}"`);
+    
     // Check for common greetings with improved detection
     const lowerBody = Body.toLowerCase();
+    
     // Handle numeric responses for product correction
-if (['1', '2', '3', '4'].includes(Body.trim())) {
-  const pending = globalState.pendingProductUpdates[From];
-  if (!pending) {
-    console.log(`[${requestId}] No pending update found for correction response: ${Body.trim()}`);
-    return;
-  }
-  
-  console.log(`[${requestId}] Processing correction response: ${Body.trim()} for pending update:`, pending.update);
-  
-  let correctionType = '';
-  let correctionMessage = '';
-  
-  switch (Body.trim()) {
-    case '1':
-      correctionType = 'product';
-      correctionMessage = 'Please type the correct product name.';
-      break;
-    case '2':
-      correctionType = 'quantity';
-      correctionMessage = 'Please type the correct quantity and unit. Example: "5 packets"';
-      break;
-    case '3':
-      correctionType = 'action';
-      correctionMessage = 'Please specify if it was purchased, sold, or remaining.';
-      break;
-    case '4':
-      correctionType = 'all';
-      correctionMessage = 'Please type the full update. Example: "Milk purchased - 5 litres"';
-      break;
-  }
-  
-  console.log(`[${requestId}] Saving correction state to database:`, {
-    shopId: From.replace('whatsapp:', ''),
-    correctionType,
-    pendingUpdate: pending.update,
-    detectedLanguage: pending.detectedLanguage
-  });
-  
-  // Save correction state to database
-  const shopId = From.replace('whatsapp:', '');
-  const saveResult = await saveCorrectionState(shopId, correctionType, pending.update, pending.detectedLanguage);
-  
-  if (saveResult.success) {
-    console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
-  } else {
-    console.error(`[${requestId}] Failed to save correction state: ${saveResult.error}`);
-  }
-  
-  // Send correction message via API
-  const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-  await client.messages.create({
-    body: correctionMessage,
-    from: process.env.TWILIO_WHATSAPP_NUMBER,
-    to: From
-  });
-  
-  return;
-}
-
+    if (['1', '2', '3', '4'].includes(Body.trim())) {
+      const pending = globalState.pendingProductUpdates[From];
+      if (!pending) {
+        console.log(`[${requestId}] No pending update found for correction response: ${Body.trim()}`);
+        return;
+      }
+      
+      console.log(`[${requestId}] Processing correction response: ${Body.trim()} for pending update:`, pending.update);
+      
+      let correctionType = '';
+      let correctionMessage = '';
+      
+      switch (Body.trim()) {
+        case '1':
+          correctionType = 'product';
+          correctionMessage = 'Please type the correct product name.';
+          break;
+        case '2':
+          correctionType = 'quantity';
+          correctionMessage = 'Please type the correct quantity and unit. Example: "5 packets"';
+          break;
+        case '3':
+          correctionType = 'action';
+          correctionMessage = 'Please specify if it was purchased, sold, or remaining.';
+          break;
+        case '4':
+          correctionType = 'all';
+          correctionMessage = 'Please type the full update. Example: "Milk purchased - 5 litres"';
+          break;
+      }
+      
+      console.log(`[${requestId}] Saving correction state to database:`, {
+        shopId: From.replace('whatsapp:', ''),
+        correctionType,
+        pendingUpdate: pending.update,
+        detectedLanguage: pending.detectedLanguage
+      });
+      
+      // Save correction state to database
+      const shopId = From.replace('whatsapp:', '');
+      const saveResult = await saveCorrectionState(shopId, correctionType, pending.update, pending.detectedLanguage);
+      
+      if (saveResult.success) {
+        console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
+        
+        // FIX: Set correction state
+        await setUserState(From, 'correction', {
+          correctionState: {
+            correctionType,
+            pendingUpdate: pending.update,
+            detectedLanguage: pending.detectedLanguage,
+            id: saveResult.id
+          }
+        });
+      }
+      
+      // Send correction message via API
+      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+      await client.messages.create({
+        body: correctionMessage,
+        from: process.env.TWILIO_WHATSAPP_NUMBER,
+        to: From
+      });
+      
+      return;
+    }
+    
     let isGreeting = false;
     let greetingLang = 'en';
     // Use improved greeting detection
@@ -2183,16 +2218,21 @@ if (['1', '2', '3', '4'].includes(Body.trim())) {
         const shopId = From.replace('whatsapp:', '');
         await saveUserPreference(shopId, greetingLang);
         console.log(`[${requestId}] Saved language preference: ${greetingLang} for user ${shopId}`);
+        
+        // FIX: Set greeting state
+        await setUserState(From, 'greeting', { greetingLang });
+        
         // Get user preference
         let userPreference = 'voice'; // Default to voice
         if (globalState.userPreferences[From]) {
           userPreference = globalState.userPreferences[From];
           console.log(`[${requestId}] User preference: ${userPreference}`);
         }
+        
         // Use predefined greeting messages to avoid translation API calls
         const greetingMessages = {
           'hi': `नमस्ते! मैं देखता हूं कि आप ${userPreference} द्वारा अपडेट भेजना पसंद करते हैं। आज मैं आपकी कैसे मदद कर सकता हूं?\n\nNamaste! Main dekhta hoon ki aap ${userPreference} dwara update bhejna pasand karte hain. Aaj main aapki kaise madad kar sakta hoon?`,
-          'bn': `হ্যালো! আমি দেখতে পাচ্ছি আপনি ${userPreference} দিয়ে আপডেট পাঠাতে পছন্দ করেন। আজ আমি আপনাকে কিভাবে সাহায্য করতে পারি?\n\nHello! Ami dekhte pachchi apni ${userPreference} diye update pathate pochondo koren. Aaj ami apnake kivabe sahaj korte pari?`,
+          'bn': `হ্যালো! আমি দেখতে পাচ্ছি আপনি ${userPreference} দিয়ে আপডেট পাঠাতে পছন্দ করেন। আজ আমি আপনাকে কিভাবে সাহায্য করতে পারি?\n\nHello! Ami dekhte pachchi apni ${userPreference} diye update pathate pochondo koren. Aaj ami apnike kivabe sahaj korte pari?`,
           'ta': `வணக்கம்! நான் பார்க்கிறேன் நீங்கள் ${userPreference} மூலம் புதுப்பிப்புகளை அனுப்புவதை விரும்புகிறீர்கள். இன்று நான் உங்களுக்கு எப்படி உதவ முடியும்?\n\nVanakkam! Naan paarkiren neengal ${userPreference} mulam puthippugalai anupuvathai virumbukireergal. Indru naan ungaluku eppadi utha mudiyum?`,
           'te': `నమస్కారం! నేను చూస్తున్నాను మీరు ${userPreference} ద్వారా నవీకరణలను పంపించడాన్ని ఇష్టపడతారు. నేడు నేను మీకు ఎలా సహాయపడగలను?\n\nNamaskaram! Nenu chustunnanu miru ${userPreference} dwara naveekaralanu pampinchadanni istapadaru. Nedu nenu meeku ela saahayapadagalanu?`,
           'kn': `ನಮಸ್ಕಾರ! ನಾನು ನೋಡುತ್ತಿದ್ದೇನೆ ನೀವು ${userPreference} ಮೂಲಕ ನವೀಕರಣಗಳನ್ನು ಕಳುಹಿಸಲು ಇಷ್ಟಪಡುತ್ತೀರಿ. ಇಂದು ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?\n\nNamaskara! Nanu noduttiddene neevu ${userPreference} moolaka naveekaragannannu kelisu baaasuttiri. Indu nanu nimage hege saahya madabahudu?`,
@@ -2200,6 +2240,7 @@ if (['1', '2', '3', '4'].includes(Body.trim())) {
           'mr': `नमस्कार! मी पाहतो आपण ${userPreference} द्वारे अपडेट्स पाठवायला पसंत करता. आज मी तुम्हाला कशी मदत करू शकतो?\n\nNamaskar! Mi pahato aapan ${userPreference} dware apdets pathavayala pasant karta. Aaj mi tumhala kashi madad karu shakto?`,
           'en': `Hello! I see you prefer to send updates by ${userPreference}. How can I help you today?`
         };
+        
         if (userPreference !== 'voice') {
           const greetingMessage = greetingMessages[greetingLang] || greetingMessages['en'];
           // Send via Twilio API
@@ -2211,6 +2252,7 @@ if (['1', '2', '3', '4'].includes(Body.trim())) {
           });
           return;
         }
+        
         // Use text-based selection instead of buttons for broader compatibility
         const welcomeMessages = {
           'hi': `नमस्ते! आप अपना इन्वेंट्री अपडेट कैसे भेजना चाहेंगे?\n\nजवाब दें:\n• "1" वॉइस मैसेज के लिए\n• "2" टेक्स्ट मैसेज के लिए\n\nNamaste! Aap apna inventory update kaise bhejna chaahenge?\n\nJawaab dein:\n• "1" voice message ke liye\n• "2" text message ke liye`,
@@ -2222,6 +2264,7 @@ if (['1', '2', '3', '4'].includes(Body.trim())) {
           'mr': `नमस्कार! तुम्ही तुमचे इन्व्हेन्टरी अपडेट कसे पाठवायला इच्छिता?\n\n उत्तर द्या:\n• "1" व्हॉइस मेसेज साठी\n• "2" मजकूर मेसेज साठी\n\nNamaskar! Tumhi tumche inventory update kase pathavayla ichhita?\n\nUttar dya:\n• "1" voice message sathi\n• "2" majkur message sathi`,
           'en': `Welcome! How would you like to send your inventory update?\n\nReply:\n• "1" for Voice Message\n• "2" for Text Message`
         };
+        
         const welcomeMessage = welcomeMessages[greetingLang] || welcomeMessages['en'];
         // Send via Twilio API
         const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
@@ -2233,6 +2276,7 @@ if (['1', '2', '3', '4'].includes(Body.trim())) {
         return;
       }
     }
+    
     // Check if we're awaiting batch selection
     if (conversationState && conversationState.state === 'awaiting_batch_selection') {
       console.log(`[${requestId}] Awaiting batch selection response`);
@@ -2244,23 +2288,38 @@ if (['1', '2', '3', '4'].includes(Body.trim())) {
         return;
       }
     }
+    
     console.log(`[${requestId}] Attempting to parse as inventory update first`);
     // Detect language and update preference
     let detectedLanguage = conversationState ? conversationState.language : 'en';
     detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
     console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
+    
     // Try to parse as inventory update
     const updates = await parseMultipleUpdates(Body);
     if (updates.length > 0) {
       console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
+      
       // Check if any updates are for unknown products
       const unknownProducts = updates.filter(u => !u.isKnown);
       if (unknownProducts.length > 0) {
         console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
+        
+        // FIX: Set confirmation state before sending the request
+        await setUserState(From, 'confirmation', {
+          pendingTranscript: Body,
+          detectedLanguage,
+          confidence: 1.0, // High confidence since we're confirming product
+          type: 'product_confirmation',
+          unknownProducts
+        });
+        
         // Confirm the first unknown product
         const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
+        
         // Send via Twilio API
         const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+        
         // Extract message body with error handling
         let messageBody;
         try {
@@ -2277,6 +2336,7 @@ if (['1', '2', '3', '4'].includes(Body.trim())) {
           console.error(`[${requestId}] Error extracting message body:`, error);
           messageBody = "Please confirm the product update.";
         }
+        
         await client.messages.create({
           body: messageBody,
           from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -2284,6 +2344,7 @@ if (['1', '2', '3', '4'].includes(Body.trim())) {
         });
         return;
       }
+      
       // Create a mock response object for processConfirmedTranscription
       const mockResponse = {
         message: (msg) => {
@@ -2307,6 +2368,7 @@ if (['1', '2', '3', '4'].includes(Body.trim())) {
         },
         toString: () => '<Response><Message>Processing complete</Message></Response>'
       };
+      
       // Create a mock res object
       const mockRes = {
         send: () => {
@@ -2314,6 +2376,7 @@ if (['1', '2', '3', '4'].includes(Body.trim())) {
           return Promise.resolve();
         }
       };
+      
       await processConfirmedTranscription(
         Body,
         From,
@@ -2324,16 +2387,20 @@ if (['1', '2', '3', '4'].includes(Body.trim())) {
       );
     } else {
       console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
+      
       // Get user preference
       let userPreference = 'voice'; // Default to voice
       if (globalState.userPreferences[From]) {
         userPreference = globalState.userPreferences[From];
         console.log(`[${requestId}] User preference: ${userPreference}`);
       }
+      
       const defaultMessage = userPreference === 'voice'
         ? '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to text input, reply "switch to text".'
         : '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to voice input, reply "switch to voice".';
+      
       const translatedMessage = await generateMultiLanguageResponse(defaultMessage, detectedLanguage, requestId);
+      
       // Send via Twilio API
       await sendMessageViaAPI(From, translatedMessage);
     }
@@ -2416,24 +2483,32 @@ module.exports = async (req, res) => {
     
     // 3. Handle based on current state
     if (currentState) {
-      switch (currentState.mode) {
-        case 'greeting':
+    switch (currentState.mode) {
+      case 'greeting':
         await handleGreetingResponse(Body, From, currentState, requestId, res);
         return;
         
-        case 'correction':
-          await handleCorrectionState(Body, From, currentState, requestId, res);
-          return;
-          
-        case 'confirmation':
+      case 'correction':
+        await handleCorrectionState(Body, From, currentState, requestId, res);
+        return;
+        
+      case 'confirmation':
+        if (currentState.data.type === 'voice_confirmation') {
+          await handleVoiceConfirmationState(Body, From, currentState, requestId, res);
+        } else if (currentState.data.type === 'text_confirmation') {
+          await handleTextConfirmationState(Body, From, currentState, requestId, res);
+        } else if (currentState.data.type === 'product_confirmation') {
+          await handleProductConfirmationState(Body, From, currentState, requestId, res);
+        } else {
           await handleConfirmationState(Body, From, currentState, requestId, res);
-          return;
-          
-        case 'inventory':
-          await handleInventoryState(Body, From, currentState, requestId, res);
-          return;
-      }
+        }
+        return;
+        
+      case 'inventory':
+        await handleInventoryState(Body, From, currentState, requestId, res);
+        return;
     }
+  }
     
     // 4. No active state - process as new interaction
     await handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res);
@@ -2876,6 +2951,330 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
     );
     
     await sendMessageViaAPI(From, helpMessage);
+  }
+  
+  res.send('<Response></Response>');
+}
+
+function extractProductName(fullText) {
+  // Remove quantity indicators and units
+  let cleaned = fullText
+    .replace(/\b\d+\s*(kg|kgs|gram|grams|g|pack|packs|packet|packets|box|boxes|piece|pieces|pc|pcs|litre|litres|liter|liters|l|ml)\b/gi, '')
+    .replace(/\b(purchased|bought|sold|remaining|left|of)\b/gi, '')
+    .replace(/^\d+\s*/, '')  // Remove leading numbers
+    .replace(/\s+$/, '')     // Remove trailing spaces
+    .trim();
+  
+  // Handle specific cases
+  if (cleaned.toLowerCase().includes('packs of')) {
+    cleaned = cleaned.replace(/(\d+)\s*packs\s+of\s+(.+)/i, '$2');
+  }
+  
+  if (cleaned.toLowerCase().includes('kg of')) {
+    cleaned = cleaned.replace(/(\d+)\s*kg\s+of\s+(.+)/i, '$2');
+  }
+  
+  if (cleaned.toLowerCase().includes('litres of')) {
+    cleaned = cleaned.replace(/(\d+)\s*litres?\s+of\s+(.+)/i, '$2');
+  }
+  
+  console.log(`[Product Extraction] "${fullText}" → "${cleaned}"`);
+  return cleaned;
+}
+
+async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
+  console.log(`[${requestId}] Handling voice confirmation with input: "${Body}"`);
+  
+  const { pendingTranscript, detectedLanguage, type } = state.data;
+  const shopId = From.replace('whatsapp:', '');
+  
+  const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
+  const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
+  
+  if (yesVariants.includes(Body.toLowerCase())) {
+    console.log(`[${requestId}] User confirmed voice transcription`);
+    
+    // Process the confirmed transcription
+    const results = await updateMultipleInventory(shopId, [pendingTranscript], detectedLanguage);
+    
+    let message = '✅ Updates processed:\n\n';
+    let successCount = 0;
+    
+    for (const result of results) {
+      if (result.success) {
+        successCount++;
+        const unitText = result.unit ? ` ${result.unit}` : '';
+        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+      } else {
+        message += `• ${result.product}: Error - ${result.error}\n`;
+      }
+    }
+    
+    message += `\n✅ Successfully updated ${successCount} of 1 item`;
+    
+    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, formattedResponse);
+    
+    // Clear state after processing
+    await clearUserState(From);
+    
+  } else if (noVariants.includes(Body.toLowerCase())) {
+    console.log(`[${requestId}] User rejected voice transcription`);
+    
+    // Parse the transcript to get update details
+    try {
+      const updates = await parseMultipleUpdates(pendingTranscript);
+      if (updates.length > 0) {
+        // Take the first update (assuming one product per message for correction)
+        const update = updates[0];
+        
+        // Save correction state to database with type 'selection'
+        console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
+        const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
+        
+        if (saveResult.success) {
+          console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
+          
+          // Set correction state
+          await setUserState(From, 'correction', {
+            correctionState: {
+              correctionType: 'selection',
+              pendingUpdate: update,
+              detectedLanguage,
+              id: saveResult.id
+            }
+          });
+          
+          // Show correction options
+          const correctionMessage = `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
+What needs to be corrected?
+Reply with:
+1 – Product is wrong
+2 – Quantity is wrong
+3 – Action is wrong
+4 – All wrong, I'll type it instead`;
+          
+          const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+          await sendMessageViaAPI(From, translatedMessage);
+        }
+      } else {
+        // If parsing failed, ask to retry
+        const errorMessage = await generateMultiLanguageResponse(
+          'Please try again with a clear voice message.',
+          detectedLanguage,
+          requestId
+        );
+        await sendMessageViaAPI(From, errorMessage);
+      }
+    } catch (parseError) {
+      console.error(`[${requestId}] Error parsing transcript for correction:`, parseError.message);
+      // If parsing failed, ask to retry
+      const errorMessage = await generateMultiLanguageResponse(
+        'Please try again with a clear voice message.',
+        detectedLanguage,
+        requestId
+      );
+      await sendMessageViaAPI(From, errorMessage);
+    }
+  } else {
+    // Invalid response
+    const errorMessage = await generateMultiLanguageResponse(
+      'Please reply with "yes" or "no".',
+      detectedLanguage,
+      requestId
+    );
+    await sendMessageViaAPI(From, errorMessage);
+  }
+  
+  res.send('<Response></Response>');
+}
+
+async function handleTextConfirmationState(Body, From, state, requestId, res) {
+  console.log(`[${requestId}] Handling text confirmation with input: "${Body}"`);
+  
+  const { pendingTranscript, detectedLanguage, type } = state.data;
+  const shopId = From.replace('whatsapp:', '');
+  
+  const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
+  const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
+  
+  if (yesVariants.includes(Body.toLowerCase())) {
+    console.log(`[${requestId}] User confirmed text update`);
+    
+    // Process the confirmed update
+    const results = await updateMultipleInventory(shopId, [pendingTranscript], detectedLanguage);
+    
+    let message = '✅ Updates processed:\n\n';
+    let successCount = 0;
+    
+    for (const result of results) {
+      if (result.success) {
+        successCount++;
+        const unitText = result.unit ? ` ${result.unit}` : '';
+        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+      } else {
+        message += `• ${result.product}: Error - ${result.error}\n`;
+      }
+    }
+    
+    message += `\n✅ Successfully updated ${successCount} of 1 item`;
+    
+    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, formattedResponse);
+    
+    // Clear state after processing
+    await clearUserState(From);
+    
+  } else if (noVariants.includes(Body.toLowerCase())) {
+    console.log(`[${requestId}] User rejected text update`);
+    
+    // Parse the transcript to get update details
+    try {
+      const updates = await parseMultipleUpdates(pendingTranscript);
+      if (updates.length > 0) {
+        // Take the first update (assuming one product per message for correction)
+        const update = updates[0];
+        
+        // Save correction state to database with type 'selection'
+        console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
+        const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
+        
+        if (saveResult.success) {
+          console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
+          
+          // Set correction state
+          await setUserState(From, 'correction', {
+            correctionState: {
+              correctionType: 'selection',
+              pendingUpdate: update,
+              detectedLanguage,
+              id: saveResult.id
+            }
+          });
+          
+          // Show correction options
+          const correctionMessage = `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
+What needs to be corrected?
+Reply with:
+1 – Product is wrong
+2 – Quantity is wrong
+3 – Action is wrong
+4 – All wrong, I'll type it instead`;
+          
+          const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+          await sendMessageViaAPI(From, translatedMessage);
+        }
+      } else {
+        // If parsing failed, ask to retry
+        const errorMessage = await generateMultiLanguageResponse(
+          'Please try again with a clear message.',
+          detectedLanguage,
+          requestId
+        );
+        await sendMessageViaAPI(From, errorMessage);
+      }
+    } catch (parseError) {
+      console.error(`[${requestId}] Error parsing transcript for correction:`, parseError.message);
+      // If parsing failed, ask to retry
+      const errorMessage = await generateMultiLanguageResponse(
+        'Please try again with a clear message.',
+        detectedLanguage,
+        requestId
+      );
+      await sendMessageViaAPI(From, errorMessage);
+    }
+  } else {
+    // Invalid response
+    const errorMessage = await generateMultiLanguageResponse(
+      'Please reply with "yes" or "no".',
+      detectedLanguage,
+      requestId
+    );
+    await sendMessageViaAPI(From, errorMessage);
+  }
+  
+  res.send('<Response></Response>');
+}
+
+async function handleProductConfirmationState(Body, From, state, requestId, res) {
+  console.log(`[${requestId}] Handling product confirmation with input: "${Body}"`);
+  
+  const { pendingTranscript, detectedLanguage, unknownProducts } = state.data;
+  const shopId = From.replace('whatsapp:', '');
+  
+  const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
+  const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
+  
+  if (yesVariants.includes(Body.toLowerCase())) {
+    console.log(`[${requestId}] User confirmed unknown products`);
+    
+    // Process the updates even with unknown products
+    const results = await updateMultipleInventory(shopId, unknownProducts, detectedLanguage);
+    
+    let message = '✅ Updates processed:\n\n';
+    let successCount = 0;
+    
+    for (const result of results) {
+      if (result.success) {
+        successCount++;
+        const unitText = result.unit ? ` ${result.unit}` : '';
+        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+      } else {
+        message += `• ${result.product}: Error - ${result.error}\n`;
+      }
+    }
+    
+    message += `\n✅ Successfully updated ${successCount} of ${unknownProducts.length} items`;
+    
+    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, formattedResponse);
+    
+    // Clear state after processing
+    await clearUserState(From);
+    
+  } else if (noVariants.includes(Body.toLowerCase())) {
+    console.log(`[${requestId}] User rejected unknown products`);
+    
+    // Take the first unknown product for correction
+    const update = unknownProducts[0];
+    
+    // Save correction state to database with type 'selection'
+    console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
+    const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
+    
+    if (saveResult.success) {
+      console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
+      
+      // Set correction state
+      await setUserState(From, 'correction', {
+        correctionState: {
+          correctionType: 'selection',
+          pendingUpdate: update,
+          detectedLanguage,
+          id: saveResult.id
+        }
+      });
+      
+      // Show correction options
+      const correctionMessage = `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
+What needs to be corrected?
+Reply with:
+1 – Product is wrong
+2 – Quantity is wrong
+3 – Action is wrong
+4 – All wrong, I'll type it instead`;
+      
+      const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, translatedMessage);
+    }
+  } else {
+    // Invalid response
+    const errorMessage = await generateMultiLanguageResponse(
+      'Please reply with "yes" or "no".',
+      detectedLanguage,
+      requestId
+    );
+    await sendMessageViaAPI(From, errorMessage);
   }
   
   res.send('<Response></Response>');
