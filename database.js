@@ -1,6 +1,8 @@
 const axios = require('axios');
 const PENDING_TRANSCRIPTIONS_TABLE_NAME = process.env.AIRTABLE_PENDING_TRANSCRIPTIONS_TABLE_NAME || 'PendingTranscriptions';
 const CORRECTION_STATE_TABLE_NAME = process.env.AIRTABLE_CORRECTION_STATE_TABLE_NAME || 'CorrectionState';
+const USER_STATE_TABLE_NAME = process.env.AIRTABLE_USER_STATE_TABLE_NAME || 'UserState';
+const STATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
 
@@ -1264,6 +1266,104 @@ async function deleteCorrectionState(id) {
   }
 }
 
+// Save user state to database
+async function saveUserStateToDB(shopId, mode, data = {}) {
+  const context = `Save User State ${shopId}`;
+  try {
+    const createData = {
+      fields: {
+        ShopID: shopId,
+        StateMode: mode,
+        StateData: JSON.stringify(data),
+        Timestamp: new Date().toISOString()
+      }
+    };
+
+    // Check if record already exists
+    const filterFormula = `{ShopID} = '${shopId}'`;
+    const findResult = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula },
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${USER_STATE_TABLE_NAME}`
+    }, `${context} - Find`);
+
+    if (findResult.records.length > 0) {
+      // Update existing record
+      const recordId = findResult.records[0].id;
+      await airtableRequest({
+        method: 'patch',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${USER_STATE_TABLE_NAME}/${recordId}`,
+        data: createData
+      }, `${context} - Update`);
+    } else {
+      // Create new record
+      await airtableRequest({
+        method: 'post',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${USER_STATE_TABLE_NAME}`,
+        data: createData
+      }, `${context} - Create`);
+    }
+
+    return { success: true };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get user state from database
+async function getUserStateFromDB(shopId) {
+  const context = `Get User State ${shopId}`;
+  try {
+    const filterFormula = `{ShopID} = '${shopId}'`;
+    const result = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula },
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${USER_STATE_TABLE_NAME}`
+    }, context);
+
+    if (result.records.length > 0) {
+      const record = result.records[0];
+      const stateMode = record.fields.StateMode;
+      const stateData = record.fields.StateData ? JSON.parse(record.fields.StateData) : {};
+      const timestamp = new Date(record.fields.Timestamp);
+
+      // Check if state expired (5 minutes)
+      if (Date.now() - timestamp.getTime() > STATE_TIMEOUT) {
+        // Delete expired state
+        await deleteUserStateFromDB(record.id);
+        return null;
+      }
+
+      return {
+        mode: stateMode,
+        data: stateData,
+        id: record.id
+      };
+    }
+
+    return null;
+  } catch (error) {
+    logError(context, error);
+    return null;
+  }
+}
+
+// Delete user state from database
+async function deleteUserStateFromDB(id) {
+  const context = `Delete User State ${id}`;
+  try {
+    await airtableRequest({
+      method: 'delete',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${USER_STATE_TABLE_NAME}/${id}`
+    }, context);
+    return { success: true };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   updateInventory,
   testConnection,
@@ -1289,5 +1389,8 @@ module.exports = {
   deletePendingTranscription,
   saveCorrectionState,    // Add this
   getCorrectionState,     // Add this
-  deleteCorrectionState   // Add this
+  deleteCorrectionState,
+  saveUserStateToDB,
+  getUserStateFromDB,
+  deleteUserStateFromDB
 };
