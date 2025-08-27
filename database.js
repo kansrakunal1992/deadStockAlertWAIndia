@@ -1157,7 +1157,7 @@ async function saveCorrectionState(shopId, correctionType, pendingUpdate, detect
     
     const result = await airtableRequest({
       method: 'post',
-      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/CorrectionState`,
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${CORRECTION_STATE_TABLE_NAME}`,
       data: createData
     }, context);
     
@@ -1187,7 +1187,7 @@ async function getCorrectionState(shopId) {
         filterByFormula: filterFormula,
         sort: [{ field: 'Timestamp', direction: 'desc' }]
       },
-      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/CorrectionState`
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${CORRECTION_STATE_TABLE_NAME}`
     }, context);
     
     console.log(`[${context}] Airtable returned ${result.records.length} records`);
@@ -1229,7 +1229,7 @@ async function deleteCorrectionState(id) {
     
     await airtableRequest({
       method: 'delete',
-      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/CorrectionState/${id}`
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${CORRECTION_STATE_TABLE_NAME}/${id}`
     }, context);
     
     console.log(`[${context}] Successfully deleted correction state`);
