@@ -2359,6 +2359,52 @@ if (correctionStateResult.success && correctionStateResult.correctionState) {
     return res.send(response.toString());
   }
   
+  // Check if this is the initial selection (1, 2, 3, or 4)
+  if (['1', '2', '3', '4'].includes(Body.trim())) {
+    console.log(`[${requestId}] User selected correction option: ${Body.trim()}`);
+    
+    let newCorrectionType = '';
+    let followUpMessage = '';
+    
+    switch (Body.trim()) {
+      case '1':
+        newCorrectionType = 'product';
+        followUpMessage = 'Please type the correct product name.';
+        break;
+      case '2':
+        newCorrectionType = 'quantity';
+        followUpMessage = 'Please type the correct quantity and unit. Example: "5 packets"';
+        break;
+      case '3':
+        newCorrectionType = 'action';
+        followUpMessage = 'Please specify if it was purchased, sold, or remaining.';
+        break;
+      case '4':
+        newCorrectionType = 'all';
+        followUpMessage = 'Please type the full update. Example: "Milk purchased - 5 litres"';
+        break;
+    }
+    
+    console.log(`[${requestId}] Updating correction state to: ${newCorrectionType}`);
+    
+    // Update the correction state with the new type
+    const shopId = From.replace('whatsapp:', '');
+    const updateResult = await saveCorrectionState(shopId, newCorrectionType, pendingUpdate, detectedLanguage);
+    
+    if (updateResult.success) {
+      console.log(`[${requestId}] Successfully updated correction state with ID: ${updateResult.id}`);
+    } else {
+      console.error(`[${requestId}] Failed to update correction state: ${updateResult.error}`);
+    }
+    
+    // Send the follow-up message
+    await sendSystemMessage(followUpMessage, From, detectedLanguage, requestId, response);
+    return res.send(response.toString());
+  }
+  
+  // If we get here, it's the actual correction data (not the initial selection)
+  console.log(`[${requestId}] Processing actual correction data: "${Body}"`);
+  
   try {
     // Create the corrected update based on the correction type
     let correctedUpdate = { ...pendingUpdate };
@@ -2407,8 +2453,8 @@ if (correctionStateResult.success && correctionStateResult.correctionState) {
     console.log(`[${requestId}] Final corrected update:`, correctedUpdate);
     
     // Delete the correction state from database
-    console.log(`[${requestId}] Deleting correction state with ID: ${correctionStateResult.id}`);
-    const deleteResult = await deleteCorrectionState(correctionStateResult.id);
+    console.log(`[${requestId}] Deleting correction state with ID: ${correctionStateResult.correctionState.id}`);
+    const deleteResult = await deleteCorrectionState(correctionStateResult.correctionState.id);
     
     if (deleteResult.success) {
       console.log(`[${requestId}] Successfully deleted correction state`);
