@@ -2659,25 +2659,39 @@ if (correctionStateResult.success && correctionStateResult.correctionState) {
   
   // Parse the transcript to get update details
   try {
-    const updates = await parseMultipleUpdates(pendingResult.transcript);
-    if (updates.length > 0) {
-      // Take the first update (assuming one product per message for correction)
-      const update = updates[0];
-      
-      // Store in globalState.pendingProductUpdates temporarily
-      if (!globalState.pendingProductUpdates) {
-        globalState.pendingProductUpdates = {};
-      }
-      globalState.pendingProductUpdates[From] = {
-        update,
-        detectedLanguage: pending.detectedLanguage,
-        timestamp: Date.now()
-      };
-      
-      // Show correction options
-      const correctionResponse = await confirmProduct(update, From, pending.detectedLanguage, requestId);
-      return res.send(correctionResponse);
-    } else {
+    // In whatsapp.js, in the section that handles the "No" response:
+
+// After parsing the transcript:
+const updates = await parseMultipleUpdates(pendingResult.transcript);
+if (updates.length > 0) {
+  // Take the first update (assuming one product per message for correction)
+  const update = updates[0];
+  
+  // Store in globalState.pendingProductUpdates temporarily
+  if (!globalState.pendingProductUpdates) {
+    globalState.pendingProductUpdates = {};
+  }
+  globalState.pendingProductUpdates[From] = {
+    update,
+    detectedLanguage: pending.detectedLanguage,
+    timestamp: Date.now()
+  };
+  
+  // ADD THIS: Save correction state to database
+  const shopId = From.replace('whatsapp:', '');
+  console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
+  const saveResult = await saveCorrectionState(shopId, 'all', update, pending.detectedLanguage);
+  
+  if (saveResult.success) {
+    console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
+  } else {
+    console.error(`[${requestId}] Failed to save correction state: ${saveResult.error}`);
+  }
+  
+  // Show correction options
+  const correctionResponse = await confirmProduct(update, From, pending.detectedLanguage, requestId);
+  return res.send(correctionResponse);
+} else {
       // If parsing failed, ask to retry
       const errorMessage = await generateMultiLanguageResponse(
         'Please try again with a clear voice message.',
