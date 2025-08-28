@@ -2478,7 +2478,8 @@ module.exports = async (req, res) => {
     }
     
     // 2. Get current user state
-    const currentState = getUserState(From);
+    console.log(`[${requestId}] Checking state for ${From} in database...`);
+    const currentState = await getUserState(From);
     console.log(`[${requestId}] Current state for ${From}:`, currentState ? currentState.mode : 'none');
     
     // 3. Handle based on current state
@@ -2670,7 +2671,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
     }
     
     // Move to confirmation state
-    setUserState(From, 'confirmation', {
+    await setUserState(From, 'confirmation', {
       correctedUpdate,
       detectedLanguage: correctionState.detectedLanguage,
       originalCorrectionId: correctionState.id
@@ -2848,7 +2849,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       
       // Set user state to inventory mode
       const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
-      setUserState(From, 'inventory', { updates, detectedLanguage });
+      await setUserState(From, 'inventory', { updates, detectedLanguage });
       
       // Process the updates
       const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
@@ -2984,6 +2985,14 @@ function extractProductName(fullText) {
 
 async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
   console.log(`[${requestId}] Handling voice confirmation with input: "${Body}"`);
+  
+  // Verify state persistence
+  const persistenceCheck = await verifyStatePersistence(From, 'confirmation');
+  if (!persistenceCheck) {
+    console.error(`[${requestId}] State persistence failed, treating as new interaction`);
+    await handleNewInteraction(Body, null, 0, From, requestId, res);
+    return;
+  }
   
   const { pendingTranscript, detectedLanguage, type } = state.data;
   const shopId = From.replace('whatsapp:', '');
@@ -3278,6 +3287,16 @@ Reply with:
   }
   
   res.send('<Response></Response>');
+}
+
+async function verifyStatePersistence(from, expectedMode) {
+  const state = await getUserState(from);
+  if (!state || state.mode !== expectedMode) {
+    console.warn(`[State] Persistence check failed for ${from}. Expected: ${expectedMode}, Got: ${state ? state.mode : 'none'}`);
+    return false;
+  }
+  console.log(`[State] Persistence check passed for ${from}: ${expectedMode}`);
+  return true;
 }
 
 // Log performance metrics periodically
