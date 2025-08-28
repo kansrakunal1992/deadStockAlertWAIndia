@@ -1374,11 +1374,17 @@ const AUTH_CODE_EXPIRY = 24 * 60 * 60 * 1000; // 24 hours
 async function isUserAuthorized(shopId, authCode = null) {
   const context = `Check Authorization ${shopId}`;
   try {
-    let filterFormula = `{ShopID} = '${shopId}' AND {StatusUser} = 'active'`;
+    // Escape single quotes in the values for Airtable formula
+    const escapedShopId = shopId.replace(/'/g, "''");
+    const escapedAuthCode = authCode ? authCode.replace(/'/g, "''") : '';
+    
+    let filterFormula = `{ShopID} = '${escapedShopId}' AND {StatusUser} = 'active'`;
     
     if (authCode) {
-      filterFormula += ` AND {AuthCode} = '${authCode}'`;
+      filterFormula += ` AND {AuthCode} = '${escapedAuthCode}'`;
     }
+    
+    console.log(`[${context}] Using filter formula: ${filterFormula}`);
     
     const result = await airtableRequest({
       method: 'get',
@@ -1412,16 +1418,22 @@ async function isUserAuthorized(shopId, authCode = null) {
     
     return { success: false, error: 'User not found or inactive' };
   } catch (error) {
-    logError(context, error);
+    console.error(`[${context}] Error:`, error.message);
+    console.error(`[${context}] Status:`, error.response?.status);
+    console.error(`[${context}] Data:`, error.response?.data);
     return { success: false, error: error.message };
   }
 }
 
-// Deactivate user (optional, if you want to deactivate programmatically)
+// Deactivate user
 async function deactivateUser(shopId) {
   const context = `Deactivate User ${shopId}`;
   try {
-    const filterFormula = `{ShopID} = '${shopId}'`;
+    const escapedShopId = shopId.replace(/'/g, "''");
+    const filterFormula = `{ShopID} = '${escapedShopId}'`;
+    
+    console.log(`[${context}] Using filter formula: ${filterFormula}`);
+    
     const result = await airtableRequest({
       method: 'get',
       params: { filterByFormula: filterFormula },
@@ -1444,7 +1456,9 @@ async function deactivateUser(shopId) {
     
     return { success: false, error: 'User not found' };
   } catch (error) {
-    logError(context, error);
+    console.error(`[${context}] Error:`, error.message);
+    console.error(`[${context}] Status:`, error.response?.status);
+    console.error(`[${context}] Data:`, error.response?.data);
     return { success: false, error: error.message };
   }
 }
