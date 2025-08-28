@@ -3001,31 +3001,52 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
   const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
   
   if (yesVariants.includes(Body.toLowerCase())) {
-    console.log(`[${requestId}] User confirmed voice transcription`);
-    
-    // Process the confirmed transcription
-    const results = await updateMultipleInventory(shopId, [pendingTranscript], detectedLanguage);
-    
-    let message = '✅ Updates processed:\n\n';
-    let successCount = 0;
-    
-    for (const result of results) {
-      if (result.success) {
-        successCount++;
-        const unitText = result.unit ? ` ${result.unit}` : '';
-        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-      } else {
-        message += `• ${result.product}: Error - ${result.error}\n`;
+  console.log(`[${requestId}] User confirmed voice transcription`);
+  
+  // Parse the transcript to get update details
+  try {
+    const updates = await parseMultipleUpdates(pendingTranscript);
+    if (updates.length > 0) {
+      // Process the confirmed updates
+      const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+      let message = '✅ Updates processed:\n\n';
+      let successCount = 0;
+      for (const result of results) {
+        if (result.success) {
+          successCount++;
+          const unitText = result.unit ? ` ${result.unit}` : '';
+          message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+        } else {
+          message += `• ${result.product}: Error - ${result.error}\n`;
+        }
       }
+      message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+      const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, formattedResponse);
+      
+      // Clear state after processing
+      await clearUserState(From);
+    } else {
+      // If parsing failed, ask to retry
+      const errorMessage = await generateMultiLanguageResponse(
+        'Sorry, I couldn\'t parse your inventory update. Please try again with a clear voice message.',
+        detectedLanguage,
+        requestId
+      );
+      await sendMessageViaAPI(From, errorMessage);
+      await clearUserState(From);
     }
-    
-    message += `\n✅ Successfully updated ${successCount} of 1 item`;
-    
-    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, formattedResponse);
-    
-    // Clear state after processing
+  } catch (parseError) {
+    console.error(`[${requestId}] Error parsing transcript for confirmation:`, parseError.message);
+    // If parsing failed, ask to retry
+    const errorMessage = await generateMultiLanguageResponse(
+      'Sorry, I had trouble processing your voice message. Please try again.',
+      detectedLanguage,
+      requestId
+    );
+    await sendMessageViaAPI(From, errorMessage);
     await clearUserState(From);
+  }
     
   } else if (noVariants.includes(Body.toLowerCase())) {
     console.log(`[${requestId}] User rejected voice transcription`);
@@ -3108,31 +3129,52 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
   const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
   
   if (yesVariants.includes(Body.toLowerCase())) {
-    console.log(`[${requestId}] User confirmed text update`);
-    
-    // Process the confirmed update
-    const results = await updateMultipleInventory(shopId, [pendingTranscript], detectedLanguage);
-    
-    let message = '✅ Updates processed:\n\n';
-    let successCount = 0;
-    
-    for (const result of results) {
-      if (result.success) {
-        successCount++;
-        const unitText = result.unit ? ` ${result.unit}` : '';
-        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-      } else {
-        message += `• ${result.product}: Error - ${result.error}\n`;
+  console.log(`[${requestId}] User confirmed text update`);
+  
+  // Parse the transcript to get update details
+  try {
+    const updates = await parseMultipleUpdates(pendingTranscript);
+    if (updates.length > 0) {
+      // Process the confirmed updates
+      const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+      let message = '✅ Updates processed:\n\n';
+      let successCount = 0;
+      for (const result of results) {
+        if (result.success) {
+          successCount++;
+          const unitText = result.unit ? ` ${result.unit}` : '';
+          message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+        } else {
+          message += `• ${result.product}: Error - ${result.error}\n`;
+        }
       }
+      message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+      const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, formattedResponse);
+      
+      // Clear state after processing
+      await clearUserState(From);
+    } else {
+      // If parsing failed, ask to retry
+      const errorMessage = await generateMultiLanguageResponse(
+        'Sorry, I couldn\'t parse your inventory update. Please try again with a clear message.',
+        detectedLanguage,
+        requestId
+      );
+      await sendMessageViaAPI(From, errorMessage);
+      await clearUserState(From);
     }
-    
-    message += `\n✅ Successfully updated ${successCount} of 1 item`;
-    
-    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, formattedResponse);
-    
-    // Clear state after processing
+  } catch (parseError) {
+    console.error(`[${requestId}] Error parsing transcript for confirmation:`, parseError.message);
+    // If parsing failed, ask to retry
+    const errorMessage = await generateMultiLanguageResponse(
+      'Sorry, I had trouble processing your message. Please try again.',
+      detectedLanguage,
+      requestId
+    );
+    await sendMessageViaAPI(From, errorMessage);
     await clearUserState(From);
+  }
     
   } else if (noVariants.includes(Body.toLowerCase())) {
     console.log(`[${requestId}] User rejected text update`);
