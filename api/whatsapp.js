@@ -4,6 +4,7 @@ const axios = require('axios');
 const { execSync } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
+const authCache = new Map();
 const {
   updateInventory,
   testConnection,
@@ -2460,6 +2461,13 @@ module.exports = async (req, res) => {
     }
     
     console.log(`[${requestId}] User ${shopId} is authorized, proceeding with request`);
+
+    if (authCache.has(shopId) && Date.now() - authCache.get(shopId) < 5000) {
+      console.log(`[${requestId}] Skipping duplicate processing for ${shopId}`);
+      res.send('<Response></Response>');
+      return;
+    }
+
     
     // STATE-AWARE PROCESSING START
     // ============================
