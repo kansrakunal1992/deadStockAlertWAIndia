@@ -1470,7 +1470,6 @@ module.exports = {
   deleteUserStateFromDB,
   saveAuthorizedUser,
   isUserAuthorized,
-  generateAuthCode,
   sendAuthCode,
   deactivateUser
 };
