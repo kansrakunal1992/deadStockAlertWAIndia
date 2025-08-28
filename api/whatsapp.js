@@ -3368,9 +3368,11 @@ async function verifyStatePersistence(from, expectedMode) {
 // Check user authentication
 async function checkUserAuthorization(From, Body, requestId) {
   const shopId = From.replace('whatsapp:', '');
+  console.log(`[${requestId}] Checking authorization for shopId: "${shopId}"`);
   
   // First check if user is already authorized
   const authResult = await isUserAuthorized(shopId);
+  console.log(`[${requestId}] Auth result:`, authResult);
   
   if (authResult.success) {
     return { authorized: true, user: authResult.user };
@@ -3379,7 +3381,9 @@ async function checkUserAuthorization(From, Body, requestId) {
   // If not authorized, check if they're sending an auth code
   if (Body && Body.length >= 6 && Body.length <= 8) {
     const authCode = Body.trim().toUpperCase();
+    console.log(`[${requestId}] Checking auth code: "${authCode}"`);
     const authCheck = await isUserAuthorized(shopId, authCode);
+    console.log(`[${requestId}] Auth check result:`, authCheck);
     
     if (authCheck.success) {
       return { authorized: true, user: authCheck.user, justAuthenticated: true };
