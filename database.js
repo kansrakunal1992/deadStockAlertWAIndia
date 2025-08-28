@@ -1378,11 +1378,14 @@ async function isUserAuthorized(shopId, authCode = null) {
     const escapedShopId = shopId.replace(/'/g, "''");
     const escapedAuthCode = authCode ? authCode.replace(/'/g, "''") : '';
     
-    let filterFormula = `{ShopID} = '${escapedShopId}' AND {StatusUser} = 'active'`;
-    
+    const conditions = [
+  `{ShopID} = '${escapedShopId}'`,
+  `{StatusUser} = 'active'`
+    ];
     if (authCode) {
-      filterFormula += ` AND {AuthCode} = '${escapedAuthCode}'`;
+      conditions.push(`{AuthCode} = '${escapedAuthCode}'`);
     }
+    const filterFormula = `AND(${conditions.join(', ')})`;
     
     console.log(`[${context}] Using filter formula: ${filterFormula}`);
     
