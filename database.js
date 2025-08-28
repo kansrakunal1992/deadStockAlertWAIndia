@@ -1364,6 +1364,165 @@ async function deleteUserStateFromDB(id) {
   }
 }
 
+// Constants for authentication
+const AUTH_USERS_TABLE_NAME = process.env.AIRTABLE_AUTH_USERS_TABLE_NAME || 'AuthUsers';
+const AUTH_CODE_EXPIRY = 24 * 60 * 60 * 1000; // 24 hours
+
+// Save authorized user to database
+async function saveAuthorizedUser(shopId, authCode, name = '') {
+  const context = `Save Authorized User ${shopId}`;
+  try {
+    const createData = {
+      fields: {
+        ShopID: shopId,
+        AuthCode: authCode,
+        Name: name,
+        Status: 'active',
+        CreatedDate: new Date().toISOString(),
+        LastUsed: new Date().toISOString()
+      }
+    };
+    
+    // Check if user already exists
+    const filterFormula = `{ShopID} = '${shopId}'`;
+    const findResult = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula },
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`
+    }, `${context} - Find`);
+    
+    if (findResult.records.length > 0) {
+      // Update existing record
+      const recordId = findResult.records[0].id;
+      await airtableRequest({
+        method: 'patch',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}/${recordId}`,
+        data: createData
+      }, `${context} - Update`);
+      return { success: true, id: recordId };
+    } else {
+      // Create new record
+      const result = await airtableRequest({
+        method: 'post',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`,
+        data: createData
+      }, `${context} - Create`);
+      return { success: true, id: result.data.id };
+    }
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Check if user is authorized
+async function isUserAuthorized(shopId, authCode = null) {
+  const context = `Check Authorization ${shopId}`;
+  try {
+    let filterFormula = `{ShopID} = '${shopId}' AND {Status} = 'active'`;
+    
+    if (authCode) {
+      filterFormula += ` AND {AuthCode} = '${authCode}'`;
+    }
+    
+    const result = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula },
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`
+    }, context);
+    
+    if (result.records.length > 0) {
+      // Update last used timestamp
+      const recordId = result.records[0].id;
+      await airtableRequest({
+        method: 'patch',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}/${recordId}`,
+        data: {
+          fields: {
+            LastUsed: new Date().toISOString()
+          }
+        }
+      }, `${context} - Update Last Used`);
+      
+      return { 
+        success: true, 
+        user: {
+          id: recordId,
+          shopId: result.records[0].fields.ShopID,
+          name: result.records[0].fields.Name || '',
+          authCode: result.records[0].fields.AuthCode
+        }
+      };
+    }
+    
+    return { success: false, error: 'User not found or inactive' };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Generate authentication code
+function generateAuthCode() {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
+
+// Send authentication code via WhatsApp
+async function sendAuthCode(shopId, authCode, name = '') {
+  const context = `Send Auth Code ${shopId}`;
+  try {
+    const message = `Hello${name ? ' ' + name : ''}! Your authentication code for the inventory system is: *${authCode}*
+
+This code will expire in 24 hours. Please save it for future use.
+
+Reply with this code to activate your account.`;
+    
+    const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+    await client.messages.create({
+      body: message,
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      to: `whatsapp:${shopId}`
+    });
+    
+    return { success: true };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Deactivate user
+async function deactivateUser(shopId) {
+  const context = `Deactivate User ${shopId}`;
+  try {
+    const filterFormula = `{ShopID} = '${shopId}'`;
+    const result = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula },
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`
+    }, `${context} - Find`);
+    
+    if (result.records.length > 0) {
+      const recordId = result.records[0].id;
+      await airtableRequest({
+        method: 'patch',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}/${recordId}`,
+        data: {
+          fields: {
+            Status: 'inactive'
+          }
+        }
+      }, `${context} - Deactivate`);
+      return { success: true };
+    }
+    
+    return { success: false, error: 'User not found' };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   updateInventory,
   testConnection,
@@ -1392,5 +1551,10 @@ module.exports = {
   deleteCorrectionState,
   saveUserStateToDB,
   getUserStateFromDB,
-  deleteUserStateFromDB
+  deleteUserStateFromDB,
+  saveAuthorizedUser,
+  isUserAuthorized,
+  generateAuthCode,
+  sendAuthCode,
+  deactivateUser
 };
