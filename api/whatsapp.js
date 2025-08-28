@@ -25,7 +25,12 @@ const {
   deleteCorrectionState,
   saveUserStateToDB,
   getUserStateFromDB,
-  deleteUserStateFromDB
+  deleteUserStateFromDB,
+  saveAuthorizedUser,
+  isUserAuthorized,
+  generateAuthCode,
+  sendAuthCode,
+  deactivateUser
 } = require('../database');
 
 // Performance tracking
@@ -2436,6 +2441,28 @@ module.exports = async (req, res) => {
     
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
     const shopId = From.replace('whatsapp:', '');
+
+    // AUTHENTICATION CHECK FIRST
+    // =========================
+    console.log(`[${requestId}] Checking authentication for ${shopId}`);
+    const authCheck = await checkUserAuthorization(From, Body, requestId);
+    
+    if (!authCheck.authorized) {
+      console.log(`[${requestId}] User ${shopId} is not authorized`);
+      await sendUnauthorizedResponse(From, requestId);
+      res.send('<Response></Response>');
+      return;
+    }
+    
+    // If user just authenticated, send success message
+    if (authCheck.justAuthenticated) {
+      console.log(`[${requestId}] User ${shopId} just authenticated successfully`);
+      await sendAuthSuccessResponse(From, authCheck.user, requestId);
+      res.send('<Response></Response>');
+      return;
+    }
+    
+    console.log(`[${requestId}] User ${shopId} is authorized, proceeding with request`);
     
     // STATE-AWARE PROCESSING START
     // ============================
@@ -3339,6 +3366,87 @@ async function verifyStatePersistence(from, expectedMode) {
   }
   console.log(`[State] Persistence check passed for ${from}: ${expectedMode}`);
   return true;
+}
+
+// Check user authentication
+async function checkUserAuthorization(From, Body, requestId) {
+  const shopId = From.replace('whatsapp:', '');
+  
+  // First check if user is already authorized
+  const authResult = await isUserAuthorized(shopId);
+  
+  if (authResult.success) {
+    return { authorized: true, user: authResult.user };
+  }
+  
+  // If not authorized, check if they're sending an auth code
+  if (Body && Body.length >= 6 && Body.length <= 8) {
+    const authCode = Body.trim().toUpperCase();
+    const authCheck = await isUserAuthorized(shopId, authCode);
+    
+    if (authCheck.success) {
+      return { authorized: true, user: authCheck.user, justAuthenticated: true };
+    }
+  }
+  
+  return { authorized: false };
+}
+
+// Send unauthorized response
+async function sendUnauthorizedResponse(From, requestId) {
+  const message = `🚫 Unauthorized Access
+
+Sorry, you are not authorized to use this inventory system.
+
+If you believe this is an error, please contact the administrator to get your authentication code.
+
+This is a secure system for authorized users only.`;
+  
+  await sendMessageViaAPI(From, message);
+}
+
+// Send authentication success response
+async function sendAuthSuccessResponse(From, user, requestId) {
+  const message = `✅ Authentication Successful!
+
+Welcome${user.name ? ' ' + user.name : ''}! You are now authorized to use the inventory system.
+
+You can now send inventory updates like:
+• "10 Parle-G sold"
+• "5kg sugar purchased"
+
+Your authentication code is: *${user.authCode}*
+Please save this code for future use.`;
+  
+  await sendMessageViaAPI(From, message);
+}
+
+// Admin function to add authorized user
+async function addAuthorizedUser(shopId, name = '') {
+  try {
+    // Generate auth code
+    const authCode = generateAuthCode();
+    
+    // Save to database
+    const saveResult = await saveAuthorizedUser(shopId, authCode, name);
+    if (!saveResult.success) {
+      return { success: false, error: saveResult.error };
+    }
+    
+    // Send auth code via WhatsApp
+    const sendResult = await sendAuthCode(shopId, authCode, name);
+    if (!sendResult.success) {
+      return { success: false, error: sendResult.error };
+    }
+    
+    return { 
+      success: true, 
+      authCode,
+      message: `User ${shopId} added successfully with auth code: ${authCode}`
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 }
 
 // Log performance metrics periodically
