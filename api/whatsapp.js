@@ -26,10 +26,7 @@ const {
   saveUserStateToDB,
   getUserStateFromDB,
   deleteUserStateFromDB,
-  saveAuthorizedUser,
   isUserAuthorized,
-  generateAuthCode,
-  sendAuthCode,
   deactivateUser
 } = require('../database');
 
@@ -3419,34 +3416,6 @@ Your authentication code is: *${user.authCode}*
 Please save this code for future use.`;
   
   await sendMessageViaAPI(From, message);
-}
-
-// Admin function to add authorized user
-async function addAuthorizedUser(shopId, name = '') {
-  try {
-    // Generate auth code
-    const authCode = generateAuthCode();
-    
-    // Save to database
-    const saveResult = await saveAuthorizedUser(shopId, authCode, name);
-    if (!saveResult.success) {
-      return { success: false, error: saveResult.error };
-    }
-    
-    // Send auth code via WhatsApp
-    const sendResult = await sendAuthCode(shopId, authCode, name);
-    if (!sendResult.success) {
-      return { success: false, error: sendResult.error };
-    }
-    
-    return { 
-      success: true, 
-      authCode,
-      message: `User ${shopId} added successfully with auth code: ${authCode}`
-    };
-  } catch (error) {
-    return { success: false, error: error.message };
-  }
 }
 
 // Log performance metrics periodically
