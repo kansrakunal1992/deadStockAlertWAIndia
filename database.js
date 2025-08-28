@@ -1370,44 +1370,54 @@ const AUTH_CODE_EXPIRY = 24 * 60 * 60 * 1000; // 24 hours
 
 // In database.js, update these functions:
 
-// Save authorized user to database
-async function saveAuthorizedUser(shopId, authCode, name = '') {
-  const context = `Save Authorized User ${shopId}`;
-  try {
-    const createData = {
-      fields: {
-        ShopID: shopId,
-        AuthCode: authCode,
-        Name: name,
-        StatusUser: 'active', // Changed from Status
-        CreatedDate: new Date().toISOString(),
-        LastUsed: new Date().toISOString()
-      }
-    };
-    // ... rest of the function remains the same
-  } catch (error) {
-    logError(context, error);
-    return { success: false, error: error.message };
-  }
-}
-
 // Check if user is authorized
 async function isUserAuthorized(shopId, authCode = null) {
   const context = `Check Authorization ${shopId}`;
   try {
-    let filterFormula = `{ShopID} = '${shopId}' AND {StatusUser} = 'active'`; // Changed from Status
+    let filterFormula = `{ShopID} = '${shopId}' AND {StatusUser} = 'active'`;
     
     if (authCode) {
       filterFormula += ` AND {AuthCode} = '${authCode}'`;
     }
-    // ... rest of the function remains the same
+    
+    const result = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula },
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`
+    }, context);
+    
+    if (result.records.length > 0) {
+      // Update last used timestamp
+      const recordId = result.records[0].id;
+      await airtableRequest({
+        method: 'patch',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}/${recordId}`,
+        data: {
+          fields: {
+            LastUsed: new Date().toISOString()
+          }
+        }
+      }, `${context} - Update Last Used`);
+      
+      return { 
+        success: true, 
+        user: {
+          id: recordId,
+          shopId: result.records[0].fields.ShopID,
+          name: result.records[0].fields.Name || '',
+          authCode: result.records[0].fields.AuthCode
+        }
+      };
+    }
+    
+    return { success: false, error: 'User not found or inactive' };
   } catch (error) {
     logError(context, error);
     return { success: false, error: error.message };
   }
 }
 
-// Deactivate user
+// Deactivate user (optional, if you want to deactivate programmatically)
 async function deactivateUser(shopId) {
   const context = `Deactivate User ${shopId}`;
   try {
@@ -1425,7 +1435,7 @@ async function deactivateUser(shopId) {
         url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}/${recordId}`,
         data: {
           fields: {
-            StatusUser: 'inactive' // Changed from Status
+            StatusUser: 'inactive'
           }
         }
       }, `${context} - Deactivate`);
@@ -1468,8 +1478,6 @@ module.exports = {
   saveUserStateToDB,
   getUserStateFromDB,
   deleteUserStateFromDB,
-  saveAuthorizedUser,
   isUserAuthorized,
-  sendAuthCode,
   deactivateUser
 };
