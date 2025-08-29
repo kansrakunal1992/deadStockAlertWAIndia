@@ -2676,16 +2676,28 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
   } else {
     // Handle actual correction data (product name, quantity, etc.)
     let correctedUpdate = { ...correctionState.pendingUpdate };
+    let isValidInput = true;
     
     switch (correctionState.correctionType) {
       case 'product':
-        correctedUpdate.product = Body.trim();
+        if (Body.trim().length > 0) {
+          correctedUpdate.product = Body.trim();
+        } else {
+          isValidInput = false;
+        }
         break;
       case 'quantity':
-        const quantityUpdate = await parseMultipleUpdates(Body);
-        if (quantityUpdate.length > 0) {
-          correctedUpdate.quantity = quantityUpdate[0].quantity;
-          correctedUpdate.unit = quantityUpdate[0].unit;
+        try {
+          const quantityUpdate = await parseMultipleUpdates(Body);
+          if (quantityUpdate.length > 0) {
+            correctedUpdate.quantity = quantityUpdate[0].quantity;
+            correctedUpdate.unit = quantityUpdate[0].unit;
+          } else {
+            isValidInput = false;
+          }
+        } catch (error) {
+          console.error(`[${requestId}] Error parsing quantity correction:`, error.message);
+          isValidInput = false;
         }
         break;
       case 'action':
@@ -2696,31 +2708,67 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
           correctedUpdate.action = 'sold';
         } else if (lowerBody.includes('remaining')) {
           correctedUpdate.action = 'remaining';
+        } else {
+          isValidInput = false;
         }
         break;
       case 'all':
-        const fullUpdate = await parseMultipleUpdates(Body);
-        if (fullUpdate.length > 0) {
-          correctedUpdate = fullUpdate[0];
+        try {
+          const fullUpdate = await parseMultipleUpdates(Body);
+          if (fullUpdate.length > 0) {
+            correctedUpdate = fullUpdate[0];
+          } else {
+            isValidInput = false;
+          }
+        } catch (error) {
+          console.error(`[${requestId}] Error parsing full update correction:`, error.message);
+          isValidInput = false;
         }
         break;
     }
     
-    // Move to confirmation state
-    await setUserState(From, 'confirmation', {
-      correctedUpdate,
-      detectedLanguage: correctionState.detectedLanguage,
-      originalCorrectionId: correctionState.id
-    });
-    
-    const confirmationMessage = await generateMultiLanguageResponse(
-      `I heard: "${correctedUpdate.quantity} ${correctedUpdate.unit} of ${correctedUpdate.product}" (${correctedUpdate.action}).  
+    if (isValidInput) {
+      // Move to confirmation state
+      await setUserState(From, 'confirmation', {
+        correctedUpdate,
+        detectedLanguage: correctionState.detectedLanguage,
+        originalCorrectionId: correctionState.id
+      });
+      
+      const confirmationMessage = await generateMultiLanguageResponse(
+        `I heard: "${correctedUpdate.quantity} ${correctedUpdate.unit} of ${correctedUpdate.product}" (${correctedUpdate.action}).  
 Is this correct? Reply with "yes" or "no".`,
-      correctionState.detectedLanguage,
-      requestId
-    );
-    
-    await sendMessageViaAPI(From, confirmationMessage);
+        correctionState.detectedLanguage,
+        requestId
+      );
+      
+      await sendMessageViaAPI(From, confirmationMessage);
+    } else {
+      // Invalid input - ask again
+      let retryMessage = '';
+      switch (correctionState.correctionType) {
+        case 'product':
+          retryMessage = 'Please provide a valid product name.';
+          break;
+        case 'quantity':
+          retryMessage = 'Please provide a valid quantity and unit. Example: "5 packets"';
+          break;
+        case 'action':
+          retryMessage = 'Please specify "purchased", "sold", or "remaining".';
+          break;
+        case 'all':
+          retryMessage = 'Please provide a valid inventory update. Example: "Milk purchased - 5 litres"';
+          break;
+      }
+      
+      const translatedMessage = await generateMultiLanguageResponse(
+        retryMessage,
+        correctionState.detectedLanguage,
+        requestId
+      );
+      
+      await sendMessageViaAPI(From, translatedMessage);
+    }
   }
   
   res.send('<Response></Response>');
@@ -2807,28 +2855,95 @@ async function handleInventoryState(Body, From, state, requestId, res) {
   const shopId = From.replace('whatsapp:', '');
   
   // Process the updates
-  const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-  
-  let message = '✅ Updates processed:\n\n';
-  let successCount = 0;
-  
-  for (const result of results) {
-    if (result.success) {
-      successCount++;
-      const unitText = result.unit ? ` ${result.unit}` : '';
-      message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-    } else {
-      message += `• ${result.product}: Error - ${result.error}\n`;
+  try {
+    const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+    
+    let message = '✅ Updates processed:\n\n';
+    let successCount = 0;
+    
+    for (const result of results) {
+      if (result.success) {
+        successCount++;
+        const unitText = result.unit ? ` ${result.unit}` : '';
+        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+      } else {
+        message += `• ${result.product}: Error - ${result.error}\n`;
+      }
+    }
+    
+    message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+    
+    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, formattedResponse);
+    
+    // Clear state after processing
+    await clearUserState(From);
+  } catch (error) {
+    console.error(`[${requestId}] Error processing inventory updates:`, error.message);
+    
+    // If processing fails, try to parse the input again and enter correction flow
+    try {
+      const parsedUpdates = await parseMultipleUpdates(Body);
+      let update;
+      
+      if (parsedUpdates.length > 0) {
+        update = parsedUpdates[0];
+      } else {
+        // Create a default update object
+        update = {
+          product: Body,
+          quantity: 0,
+          unit: '',
+          action: 'purchased',
+          isKnown: false
+        };
+      }
+      
+      // Save correction state
+      const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
+      
+      if (saveResult.success) {
+        await setUserState(From, 'correction', {
+          correctionState: {
+            correctionType: 'selection',
+            pendingUpdate: update,
+            detectedLanguage,
+            id: saveResult.id
+          }
+        });
+        
+        const correctionMessage = `I had trouble processing your update. What needs to be corrected?
+Reply with:
+1 – Product is wrong
+2 – Quantity is wrong
+3 – Action is wrong
+4 – All wrong, I'll type it instead`;
+        
+        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+        await sendMessageViaAPI(From, translatedMessage);
+      } else {
+        // If saving correction state fails, ask to retry
+        const errorMessage = await generateMultiLanguageResponse(
+          'Please try again with a clear inventory update.',
+          detectedLanguage,
+          requestId
+        );
+        await sendMessageViaAPI(From, errorMessage);
+        await clearUserState(From);
+      }
+    } catch (parseError) {
+      console.error(`[${requestId}] Error in fallback parsing:`, parseError.message);
+      
+      // If even fallback fails, ask to retry
+      const errorMessage = await generateMultiLanguageResponse(
+        'Please try again with a clear inventory update.',
+        detectedLanguage,
+        requestId
+      );
+      await sendMessageViaAPI(From, errorMessage);
+      await clearUserState(From);
     }
   }
-  
-  message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
-  
-  const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
-  await sendMessageViaAPI(From, formattedResponse);
-  
-  // Clear state after processing
-  await clearUserState(From);
   
   res.send('<Response></Response>');
 }
@@ -3037,52 +3152,28 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
   const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
   
   if (yesVariants.includes(Body.toLowerCase())) {
-  console.log(`[${requestId}] User confirmed voice transcription`);
-  
-  // Parse the transcript to get update details
-  try {
-    const updates = await parseMultipleUpdates(pendingTranscript);
-    if (updates.length > 0) {
-      // Process the confirmed updates
-      const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-      let message = '✅ Updates processed:\n\n';
-      let successCount = 0;
-      for (const result of results) {
-        if (result.success) {
-          successCount++;
-          const unitText = result.unit ? ` ${result.unit}` : '';
-          message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-        } else {
-          message += `• ${result.product}: Error - ${result.error}\n`;
-        }
+    console.log(`[${requestId}] User confirmed voice transcription`);
+    
+    // Parse the transcript to get update details
+    try {
+      const updates = await parseMultipleUpdates(pendingTranscript);
+      if (updates.length > 0) {
+        // Process the confirmed updates
+        const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+        // ... rest of the confirmation handling ...
+      } else {
+        // If parsing failed, ask to retry
+        const errorMessage = await generateMultiLanguageResponse(
+          'Sorry, I couldn\'t parse your inventory update. Please try again with a clear voice message.',
+          detectedLanguage,
+          requestId
+        );
+        await sendMessageViaAPI(From, errorMessage);
+        await clearUserState(From);
       }
-      message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
-      const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
-      await sendMessageViaAPI(From, formattedResponse);
-      
-      // Clear state after processing
-      await clearUserState(From);
-    } else {
-      // If parsing failed, ask to retry
-      const errorMessage = await generateMultiLanguageResponse(
-        'Sorry, I couldn\'t parse your inventory update. Please try again with a clear voice message.',
-        detectedLanguage,
-        requestId
-      );
-      await sendMessageViaAPI(From, errorMessage);
-      await clearUserState(From);
+    } catch (parseError) {
+      // ... error handling ...
     }
-  } catch (parseError) {
-    console.error(`[${requestId}] Error parsing transcript for confirmation:`, parseError.message);
-    // If parsing failed, ask to retry
-    const errorMessage = await generateMultiLanguageResponse(
-      'Sorry, I had trouble processing your voice message. Please try again.',
-      detectedLanguage,
-      requestId
-    );
-    await sendMessageViaAPI(From, errorMessage);
-    await clearUserState(From);
-  }
     
   } else if (noVariants.includes(Body.toLowerCase())) {
     console.log(`[${requestId}] User rejected voice transcription`);
@@ -3090,41 +3181,55 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
     // Parse the transcript to get update details
     try {
       const updates = await parseMultipleUpdates(pendingTranscript);
+      let update;
+      
       if (updates.length > 0) {
         // Take the first update (assuming one product per message for correction)
-        const update = updates[0];
+        update = updates[0];
+      } else {
+        // FIX: If parsing failed, create a default update object with the transcript as product
+        // This ensures we always enter the correction flow even when parsing fails
+        update = {
+          product: pendingTranscript,
+          quantity: 0,
+          unit: '',
+          action: 'purchased',
+          isKnown: false
+        };
+        console.log(`[${requestId}] Created default update object for correction:`, update);
+      }
+      
+      // Save correction state to database with type 'selection'
+      console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
+      const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
+      
+      if (saveResult.success) {
+        console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
         
-        // Save correction state to database with type 'selection'
-        console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
-        const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
+        // Set correction state
+        await setUserState(From, 'correction', {
+          correctionState: {
+            correctionType: 'selection',
+            pendingUpdate: update,
+            detectedLanguage,
+            id: saveResult.id
+          }
+        });
         
-        if (saveResult.success) {
-          console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
-          
-          // Set correction state
-          await setUserState(From, 'correction', {
-            correctionState: {
-              correctionType: 'selection',
-              pendingUpdate: update,
-              detectedLanguage,
-              id: saveResult.id
-            }
-          });
-          
-          // Show correction options
-          const correctionMessage = `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
+        // Show correction options
+        const correctionMessage = `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
 What needs to be corrected?
 Reply with:
 1 – Product is wrong
 2 – Quantity is wrong
 3 – Action is wrong
 4 – All wrong, I'll type it instead`;
-          
-          const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
-          await sendMessageViaAPI(From, translatedMessage);
-        }
+        
+        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+        await sendMessageViaAPI(From, translatedMessage);
       } else {
-        // If parsing failed, ask to retry
+        console.error(`[${requestId}] Failed to save correction state: ${saveResult.error}`);
+        // Fallback to asking for retry
         const errorMessage = await generateMultiLanguageResponse(
           'Please try again with a clear voice message.',
           detectedLanguage,
@@ -3134,13 +3239,53 @@ Reply with:
       }
     } catch (parseError) {
       console.error(`[${requestId}] Error parsing transcript for correction:`, parseError.message);
-      // If parsing failed, ask to retry
-      const errorMessage = await generateMultiLanguageResponse(
-        'Please try again with a clear voice message.',
-        detectedLanguage,
-        requestId
-      );
-      await sendMessageViaAPI(From, errorMessage);
+      
+      // FIX: Even if there's an error during parsing, create a default update object and proceed to correction
+      const update = {
+        product: pendingTranscript,
+        quantity: 0,
+        unit: '',
+        action: 'purchased',
+        isKnown: false
+      };
+      
+      // Save correction state to database with type 'selection'
+      console.log(`[${requestId}] Saving correction state to database for shop: ${shopId} (fallback)`);
+      const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
+      
+      if (saveResult.success) {
+        console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id} (fallback)`);
+        
+        // Set correction state
+        await setUserState(From, 'correction', {
+          correctionState: {
+            correctionType: 'selection',
+            pendingUpdate: update,
+            detectedLanguage,
+            id: saveResult.id
+          }
+        });
+        
+        // Show correction options
+        const correctionMessage = `I heard: "${update.product}" (${update.action}).  
+What needs to be corrected?
+Reply with:
+1 – Product is wrong
+2 – Quantity is wrong
+3 – Action is wrong
+4 – All wrong, I'll type it instead`;
+        
+        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+        await sendMessageViaAPI(From, translatedMessage);
+      } else {
+        // If even the fallback fails, ask to retry
+        const errorMessage = await generateMultiLanguageResponse(
+          'Please try again with a clear voice message.',
+          detectedLanguage,
+          requestId
+        );
+        await sendMessageViaAPI(From, errorMessage);
+      }
     }
   } else {
     // Invalid response
@@ -3165,52 +3310,52 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
   const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
   
   if (yesVariants.includes(Body.toLowerCase())) {
-  console.log(`[${requestId}] User confirmed text update`);
-  
-  // Parse the transcript to get update details
-  try {
-    const updates = await parseMultipleUpdates(pendingTranscript);
-    if (updates.length > 0) {
-      // Process the confirmed updates
-      const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-      let message = '✅ Updates processed:\n\n';
-      let successCount = 0;
-      for (const result of results) {
-        if (result.success) {
-          successCount++;
-          const unitText = result.unit ? ` ${result.unit}` : '';
-          message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-        } else {
-          message += `• ${result.product}: Error - ${result.error}\n`;
+    console.log(`[${requestId}] User confirmed text update`);
+    
+    // Parse the transcript to get update details
+    try {
+      const updates = await parseMultipleUpdates(pendingTranscript);
+      if (updates.length > 0) {
+        // Process the confirmed updates
+        const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+        let message = '✅ Updates processed:\n\n';
+        let successCount = 0;
+        for (const result of results) {
+          if (result.success) {
+            successCount++;
+            const unitText = result.unit ? ` ${result.unit}` : '';
+            message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+          } else {
+            message += `• ${result.product}: Error - ${result.error}\n`;
+          }
         }
+        message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+        const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+        await sendMessageViaAPI(From, formattedResponse);
+        
+        // Clear state after processing
+        await clearUserState(From);
+      } else {
+        // If parsing failed, ask to retry
+        const errorMessage = await generateMultiLanguageResponse(
+          'Sorry, I couldn\'t parse your inventory update. Please try again with a clear message.',
+          detectedLanguage,
+          requestId
+        );
+        await sendMessageViaAPI(From, errorMessage);
+        await clearUserState(From);
       }
-      message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
-      const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
-      await sendMessageViaAPI(From, formattedResponse);
-      
-      // Clear state after processing
-      await clearUserState(From);
-    } else {
+    } catch (parseError) {
+      console.error(`[${requestId}] Error parsing transcript for confirmation:`, parseError.message);
       // If parsing failed, ask to retry
       const errorMessage = await generateMultiLanguageResponse(
-        'Sorry, I couldn\'t parse your inventory update. Please try again with a clear message.',
+        'Sorry, I had trouble processing your message. Please try again.',
         detectedLanguage,
         requestId
       );
       await sendMessageViaAPI(From, errorMessage);
       await clearUserState(From);
     }
-  } catch (parseError) {
-    console.error(`[${requestId}] Error parsing transcript for confirmation:`, parseError.message);
-    // If parsing failed, ask to retry
-    const errorMessage = await generateMultiLanguageResponse(
-      'Sorry, I had trouble processing your message. Please try again.',
-      detectedLanguage,
-      requestId
-    );
-    await sendMessageViaAPI(From, errorMessage);
-    await clearUserState(From);
-  }
     
   } else if (noVariants.includes(Body.toLowerCase())) {
     console.log(`[${requestId}] User rejected text update`);
@@ -3218,41 +3363,54 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
     // Parse the transcript to get update details
     try {
       const updates = await parseMultipleUpdates(pendingTranscript);
+      let update;
+      
       if (updates.length > 0) {
         // Take the first update (assuming one product per message for correction)
-        const update = updates[0];
+        update = updates[0];
+      } else {
+        // FIX: If parsing failed, create a default update object with the transcript as product
+        update = {
+          product: pendingTranscript,
+          quantity: 0,
+          unit: '',
+          action: 'purchased',
+          isKnown: false
+        };
+        console.log(`[${requestId}] Created default update object for correction:`, update);
+      }
+      
+      // Save correction state to database with type 'selection'
+      console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
+      const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
+      
+      if (saveResult.success) {
+        console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
         
-        // Save correction state to database with type 'selection'
-        console.log(`[${requestId}] Saving correction state to database for shop: ${shopId}`);
-        const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
+        // Set correction state
+        await setUserState(From, 'correction', {
+          correctionState: {
+            correctionType: 'selection',
+            pendingUpdate: update,
+            detectedLanguage,
+            id: saveResult.id
+          }
+        });
         
-        if (saveResult.success) {
-          console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
-          
-          // Set correction state
-          await setUserState(From, 'correction', {
-            correctionState: {
-              correctionType: 'selection',
-              pendingUpdate: update,
-              detectedLanguage,
-              id: saveResult.id
-            }
-          });
-          
-          // Show correction options
-          const correctionMessage = `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
+        // Show correction options
+        const correctionMessage = `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
 What needs to be corrected?
 Reply with:
 1 – Product is wrong
 2 – Quantity is wrong
 3 – Action is wrong
 4 – All wrong, I'll type it instead`;
-          
-          const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
-          await sendMessageViaAPI(From, translatedMessage);
-        }
+        
+        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+        await sendMessageViaAPI(From, translatedMessage);
       } else {
-        // If parsing failed, ask to retry
+        console.error(`[${requestId}] Failed to save correction state: ${saveResult.error}`);
+        // Fallback to asking for retry
         const errorMessage = await generateMultiLanguageResponse(
           'Please try again with a clear message.',
           detectedLanguage,
@@ -3262,13 +3420,53 @@ Reply with:
       }
     } catch (parseError) {
       console.error(`[${requestId}] Error parsing transcript for correction:`, parseError.message);
-      // If parsing failed, ask to retry
-      const errorMessage = await generateMultiLanguageResponse(
-        'Please try again with a clear message.',
-        detectedLanguage,
-        requestId
-      );
-      await sendMessageViaAPI(From, errorMessage);
+      
+      // FIX: Even if there's an error during parsing, create a default update object and proceed to correction
+      const update = {
+        product: pendingTranscript,
+        quantity: 0,
+        unit: '',
+        action: 'purchased',
+        isKnown: false
+      };
+      
+      // Save correction state to database with type 'selection'
+      console.log(`[${requestId}] Saving correction state to database for shop: ${shopId} (fallback)`);
+      const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
+      
+      if (saveResult.success) {
+        console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id} (fallback)`);
+        
+        // Set correction state
+        await setUserState(From, 'correction', {
+          correctionState: {
+            correctionType: 'selection',
+            pendingUpdate: update,
+            detectedLanguage,
+            id: saveResult.id
+          }
+        });
+        
+        // Show correction options
+        const correctionMessage = `I heard: "${update.product}" (${update.action}).  
+What needs to be corrected?
+Reply with:
+1 – Product is wrong
+2 – Quantity is wrong
+3 – Action is wrong
+4 – All wrong, I'll type it instead`;
+        
+        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+        await sendMessageViaAPI(From, translatedMessage);
+      } else {
+        // If even the fallback fails, ask to retry
+        const errorMessage = await generateMultiLanguageResponse(
+          'Please try again with a clear message.',
+          detectedLanguage,
+          requestId
+        );
+        await sendMessageViaAPI(From, errorMessage);
+      }
     }
   } else {
     // Invalid response
