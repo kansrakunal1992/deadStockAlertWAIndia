@@ -193,7 +193,7 @@ const greetings = {
 
 // State management constants and functions
 const STATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-const RESET_COMMANDS = ['reset', 'start over', 'restart', 'cancel', 'exit', 'stop', 'hello', 'hi', 'namaste'];
+const RESET_COMMANDS = ['reset', 'start over', 'restart', 'cancel', 'exit', 'stop'];
 
 async function getUserState(from) {
   const shopId = from.replace('whatsapp:', '');
