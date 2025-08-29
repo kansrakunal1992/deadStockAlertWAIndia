@@ -2425,6 +2425,10 @@ module.exports = async (req, res) => {
   const response = new twilio.twiml.MessagingResponse();
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   
+  await handleRequest(req, res, response, requestId, requestStart);
+};
+
+  async function handleRequest(req, res, response, requestId, requestStart) {  
   try {
     // Add request ID to the request object for logging
     req.requestId = requestId;
