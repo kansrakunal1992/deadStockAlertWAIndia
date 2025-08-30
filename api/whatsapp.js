@@ -5,6 +5,7 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
 const authCache = new Map();
+const { processShopSummary } = require('./dailySummary');
 const {
   updateInventory,
   testConnection,
