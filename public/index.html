@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>StockGuard - WhatsApp Dead Stock Alert for Indian Kiranas</title>
+    <title>Saamagrii.AI - WhatsApp Dead Stock Alert for Indian Kiranas</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Hind+Siliguri:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
@@ -19,6 +19,8 @@
             --text-medium: #555555;
             --text-light: #777777;
             --shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            --primary: #4a6bdf;
+            --secondary: #6c63ff;
         }
         
         * {
@@ -297,13 +299,13 @@
         }
         
         .btn-enroll {
-            background: linear-gradient(135deg, var(--saffron), #e67300);
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
             color: white;
         }
         
         .btn-enroll:hover {
             transform: translateY(-5px);
-            box-shadow: 0 10px 20px rgba(255, 153, 51, 0.3);
+            box-shadow: 0 10px 20px rgba(74, 107, 223, 0.3);
         }
         
         .btn i {
@@ -380,6 +382,18 @@
             border-top-color: var(--navy);
         }
         
+        .feature-card:nth-child(4) {
+            border-top-color: var(--primary);
+        }
+        
+        .feature-card:nth-child(5) {
+            border-top-color: var(--secondary);
+        }
+        
+        .feature-card:nth-child(6) {
+            border-top-color: var(--dark-green);
+        }
+        
         .feature-icon {
             width: 80px;
             height: 80px;
@@ -401,6 +415,21 @@
         .feature-card:nth-child(3) .feature-icon {
             background: linear-gradient(135deg, #e6e6ff, white);
             color: var(--navy);
+        }
+        
+        .feature-card:nth-child(4) .feature-icon {
+            background: linear-gradient(135deg, #e6f0ff, white);
+            color: var(--primary);
+        }
+        
+        .feature-card:nth-child(5) .feature-icon {
+            background: linear-gradient(135deg, #f0e6ff, white);
+            color: var(--secondary);
+        }
+        
+        .feature-card:nth-child(6) .feature-icon {
+            background: linear-gradient(135deg, #e6ffe6, white);
+            color: var(--dark-green);
         }
         
         .feature-card h3 {
@@ -815,6 +844,158 @@
             margin: 0 auto;
         }
         
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            overflow: auto;
+        }
+        
+        .modal-content {
+            background-color: white;
+            margin: 10% auto;
+            padding: 40px;
+            border-radius: 20px;
+            width: 90%;
+            max-width: 600px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            position: relative;
+        }
+        
+        .close {
+            position: absolute;
+            right: 20px;
+            top: 20px;
+            font-size: 28px;
+            font-weight: bold;
+            color: #aaa;
+            cursor: pointer;
+        }
+        
+        .close:hover {
+            color: var(--navy);
+        }
+        
+        .form-group {
+            margin-bottom: 25px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 20px;
+        }
+        
+        .form-row .form-group {
+            flex: 1;
+        }
+        
+        .submit-btn {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            border: none;
+            padding: 16px 36px;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 100%;
+            margin-top: 20px;
+        }
+        
+        .submit-btn:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(74, 107, 223, 0.3);
+        }
+        
+        /* Thank You Page */
+        .thank-you-page {
+            display: none;
+            padding: 100px 5%;
+            background: linear-gradient(135deg, var(--light-green) 0%, #e6f7e6 100%);
+            text-align: center;
+            min-height: 100vh;
+        }
+        
+        .thank-you-content {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 60px 40px;
+            border-radius: 20px;
+            box-shadow: var(--shadow);
+        }
+        
+        .thank-you-icon {
+            font-size: 5rem;
+            color: var(--green);
+            margin-bottom: 30px;
+        }
+        
+        .thank-you-content h2 {
+            font-size: 2.5rem;
+            margin-bottom: 20px;
+            color: var(--navy);
+        }
+        
+        .thank-you-content p {
+            font-size: 1.2rem;
+            margin-bottom: 30px;
+            color: var(--text-medium);
+        }
+        
+        .whatsapp-info {
+            background: var(--light-green);
+            padding: 20px;
+            border-radius: 15px;
+            margin-top: 30px;
+        }
+        
+        .whatsapp-info h3 {
+            color: var(--green);
+            margin-bottom: 15px;
+        }
+        
+        .whatsapp-info p {
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+        }
+        
+        .whatsapp-number {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--green);
+        }
+        
         /* Responsive Design */
         @media (max-width: 1100px) {
             .hero h1 {
@@ -913,6 +1094,10 @@
             .cta-section h2 {
                 font-size: 2.2rem;
             }
+            
+            .form-row {
+                flex-direction: column;
+            }
         }
         
         @media (max-width: 400px) {
@@ -942,7 +1127,7 @@
                 <div class="logo-icon">
                     <i class="fas fa-box"></i>
                 </div>
-                <div class="logo-text">Stock<span>Guard</span></div>
+                <div class="logo-text">Saamagrii.<span>AI</span></div>
             </div>
             
             <ul class="nav-links">
@@ -963,8 +1148,11 @@
                 <div class="language-options">
                     <div class="language-option active" data-lang="hi">हिंदी (Hindi)</div>
                     <div class="language-option" data-lang="en">English</div>
-                    <div class="language-option" data-lang="ta">தமிழ் (Tamil)</div>
+                    <div class="language-option" data-lang="hn">Hinglish</div>
+                    <div class="language-option" data-lang="bn">বাংলা (Bengali)</div>
                     <div class="language-option" data-lang="mr">मराठी (Marathi)</div>
+                    <div class="language-option" data-lang="ta">தமிழ் (Tamil)</div>
+                    <div class="language-option" data-lang="te">తెలుగు (Telugu)</div>
                 </div>
             </div>
             
@@ -973,20 +1161,20 @@
             </button>
         </div>
     </header>
-
+    
     <!-- Hero Section -->
     <section class="hero" id="hero">
         <div class="hero-content">
             <div class="hero-text">
                 <h1 data-translate="heroTitle">Reduce Dead Stock with WhatsApp Voice Notes</h1>
-                <p data-translate="heroText">StockGuard helps Indian shopkeepers manage inventory, reduce waste, and increase profits using WhatsApp - no apps to install, no complex software to learn!</p>
+                <p data-translate="heroText">Saamagrii.AI helps Indian shopkeepers manage inventory, reduce waste, and increase profits using WhatsApp - no apps to install, no complex software to learn!</p>
                 
                 <div class="cta-buttons">
                     <a href="#" class="btn btn-whatsapp">
-                        <i class="fab fa-whatsapp"></i> <span data-translate="whatsappBtn">Test on WhatsApp</span>
+                        <i class="fab fa-whatsapp"></i> <span data-translate="whatsappBtn">WhatsApp Demo</span>
                     </a>
-                    <a href="#pricing" class="btn btn-enroll">
-                        <span class="rupee-symbol">₹</span> <span data-translate="enrollBtn">Enroll Now</span>
+                    <a href="#" class="btn btn-enroll" id="enrollBtn">
+                        <i class="fas fa-user-plus"></i> <span data-translate="enrollBtn">Enroll Now</span>
                     </a>
                 </div>
             </div>
@@ -996,7 +1184,7 @@
             </div>
         </div>
     </section>
-
+    
     <!-- Features Section -->
     <section class="features" id="features">
         <div class="section-title">
@@ -1028,15 +1216,39 @@
                 <h3 data-translate="feature3Title">Dead Stock Alerts</h3>
                 <p data-translate="feature3Text">Receive automatic alerts for slow-moving items before they expire. Get smart suggestions for bundled offers to clear stock.</p>
             </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-file-alt"></i>
+                </div>
+                <h3 data-translate="feature4Title">On-Demand Summary</h3>
+                <p data-translate="feature4Text">Get a short summary of your inventory anytime by sending "Summary" on WhatsApp. Know your stock levels at a glance.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-calendar-day"></i>
+                </div>
+                <h3 data-translate="feature5Title">Daily Long Summary</h3>
+                <p data-translate="feature5Text">Receive a detailed daily summary of your inventory movements, sales, and expiring items every morning.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-lightbulb"></i>
+                </div>
+                <h3 data-translate="feature6Title">Actionable Insights</h3>
+                <p data-translate="feature6Text">Get personalized recommendations based on your inventory situation. Suggestions on what to reorder, discount, or bundle.</p>
+            </div>
         </div>
     </section>
-
+    
     <!-- How It Works -->
     <section class="how-it-works" id="how-it-works">
         <div class="steps-container">
             <div class="section-title">
                 <h2 data-translate="howItWorksTitle">Simple 4-Step Process</h2>
-                <p data-translate="howItWorksSubtitle">Manage your inventory efficiently with StockGuard</p>
+                <p data-translate="howItWorksSubtitle">Manage your inventory efficiently with Saamagrii.AI</p>
             </div>
             
             <div class="steps">
@@ -1078,7 +1290,7 @@
             </div>
         </div>
     </section>
-
+    
     <!-- Pricing Section -->
     <section class="pricing" id="pricing">
         <div class="section-title">
@@ -1097,8 +1309,8 @@
                     <li data-translate="feature4">Dead stock alerts</li>
                     <li data-translate="feature5">WhatsApp support</li>
                 </ul>
-                <a href="#" class="btn btn-enroll">
-                    <span class="rupee-symbol">₹</span> <span data-translate="pricingEnroll">Enroll Now</span>
+                <a href="#" class="btn btn-enroll enroll-pricing">
+                    <i class="fas fa-user-plus"></i> <span data-translate="pricingEnroll">Enroll Now</span>
                 </a>
             </div>
             
@@ -1114,8 +1326,8 @@
                     <li data-translate="feature10">Priority support</li>
                     <li data-translate="feature11">Multi-user access</li>
                 </ul>
-                <a href="#" class="btn btn-whatsapp">
-                    <i class="fab fa-whatsapp"></i> <span data-translate="pricingEnroll">Enroll Now</span>
+                <a href="#" class="btn btn-whatsapp enroll-pricing">
+                    <i class="fas fa-user-plus"></i> <span data-translate="pricingEnroll">Enroll Now</span>
                 </a>
             </div>
             
@@ -1130,23 +1342,23 @@
                     <li data-translate="feature16">Dedicated account manager</li>
                     <li data-translate="feature17">24/7 support</li>
                 </ul>
-                <a href="#" class="btn btn-enroll">
-                    <span class="rupee-symbol">₹</span> <span data-translate="pricingEnroll">Enroll Now</span>
+                <a href="#" class="btn btn-enroll enroll-pricing">
+                    <i class="fas fa-user-plus"></i> <span data-translate="pricingEnroll">Enroll Now</span>
                 </a>
             </div>
         </div>
     </section>
-
+    
     <!-- Testimonials -->
     <section class="testimonials" id="testimonials">
         <div class="section-title">
             <h2 data-translate="testimonialsTitle">What Shopkeepers Say</h2>
-            <p data-translate="testimonialsSubtitle">Hear from Indian Kirana owners using StockGuard</p>
+            <p data-translate="testimonialsSubtitle">Hear from Indian Kirana owners using Saamagrii.AI</p>
         </div>
         
         <div class="testimonial-grid">
             <div class="testimonial">
-                <p data-translate="testimonial1">"StockGuard reduced my expired goods by 40%! The voice note system is perfect for busy shopkeepers like me who don't have time for complex software."</p>
+                <p data-translate="testimonial1">"Saamagrii.AI reduced my expired goods by 40%! The voice note system is perfect for busy shopkeepers like me who don't have time for complex software."</p>
                 <div class="client">
                     <div class="client-avatar">RK</div>
                     <div class="client-info">
@@ -1168,7 +1380,7 @@
             </div>
             
             <div class="testimonial">
-                <p data-translate="testimonial3">"As a 55-year-old shopkeeper, I was worried about technology. But WhatsApp I know! StockGuard made inventory management so simple."</p>
+                <p data-translate="testimonial3">"As a 55-year-old shopkeeper, I was worried about technology. But WhatsApp I know! Saamagrii.AI made inventory management so simple."</p>
                 <div class="client">
                     <div class="client-avatar">VP</div>
                     <div class="client-info">
@@ -1179,22 +1391,22 @@
             </div>
         </div>
     </section>
-
+    
     <!-- CTA Section -->
     <section class="cta-section">
         <h2 data-translate="ctaTitle">Ready to Reduce Your Dead Stock?</h2>
-        <p data-translate="ctaSubtitle">Join thousands of Indian shopkeepers who are saving money and reducing waste with StockGuard</p>
-        <a href="#" class="btn btn-whatsapp">
-            <i class="fab fa-whatsapp"></i> <span data-translate="ctaBtn">Start Free Trial on WhatsApp</span>
+        <p data-translate="ctaSubtitle">Join thousands of Indian shopkeepers who are saving money and reducing waste with Saamagrii.AI</p>
+        <a href="#" class="btn btn-whatsapp" id="ctaEnrollBtn">
+            <i class="fas fa-user-plus"></i> <span data-translate="ctaBtn">Enroll Now</span>
         </a>
     </section>
-
+    
     <!-- Footer -->
     <footer id="contact">
         <div class="footer-content">
             <div class="footer-column">
-                <h3 data-translate="footerAbout">About StockGuard</h3>
-                <p data-translate="footerAboutText">StockGuard helps Indian shopkeepers reduce dead stock and increase profits through simple WhatsApp-based inventory management.</p>
+                <h3 data-translate="footerAbout">About Saamagrii.AI</h3>
+                <p data-translate="footerAboutText">Saamagrii.AI helps Indian shopkeepers reduce dead stock and increase profits through simple WhatsApp-based inventory management.</p>
                 <div class="social-links">
                     <a href="#"><i class="fab fa-facebook-f"></i></a>
                     <a href="#"><i class="fab fa-twitter"></i></a>
@@ -1219,17 +1431,92 @@
                 <div class="contact-info">
                     <p><i class="fas fa-map-marker-alt"></i> <span data-translate="footerAddress">Gurgaon, India</span></p>
                     <p><i class="fas fa-phone"></i> +91 98765 43210</p>
-                    <p><i class="fas fa-envelope"></i> info@stockguard.in</p>
-                    <p><i class="fab fa-whatsapp"></i> +91 98765 43210</p>
+                    <p><i class="fas fa-envelope"></i> info@saamagrii.ai</p>
+                    <p><i class="fab fa-whatsapp"></i> +91 90132 83687</p>
                 </div>
             </div>
         </div>
         
         <div class="footer-bottom">
-            <p data-translate="footerCopyright">Copyright@2025 StockGuard. All Rights Reserved. | Designed with ❤️ for Indian Shopkeepers</p>
+            <p data-translate="footerCopyright">Copyright@2025 Saamagrii.AI. All Rights Reserved. | Designed with ❤️ for Indian Shopkeepers</p>
         </div>
     </footer>
-
+    
+    <!-- Enrollment Modal -->
+    <div id="enrollModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2 data-translate="modalTitle">Enroll with Saamagrii.AI</h2>
+            <p data-translate="modalSubtitle">Fill in your details to get started with our inventory management system</p>
+            
+            <form id="enrollForm">
+                <div class="form-group">
+                    <label for="mobile" data-translate="mobileLabel">Mobile Number *</label>
+                    <input type="tel" id="mobile" name="mobile" placeholder="+91 98765 43210" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="shopName" data-translate="shopNameLabel">Shop Name *</label>
+                    <input type="text" id="shopName" name="shopName" placeholder="Your shop name" required>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="state" data-translate="stateLabel">State *</label>
+                        <select id="state" name="state" required>
+                            <option value="" disabled selected>Select State</option>
+                            <option value="Andhra Pradesh">Andhra Pradesh</option>
+                            <option value="Assam">Assam</option>
+                            <option value="Bihar">Bihar</option>
+                            <option value="Gujarat">Gujarat</option>
+                            <option value="Haryana">Haryana</option>
+                            <option value="Karnataka">Karnataka</option>
+                            <option value="Kerala">Kerala</option>
+                            <option value="Madhya Pradesh">Madhya Pradesh</option>
+                            <option value="Maharashtra">Maharashtra</option>
+                            <option value="Odisha">Odisha</option>
+                            <option value="Punjab">Punjab</option>
+                            <option value="Rajasthan">Rajasthan</option>
+                            <option value="Tamil Nadu">Tamil Nadu</option>
+                            <option value="Telangana">Telangana</option>
+                            <option value="Uttar Pradesh">Uttar Pradesh</option>
+                            <option value="West Bengal">West Bengal</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="country" data-translate="countryLabel">Country *</label>
+                        <select id="country" name="country" required>
+                            <option value="India" selected>India</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <button type="submit" class="submit-btn" data-translate="submitBtn">Submit Enrollment</button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Thank You Page -->
+    <div id="thankYouPage" class="thank-you-page">
+        <div class="thank-you-content">
+            <div class="thank-you-icon">
+                <i class="fas fa-check-circle"></i>
+            </div>
+            <h2 data-translate="thankYouTitle">Thank You for Enrolling!</h2>
+            <p data-translate="thankYouText">Your enrollment details have been submitted successfully. Our team will review your information and send you an activation code shortly.</p>
+            
+            <div class="whatsapp-info">
+                <h3 data-translate="whatsappHelpTitle">Need Help or Have Questions?</h3>
+                <p data-translate="whatsappHelpText">Feel free to reach out to us on WhatsApp for any assistance or if you need your activation code urgently.</p>
+                <p class="whatsapp-number">+91 90132 83687</p>
+                <p data-translate="whatsappHelpText2">Just send a message saying "I need help with Saamagrii.AI" and our team will assist you.</p>
+            </div>
+        </div>
+    </div>
+    
     <script>
         // Translation dictionary
         const translations = {
@@ -1240,8 +1527,8 @@
                 navTestimonials: "Testimonials",
                 navContact: "Contact",
                 heroTitle: "Reduce Dead Stock with WhatsApp Voice Notes",
-                heroText: "StockGuard helps Indian shopkeepers manage inventory, reduce waste, and increase profits using WhatsApp - no apps to install, no complex software to learn!",
-                whatsappBtn: "Test on WhatsApp",
+                heroText: "Saamagrii.AI helps Indian shopkeepers manage inventory, reduce waste, and increase profits using WhatsApp - no apps to install, no complex software to learn!",
+                whatsappBtn: "WhatsApp Demo",
                 enrollBtn: "Enroll Now",
                 featuresTitle: "Powerful Features for Kirana Stores",
                 featuresSubtitle: "Designed specifically for Indian shopkeepers to save time and reduce inventory waste",
@@ -1251,8 +1538,14 @@
                 feature2Text: "Get immediate confirmation of your inventory update with current stock levels. No more manual tracking or guesswork.",
                 feature3Title: "Dead Stock Alerts",
                 feature3Text: "Receive automatic alerts for slow-moving items before they expire. Get smart suggestions for bundled offers to clear stock.",
+                feature4Title: "On-Demand Summary",
+                feature4Text: "Get a short summary of your inventory anytime by sending \"Summary\" on WhatsApp. Know your stock levels at a glance.",
+                feature5Title: "Daily Long Summary",
+                feature5Text: "Receive a detailed daily summary of your inventory movements, sales, and expiring items every morning.",
+                feature6Title: "Actionable Insights",
+                feature6Text: "Get personalized recommendations based on your inventory situation. Suggestions on what to reorder, discount, or bundle.",
                 howItWorksTitle: "Simple 4-Step Process",
-                howItWorksSubtitle: "Manage your inventory efficiently with StockGuard",
+                howItWorksSubtitle: "Manage your inventory efficiently with Saamagrii.AI",
                 step1Title: "Send Voice Note",
                 step1Text: "Update purchases or sales via WhatsApp voice message in your language.",
                 step2Title: "Instant Update",
@@ -1287,26 +1580,38 @@
                 feature16: "Dedicated account manager",
                 feature17: "24/7 support",
                 testimonialsTitle: "What Shopkeepers Say",
-                testimonialsSubtitle: "Hear from Indian Kirana owners using StockGuard",
-                testimonial1: "\"StockGuard reduced my expired goods by 40%! The voice note system is perfect for busy shopkeepers like me who don't have time for complex software.\"",
+                testimonialsSubtitle: "Hear from Indian Kirana owners using Saamagrii.AI",
+                testimonial1: "\"Saamagrii.AI reduced my expired goods by 40%! The voice note system is perfect for busy shopkeepers like me who don't have time for complex software.\"",
                 client1Name: "Rajesh Kumar",
                 client1Store: "Grocery Store, Delhi",
                 testimonial2: "\"The bundled offer suggestions helped me clear old stock quickly. I made ₹8,000 extra in a month that would have been dead loss!\"",
                 client2Name: "Priya Sharma",
                 client2Store: "General Store, Mumbai",
-                testimonial3: "\"As a 55-year-old shopkeeper, I was worried about technology. But WhatsApp I know! StockGuard made inventory management so simple.\"",
+                testimonial3: "\"As a 55-year-old shopkeeper, I was worried about technology. But WhatsApp I know! Saamagrii.AI made inventory management so simple.\"",
                 client3Name: "Vijay Patel",
                 client3Store: "Kirana Store, Ahmedabad",
                 ctaTitle: "Ready to Reduce Your Dead Stock?",
-                ctaSubtitle: "Join thousands of Indian shopkeepers who are saving money and reducing waste with StockGuard",
-                ctaBtn: "Start Free Trial on WhatsApp",
-                footerAbout: "About StockGuard",
-                footerAboutText: "StockGuard helps Indian shopkeepers reduce dead stock and increase profits through simple WhatsApp-based inventory management.",
+                ctaSubtitle: "Join thousands of Indian shopkeepers who are saving money and reducing waste with Saamagrii.AI",
+                ctaBtn: "Enroll Now",
+                footerAbout: "About Saamagrii.AI",
+                footerAboutText: "Saamagrii.AI helps Indian shopkeepers reduce dead stock and increase profits through simple WhatsApp-based inventory management.",
                 footerLinks: "Quick Links",
                 footerFaq: "FAQ",
                 footerContact: "Contact Us",
                 footerAddress: "Gurgaon, India",
-                footerCopyright: "Copyright@2025 StockGuard. All Rights Reserved. | Designed with ❤️ for Indian Shopkeepers"
+                footerCopyright: "Copyright@2025 Saamagrii.AI. All Rights Reserved. | Designed with ❤️ for Indian Shopkeepers",
+                modalTitle: "Enroll with Saamagrii.AI",
+                modalSubtitle: "Fill in your details to get started with our inventory management system",
+                mobileLabel: "Mobile Number *",
+                shopNameLabel: "Shop Name *",
+                stateLabel: "State *",
+                countryLabel: "Country *",
+                submitBtn: "Submit Enrollment",
+                thankYouTitle: "Thank You for Enrolling!",
+                thankYouText: "Your enrollment details have been submitted successfully. Our team will review your information and send you an activation code shortly.",
+                whatsappHelpTitle: "Need Help or Have Questions?",
+                whatsappHelpText: "Feel free to reach out to us on WhatsApp for any assistance or if you need your activation code urgently.",
+                whatsappHelpText2: "Just send a message saying \"I need help with Saamagrii.AI\" and our team will assist you."
             },
             hi: {
                 navFeatures: "विशेषताएँ",
@@ -1314,9 +1619,9 @@
                 navPricing: "मूल्य निर्धारण",
                 navTestimonials: "प्रशंसापत्र",
                 navContact: "संपर्क करें",
-                heroTitle: "व्हाट्सएप वॉइस नोट्स के साथ मृत स्टॉक कम करें व्हाट्सएप वॉइस नोट्स",
-                heroText: "स्टॉकगार्ड भारतीय दुकानदारों को व्हाट्सएप का उपयोग करके इन्वेंट्री प्रबंधित करने, कचरे को कम करने और मुनाफा बढ़ाने में मदद करता है - कोई ऐप इंस्टॉल करने की आवश्यकता नहीं, कोई जटिल सॉफ्टवेयर सीखने की आवश्यकता नहीं!",
-                whatsappBtn: "व्हाट्सएप पर परीक्षण करें",
+                heroTitle: "व्हाट्सएप वॉइस नोट्स के साथ मृत स्टॉक कम करें",
+                heroText: "सामग्री.एआई भारतीय दुकानदारों को व्हाट्सएप का उपयोग करके इन्वेंट्री प्रबंधित करने, कचरा कम करने और मुनाफा बढ़ाने में मदद करता है - कोई ऐप इंस्टॉल करने की आवश्यकता नहीं, कोई जटिल सॉफ्टवेयर सीखने की आवश्यकता नहीं!",
+                whatsappBtn: "व्हाट्सएप डेमो",
                 enrollBtn: "अभी नामांकन करें",
                 featuresTitle: "किराना स्टोर के लिए शक्तिशाली सुविधाएँ",
                 featuresSubtitle: "भारतीय दुकानदारों के लिए विशेष रूप से डिज़ाइन किया गया ताकि समय बचाया जा सके और इन्वेंट्री कचरा कम किया जा सके",
@@ -1326,8 +1631,14 @@
                 feature2Text: "वर्तमान स्टॉक स्तरों के साथ अपने इन्वेंट्री अपडेट की तुरंत पुष्टि प्राप्त करें। अब कोई मैन्युअल ट्रैकिंग या अनुमान नहीं।",
                 feature3Title: "मृत स्टॉक अलर्ट",
                 feature3Text: "धीमी गति से बिकने वाली वस्तुओं के लिए उनके एक्सपायर होने से पहले स्वचालित अलर्ट प्राप्त करें। स्टॉक साफ़ करने के लिए बंडल ऑफर के स्मार्ट सुझाव प्राप्त करें।",
+                feature4Title: "ऑन-डिमांड सारांश",
+                feature4Text: "व्हाट्सएप पर \"सारांश\" भेजकर किसी भी समय अपने इन्वेंट्री का संक्षिप्त सारांश प्राप्त करें। एक नज़र में अपने स्टॉक स्तर जानें।",
+                feature5Title: "दैनिक लंबा सारांश",
+                feature5Text: "प्रत्येक सुबह अपने इन्वेंट्री मूवमेंट, बिक्री और एक्सपायर हो रहे आइटम्स का विस्तृत दैनिक सारांश प्राप्त करें।",
+                feature6Title: "कार्रवाई योग्य अंतर्दृष्टि",
+                feature6Text: "अपनी इन्वेंट्री स्थिति के आधार पर व्यक्तिगत अनुशंसाएँ प्राप्त करें। क्या रीऑर्डर करना है, डिस्काउंट देना है या बंडल करना है, इस पर सुझाव।",
                 howItWorksTitle: "सरल 4-चरण प्रक्रिया",
-                howItWorksSubtitle: "स्टॉकगार्ड के साथ अपनी इन्वेंट्री को कुशलता से प्रबंधित करें",
+                howItWorksSubtitle: "सामग्री.एआई के साथ अपनी इन्वेंट्री को कुशलता से प्रबंधित करें",
                 step1Title: "वॉइस नोट भेजें",
                 step1Text: "व्हाट्सएप वॉइस संदेश के माध्यम से अपनी भाषा में खरीद या बिक्री अपडेट करें।",
                 step2Title: "तुरंत अपडेट",
@@ -1346,12 +1657,12 @@
                 pricingEnroll: "अभी नामांकन करें",
                 feature1: "असीमित वॉइस अपडेट",
                 feature2: "रियल-टाइम इन्वेंट्री ट्रैकिंग",
-                feature3: "दैनिक सारांश (ऑप्ट-इन)",
+                feature3: "दैनिक सारांश (वैकल्पिक)",
                 feature4: "मृत स्टॉक अलर्ट",
                 feature5: "व्हाट्सएप समर्थन",
                 feature6: "सभी बेसिक सुविधाएँ",
                 feature7: "स्मार्ट बंडल ऑफर",
-                feature8: "एक्सपायरी भविष्यवाणी अलर्ट",
+                feature8: "एक्सपायरी पूर्वानुमान अलर्ट",
                 feature9: "बिक्री विश्लेषण रिपोर्ट",
                 feature10: "प्राथमिकता समर्थन",
                 feature11: "बहु-उपयोगकर्ता पहुंच",
@@ -1362,37 +1673,328 @@
                 feature16: "समर्पित खाता प्रबंधक",
                 feature17: "24/7 समर्थन",
                 testimonialsTitle: "दुकानदार क्या कहते हैं",
-                testimonialsSubtitle: "स्टॉकगार्ड का उपयोग करने वाले भारतीय किराना मालिकों से सुनें",
-                testimonial1: "\"स्टॉकगार्ड ने मेरे एक्सपायर्ड सामान को 40% तक कम कर दिया! वॉइस नोट सिस्टम व्यस्त दुकानदारों जैसे मेरे लिए बिल्कुल सही है जिनके पास जटिल सॉफ्टवेयर के लिए समय नहीं है।\"",
+                testimonialsSubtitle: "सामग्री.एआई का उपयोग करने वाले भारतीय किराना मालिकों से सुनें",
+                testimonial1: "\"सामग्री.एआई ने मेरे एक्सपायर्ड सामान को 40% तक कम कर दिया! वॉइस नोट सिस्टम व्यस्त दुकानदारों जैसे मेरे लिए बिल्कुल सही है जिनके पास जटिल सॉफ्टवेयर के लिए समय नहीं है।\"",
                 client1Name: "राजेश कुमार",
                 client1Store: "किराना स्टोर, दिल्ली",
                 testimonial2: "\"बंडल ऑफर सुझावों ने मुझे पुराना स्टॉक जल्दी साफ करने में मदद की। मैंने एक महीने में ₹8,000 अतिरिक्त कमाए जो मृत हानि होती।\"",
                 client2Name: "प्रिया शर्मा",
                 client2Store: "जनरल स्टोर, मुंबई",
-                testimonial3: "\"55 वर्षीय दुकानदार के रूप में, मुझे तकनीक की चिंता थी। लेकिन व्हाट्सएप मैं जानता हूँ! स्टॉकगार्ड ने इन्वेंट्री प्रबंधन को इतना सरल बना दिया।\"",
+                testimonial3: "\"55 वर्षीय दुकानदार के रूप में, मुझे तकनीक की चिंता थी। लेकिन व्हाट्सएप मैं जानता हूँ! सामग्री.एआई ने इन्वेंट्री प्रबंधन को इतना सरल बना दिया।\"",
                 client3Name: "विजय पटेल",
                 client3Store: "किराना स्टोर, अहमदाबाद",
                 ctaTitle: "अपना मृत स्टॉक कम करने के लिए तैयार हैं?",
-                ctaSubtitle: "हजारों भारतीय दुकानदारों में शामिल हों जो स्टॉकगार्ड के साथ पैसा बचा रहे हैं और कचरा कम कर रहे हैं",
-                ctaBtn: "व्हाट्सएप पर निःशुल्क परीक्षण शुरू करें",
-                footerAbout: "स्टॉकगार्ड के बारे में",
-                footerAboutText: "स्टॉकगार्ड सरल व्हाट्सएप-आधारित इन्वेंट्री प्रबंधन के माध्यम से भारतीय दुकानदारों को मृत स्टॉक कम करने और मुनाफा बढ़ाने में मदद करता है।",
+                ctaSubtitle: "सामग्री.एआई के साथ पैसा बचा रहे हैं और कचरा कम कर रहे हैं ऐसे हजारों भारतीय दुकानदारों में शामिल हों",
+                ctaBtn: "अभी नामांकन करें",
+                footerAbout: "सामग्री.एआई के बारे में",
+                footerAboutText: "सामग्री.एआई सरल व्हाट्सएप-आधारित इन्वेंट्री प्रबंधन के माध्यम से भारतीय दुकानदारों को मृत स्टॉक कम करने और मुनाफा बढ़ाने में मदद करता है।",
                 footerLinks: "त्वरित लिंक",
                 footerFaq: "सामान्य प्रश्न",
                 footerContact: "हमसे संपर्क करें",
                 footerAddress: "गुड़गाँव, भारत",
-                footerCopyright: "Copyright@2025 स्टॉकगार्ड। सर्वाधिकार सुरक्षित। | भारतीय दुकानदारों के लिए ❤️ के साथ डिज़ाइन किया गया"
+                footerCopyright: "Copyright@2025 सामग्री.एआई। सर्वाधिकार सुरक्षित। | भारतीय दुकानदारों के लिए ❤️ के साथ डिज़ाइन किया गया",
+                modalTitle: "सामग्री.एआई के साथ नामांकन करें",
+                modalSubtitle: "हमारे इन्वेंट्री प्रबंधन सिस्टम के साथ शुरू करने के लिए अपना विवरण भरें",
+                mobileLabel: "मोबाइल नंबर *",
+                shopNameLabel: "दुकान का नाम *",
+                stateLabel: "राज्य *",
+                countryLabel: "देश *",
+                submitBtn: "नामांकन जमा करें",
+                thankYouTitle: "नामांकन के लिए धन्यवाद!",
+                thankYouText: "आपका नामांकन विवरण सफलतापूर्वक जमा कर दिया गया है। हमारी टीम आपकी जानकारी की समीक्षा करेगी और जल्द ही आपको एक एक्टिवेशन कोड भेजेगी।",
+                whatsappHelpTitle: "मदद चाहिए या कोई प्रश्न है?",
+                whatsappHelpText: "किसी भी सहायता के लिए या यदि आपको तुरंत अपना एक्टिवेशन कोड चाहिए तो हमें व्हाट्सएप पर संपर्क करने में संकोच न करें।",
+                whatsappHelpText2: "बस \"मुझे सामग्री.एआई में मदद चाहिए\" कहते हुए एक संदेश भेजें और हमारी टीम आपकी सहायता करेगी।"
+            },
+            hn: {
+                navFeatures: "फीचर्स",
+                navHowItWorks: "कैसे काम करता है",
+                navPricing: "प्राइसिंग",
+                navTestimonials: "टेस्टिमोनियल्स",
+                navContact: "कॉन्टैक्ट",
+                heroTitle: "WhatsApp वॉइस नोट्स से डेड स्टॉक कम करें",
+                heroText: "Saamagrii.AI भारतीय दुकानदारों को WhatsApp का उपयोग करके इन्वेंट्री मैनेज करने, कचरा कम करने और प्रॉफिट बढ़ाने में help करता है - कोई app install करने की जरूरत नहीं, कोई complicated software सीखने की जरूरत नहीं!",
+                whatsappBtn: "WhatsApp डेमो",
+                enrollBtn: "अभी Enroll करें",
+                featuresTitle: "किराना स्टोर्स के लिए Powerful फीचर्स",
+                featuresSubtitle: "खास तौर पर भारतीय दुकानदारों के लिए डिज़ाइन किया गया ताकि time बचे और इन्वेंट्री कचरा कम हो",
+                feature1Title: "वॉइस नोट अपडेट",
+                feature1Text: "हिंदी या आपकी local language में simple वॉइस नोट्स से इन्वेंट्री अपडेट करें। बस कहें \"10 Maggi packets खरीदे\" या \"5 Parle-G biscuits बेचे\"।",
+                feature2Title: "Instant Confirmation",
+                feature2Text: "अपने इन्वेंट्री अपडेट की immediate confirmation करेंट स्टॉक लेवल्स के साथ। अब कोई manual tracking या guesswork नहीं।",
+                feature3Title: "डेड स्टॉक अलर्ट्स",
+                feature3Text: "स्लो-मूविंग आइटम्स के लिए expire होने से पहले automatic अलर्ट्स पाएं। स्टॉक clear करने के लिए bundled offers के smart suggestions पाएं।",
+                feature4Title: "ऑन-डिमांड सारांश",
+                feature4Text: "WhatsApp पर \"सारांश\" भेजकर किसी भी time अपने इन्वेंट्री का short सारांश पाएं। एक नजर में अपने स्टॉक लेवल्स जानें।",
+                feature5Title: "डेली लॉन्ग सारांश",
+                feature5Text: "हर सुबह अपने इन्वेंट्री मूवमेंट्स, सेल्स और expire हो रहे आइटम्स का detailed डेली सारांश पाएं।",
+                feature6Title: "Actionable इनसाइट्स",
+                feature6Text: "अपनी इन्वेंट्री सिचुएशन के आधार पर personalized रिकमेंडेशन्स पाएं। क्या reorder करना है, discount देना है या bundle करना है, इस पर suggestions।",
+                howItWorksTitle: "सिंपल 4-स्टेप प्रोसेस",
+                howItWorksSubtitle: "Saamagrii.AI के साथ अपनी इन्वेंट्री efficiently मैनेज करें",
+                step1Title: "वॉइस नोट भेजें",
+                step1Text: "WhatsApp वॉइस मैसेज से अपनी language में परचेस या सेल्स अपडेट करें।",
+                step2Title: "Instant अपडेट",
+                step2Text: "इन्वेंट्री रियल-टाइम में automatically अपडेट हो जाती है।",
+                step3Title: "Confirmation पाएं",
+                step3Text: "करेंट स्टॉक लेवल्स के साथ immediate confirmation पाएं।",
+                step4Title: "Smart अलर्ट्स पाएं",
+                step4Text: "डेड स्टॉक अलर्ट्स और bundled offer suggestions पाएं।",
+                pricingTitle: "अफॉर्डेबल प्राइसिंग प्लान्स",
+                pricingSubtitle: "अपनी दुकान के लिए best वर्क करने वाला प्लान चुनें। कोई hidden चार्जेस नहीं!",
+                basicPlan: "बेसिक प्लान",
+                proPlan: "प्रो प्लान",
+                businessPlan: "बिजनेस प्लान",
+                perMonth: "प्रति महीने",
+                popularTag: "MOST POPULAR",
+                pricingEnroll: "अभी Enroll करें",
+                feature1: "अनलिमिटेड वॉइस अपडेट्स",
+                feature2: "रियल-टाइम इन्वेंट्री ट्रैकिंग",
+                feature3: "डेली सारांश (ऑप्ट-इन)",
+                feature4: "डेड स्टॉक अलर्ट्स",
+                feature5: "WhatsApp सपोर्ट",
+                feature6: "सभी बेसिक फीचर्स",
+                feature7: "स्मार्ट bundled ऑफर्स",
+                feature8: "एक्सपायरी प्रेडिक्शन अलर्ट्स",
+                feature9: "सेल्स एनालिटिक्स रिपोर्ट्स",
+                feature10: "प्रायोरिटी सपोर्ट",
+                feature11: "मल्टी-यूजर एक्सेस",
+                feature12: "सभी प्रो फीचर्स",
+                feature13: "मल्टीपल स्टोर मैनेजमेंट",
+                feature14: "सप्लायर मैनेजमेंट",
+                feature15: "कस्टम रिपोर्टिंग",
+                feature16: "डेडिकेटेड अकाउंट मैनेजर",
+                feature17: "24/7 सपोर्ट",
+                testimonialsTitle: "दुकानदार क्या कहते हैं",
+                testimonialsSubtitle: "Saamagrii.AI यूज़ करने वाले भारतीय किराना ओनर्स से सुनें",
+                testimonial1: "\"Saamagrii.AI ने मेरे expired गुड्स को 40% कम कर दिया! वॉइस नोट सिस्टम बिजी दुकानदारों जैसे मेरे लिए perfect है जिनके पास complicated software के लिए time नहीं है।\"",
+                client1Name: "राजेश कुमार",
+                client1Store: "ग्रोसरी स्टोर, दिल्ली",
+                testimonial2: "\"Bundled offer suggestions ने मुझे old स्टॉक quickly clear करने में help की। मैंने एक महीने में ₹8,000 extra कमाए जो dead loss होता।\"",
+                client2Name: "प्रिया शर्मा",
+                client2Store: "जनरल स्टोर, मुंबई",
+                testimonial3: "\"55 साल के दुकानदार के रूप में, मुझे technology की चिंता थी। लेकिन WhatsApp मैं जानता हूँ! Saamagrii.AI ने इन्वेंट्री मैनेजमेंट इतना simple बना दिया।\"",
+                client3Name: "विजय पटेल",
+                client3Store: "किराना स्टोर, अहमदाबाद",
+                ctaTitle: "अपना डेड स्टॉक कम करने के लिए ready हैं?",
+                ctaSubtitle: "Saamagrii.AI के साथ पैसे बचा रहे और कचरा कम कर रहे ऐसे हजारों भारतीय दुकानदारों में शामिल हों",
+                ctaBtn: "अभी Enroll करें",
+                footerAbout: "Saamagrii.AI के बारे में",
+                footerAboutText: "Saamagrii.AI सिंपल WhatsApp-बेस्ड इन्वेंट्री मैनेजमेंट के जरिए भारतीय दुकानदारों को डेड स्टॉक कम करने और प्रॉफिट बढ़ाने में help करता है।",
+                footerLinks: "क्विक लिंक्स",
+                footerFaq: "FAQ",
+                footerContact: "हमसे कॉन्टैक्ट करें",
+                footerAddress: "गुड़गाँव, भारत",
+                footerCopyright: "Copyright@2025 Saamagrii.AI. ऑल राइट्स रिज़र्व्ड। | भारतीय दुकानदारों के लिए ❤️ से डिज़ाइन किया गया",
+                modalTitle: "Saamagrii.AI के साथ Enroll करें",
+                modalSubtitle: "हमारे इन्वेंट्री मैनेजमेंट सिस्टम के साथ शुरू करने के लिए अपनी डिटेल्स भरें",
+                mobileLabel: "मोबाइल नंबर *",
+                shopNameLabel: "दुकान का नाम *",
+                stateLabel: "राज्य *",
+                countryLabel: "देश *",
+                submitBtn: "Enrollment सबमिट करें",
+                thankYouTitle: "Enrollment के लिए धन्यवाद!",
+                thankYouText: "आपकी enrollment डिटेल्स successfully सबमिट की गई हैं। हमारी टीम आपकी इनफार्मेशन की review करेगी और जल्द ही आपको एक activation code भेजेगी।",
+                whatsappHelpTitle: "Help चाहिए या कोई सवाल है?",
+                whatsappHelpText: "किसी भी assistance के लिए या अगर आपको urgently अपना activation code चाहिए तो हमें WhatsApp पर contact करने में hesitate न करें।",
+                whatsappHelpText2: "बस \"मुझे Saamagrii.AI में help चाहिए\" कहते हुए एक मैसेज भेजें और हमारी टीम आपकी help करेगी।"
+            },
+            bn: {
+                navFeatures: "বৈশিষ্ট্য",
+                navHowItWorks: "এটি কিভাবে কাজ করে",
+                navPricing: "মূল্য নির্ধারণ",
+                navTestimonials: "প্রশংসাপত্র",
+                navContact: "যোগাযোগ করুন",
+                heroTitle: "WhatsApp ভয়েস নোট দিয়ে মৃত স্টক কমান",
+                heroText: "Saamagrii.AI ভারতীয় দোকানদারদের WhatsApp ব্যবহার করে ইনভেন্টরি পরিচালনা, বর্জ্য কমানো এবং মুনাফা বাড়ানোতে সাহায্য করে - ইনস্টল করার কোনো অ্যাপ নেই, শেখার কোনো জটিল সফটওয়্যার নেই!",
+                whatsappBtn: "WhatsApp ডেমো",
+                enrollBtn: "এখনই নাম নথিভুক্ত করুন",
+                featuresTitle: "কিরানা স্টোরের জন্য শক্তিশালী বৈশিষ্ট্য",
+                featuresSubtitle: "ভারতীয় দোকানদারদের সময় বাঁচাতে এবং ইনভেন্টরি বর্জ্য কমাতে বিশেষভাবে ডিজাইন করা হয়েছে",
+                feature1Title: "ভয়েস নোট আপডেট",
+                feature1Text: "হিন্দি বা আপনার স্থানীয় ভাষায় সহজ ভয়েস নোট দিয়ে ইনভেন্টরি আপডেট করুন। শুধু বলুন \"10 ম্যাগি প্যাকেট কিনেছি\" বা \"5 পার্লে-জি বিস্কুট বিক্রি করেছি\"।",
+                feature2Title: "তাত্ক্ষণিক নিশ্চিতকরণ",
+                feature2Text: "বর্তমান স্টক লেভেলের সাথে আপনার ইনভেন্টরি আপডেটের তাত্ক্ষণিক নিশ্চিতকরণ পান। আর কোনো ম্যানুয়াল ট্র্যাকিং বা অনুমান নেই।",
+                feature3Title: "মৃত স্টক সতর্কীকরণ",
+                feature3Text: "মেয়াদ শেষ হওয়ার আগে ধীরে বিক্রি হওয়া আইটেমগুলির জন্য স্বয়ংক্রিয় সতর্কীকরণ পান। স্টক পরিষ্কার করার জন্য বান্ডেল অফারের স্মার্ট পরামর্শ পান।",
+                feature4Title: "চাহিবা মাত্র সারসংক্ষেপ",
+                feature4Text: "WhatsApp এ \"সারসংক্ষেপ\" পাঠিয়ে যেকোনো সময় আপনার ইনভেন্টরির একটি সংক্ষিপ্ত সারসংক্ষেপ পান। এক নজরে আপনার স্টক লেভেল জানুন।",
+                feature5Title: "দৈনিক দীর্ঘ সারসংক্ষেপ",
+                feature5Text: "প্রতিদিন সকালে আপনার ইনভেন্টরি মুভমেন্ট, বিক্রি এবং মেয়াদ শেষ হওয়া আইটেমগুলির একটি বিস্তারিত দৈনিক সারসংক্ষেপ পান।",
+                feature6Title: "কার্যকরী অন্তর্দৃষ্টি",
+                feature6Text: "আপনার ইনভেন্টরি পরিস্থিতির উপর ভিত্তি করে ব্যক্তিগতকৃত সুপারিশ পান। কি পুনরায় অর্ডার করতে হবে, ছাড় দিতে হবে বা বান্ডেল করতে হবে, এই সম্পর্কে পরামর্শ।",
+                howItWorksTitle: "সহজ 4-ধাপ প্রক্রিয়া",
+                howItWorksSubtitle: "Saamagrii.AI দিয়ে আপনার ইনভেন্টরি কার্যকরভাবে পরিচালনা করুন",
+                step1Title: "ভয়েস নোট পাঠান",
+                step1Text: "আপনার ভাষায় WhatsApp ভয়েস বার্তা দিয়ে ক্রয় বা বিক্রি আপডেট করুন।",
+                step2Title: "তাত্ক্ষণিক আপডেট",
+                step2Text: "ইনভেন্টরি রিয়েল-টাইমে স্বয়ংক্রিয়ভাবে আপডেট হয়।",
+                step3Title: "নিশ্চিতকরণ পান",
+                step3Text: "বর্তমান স্টক লেভেলের সাথে তাত্ক্ষণিক নিশ্চিতকরণ পান।",
+                step4Title: "স্মার্ট সতর্কীকরণ পান",
+                step4Text: "মৃত স্টক সতর্কীকরণ এবং বান্ডেল অফার পরামর্শ পান।",
+                pricingTitle: "সাশ্রয়ী মূল্য পরিকল্পনা",
+                pricingSubtitle: "আপনার দোকানের জন্য সেরা কাজ করে এমন পরিকল্পনা বেছে নিন। কোনো লুকানো চার্জ নেই!",
+                basicPlan: "বেসিক প্ল্যান",
+                proPlan: "প্রো প্ল্যান",
+                businessPlan: "বিজনেস প্ল্যান",
+                perMonth: "প্রতি মাসে",
+                popularTag: "সবচেয়ে জনপ্রিয়",
+                pricingEnroll: "এখনই নাম নথিভুক্ত করুন",
+                feature1: "আনলিমিটেড ভয়েস আপডেট",
+                feature2: "রিয়েল-টাইম ইনভেন্টরি ট্র্যাকিং",
+                feature3: "দৈনিক সারসংক্ষেপ (ঐচ্ছিক)",
+                feature4: "মৃত স্টক সতর্কীকরণ",
+                feature5: "WhatsApp সমর্থন",
+                feature6: "সব বেসিক বৈশিষ্ট্য",
+                feature7: "স্মার্ট বান্ডেল অফার",
+                feature8: "মেয়াদ শেষ হওয়ার পূর্বাভাস সতর্কীকরণ",
+                feature9: "বিক্রি বিশ্লেষণ প্রতিবেদন",
+                feature10: "অগ্রাধিকার সমর্থন",
+                feature11: "মাল্টি-ইউজার অ্যাক্সেস",
+                feature12: "সব প্রো বৈশিষ্ট্য",
+                feature13: "মাল্টিপল স্টোর ম্যানেজমেন্ট",
+                feature14: "সরবরাহকারী ব্যবস্থাপনা",
+                feature15: "কাস্টম রিপোর্টিং",
+                feature16: "নিবেদিত অ্যাকাউন্ট ম্যানেজার",
+                feature17: "24/7 সমর্থন",
+                testimonialsTitle: "দোকানদার কি বলেন",
+                testimonialsSubtitle: "Saamagrii.AI ব্যবহারকারী ভারতীয় কিরানা মালিকদের কাছ থেকে শুনুন",
+                testimonial1: "\"Saamagrii.AI আমার মেয়াদ উত্তীর্ণ পণ্য 40% কমিয়ে দিয়েছে! ভয়েস নোট সিস্টেম আমার মতো ব্যস্ত দোকানদারদের জন্য নিখুঁত, যাদের জটিল সফটওয়্যারের জন্য সময় নেই।\"",
+                client1Name: "রাজেশ কুমার",
+                client1Store: "গ্রোসারি স্টোর, দিল্লি",
+                testimonial2: "\"বান্ডেল অফার পরামর্শগুলি আমাকে পুরানো স্টক দ্রুত পরিষ্কার করতে সাহায্য করেছে। আমি এক মাসে ₹8,000 অতিরিক্ত উপার্জন করেছি যা মৃত ক্ষতি হত।\"",
+                client2Name: "প্রিয়া শর্মা",
+                client2Store: "জেনারেল স্টোর, মুম্বাই",
+                testimonial3: "\"55 বছর বয়সী দোকানদার হিসাবে, আমি প্রযুক্তি নিয়ে চিন্তিত ছিলাম। কিন্তু WhatsApp আমি জানি! Saamagrii.AI ইনভেন্টরি ব্যবস্থাপনা এত সহজ করে দিয়েছে।\"",
+                client3Name: "বিজয় প্যাটেল",
+                client3Store: "কিরানা স্টোর, আহমেদাবাদ",
+                ctaTitle: "আপনার মৃত স্টক কমাতে প্রস্তুত?",
+                ctaSubtitle: "Saamagrii.AI দিয়ে টাকা বাঁচাচ্ছেন এবং বর্জ্য কমাচ্ছেন এমন হাজার হাজার ভারতীয় দোকানদারদের সাথে যোগ দিন",
+                ctaBtn: "এখনই নাম নথিভুক্ত করুন",
+                footerAbout: "Saamagrii.AI সম্পর্কে",
+                footerAboutText: "Saamagrii.AI সহজ WhatsApp-ভিত্তিক ইনভেন্টরি ব্যবস্থাপনার মাধ্যমে ভারতীয় দোকানদারদের মৃত স্টক কমাতে এবং মুনাফা বাড়াতে সাহায্য করে।",
+                footerLinks: "দ্রুত লিঙ্ক",
+                footerFaq: "সাধারণ প্রশ্ন",
+                footerContact: "আমাদের সাথে যোগাযোগ করুন",
+                footerAddress: "গুড়গাঁও, ভারত",
+                footerCopyright: "কপিরাইট@2025 Saamagrii.AI। সর্বস্বত্ব সংরক্ষিত। | ভারতীয় দোকানদারদের জন্য ❤️ দিয়ে ডিজাইন করা",
+                modalTitle: "Saamagrii.AI এর সাথে নাম নথিভুক্ত করুন",
+                modalSubtitle: "আমাদের ইনভেন্টরি ব্যবস্থাপনা সিস্টেমের সাথে শুরু করতে আপনার বিবরণ পূরণ করুন",
+                mobileLabel: "মোবাইল নম্বর *",
+                shopNameLabel: "দোকানের নাম *",
+                stateLabel: "রাজ্য *",
+                countryLabel: "দেশ *",
+                submitBtn: "নাম নথিভুক্ত করুন",
+                thankYouTitle: "নাম নথিভুক্ত করার জন্য ধন্যবাদ!",
+                thankYouText: "আপনার নাম নথিভুক্ত বিবরণ সফলভাবে জমা দেওয়া হয়েছে। আমাদের দল আপনার তথ্য পর্যালোচনা করবে এবং শীঘ্রই আপনাকে একটি সক্রিয়ন কোড পাঠাবে।",
+                whatsappHelpTitle: "সাহায্য প্রয়োজন বা কোনো প্রশ্ন আছে?",
+                whatsappHelpText: "যেকোনো সহায়তার জন্য বা আপনার সক্রিয়ন কোড জরুরি প্রয়োজন হলে WhatsApp এ আমাদের সাথে যোগাযোগ করতে দ্বিধা করবেন না।",
+                whatsappHelpText2: "শুধু \"Saamagrii.AI এ আমার সাহায্য প্রয়োজন\" বলে একটি বার্তা পাঠান এবং আমাদের দল আপনাকে সাহায্য করবে।"
+            },
+            mr: {
+                navFeatures: "वैशिष्ट्ये",
+                navHowItWorks: "हे कसे काम करते",
+                navPricing: "किंमत",
+                navTestimonials: "प्रतिक्रिया",
+                navContact: "संपर्क साधा",
+                heroTitle: "WhatsApp व्हॉईस नोट्ससह डेड स्टॉक कमी करा",
+                heroText: "सामग्री.एआय भारतीय दुकानदारांना व्हाट्सअॅप वापरून इन्व्हेंटरी व्यवस्थापित करण्यास, कचरा कमी करण्यास आणि नफा वाढवण्यास मदत करते - इंस्टॉल करण्यासाठी कोणतेही अॅप्स नाहीत, शिकण्यासाठी कोणतेही क्लिष्ट सॉफ्टवेअर नाही!",
+                whatsappBtn: "व्हाट्सअॅप डेमो",
+                enrollBtn: "आत्ताच नोंदणी करा",
+                featuresTitle: "किराणा स्टोअर्ससाठी शक्तिशाली वैशिष्ट्ये",
+                featuresSubtitle: "भारतीय दुकानदारांसाठी विशेषतः डिझाइन केलेले, वेळ वाचवण्यासाठी आणि इन्व्हेंट्री कचरा कमी करण्यासाठी",
+                feature1Title: "व्हॉईस नोट अद्यतने",
+                feature1Text: "हिंदी किंवा आपल्या स्थानिक भाषेत साध्या व्हॉईस नोट्ससह इन्व्हेंट्री अद्यतनित करा. फक्त \"10 मॅगी पॅकेट्स खरेदी केली\" किंवा \"5 पार्ले-जी बिस्किट्स विकली\" म्हणा.",
+                feature2Title: "तात्काळ पुष्टीकरण",
+                feature2Text: "वर्तमान स्टॉक पातळीसह आपल्या इन्व्हेंट्री अद्यतनाची त्वरित पुष्टी मिळवा. यापुढे कोणतेही मॅन्युअल ट्रॅकिंग किंवा अंदाज नाही.",
+                feature3Title: "डेड स्टॉक अलर्ट",
+                feature3Text: "हळूहळू हलणाऱ्या वस्तूंसाठी त्या कालबाह्य होण्यापूर्वी स्वयंचलित अलर्ट मिळवा. स्टॉक साफ करण्यासाठी स्मार्ट बंडल ऑफर सूचना मिळवा.",
+                feature4Title: "मागणीनुसार सारांश",
+                feature4Text: "व्हाट्सअॅपवर \"सारांश\" पाठवून कोणत्याही वेळी आपल्या इन्व्हेंट्रीचा लहान सारांश मिळवा. एका नजरेत आपले स्टॉक पातळी जाणून घ्या.",
+                feature5Title: "दैनिक लांब सारांश",
+                feature5Text: "प्रत्येक सकाळी आपल्या इन्व्हेंट्री मूव्हमेंट्स, विक्री आणि कालबाह्य होणाऱ्या वस्तूंचा तपशील दैनिक सारांश मिळवा.",
+                feature6Title: "कार्यक्षम अंतर्दृष्टी",
+                feature6Text: "आपल्या इन्व्हेंट्री परिस्थितीच्या आधारावर वैयक्तिकृत शिफारस मिळवा. पुन्हा ऑर्डर करण्यासाठी, सूट देण्यासाठी किंवा बंडल करण्यासाठी शिफारस.",
+                howItWorksTitle: "सोपे 4-पायरी प्रक्रिया",
+                howItWorksSubtitle: "सामग्री.एआयसह आपली इन्व्हेंट्री कार्यक्षमतेने व्यवस्थापित करा",
+                step1Title: "व्हॉईस नोट पाठवा",
+                step1Text: "व्हाट्सअॅप व्हॉईस मेसेजद्वारे आपल्या भाषेत खरेदी किंवा विक्री अद्यतनित करा.",
+                step2Title: "तात्काळ अद्यतन",
+                step2Text: "इन्व्हेंट्री रिअल-टाइममध्ये स्वयंचलितपणे अद्यतनित होते.",
+                step3Title: "पुष्टीकरण मिळवा",
+                step3Text: "वर्तमान स्टॉक पातळीसह त्वरित पुष्टीकरण मिळवा.",
+                step4Title: "स्मार्ट अलर्ट मिळवा",
+                step4Text: "डेड स्टॉक अलर्ट आणि बंडल ऑफर सूचना मिळवा.",
+                pricingTitle: "स्वस्त किंमतीचे योजना",
+                pricingSubtitle: "आपल्या दुकानासाठी सर्वोत्तम कार्य करणारी योजना निवडा. लपवलेले शुल्क नाही!",
+                basicPlan: "मूलभूत योजना",
+                proPlan: "प्रो योजना",
+                businessPlan: "व्यवसाय योजना",
+                perMonth: "दर महिन्याला",
+                popularTag: "सर्वात लोकप्रिय",
+                pricingEnroll: "आत्ताच नोंदणी करा",
+                feature1: "अमर्यादित व्हॉईस अद्यतने",
+                feature2: "रिअल-टाइम इन्व्हेंट्री ट्रॅकिंग",
+                feature3: "दैनिक सारांश (ऑप्ट-इन)",
+                feature4: "डेड स्टॉक अलर्ट",
+                feature5: "व्हाट्सअॅप समर्थन",
+                feature6: "सर्व मूलभूत वैशिष्ट्ये",
+                feature7: "स्मार्ट बंडल ऑफर",
+                feature8: "कालबाह्यता अंदाज अलर्ट",
+                feature9: "विक्री विश्लेषण अहवाल",
+                feature10: "प्राधान्य समर्थन",
+                feature11: "मल्टी-यूजर प्रवेश",
+                feature12: "सर्व प्रो वैशिष्ट्ये",
+                feature13: "एकाधिक स्टोअर व्यवस्थापन",
+                feature14: "पुरवठादार व्यवस्थापन",
+                feature15: "सानुकूल अहवाल",
+                feature16: "समर्पित खाते व्यवस्थापक",
+                feature17: "24/7 समर्थन",
+                testimonialsTitle: "दुकानदार काय म्हणतात",
+                testimonialsSubtitle: "सामग्री.एआय वापरणाऱ्या भारतीय किराणा मालकांकडून ऐका",
+                testimonial1: "\"सामग्री.एआयने माझे कालबाह्य माल 40% ने कमी केले! व्हॉईस नोट सिस्टम माझ्यासारख्या व्यस्त दुकानदारांसाठी परिपूर्ण आहे ज्यांना क्लिष्ट सॉफ्टवेअरसाठी वेळ नसतो.\"",
+                client1Name: "राजेश कुमार",
+                client1Store: "किराणा दुकान, दिल्ली",
+                testimonial2: "\"बंडल ऑफर सूचनांनी जुन्या स्टॉकला पटकन साफ करण्यास मदत केली. मी एका महिन्यात ₹8,000 अतिरिक्त कमावले जे डेड लॉस झाले असते!\"",
+                client2Name: "प्रिया शर्मा",
+                client2Store: "सामान्य दुकान, मुंबई",
+                testimonial3: "\"55 वर्षांचा दुकानदार म्हणून, मला तंत्रज्ञानाची काळजी होती. पण व्हाट्सअॅप मला माहित आहे! सामग्री.एआयने इन्व्हेंट्री व्यवस्थापन इतके सोपे केले.\"",
+                client3Name: "विजय पाटील",
+                client3Store: "किराणा दुकान, अहमदाबाद",
+                ctaTitle: "आपला डेड स्टॉक कमी करण्यासाठी तयार आहात?",
+                ctaSubtitle: "सामग्री.एआयसह पैसे वाचवणाऱ्या आणि कचरा कमी करणाऱ्या हजारो भारतीय दुकानदारांमध्ये सामील व्हा",
+                ctaBtn: "आत्ताच नोंदणी करा",
+                footerAbout: "सामग्री.एआय बद्दल",
+                footerAboutText: "सामग्री.एआय साध्या व्हाट्सअॅप-आधारित इन्व्हेंट्री व्यवस्थापनाद्वारे भारतीय दुकानदारांना डेड स्टॉक कमी करण्यास आणि नफा वाढवण्यास मदत करते.",
+                footerLinks: "द्रुत दुवे",
+                footerFaq: "सामान्य प्रश्न",
+                footerContact: "आमच्याशी संपर्क साधा",
+                footerAddress: "गुड़गाँव, भारत",
+                footerCopyright: "Copyright@2025 सामग्री.एआय. सर्व हक्क राखीव. | भारतीय दुकानदारांसाठी ❤️ सह डिझाइन केलेले",
+                modalTitle: "सामग्री.एआयसह नोंदणी करा",
+                modalSubtitle: "आमच्या इन्व्हेंट्री व्यवस्थापन प्रणालीसह सुरु करण्यासाठी तुमचे तपशील भरा",
+                mobileLabel: "मोबाइल नंबर *",
+                shopNameLabel: "दुकानाचे नाव *",
+                stateLabel: "राज्य *",
+                countryLabel: "देश *",
+                submitBtn: "नोंदणी जमा करा",
+                thankYouTitle: "नोंदणीसाठी धन्यवाद!",
+                thankYouText: "तुमची नोंदणी तपशील यशस्वीरीपणे जमा झाली आहे. आमच्या टीम तुमची माहिती तपासतील आणि लवकरच तुम्हाला एक सक्रियन कोड पाठवेल.",
+                whatsappHelpTitle: "मदत हवी किंवा प्रश्न आहे का?",
+                whatsappHelpText: "कोणतीही मदत हवी असेल तर किंवा तुम्हाला तुमचा सक्रियन कोड लवकर हवा असेल तर आम्हाला व्हाट्सअॅपवर संपर्क करण्यास शंका घेऊ नका.",
+                whatsappHelpText2: "फक्त \"मला सामग्री.एआयमध्ये मदत हवी\" म्हणून एक संदेश पाठवा आणि आमची टीम तुम्हाली मदत करेल."
             },
             ta: {
                 navFeatures: "அம்சங்கள்",
                 navHowItWorks: "இது எவ்வாறு செயல்படுகிறது",
                 navPricing: "விலை நிர்ணயம்",
-                navTestimonials: "வாடிக்கையாளர் கருத்துகள்",
+                navTestimonials: "வாடிக்கையாளர் கருத்துக்கள்",
                 navContact: "தொடர்பு கொள்ள",
-                heroTitle: "வாட்ஸ்அப்பு குரல் குறிப்புகள் மூலம் இறந்த பங்கு குறைக்க வாட்ஸ்அப்பு குரல் குறிப்புகள்",
-                heroText: "ஸ்டாக்குகார்ட் இந்திய கடைக்காரர்களுக்கு வாட்ஸ்அப்பைப் பயன்படுத்தி சரக்கு மேலாண்மை செய்ய, கழிவுகளைக் குறைக்க, மற்றும் லாபத்தை அதிகரிக்க உதவுகிறது - நிறுவ வேண்டிய பயன்பாடுகள் இல்லை, கற்றுக்கொள்ள சிக்கலான மென்பொருள் தேவையில்லை!",
+                heroTitle: "வாட்ஸ்அப்பு குரல் குறிப்புகள் மூலம் இறந்த பங்கு குறைக்க",
+                heroText: "சாமக்ரிய்.ஏஐ இந்திய கடைக்காரர்களுக்கு வாட்ஸ்அப்பைப் பயன்படுத்தி சரக்கு மேலாண்மை செய்ய, கழிவுகளைக் குறைக்க, மற்றும் லாபத்தை அதிகரிக்க உதவுகிறது - நிறுவ வேண்டிய பயன்பாடுகள் இல்லை, கற்றுக்கொள்ள சிக்கலான மென்பொருள் தேவையில்லை!",
                 whatsappBtn: "வாட்ஸ்அப்பில் சோதிக்கவும்",
-                enrollBtn: "இப்போதே பதிவு செய்யவும்",
+                enrollBtn: "இப்போது பதிவு செய்யவும்",
                 featuresTitle: "கிரானா கடைகளுக்கான சக்திவாய்ந்த அம்சங்கள்",
                 featuresSubtitle: "இந்திய கடைக்காரர்களுக்காக குறிப்பாக வடிவமைக்கப்பட்டுள்ளது, நேரத்தைச் சேமிக்கவும் சரக்கு கழிவுகளைக் குறைக்கவும்",
                 feature1Title: "குரல் குறிப்பு புதுப்பிப்புகள்",
@@ -1401,10 +2003,16 @@
                 feature2Text: "தற்போதைய பங்கு நிலைகளுடன் உங்கள் சரக்கு புதுப்பிப்பின் உடனடி உறுதிப்பாட்டைப் பெறவும். இனி கைமுறை கண்காணிப்பு அல்லது யூகம் இல்லை.",
                 feature3Title: "இறந்த பங்கு எச்சரிக்கைகள்",
                 feature3Text: "மெதுவாக நகரும் பொருட்களுக்கு அவை காலாவதியாகும் முன் தானியங்கி எச்சரிக்கைகளைப் பெறவும். பங்கை அழிக்க பிணைக்கப்பட்ட சலுகைகளுக்கான ஸ்மார்ட் பரிந்துரைகளைப் பெறவும்.",
+                feature4Title: "தேவைக்கு ஏற்ப சுருக்கம்",
+                feature4Text: "வாட்ஸ்அப் குரல் செய்தியில் \"சுருக்கம்\" என்று அனுப்பி உங்கள் சரக்கின் குறுகிய சுருக்கத்தை எப்போதும் பெறவும். ஒரே பார்வையில் உங்கள் பங்கு நிலைகளை அறிந்து கொள்ளுங்கள்.",
+                feature5Title: "தினசரி நீண்ட சுருக்கம்",
+                feature5Text: "ஒவ்வொரு காலையும் உங்கள் சரக்கு இயக்கங்கள், விற்பனை மற்றும் காலாவதியாகும் பொருட்களின் விரிவான தினசரி சுருக்கத்தைப் பெறவும்.",
+                feature6Title: "செயல்படுத்தக்கூடிய நுண்ணுக்கங்கள்",
+                feature6Text: "உங்கள் சரக்கு நிலையின் அடிப்படையில் தனிப்பயனாக்கப்பட்ட பரிந்துரைகளைப் பெறவும். மீண்டும் ஆர்டர் செய்ய, தள்ளுதல் வழங்குதல் அல்லது பிணைக்கதல் தொடர்பான பரிந்துரைகள்.",
                 howItWorksTitle: "எளிய 4-படி செயல்முறை",
-                howItWorksSubtitle: "ஸ்டாக்குகார்டுடன் உங்கள் சரக்குகளை திறமையாக நிர்வகிக்கவும்",
+                howItWorksSubtitle: "சாமக்ரிய்.ஏஐ உடன் உங்கள் சரக்குகளை திறமையாக நிர்வகிக்கவும்",
                 step1Title: "குரல் குறிப்பை அனுப்பவும்",
-                step1Text: "வாட்ஸ்அப் குரல் செய்தி மூலம் உங்கள் மொழியில் கொள்முதல் அல்லது விற்பனையைப் புதுப்பிக்கவும்.",
+                step1Text: "வாட்ஸ்அப் குரல் செய்தியில் உங்கள் மொழியில் கொள்முதல் அல்லது விற்பனையைப் புதுப்பிக்கவும்.",
                 step2Title: "உடனடி புதுப்பிப்பு",
                 step2Text: "சரக்கு உண்மையான நேரத்தில் தானாகவே புதுப்பிக்கப்படும்.",
                 step3Title: "உறுதிப்பாட்டைப் பெறவும்",
@@ -1418,7 +2026,7 @@
                 businessPlan: "வணிக திட்டம்",
                 perMonth: "மாதத்திற்கு",
                 popularTag: "மிகவும் பிரபலமானது",
-                pricingEnroll: "இப்போதே பதிவு செய்யவும்",
+                pricingEnroll: "இப்போது பதிவு செய்யவும்",
                 feature1: "வரம்பற்ற குரல் புதுப்பிப்புகள்",
                 feature2: "உண்மையான நேர சரக்கு கண்காணிப்பு",
                 feature3: "தினசரி சுருக்கம் (விருப்பம்)",
@@ -1437,104 +2045,134 @@
                 feature16: "அர்ப்பணிக்கப்பட்ட கணக்கு மேலாளர்",
                 feature17: "24/7 ஆதரவு",
                 testimonialsTitle: "கடைக்காரர்கள் என்ன சொல்கிறார்கள்",
-                testimonialsSubtitle: "ஸ்டாக்குகார்டைப் பயன்படுத்தும் இந்திய கிரானா உரிமையாளர்களிடமிருந்து கேளுங்கள்",
-                testimonial1: "\"ஸ்டாக்குகார்ட் எனது காலாவதியான பொருட்களை 40% குறைத்தது! குரல் குறிப்பு முறை என்னைப் போன்ற பிஸியான கடைக்காரர்களுக்கு சிக்கலான மென்பொருளுக்கு நேரம் இல்லாதவர்களுக்கு சரியானது.\"",
+                testimonialsSubtitle: "சாமக்ரிய்.ஏஐ ஐப் பயன்படுத்தும் இந்திய கிரானா உரிமையாளர்களிடமிருந்து கேளுங்கள்",
+                testimonial1: "\"சாமக்ரிய்.ஏஐ எனது காலாவதியான பொருட்களை 40% குறைத்தது! குரல் குறிப்பு முறை என்னைப் போன்ற பிஸியான கடைக்காரர்களுக்கு சரியானது, அவர்களுக்கு சிக்கலான மென்பொருளுக்கு நேரம் இல்லை.\"",
                 client1Name: "ராஜேஷ் குமார்",
                 client1Store: "கிராகரி ஸ்டோர், டெல்லி",
-                testimonial2: "\"பிணைக்கப்பட்ட சலுகை பரிந்துரைகள் பழைய பங்கை விரைவாக அழிக்க எனக்கு உதவியது. மாதத்தில் ₹8,000 கூடுதல் சம்பாதித்தேன், இது இறந்த இழப்பாக இருந்திருக்கும்!\"",
+                testimonial2: "\"பிணைக்கப்பட்ட சலுகை பரிந்துரைகள் பழைய பங்கை விரைவாக அழிக்க எனக்கு உதவியது. ஒரு மாதத்தில் ₹8,000 கூடுதல் சம்பாதித்தேன், இது இறந்த இழப்பாக இருந்திருக்கும்!\"",
                 client2Name: "பிரியா சர்மா",
                 client2Store: "ஜெனரல் ஸ்டோர், மும்பை",
-                testimonial3: "\"55 வயது கடைக்காரராக, நான் தொழில்நுட்பத்தைப் பற்றி கவலைப்பட்டேன். ஆனால் வாட்ஸ்அப் எனக்குத் தெரியும்! ஸ்டாக்குகார்ட் சரக்கு மேலாண்மையை மிகவும் எளிதாக்கியது.\"",
+                testimonial3: "\"55 வயது கடைக்காரராக, நான் தொழில்நுட்பத்தைப் பற்றி கவலைப்பட்டேன். ஆனால் வாட்ஸ்அப் எனக்குத் தெரியும்! சாமக்ரிய்.ஏஐ சரக்கு மேலாண்மையை மிகவும் எளிதாக்கியது.\"",
                 client3Name: "விஜய் படேல்",
                 client3Store: "கிரானா ஸ்டோர், அகமதாபாத்",
-                ctaTitle: "உங்கள் இறந்த பங்கைக் குறைக்க தயாரா?",
-                ctaSubtitle: "ஸ்டாக்குகார்டுடன் பணத்தைச் சேமித்து கழிவுகளைக் குறைக்கும் ஆயிரக்கணக்கான இந்திய கடைக்காரர்களுடன் சேரவும்",
-                ctaBtn: "வாட்ஸ்அப்பில் இலவச சோதனையைத் தொடங்கவும்",
-                footerAbout: "ஸ்டாக்குகார்ட் பற்றி",
-                footerAboutText: "ஸ்டாக்குகார்ட் எளிய வாட்ஸ்அப்-சார்ந்த சரக்கு மேலாண்மை மூலம் இந்திய கடைக்காரர்களுக்கு இறந்த பங்கைக் குறைத்து லாபத்தை அதிகரிக்க உதவுகிறது.",
+                ctaTitle: "உங்கள் இறந்த பங்கைக் குறைக்கத் தயாரா?",
+                ctaSubtitle: "சாமக்ரிய்.ஏஐ உடன் பணத்தைச் சேமித்து கழிவுகளைக் குறைக்கும் ஆயிரக்கணக்கான இந்திய கடைக்காரர்களுடன் சேரவும்",
+                ctaBtn: "இப்போது பதிவு செய்யவும்",
+                footerAbout: "சாமக்ரிய்.ஏஐ பற்றி",
+                footerAboutText: "சாமக்ரிய்.ஏஐ எளிய வாட்ஸ்அப்-சார்ந்த சரக்கு மேலாண்மை மூலம் இந்திய கடைக்காரர்களுக்கு இறந்த பங்கைக் குறைத்து லாபத்தை அதிகரிக்க உதவுகிறது.",
                 footerLinks: "விரைவு இணைப்புகள்",
-                footerFaq: "அடிக்கடி கேட்கப்படும் கேள்விகள்",
+                footerFaq: "அடிக்கட்கப் கேள்விகள்",
                 footerContact: "எங்களை தொடர்பு கொள்ள",
                 footerAddress: "குருகான், இந்தியா",
-                footerCopyright: "Copyright@2025 ஸ்டாக்குகார்ட். அனைத்து உரிமைகளும் பாதுகாக்கப்பட்டவை. | இந்திய கடைக்காரர்களுக்காக ❤️ உடன் வடிவமைக்கப்பட்டது"
+                footerCopyright: "காப்பிரைட்டு@2025 சாமக்ரிய்.ஏஐ. அனைத்து உரிமைகளும் பாதுகாக்கப்பட்டவை. | இந்திய கடைக்காரர்களுக்காக ❤️ உடன் வடிவமைக்கப்பட்டது",
+                modalTitle: "சாமக்ரிய்.ஏஐ உடன் பதிவு செய்யவும்",
+                modalSubtitle: "எங்கள் சரக்கு மேலாண்மை அமைப்புடன் தொடங்க உங்கள் விவரங்களை நிரப்பவும்",
+                mobileLabel: "மொபைல் எண் *",
+                shopNameLabel: "கடை பெயர் *",
+                stateLabel: "மாநிலம் *",
+                countryLabel: "நாடு *",
+                submitBtn: "பதிவை சமர்ப்பு",
+                thankYouTitle: "பதிவு செய்ததற்கு நன்றி!",
+                thankYouText: "உங்கள் பதிவு விவரங்கள் வெற்றிகரமாக சமர்ப்பட்டன. எங்கள் குழு உங்கள் தகவலை மதிப்பாய்வு செய்து விரைவில் ஒரு செயல்படுத்த குறியீட்டை அனுப்பும்.",
+                whatsappHelpTitle: "உதவி தேவை அல்லது கேள்விகளா?",
+                whatsappHelpText: "எந்த உதவிக்கும் அல்லது உங்களுக்கு உங்கள் செயல்படுத்த குறியீடு தேவைப்பட்டால் எங்களை வாட்ஸ்அப்பில் தொடர்படுத்துக்கொள்ள தயங்கவும்.",
+                whatsappHelpText2: "நான் சாமக்ரிய்.ஏஐ உடன் உதவி தேவை\" என்று சொல்லும் ஒரு செய்தியை அனுப்பி, எங்கள் குழு உங்களுக்கு உதவும்."
             },
-            mr: {
-                navFeatures: "वैशिष्ट्ये",
-                navHowItWorks: "हे कसे काम करते",
-                navPricing: "किंमत",
-                navTestimonials: "प्रतिक्रिया",
-                navContact: "संपर्क साधा",
-                heroTitle: "व्हाट्सअॅप व्हॉईस नोट्ससह डेड स्टॉक कमी करा व्हाट्सअॅप व्हॉईस नोट्स",
-                heroText: "स्टॉकगार्ड भारतीय दुकानदारांना व्हाट्सअॅप वापरून इन्व्हेंटरी व्यवस्थापित करण्यास, कचरा कमी करण्यास आणि नफा वाढवण्यास मदत करते - इंस्टॉल करण्यासाठी कोणतेही अॅप्स नाहीत, शिकण्यासाठी कोणतेही क्लिष्ट सॉफ्टवेअर नाही!",
-                whatsappBtn: "व्हाट्सअॅपवर चाचणी घ्या",
-                enrollBtn: "आत्ताच नोंदणी करा",
-                featuresTitle: "किराणा स्टोअर्ससाठी शक्तिशाली वैशिष्ट्ये",
-                featuresSubtitle: "भारतीय दुकानदारांसाठी विशेषतः डिझाइन केलेले, वेळ वाचवण्यासाठी आणि इन्व्हेंटरी कचरा कमी करण्यासाठी",
-                feature1Title: "व्हॉईस नोट अद्यतने",
-                feature1Text: "हिंदी किंवा आपल्या स्थानिक भाषेत साध्या व्हॉईस नोट्ससह इन्व्हेंटरी अद्यतनित करा. फक्त \"10 मॅगी पॅकेट्स खरेदी केले\" किंवा \"5 पार्ले-जी बिस्किट्स विकले\" म्हणा.",
-                feature2Title: "तात्काळ पुष्टीकरण",
-                feature2Text: "वर्तमान स्टॉक पातळीसह आपल्या इन्व्हेंटरी अद्यतनाची त्वरित पुष्टी मिळवा. यापुढे कोणतेही मॅन्युअल ट्रॅकिंग किंवा अंदाज नाही.",
-                feature3Title: "डेड स्टॉक अलर्ट",
-                feature3Text: "हळूहळू हलणाऱ्या वस्तूंसाठी त्या कालबाह्य होण्यापूर्वी स्वयंचलित अलर्ट मिळवा. स्टॉक साफ करण्यासाठी स्मार्ट बंडल ऑफर सूचना मिळवा.",
-                howItWorksTitle: "सोपी 4-चरण प्रक्रिया",
-                howItWorksSubtitle: "स्टॉकगार्डसह आपली इन्व्हेंटरी कार्यक्षमतेने व्यवस्थापित करा",
-                step1Title: "व्हॉईस नोट पाठवा",
-                step1Text: "व्हाट्सअॅप व्हॉईस मेसेजद्वारे आपल्या भाषेत खरेदी किंवा विक्री अद्यतनित करा.",
-                step2Title: "तात्काळ अद्यतन",
-                step2Text: "इन्व्हेंटरी रिअल-टाइममध्ये स्वयंचलितपणे अद्यतनित होते.",
-                step3Title: "पुष्टीकरण मिळवा",
-                step3Text: "वर्तमान स्टॉक पातळीसह त्वरित पुष्टीकरण मिळवा.",
-                step4Title: "स्मार्ट अलर्ट मिळवा",
-                step4Text: "डेड स्टॉक अलर्ट आणि बंडल ऑफर सूचना मिळवा.",
-                pricingTitle: "स्वस्त किंमतीचे प्लॅन",
-                pricingSubtitle: "आपल्या दुकानासाठी सर्वोत्तम कार्य करणारी योजना निवडा. लपवलेले शुल्क नाही!",
-                basicPlan: "मूलभूत योजना",
-                proPlan: "प्रो योजना",
-                businessPlan: "व्यवसाय योजना",
-                perMonth: "दर महिन्याला",
-                popularTag: "सर्वात लोकप्रिय",
-                pricingEnroll: "आत्ताच नोंदणी करा",
-                feature1: "अमर्यादित व्हॉईस अद्यतने",
-                feature2: "रिअल-टाइम इन्व्हेंटरी ट्रॅकिंग",
-                feature3: "दैनिक सारांश (ऑप्ट-इन)",
-                feature4: "डेड स्टॉक अलर्ट",
-                feature5: "व्हाट्सअॅप समर्थन",
-                feature6: "सर्व मूलभूत वैशिष्ट्ये",
-                feature7: "स्मार्ट बंडल ऑफर",
-                feature8: "कालबाह्यता अंदाज अलर्ट",
-                feature9: "विक्री विश्लेषण अहवाल",
-                feature10: "प्राधान्य समर्थन",
-                feature11: "मल्टी-यूजर प्रवेश",
-                feature12: "सर्व प्रो वैशिष्ट्ये",
-                feature13: "एकाधिक स्टोअर व्यवस्थापन",
-                feature14: "पुरवठादार व्यवस्थापन",
-                feature15: "सानुकूल अहवाल",
-                feature16: "समर्पित खाते व्यवस्थापक",
-                feature17: "24/7 समर्थन",
-                testimonialsTitle: "दुकानदार काय म्हणतात",
-                testimonialsSubtitle: "स्टॉकगार्ड वापरणाऱ्या भारतीय किराणा मालकांकडून ऐका",
-                testimonial1: "\"स्टॉकगार्डने माझे कालबाह्य माल 40% ने कमी केला! व्हॉईस नोट सिस्टम माझ्यासारख्या व्यस्त दुकानदारांसाठी परिपूर्ण आहे ज्यांना क्लिष्ट सॉफ्टवेअरसाठी वेळ नसतो.\"",
-                client1Name: "राजेश कुमार",
-                client1Store: "किराणा दुकान, दिल्ली",
-                testimonial2: "\"बंडल ऑफर सूचनांनी जुन्या स्टॉकला पटकन साफ करण्यास मदत केली. मी एका महिन्यात ₹8,000 अतिरिक्त कमावले जे डेड लॉस झाले असते!\"",
-                client2Name: "प्रिया शर्मा",
-                client2Store: "सामान्य दुकान, मुंबई",
-                testimonial3: "\"55 वर्षांचा दुकानदार म्हणून, मला तंत्रज्ञानाची काळजी होती. पण व्हाट्सअॅप मला माहित आहे! स्टॉकगार्डने इन्व्हेंटरी व्यवस्थापन इतके सोपे केले.\"",
-                client3Name: "विजय पाटील",
-                client3Store: "किराणा दुकान, अहमदाबाद",
-                ctaTitle: "आपला डेड स्टॉक कमी करण्यासाठी तयार आहात?",
-                ctaSubtitle: "स्टॉकगार्डसह पैसे वाचवणाऱ्या आणि कचरा कमी करणाऱ्या हजारो भारतीय दुकानदारांमध्ये सामील व्हा",
-                ctaBtn: "व्हाट्सअॅपवर विनामूल्य चाचणी सुरू करा",
-                footerAbout: "स्टॉकगार्ड बद्दल",
-                footerAboutText: "स्टॉकगार्ड साध्या व्हाट्सअॅप-आधारित इन्व्हेंटरी व्यवस्थापनाद्वारे भारतीय दुकानदारांना डेड स्टॉक कमी करण्यास आणि नफा वाढवण्यास मदत करते.",
-                footerLinks: "द्रुत दुवे",
-                footerFaq: "सामान्य प्रश्न",
-                footerContact: "आमच्याशी संपर्क साधा",
-                footerAddress: "गुड़गाँव, भारत",
-                footerCopyright: "Copyright@2025 स्टॉकगार्ड. सर्व हक्क राखीव. | भारतीय दुकानदारांसाठी ❤️ सह डिझाइन केलेले"
+            te: {
+                navFeatures: "ఫీచర్లు",
+                navHowItWorks: "ఇది ఎలా పని చేస్తుంది",
+                navPricing: "ధర నిర్ధారణ",
+                navTestimonials: "టెస్టిమోనియల్స్",
+                navContact: "సంప్రదాయించండి",
+                heroTitle: "WhatsApp వాయిస్ నోట్లతో డెడ్ స్టాక్ తగ్గించండి",
+                heroText: "సామగ్రి.ఏఐ భారతీయ దుకాన్దారులకు WhatsApp ఉపయోగించి ఇన్వెంటరీని నిర్వహించడం, వ్యర్థను తగ్గించడం మరియు లాభాలను పెంచడంలో సహాయపడుతుంది - ఇన్స్టాల్ చేయాల్సిన యాప్‌లు లేవు, నేర్చుకోవలసిన క్లిష్ట్ సాఫ్ట్‌వేర్ లేదు!",
+                whatsappBtn: "WhatsApp డెమో",
+                enrollBtn: "ఇప్పుడే నమోదు చేయండి",
+                featuresTitle: "కిరానా స్టోర్ల కోసం శక్తివంతమైన ఫీచర్లు",
+                featuresSubtitle: "భారతీయ దుకాన్దారులు సమయాన్ని ఆదా చేయడానికి మరియు ఇన్వెంటరీ వ్యర్థను తగ్గించడానికి ప్రత్యేకంగా రూపొందించబడింది",
+                feature1Title: "వాయిస్ నోట్ అప్‌డేట్లు",
+                feature1Text: "హిందీ లేదా మీ స్థానిక భాషలో సాధారణ వాయిస్ నోట్లతో ఇన్వెంటరీని అప్‌డేట్ చేయండి. \"10 మాగీ ప్యాకెట్లు కొన్నాను\" లేదా \"5 పార్లే-జీ బిస్కెట్లు అమ్మాను\" అని చెప్పండి.",
+                feature2Title: "తక్షణ నిర్ధారణ",
+                feature2Text: "ప్రస్తుత స్టాక్ స్థాయిలతో మీ ఇన్వెంటరీ అప్‌డేట్ యొక్క తక్షణ నిర్ధారణ పొందండి. ఇకపై మాన్యువల్ ట్రాకింగ్ లేదా అంచనా లేదు.",
+                feature3Title: "డెడ్ స్టాక్ హెచ్చర్లు",
+                feature3Text: "వాటి గడువు ముగిసే ముందు నెమ్మదిగా అమ్మిన అంశాలకు స్వయంచాలిత హెచ్చర్లను పొందండండి. స్టాక్ క్లీన్ చేయడానికి బండిల్ ఆఫర్‌ల కోసం స్మార్ట్ సూచనలను పొందండండి.",
+                feature4Title: "డిమాండ్ సారాంశం",
+                feature4Text: "WhatsAppలో \"సారాంశం\" పంపి ఎప్పుడైనా మీ ఇన్వెంటరీ సంక్షిప్త సారాంశాన్ని పొందండండి. ఒక్క చూప్పుడే మీ స్టాక్ స్థాయిలను తెలుసుకోండి.",
+                feature5Title: "రోజు పొడవాటి సారాంశం",
+                feature5Text: "ప్�తి ఉదయం మీ ఇన్వెంటరీ కదలికలు, అమ్మింపులు మరియు గడువు ముగిసే అంశాల వివరమైన రోజు సారాంశాన్ని పొందండండి.",
+                feature6Title: "చర్యా చేయగల అంతర్దృష్టులు",
+                feature6Text: "మీ ఇన్వెంటరీ పరిస్థితి ఆధారంగా వ్యక్తిగత సిఫార్లను పొందండండి. ఏమి తిరిగి ఆర్డర్ చేయాలి, డిస్కౌంట్ ఇవ్వడం చేయాలి లేదా బండిల్ చేయాలి అనే సిఫార్లు.",
+                howItWorksTitle: "సులభమైన 4-దశ ప్రక్రియ",
+                howItWorksSubtitle: "సామగ్రి.ఏఐతో మీ ఇన్వెంటరీని సమర్థవంతంగా నిర్వహించండి",
+                step1Title: "వాయిస్ నోట్ పంపండి",
+                step1Text: "WhatsApp వాయిస్ సందేశం ద్వారా మీ భాషలో కొనుగోళ్ళు లేదా అమ్మింపులను అప్‌డేట్ చేయండి.",
+                step2Title: "తక్షణ అప్‌డేట్",
+                step2Text: "ఇన్వెంటరీ రియల్-టైమ్‌లో స్వయంచాలితంగా అప్‌డేట్ అవుతుంది.",
+                step3Title: "నిర్ధారణ పొందండి",
+                step3Text: "ప్రస్తుత స్టాక్ స్థాయిలతో తక్షణ నిర్ధారణ పొందండి.",
+                step4Title: "స్మార్ట్ హెచ్చర్లు పొందండి",
+                step4Text: "డెడ్ స్టాక్ హెచ్చర్లు మరియు బండిల్ ఆఫర్ సూచనలను పొందండి.",
+                pricingTitle: "సరసకరమైన ధర ప్లాన్లు",
+                pricingSubtitle: "మీ దుకానకు ఉత్తమైన పని చేసే ప్లాన్‌ను ఎంచుకోండి. దాచుకున్న ఛార్జీలు లేవు!",
+                basicPlan: "బేసిక్ ప్లాన్",
+                proPlan: "ప్రో ప్లాన్",
+                businessPlan: "బిజినెస్ ప్లాన్",
+                perMonth: "నెలకు",
+                popularTag: "అత్యంత ప్రాచుల్యమైనది",
+                pricingEnroll: "ఇప్పుడే నమోదు చేయండి",
+                feature1: "అపరిమితమైన వాయిస్ అప్‌డేట్లు",
+                feature2: "రియల్-టైమ్ ఇన్వెంటరీ ట్రాకింగ్",
+                feature3: "రోజు సారాంశం (ఐచ్ఛికం)",
+                feature4: "డెడ్ స్టాక్ హెచ్చర్లు",
+                feature5: "WhatsApp మద్దతు",
+                feature6: "అన్ని బేసిక్ ఫీచర్లు",
+                feature7: "స్మార్ట్ బండిల్ ఆఫర్లు",
+                feature8: "గడువు ముగింపు అంచన హెచ్చర్లు",
+                feature9: "అమ్మింపుల యానలిటిక్స్ నివేదికలు",
+                feature10: "ప్రాధాన్య మద్దతు",
+                feature11: "బహు-వినియోగదారు యాక్సెస్",
+                feature12: "అన్ని ప్రో ఫీచర్లు",
+                feature13: "బహుళ స్టోర్ మేనేజ్‌మెంట్",
+                feature14: "సరఫ్లయర్ మేనేజ్‌మెంట్",
+                feature15: "అనుకూల నివేదికలు",
+                feature16: "అంకితం ఖాతా నిర్వాహకుడు",
+                feature17: "24/7 మద్దతు",
+                testimonialsTitle: "దుకానదారులు ఏమి చెబుతున్నారు",
+                testimonialsSubtitle: "సామగ్రి.ఏఐని ఉపయోగించే భారతీయ కిరానా యజమానుల నుండి వినండి",
+                testimonial1: "\"సామగ్రి.ఏఐ నా గడువు ముగిన వస్తువులను 40% తగ్గించింది! వాయిస్ నోట్ సిస్టమ్ నాకు వంటి బిజీ దుకానదారులకు ఖచ్చితంగా ఉంది, వారికి క్లిష్ట్ సాఫ్ట్‌వేర్ కోసం సమయం లేదు.\"",
+                client1Name: "రాజేష్ కుమార్",
+                client1Store: "కిరాణా స్టోర్, ఢిల్లీ",
+                testimonial2: "\"బండిల్ ఆఫర్ సూచనలు నా పాత స్టాక్‌ను త్వరగా శుభ్రం చేయడంలో నాకు సహాయపడ్యాయి. నేను నెలకు ₹8,000 అదనపు సంపాదించాను, అది డెడ్ లాస్‌గా ఉండేది!\"",
+                client2Name: "ప్రియా శర్మ",
+                client2Store: "జనరల్ స్టోర్, ముంబై",
+                testimonial3: "\"55 ఏళ్ల వయస్కు చెందిన దుకానదారిగా, నాకు టెక్నాలజీ గురించి భయపడ్డాను. కానీ WhatsApp నాకు తెలుసుంది! సామగ్రి.ఏఐ ఇన్వెంటరీ మేనేజ్‌మెంట్‌ను చాలా తేలికగా చేసింది.\"",
+                client3Name: "విజయ్ పటేల్",
+                client3Store: "కిరాణా స్టోర్, అహ్మదాబాద్",
+                ctaTitle: "మీ డెడ్ స్టాక్‌ను తగ్గించుకోవడానికి సిద్ధంగా ఉన్నారా?",
+                ctaSubtitle: "సామగ్రి.ఏఐతో డబ్బులు ఆదా చేసే, వ్యర్థను తగ్గించే వేలాంటి వేలసిన భారతీయ దుకానదారులతో చేరండి",
+                ctaBtn: "ఇప్పుడే నమోదు చేయండి",
+                footerAbout: "సామగ్రి.ఏఐ గురించి",
+                footerAboutText: "సామగ్రి.ఏఐ సాధారణ WhatsApp-ఆధారిత ఇన్వెంటరీ మేనేజ్‌మెంట్ ద్వారా భారతీయ దుకానదారులకు డెడ్ స్టాక్‌ను తగ్గించి లాభాలను పెంచడంలో సహాయపడుతుంది.",
+                footerLinks: "త్వరణ లింకులు",
+                footerFaq: "తరచుగా అడిగే ప్రశ్నలు",
+                footerContact: "మా క్యాంటాక్ట్ చేయండి",
+                footerAddress: "గుర్గావ్, భారత్",
+                footerCopyright: "కాపీరైట్@2025 సామగ్రి.ఏఐ. అన్ని హక్కులు పరిరక్షించబడ్డాయి. | భారతీయ దుకానదారుల కోసం ❤️తో రూపొందించబడింది",
+                modalTitle: "సామగ్రి.ఏఐతో నమోదు చేయండి",
+                modalSubtitle: "మా ఇన్వెంటరీ మేనేజ్‌మెంట్ సిస్టమ్‌తో ప్రారంభించడానికి మీ వివరాలను నింపండి",
+                mobileLabel: "మొబైల్ నంబర్ *",
+                shopNameLabel: "దుకాన పేరు *",
+                stateLabel: "రాష్ట్రం *",
+                countryLabel: "దేశం *",
+                submitBtn: "నమోదును సమర్పించండి",
+                thankYouTitle: "నమోదు చేసినందుకు ధన్యవాదాలు!",
+                thankYouText: "మీ నమోదు వివరాలు విజయవంతంగా సమర్పించబడ్డాయి. మా బృందం మీ సమాచారాను సమీక్షించి, త్వరలోగా మీకు యాక్టివేషన్ కోడ్‌ను పంపుతుంది.",
+                whatsappHelpTitle: "సహాయం కావాలి లేదా ప్రశ్నలు ఉన్నాయా?",
+                whatsappHelpText: "ఏవైనా సహాయం కోసం లేదా మీకు మీ యాక్టివేషన్ కోడ్ అత్యవసరంగా కావాలంటే మాకు WhatsAppలో సంప్రదాయి చేయడాని సంకోచించకండి.",
+                whatsappHelpText2: "కేవలైనా \"నాకు సామగ్రి.ఏఐలో సహాయం కావాలి\" అని సందేశం పంపండి, మా బృందం మీకు సహాయపడుతుంది."
             }
         };
-
+        
         // Smooth scrolling for navigation links
         document.querySelectorAll('a[href^="#"]').forEach(anchor => {
             anchor.addEventListener('click', function (e) {
@@ -1550,24 +2188,62 @@
         document.querySelectorAll('.btn-whatsapp').forEach(button => {
             button.addEventListener('click', function(e) {
                 e.preventDefault();
-                alert('In the live version, this would open WhatsApp with our business number. Currently configured to: +919876543210');
+                alert('In the live version, this would open WhatsApp with our business number. Currently configured to: +919013283687');
             });
         });
         
-        // Enrollment button functionality
-        document.querySelectorAll('.btn-enroll').forEach(button => {
+        // Enrollment modal functionality
+        const enrollModal = document.getElementById('enrollModal');
+        const enrollBtns = document.querySelectorAll('#enrollBtn, #ctaEnrollBtn, .enroll-pricing');
+        const closeBtn = document.querySelector('.close');
+        const enrollForm = document.getElementById('enrollForm');
+        const thankYouPage = document.getElementById('thankYouPage');
+        
+        // Open modal when any enroll button is clicked
+        enrollBtns.forEach(button => {
             button.addEventListener('click', function(e) {
                 e.preventDefault();
-                // Scroll to pricing section
-                document.querySelector('#pricing').scrollIntoView({
-                    behavior: 'smooth'
-                });
-                
-                // In a real implementation, this would open a signup form
-                setTimeout(() => {
-                    alert('In the live version, this would open an enrollment form with payment options.');
-                }, 800);
+                enrollModal.style.display = 'block';
+                document.body.style.overflow = 'hidden'; // Prevent scrolling
             });
+        });
+        
+        // Close modal when close button is clicked
+        closeBtn.addEventListener('click', function() {
+            enrollModal.style.display = 'none';
+            document.body.style.overflow = 'auto'; // Enable scrolling
+        });
+        
+        // Close modal when clicking outside of modal content
+        window.addEventListener('click', function(event) {
+            if (event.target == enrollModal) {
+                enrollModal.style.display = 'none';
+                document.body.style.overflow = 'auto'; // Enable scrolling
+            }
+        });
+        
+        // Handle form submission
+        enrollForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Get form values
+            const mobile = document.getElementById('mobile').value;
+            const shopName = document.getElementById('shopName').value;
+            const state = document.getElementById('state').value;
+            const country = document.getElementById('country').value;
+            
+            // In a real implementation, you would send this data to a server
+            // For demo purposes, we'll just log it and show the thank you page
+            console.log('Enrollment submitted:', { mobile, shopName, state, country });
+            
+            // Hide modal and show thank you page
+            enrollModal.style.display = 'none';
+            document.body.style.overflow = 'auto'; // Enable scrolling
+            document.querySelector('.hero, .features, .how-it-works, .pricing, .testimonials, .cta-section, footer').style.display = 'none';
+            thankYouPage.style.display = 'block';
+            
+            // Scroll to top
+            window.scrollTo(0, 0);
         });
         
         // Mobile menu toggle
