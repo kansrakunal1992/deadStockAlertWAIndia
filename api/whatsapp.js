@@ -3496,6 +3496,8 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         `Welcome! I'm ready for your inventory update. You can send:
           • Voice message: "5kg sugar purchased"
           • Text message: "10 Parle-G sold"
+          • Get instant summary: "summary"
+          • Get detailed summary: "full summary"
           
           What would you like to update?`,
         greetingLang,
