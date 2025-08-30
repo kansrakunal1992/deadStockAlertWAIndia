@@ -31,6 +31,177 @@ const {
   deactivateUser
 } = require('../database');
 
+// Add this at the top of the file after the imports
+const fs = require('fs');
+const path = require('path');
+const SUMMARY_TRACK_FILE = path.join(__dirname, 'summary_tracker.json');
+
+// Add this function to track daily summaries
+function updateSummaryTracker(shopId, date) {
+  try {
+    let tracker = {};
+    
+    // Read existing tracker if it exists
+    if (fs.existsSync(SUMMARY_TRACK_FILE)) {
+      const data = fs.readFileSync(SUMMARY_TRACK_FILE, 'utf8');
+      tracker = JSON.parse(data);
+    }
+    
+    // Update tracker
+    tracker[shopId] = date;
+    
+    // Write back to file
+    fs.writeFileSync(SUMMARY_TRACK_FILE, JSON.stringify(tracker, null, 2));
+    
+    return true;
+  } catch (error) {
+    console.error('Error updating summary tracker:', error.message);
+    return false;
+  }
+}
+
+// Add this function to check if summary was already sent
+function wasSummarySent(shopId, date) {
+  try {
+    if (!fs.existsSync(SUMMARY_TRACK_FILE)) {
+      return false;
+    }
+    
+    const data = fs.readFileSync(SUMMARY_TRACK_FILE, 'utf8');
+    const tracker = JSON.parse(data);
+    
+    return tracker[shopId] === date;
+  } catch (error) {
+    console.error('Error checking summary tracker:', error.message);
+    return false;
+  }
+}
+
+// Add this function to send daily summaries
+async function sendDailySummaries() {
+  try {
+    console.log('Starting daily summary job...');
+    
+    // Get all shop IDs
+    const shopIds = await getAllShopIds();
+    console.log(`Found ${shopIds.length} shops to process`);
+    
+    if (shopIds.length === 0) {
+      console.log('No shops found to process');
+      return;
+    }
+    
+    // Get today's date in YYYY-MM-DD format
+    const today = new Date();
+    const dateStr = today.toISOString().split('T')[0];
+    
+    // Process shops with concurrency limit
+    const concurrencyLimit = 5;
+    const results = [];
+    
+    for (let i = 0; i < shopIds.length; i += concurrencyLimit) {
+      const batch = shopIds.slice(i, i + concurrencyLimit);
+      console.log(`Processing batch of ${batch.length} shops (${i + 1}-${i + batch.length} of ${shopIds.length})`);
+      
+      const batchPromises = batch.map(async (shopId) => {
+        try {
+          // Check if summary was already sent today
+          if (wasSummarySent(shopId, dateStr)) {
+            console.log(`Summary already sent for shop ${shopId} today`);
+            return { shopId, success: true, skipped: true };
+          }
+          
+          // Get user's preferred language
+          let userLanguage = 'en';
+          try {
+            const userPref = await getUserPreference(shopId);
+            if (userPref.success) {
+              userLanguage = userPref.language;
+            }
+          } catch (error) {
+            console.warn(`Failed to get user preference for shop ${shopId}:`, error.message);
+          }
+          
+          // Generate instant summary
+          const summary = await generateInstantSummary(shopId, userLanguage, `daily-${shopId}`);
+          
+          // Send summary
+          await sendMessageViaAPI(shopId, summary);
+          
+          // Update tracker
+          updateSummaryTracker(shopId, dateStr);
+          
+          return { shopId, success: true };
+        } catch (error) {
+          console.error(`Error processing shop ${shopId}:`, error.message);
+          return { shopId, success: false, error: error.message };
+        }
+      });
+      
+      const batchResults = await Promise.allSettled(batchPromises);
+      
+      // Process results
+      for (const result of batchResults) {
+        if (result.status === 'fulfilled') {
+          results.push(result.value);
+        } else {
+          console.error('Unexpected error in batch processing:', result.reason);
+        }
+      }
+      
+      // Add a small delay between batches to avoid rate limiting
+      if (i + concurrencyLimit < shopIds.length) {
+        console.log('Pausing between batches to avoid rate limiting...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+    
+    // Calculate success statistics
+    const successCount = results.filter(r => r.success && !r.skipped).length;
+    const skippedCount = results.filter(r => r.skipped).length;
+    const failureCount = results.filter(r => !r.success).length;
+    
+    console.log(`Daily summary job completed: ${successCount} sent, ${skippedCount} skipped, ${failureCount} failed`);
+    
+    return results;
+  } catch (error) {
+    console.error('Error in daily summary job:', error.message);
+    throw error;
+  }
+}
+
+// Schedule daily summary at 11 PM
+function scheduleDailySummary() {
+  const now = new Date();
+  const targetTime = new Date();
+  targetTime.setHours(23, 0, 0, 0); // 11 PM
+  
+  // If we've passed 11 PM today, schedule for tomorrow
+  if (now > targetTime) {
+    targetTime.setDate(targetTime.getDate() + 1);
+  }
+  
+  const msUntilTarget = targetTime - now;
+  
+  console.log(`Scheduling daily summary for ${targetTime.toISOString()} (in ${msUntilTarget}ms)`);
+  
+  setTimeout(() => {
+    sendDailySummaries()
+      .then(() => {
+        // Schedule for next day
+        scheduleDailySummary();
+      })
+      .catch(error => {
+        console.error('Daily summary job failed:', error.message);
+        // Retry in 1 hour
+        setTimeout(scheduleDailySummary, 60 * 60 * 1000);
+      });
+  }, msUntilTarget);
+}
+
+// Start the scheduler when the module loads
+scheduleDailySummary();
+
 // Performance tracking
 const responseTimes = {
   total: 0,
@@ -1207,6 +1378,318 @@ async function sendSystemMessage(message, from, detectedLanguage, requestId, res
     // Fallback to original message in English
     response.message(message);
     return message;
+  }
+}
+
+// Add these functions after the existing helper functions
+
+// Generate instant summary (concise, <300 words)
+async function generateInstantSummary(shopId, languageCode, requestId) {
+  try {
+    console.log(`[${requestId}] Generating instant summary for shop ${shopId}`);
+    
+    // Get today's sales data
+    const todaySales = await getTodaySalesSummary(shopId);
+    // Get inventory summary
+    const inventorySummary = await getInventorySummary(shopId);
+    // Get low stock products
+    const lowStockProducts = await getLowStockProducts(shopId, 5);
+    // Get expiring products
+    const expiringProducts = await getExpiringProducts(shopId, 7);
+    
+    // Format the summary
+    let summary = `📊 Today's Summary (${formatDateForDisplay(new Date())}):\n\n`;
+    
+    // Sales information
+    if (todaySales.totalItems > 0) {
+      summary += `💰 Sales: ${todaySales.totalItems} items`;
+      if (todaySales.totalValue > 0) {
+        summary += ` (₹${todaySales.totalValue.toFixed(2)})`;
+      }
+      summary += `\n`;
+      
+      if (todaySales.topProducts.length > 0) {
+        summary += `\n🛒 Top Sellers:\n`;
+        todaySales.topProducts.forEach(product => {
+          summary += `• ${product.name}: ${product.quantity} ${product.unit}\n`;
+        });
+      }
+    } else {
+      summary += `💰 No sales recorded today.\n`;
+    }
+    
+    // Low stock alerts
+    if (lowStockProducts.length > 0) {
+      summary += `\n⚠️ Low Stock Alerts:\n`;
+      lowStockProducts.forEach(product => {
+        summary += `• ${product.name}: Only ${product.quantity} ${product.unit} left\n`;
+      });
+    }
+    
+    // Expiry alerts
+    if (expiringProducts.length > 0) {
+      summary += `\n⏰ Expiring Soon:\n`;
+      expiringProducts.forEach(product => {
+        summary += `• ${product.name}: Expires on ${formatDateForDisplay(product.expiryDate)}\n`;
+      });
+    }
+    
+    // Generate multilingual response
+    return await generateMultiLanguageResponse(summary, languageCode, requestId);
+  } catch (error) {
+    console.error(`[${requestId}] Error generating instant summary:`, error.message);
+    
+    // Fallback error message in user's language
+    const errorMessage = `Sorry, I couldn't generate your summary right now. Please try again later.`;
+    return await generateMultiLanguageResponse(errorMessage, languageCode, requestId);
+  }
+}
+
+// Generate full-scale summary (detailed with AI insights)
+async function generateFullScaleSummary(shopId, languageCode, requestId) {
+  try {
+    console.log(`[${requestId}] Generating full-scale summary for shop ${shopId}`);
+    
+    // Get 30-day sales data
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const salesData = await getSalesDataForPeriod(shopId, thirtyDaysAgo, new Date());
+    // Get purchase data
+    const purchaseData = await getPurchaseDataForPeriod(shopId, thirtyDaysAgo, new Date());
+    // Get inventory summary
+    const inventorySummary = await getInventorySummary(shopId);
+    // Get low stock products
+    const lowStockProducts = await getLowStockProducts(shopId, 5);
+    // Get expiring products
+    const expiringProducts = await getExpiringProducts(shopId, 7);
+    
+    // Prepare data for AI analysis
+    const contextData = {
+      salesData,
+      purchaseData,
+      inventorySummary,
+      lowStockProducts,
+      expiringProducts,
+      period: "30 days"
+    };
+    
+    // Generate AI-powered insights
+    const insights = await generateSummaryInsights(contextData, languageCode, requestId);
+    
+    // Generate multilingual response
+    return insights;
+  } catch (error) {
+    console.error(`[${requestId}] Error generating full-scale summary:`, error.message);
+    
+    // Fallback error message in user's language
+    const errorMessage = `Sorry, I couldn't generate your detailed summary right now. Please try again later.`;
+    return await generateMultiLanguageResponse(errorMessage, languageCode, requestId);
+  }
+}
+
+// Generate AI-powered insights for full summary
+async function generateSummaryInsights(data, languageCode, requestId) {
+  try {
+    console.log(`[${requestId}] Generating AI insights for summary`);
+    
+    // Prepare prompt for AI
+    const prompt = `
+You are an inventory analysis assistant. Analyze the following shop data and provide insights in ${languageCode}.
+
+Sales Data (last 30 days):
+- Total items sold: ${data.salesData.totalItems || 0}
+- Total sales value: ₹${(data.salesData.totalValue || 0).toFixed(2)}
+- Top selling products: ${data.salesData.topProducts ? data.salesData.topProducts.map(p => `${p.name} (${p.quantity} ${p.unit})`).join(', ') : 'None'}
+
+Purchase Data (last 30 days):
+- Total items purchased: ${data.purchaseData.totalItems || 0}
+- Total purchase value: ₹${(data.purchaseData.totalValue || 0).toFixed(2)}
+- Most purchased products: ${data.purchaseData.topProducts ? data.purchaseData.topProducts.map(p => `${p.name} (${p.quantity} ${p.unit})`).join(', ') : 'None'}
+
+Current Inventory:
+- Total unique products: ${data.inventorySummary.totalProducts || 0}
+- Total inventory value: ₹${(data.inventorySummary.totalValue || 0).toFixed(2)}
+
+Low Stock Products:
+${data.lowStockProducts.length > 0 ? data.lowStockProducts.map(p => `- ${p.name}: ${p.quantity} ${p.unit} left`).join('\n') : 'None'}
+
+Expiring Products (next 7 days):
+${data.expiringProducts.length > 0 ? data.expiringProducts.map(p => `- ${p.name}: Expires on ${formatDateForDisplay(p.expiryDate)}`).join('\n') : 'None'}
+
+Provide a comprehensive analysis with:
+1. Sales trends and patterns
+2. Inventory performance
+3. Recommendations for restocking
+4. Suggestions for reducing waste
+5. Actionable insights for business growth
+
+Format your response in two parts:
+Part 1: Analysis in native script
+Part 2: Analysis in Roman script transliteration
+
+Keep the response under 500 words and focus on actionable insights.
+`;
+    
+    // Call AI API
+    const response = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: "deepseek-chat",
+        messages: [
+          {
+            role: "system",
+            content: "You are an expert inventory analyst providing concise, actionable insights for small business owners."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        max_tokens: 600,
+        temperature: 0.5
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000
+      }
+    );
+    
+    let insights = response.data.choices[0].message.content.trim();
+    
+    // Post-process to ensure proper formatting
+    insights = insights.replace(/\[Roman Script\]/gi, '');
+    insights = insights.replace(/\[Native Script\]/gi, '');
+    insights = insights.replace(/<translation in roman script>/gi, '');
+    insights = insights.replace(/<translation in native script>/gi, '');
+    insights = insights.replace(/^"(.*)"$/, '$1');
+    insights = insights.replace(/"/g, '');
+    insights = insights.replace(/\n\s*\n\s*\n/g, '\n\n');
+    insights = insights.replace(/^\s+|\s+$/g, '');
+    
+    return insights;
+  } catch (error) {
+    console.error(`[${requestId}] Error generating AI insights:`, error.message);
+    
+    // Fallback summary without AI
+    let fallbackSummary = `📊 30-Day Business Summary:\n\n`;
+    fallbackSummary += `💰 Sales: ${data.salesData.totalItems || 0} items (₹${(data.salesData.totalValue || 0).toFixed(2)})\n`;
+    fallbackSummary += `📦 Purchases: ${data.purchaseData.totalItems || 0} items (₹${(data.purchaseData.totalValue || 0).toFixed(2)})\n`;
+    fallbackSummary += `📋 Inventory: ${data.inventorySummary.totalProducts || 0} unique products (₹${(data.inventorySummary.totalValue || 0).toFixed(2)})\n`;
+    
+    if (data.lowStockProducts.length > 0) {
+      fallbackSummary += `\n⚠️ Low Stock: ${data.lowStockProducts.length} products need restocking\n`;
+    }
+    
+    if (data.expiringProducts.length > 0) {
+      fallbackSummary += `\n⏰ Expiring Soon: ${data.expiringProducts.length} products\n`;
+    }
+    
+    fallbackSummary += `\nConsider reviewing your sales patterns and inventory turnover for better business decisions.`;
+    
+    return await generateMultiLanguageResponse(fallbackSummary, languageCode, requestId);
+  }
+}
+
+// Add this function after the existing helper functions
+
+// Create interactive button menu
+async function createSummaryMenu(from, languageCode, requestId) {
+  try {
+    // Get user's preferred language
+    let userLanguage = languageCode;
+    
+    // Menu options in different languages
+    const menuOptions = {
+      'hi': {
+        instant: 'तत्काल सारांश',
+        full: 'विस्तृत सारांश',
+        instructions: 'कृपया एक विकल्प चुनें:'
+      },
+      'bn': {
+        instant: 'তাত্ক্ষণিক সারসংক্ষেপ',
+        full: 'বিস্তারিত সারসংক্ষেপ',
+        instructions: 'অনুগ্রহ করে একটি বিকল্প নির্বাচন করুন:'
+      },
+      'ta': {
+        instant: 'உடனடிச் சுருக்கம்',
+        full: 'விரிவான சுருக்கம்',
+        instructions: 'தயவுசெய்து ஒரு விருப்பத்தைத் தேர்ந்தெடுங்கள்:'
+      },
+      'te': {
+        instant: 'తక్షణ సారాంశం',
+        full: 'వివరణాత్మక సారాంశం',
+        instructions: 'దయచేసి ఒక ఎంపికను ఎంచుకోండి:'
+      },
+      'kn': {
+        instant: 'ತಕ್ಷಣ ಸಾರಾಂಶ',
+        full: 'ವಿಸ್ತೃತ ಸಾರಾಂಶ',
+        instructions: 'ದಯವಿಟ್ಟು ಒಂದು ಆಯ್ಕೆಯನ್ನು ಆರಿಸಿ:'
+      },
+      'gu': {
+        instant: 'તાત્કાલિક સારાંશ',
+        full: 'વિગતવાર સારાંશ',
+        instructions: 'કૃપા કરીને એક વિકલ્પ પસંદ કરો:'
+      },
+      'mr': {
+        instant: 'त्वरित सारांश',
+        full: 'तपशीलवार सारांश',
+        instructions: 'कृपया एक पर्याय निवडा:'
+      },
+      'en': {
+        instant: 'Instant Summary',
+        full: 'Detailed Summary',
+        instructions: 'Please select an option:'
+      }
+    };
+    
+    // Get options for user's language, fallback to English
+    const options = menuOptions[userLanguage] || menuOptions['en'];
+    
+    // Create menu message
+    let menuMessage = `📊 ${options.instructions}\n\n`;
+    menuMessage += `1️⃣ ${options.instant}\n`;
+    menuMessage += `2️⃣ ${options.full}\n\n`;
+    menuMessage += `You can also type "summary" for instant or "full summary" for detailed.`;
+    
+    // Generate multilingual response
+    const formattedMessage = await generateMultiLanguageResponse(menuMessage, userLanguage, requestId);
+    
+    // Create button message
+    const twiml = new twilio.twiml.MessagingResponse();
+    const messageObj = twiml.message();
+    messageObj.body(formattedMessage);
+    
+    // Add interactive buttons
+    const buttonsObj = messageObj.buttons();
+    buttonsObj.button({
+      action: {
+        type: 'reply',
+        reply: {
+          id: 'instant_summary',
+          title: options.instant
+        }
+      }
+    });
+    buttonsObj.button({
+      action: {
+        type: 'reply',
+        reply: {
+          id: 'full_summary',
+          title: options.full
+        }
+      }
+    });
+    
+    return twiml.toString();
+  } catch (error) {
+    console.error(`[${requestId}] Error creating summary menu:`, error.message);
+    
+    // Fallback to text menu
+    const fallbackMessage = `📊 Please select an option:\n\n1. Instant Summary\n2. Detailed Summary\n\nYou can also type "summary" for instant or "full summary" for detailed.`;
+    return await generateMultiLanguageResponse(fallbackMessage, languageCode, requestId);
   }
 }
 
@@ -3030,6 +3513,53 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       return;
     }
   }
+
+  // In handleNewInteraction function, add this before the default response:
+
+// Handle summary commands
+if (Body) {
+  const lowerBody = Body.toLowerCase();
+  
+  // Check for summary commands
+  if (lowerBody.includes('summary')) {
+    console.log(`[${requestId}] Summary command detected: "${Body}"`);
+    
+    // Get user's preferred language
+    let userLanguage = 'en';
+    try {
+      const userPref = await getUserPreference(shopId);
+      if (userPref.success) {
+        userLanguage = userPref.language;
+      }
+    } catch (error) {
+      console.warn(`[${requestId}] Failed to get user preference:`, error.message);
+    }
+    
+    // Determine summary type
+    if (lowerBody.includes('full')) {
+      // Full summary
+      const generatingMessage = await generateMultiLanguageResponse(
+        'Generating your detailed summary with insights... This may take a moment.',
+        userLanguage,
+        requestId
+      );
+      
+      // Send initial message
+      await sendMessageViaAPI(From, generatingMessage);
+      
+      // Generate and send full summary
+      const fullSummary = await generateFullScaleSummary(shopId, userLanguage, requestId);
+      await sendMessageViaAPI(From, fullSummary);
+    } else {
+      // Instant summary
+      const instantSummary = await generateInstantSummary(shopId, userLanguage, requestId);
+      await sendMessageViaAPI(From, instantSummary);
+    }
+    
+    res.send('<Response></Response>');
+    return;
+  }
+}
   
   // Default response for unrecognized input
   const defaultMessage = await generateMultiLanguageResponse(
