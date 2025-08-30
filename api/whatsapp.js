@@ -29,7 +29,14 @@ const {
   getUserStateFromDB,
   deleteUserStateFromDB,
   isUserAuthorized,
-  deactivateUser
+  deactivateUser,
+  getTodaySalesSummary,
+  getInventorySummary,
+  getLowStockProducts,
+  getExpiringProducts,
+  getSalesDataForPeriod,
+  getPurchaseDataForPeriod,
+  getAllShopIDs
 } = require('../database');
 
 // Add this at the top of the file after the imports
