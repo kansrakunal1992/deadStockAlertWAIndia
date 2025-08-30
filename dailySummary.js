@@ -360,4 +360,4 @@ async function runDailySummary() {
     }
 }
 
-module.exports = { runDailySummary };
+module.exports = { processShopSummary };
