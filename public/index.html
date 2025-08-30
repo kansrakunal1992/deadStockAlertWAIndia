@@ -995,98 +995,33 @@
             font-weight: 700;
             color: var(--green);
         }
-
-        /* Add these styles to the existing CSS */
-        .modal {
-          display: none;
-          position: fixed;
-          z-index: 1000;
-          left: 0;
-          top: 0;
-          width: 100%;
-          height: 100%;
-          background-color: rgba(0,0,0,0.5);
-          overflow: auto;
-        }
-        
-        .modal-content {
-          background-color: #fff;
-          margin: 10% auto;
-          padding: 30px;
-          border-radius: 16px;
-          width: 90%;
-          max-width: 500px;
-          box-shadow: var(--shadow);
-          position: relative;
-        }
-        
-        .close {
-          position: absolute;
-          right: 20px;
-          top: 15px;
-          font-size: 28px;
-          font-weight: bold;
-          cursor: pointer;
-          color: var(--text-medium);
-        }
-        
-        .close:hover {
-          color: var(--saffron);
-        }
-        
-        .form-group {
-          margin-bottom: 20px;
-        }
-        
-        .form-group label {
-          display: block;
-          margin-bottom: 8px;
-          font-weight: 600;
-          color: var(--text-dark);
-        }
-        
-        .form-group input,
-        .form-group select {
-          width: 100%;
-          padding: 12px 15px;
-          border: 2px solid #e0e0e0;
-          border-radius: 8px;
-          font-size: 16px;
-          transition: border-color 0.3s;
-        }
-        
-        .form-group input:focus,
-        .form-group select:focus {
-          border-color: var(--saffron);
-          outline: none;
-        }
         
         .whatsapp-contact {
-          margin: 20px 0;
-          text-align: center;
+            margin: 20px 0;
+            text-align: center;
         }
         
         .whatsapp-contact a {
-          display: inline-flex;
-          align-items: center;
-          gap: 10px;
-          background: #25D366;
-          color: white;
-          padding: 12px 25px;
-          border-radius: 50px;
-          text-decoration: none;
-          font-weight: 600;
-          font-size: 18px;
-          transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: #25D366;
+            color: white;
+            padding: 12px 25px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 18px;
+            transition: all 0.3s;
         }
         
         .whatsapp-contact a:hover {
-          background: #128C7E;
-          transform: translateY(-3px);
+            background: #128C7E;
+            transform: translateY(-3px);
         }
         
         .close-thankyou {
-          margin-top: 20px;
+            margin-top: 20px;
         }
         
         /* Responsive Design */
@@ -1217,10 +1152,11 @@
         <div class="header-content">
             <div class="logo">
                 <a href="index.html" style="text-decoration: none; display: flex; align-items: center; gap: 12px;">
-                <div class="logo-icon">
-                    <i class="fas fa-box"></i>
-                </div>
-                <div class="logo-text">Saamagrii.<span>AI</span></div>
+                    <div class="logo-icon">
+                        <i class="fas fa-box"></i>
+                    </div>
+                    <div class="logo-text">Saamagrii.<span>AI</span></div>
+                </a>
             </div>
             
             <ul class="nav-links">
@@ -1235,16 +1171,16 @@
             <div class="language-selector">
                 <button class="language-btn">
                     <i class="fas fa-globe"></i>
-                    <span class="current-language">Hindi</span>
+                    <span class="current-language">हिंदी</span>
                     <i class="fas fa-chevron-down"></i>
                 </button>
                 <div class="language-options">
-                  <div class="language-option active" data-lang="hi">हिंदी (Hindi)</div>
-                  <div class="language-option" data-lang="en">English</div>
-                  <div class="language-option" data-lang="bn">বাংলা (Bangla)</div>
-                  <div class="language-option" data-lang="mr">मराठी (Marathi)</div>
-                  <div class="language-option" data-lang="ta">தமிழ் (Tamil)</div>
-                  <div class="language-option" data-lang="te">తెలుగు (Telugu)</div>
+                    <div class="language-option active" data-lang="hi">हिंदी (Hindi)</div>
+                    <div class="language-option" data-lang="en">English</div>
+                    <div class="language-option" data-lang="bn">বাংলা (Bangla)</div>
+                    <div class="language-option" data-lang="mr">मराठी (Marathi)</div>
+                    <div class="language-option" data-lang="ta">தமிழ் (Tamil)</div>
+                    <div class="language-option" data-lang="te">తెలుగు (Telugu)</div>
                 </div>
             </div>
             
@@ -1261,9 +1197,9 @@
                 <h1 data-translate="heroTitle">AI से अपनी दुकान का dead stock कम करें</h1>
                 <p data-translate="heroText">Saamagrii.AI आपकी दुकान के inventory को voice या text message से manage करने में help करता है - कोई app install करने की जरूरत नहीं!</p>
                 <div class="cta-buttons">
-                  <a href="#pricing" class="btn btn-enroll">
-                    <span class="rupee-symbol">₹</span> <span data-translate="enrollBtn">अभी Enroll करें</span>
-                  </a>
+                    <a href="#pricing" class="btn btn-enroll">
+                        <span class="rupee-symbol">₹</span> <span data-translate="enrollBtn">अभी Enroll करें</span>
+                    </a>
                 </div>
             </div>
             
@@ -1281,35 +1217,36 @@
         </div>
         
         <div class="features-grid">
-          <div class="feature-card">
-            <div class="feature-icon">
-              <i class="fas fa-microphone-alt"></i>
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-microphone-alt"></i>
+                </div>
+                <h3 data-translate="feature1Title">Voice या Text से Update</h3>
+                <p data-translate="feature1Text">अपनी inventory को voice note या text message से update करें। AI की help से आपकी भाषा को समझकर inventory update हो जाता है।</p>
             </div>
-            <h3 data-translate="feature1Title">Voice या Text से Update</h3>
-            <p data-translate="feature1Text">अपनी inventory को voice note या text message से update करें। AI की help से आपकी भाषा को समझकर inventory update हो जाता है।</p>
-          </div>
-          <div class="feature-card">
-            <div class="feature-icon">
-              <i class="fas fa-file-alt"></i>
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-file-alt"></i>
+                </div>
+                <h3 data-translate="feature2Title">On-Demand Summary</h3>
+                <p data-translate="feature2Text">WhatsApp पर "Summary" भेजकर कभी भी अपनी inventory का short summary पाएं।</p>
             </div>
-            <h3 data-translate="feature2Title">On-Demand Summary</h3>
-            <p data-translate="feature2Text">WhatsApp पर "Summary" भेजकर कभी भी अपनी inventory का short summary पाएं।</p>
-          </div>
-          <div class="feature-card">
-            <div class="feature-icon">
-              <i class="fas fa-calendar-day"></i>
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-calendar-day"></i>
+                </div>
+                <h3 data-translate="feature3Title">Daily Long Summary</h3>
+                <p data-translate="feature3Text">हर दिन अपनी inventory के movements, sales और expire होने वाले items का detailed summary पाएं।</p>
             </div>
-            <h3 data-translate="feature3Title">Daily Long Summary</h3>
-            <p data-translate="feature3Text">हर दिन अपनी inventory के movements, sales और expire होने वाले items का detailed summary पाएं।</p>
-          </div>
-          <div class="feature-card">
-            <div class="feature-icon">
-              <i class="fas fa-lightbulb"></i>
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <i class="fas fa-lightbulb"></i>
+                </div>
+                <h3 data-translate="feature4Title">AI से Insights</h3>
+                <p data-translate="feature4Text">आपकी inventory situation के आधार पर personalized recommendations पाएं, जैसे कि slow-moving items के लिए offers बनाने में help।</p>
             </div>
-            <h3 data-translate="feature4Title">AI से Insights</h3>
-            <p data-translate="feature4Text">आपकी inventory situation के आधार पर personalized recommendations पाएं, जैसे कि slow-moving items के लिए offers बनाने में help।</p>
-          </div>
         </div>
+    </section>
     
     <!-- How It Works -->
     <section class="how-it-works" id="how-it-works">
@@ -1320,38 +1257,38 @@
             </div>
             
             <div class="steps">
-              <div class="step">
-                <div class="step-number">1</div>
-                <div class="step-icon">
-                  <i class="fas fa-microphone"></i>
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-icon">
+                        <i class="fas fa-microphone"></i>
+                    </div>
+                    <h3 data-translate="step1Title">Send Voice या Text</h3>
+                    <p data-translate="step1Text">WhatsApp पर voice या text message भेजकर update करें।</p>
                 </div>
-                <h3 data-translate="step1Title">Send Voice या Text</h3>
-                <p data-translate="step1Text">WhatsApp पर voice या text message भेजकर update करें।</p>
-              </div>
-              <div class="step">
-                <div class="step-number">2</div>
-                <div class="step-icon">
-                  <i class="fas fa-robot"></i>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-icon">
+                        <i class="fas fa-robot"></i>
+                    </div>
+                    <h3 data-translate="step2Title">AI Processing</h3>
+                    <p data-translate="step2Text">AI आपके message को समझकर inventory update करता है।</p>
                 </div>
-                <h3 data-translate="step2Title">AI Processing</h3>
-                <p data-translate="step2Text">AI आपके message को समझकर inventory update करता है।</p>
-              </div>
-              <div class="step">
-                <div class="step-number">3</div>
-                <div class="step-icon">
-                  <i class="fas fa-check-circle"></i>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-icon">
+                        <i class="fas fa-check-circle"></i>
+                    </div>
+                    <h3 data-translate="step3Title">Instant Confirmation</h3>
+                    <p data-translate="step3Text">Update की confirmation और current stock levels पाएं।</p>
                 </div>
-                <h3 data-translate="step3Title">Instant Confirmation</h3>
-                <p data-translate="step3Text">Update की confirmation और current stock levels पाएं।</p>
-              </div>
-              <div class="step">
-                <div class="step-number">4</div>
-                <div class="step-icon">
-                  <i class="fas fa-lightbulb"></i>
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-icon">
+                        <i class="fas fa-lightbulb"></i>
+                    </div>
+                    <h3 data-translate="step4Title">AI Insights</h3>
+                    <p data-translate="step4Text">Personalized recommendations और alerts पाएं।</p>
                 </div>
-                <h3 data-translate="step4Title">AI Insights</h3>
-                <p data-translate="step4Text">Personalized recommendations और alerts पाएं।</p>
-              </div>
             </div>
         </div>
     </section>
@@ -1578,535 +1515,555 @@
                 <p data-translate="whatsappHelpText">Feel free to reach out to us on WhatsApp for any assistance or if you need your activation code urgently.</p>
                 <p class="whatsapp-number">+91 90132 83687</p>
                 <p data-translate="whatsappHelpText2">Just send a message saying "I need help with Saamagrii.AI" and our team will assist you.</p>
+                
+                <div class="whatsapp-contact">
+                    <a href="https://wa.me/919013283687" target="_blank">
+                        <i class="fab fa-whatsapp"></i> Contact on WhatsApp
+                    </a>
+                </div>
             </div>
+            
+            <button class="btn btn-enroll close-thankyou" data-translate="closeBtn">Close</button>
         </div>
     </div>
     
     <script>
         // Translation dictionary
         const translations = {
-          en: {
-            navFeatures: "Features",
-            navHowItWorks: "How It Works",
-            navPricing: "Pricing",
-            navTestimonials: "Testimonials",
-            navContact: "Contact",
-            heroTitle: "Reduce Dead Stock with AI",
-            heroText: "Saamagrii.AI helps Indian shopkeepers manage inventory, reduce waste, and increase profits using voice or text messages - no apps to install!",
-            enrollBtn: "Enroll Now",
-            featuresTitle: "Powerful Features for Indian Stores",
-            featuresSubtitle: "Designed specifically for Indian shopkeepers to save time and reduce inventory waste",
-            feature1Title: "Voice or Text Updates",
-            feature1Text: "Update inventory with simple voice notes or text messages in your language. AI understands your language and updates inventory automatically.",
-            feature2Title: "On-Demand Summary",
-            feature2Text: "Get a short summary of your inventory anytime by sending 'Summary' on WhatsApp.",
-            feature3Title: "Daily Long Summary",
-            feature3Text: "Receive a detailed daily summary of inventory movements, sales, and expiring items.",
-            feature4Title: "AI Insights",
-            feature4Text: "Get personalized recommendations based on your inventory situation, like help creating offers for slow-moving items.",
-            howItWorksTitle: "Simple 4-Step Process",
-            howItWorksSubtitle: "Manage your inventory efficiently with Saamagrii.AI",
-            step1Title: "Send Voice or Text",
-            step1Text: "Update purchases or sales via WhatsApp voice or text message in your language.",
-            step2Title: "AI Processing",
-            step2Text: "AI understands your message and updates inventory automatically in real-time.",
-            step3Title: "Instant Confirmation",
-            step3Text: "Get immediate confirmation with current stock levels.",
-            step4Title: "AI Insights",
-            step4Text: "Receive personalized recommendations and alerts for your inventory.",
-            pricingTitle: "Affordable Pricing Plans",
-            pricingSubtitle: "Choose the plan that works best for your shop. No hidden charges!",
-            basicPlan: "Basic Plan",
-            proPlan: "Pro Plan",
-            businessPlan: "Business Plan",
-            perMonth: "per month",
-            popularTag: "MOST POPULAR",
-            pricingEnroll: "Enroll Now",
-            feature1: "Unlimited voice updates",
-            feature2: "Real-time inventory tracking",
-            feature3: "Daily summary (opt-in)",
-            feature4: "Dead stock alerts",
-            feature5: "WhatsApp support",
-            feature6: "All Basic features",
-            feature7: "Smart bundled offers",
-            feature8: "Expiry prediction alerts",
-            feature9: "Sales analytics reports",
-            feature10: "Priority support",
-            feature11: "Multi-user access",
-            feature12: "All Pro features",
-            feature13: "Multiple store management",
-            feature14: "Supplier management",
-            feature15: "Custom reporting",
-            feature16: "Dedicated account manager",
-            feature17: "24/7 support",
-            testimonialsTitle: "What Shopkeepers Say",
-            testimonialsSubtitle: "Hear from Indian Shop owners using Saamagrii.AI",
-            testimonial1: "\"Saamagrii.AI reduced my expired goods by 40%! The voice note system is perfect for busy shopkeepers like me who don't have time for complex software.\"",
-            client1Name: "Rajesh Kumar",
-            client1Store: "Grocery Store, Delhi",
-            testimonial2: "\"The bundled offer suggestions helped me clear old stock quickly. I made ₹8,000 extra in a month that would have been dead loss!\"",
-            client2Name: "Priya Sharma",
-            client2Store: "General Store, Mumbai",
-            testimonial3: "\"As a 55-year-old shopkeeper, I was worried about technology. But WhatsApp I know! Saamagrii.AI made inventory management so simple.\"",
-            client3Name: "Vijay Patel",
-            client3Store: "Shop Store, Ahmedabad",
-            ctaTitle: "Ready to Reduce Your Dead Stock?",
-            ctaSubtitle: "Join thousands of Indian shopkeepers who are saving money and reducing waste with Saamagrii.AI",
-            ctaBtn: "Start Free Trial on WhatsApp",
-            footerAbout: "About Saamagrii.AI",
-            footerAboutText: "Saamagrii.AI helps Indian shopkeepers reduce dead stock and increase profits through simple WhatsApp-based inventory management.",
-            footerLinks: "Quick Links",
-            footerFaq: "FAQ",
-            footerContact: "Contact Us",
-            footerAddress: "Gurgaon, India",
-            footerCopyright: "Copyright@2025 Saamagrii.AI. All Rights Reserved. | Designed with ❤️ for Indian Shopkeepers",
-            enrollFormTitle: "Enroll Now",
-            enrollFormSubtitle: "Fill your details to start using Saamagrii.AI",
-            mobileNumberLabel: "Mobile Number *",
-            shopNameLabel: "Shop Name *",
-            stateLabel: "State *",
-            countryLabel: "Country *",
-            submitBtn: "Submit",
-            thankYouTitle: "Thank You!",
-            thankYouMessage: "We have received your details. Our team will contact you soon with your activation code.",
-            whatsappHelp: "If you have any queries or need your activation code urgently, WhatsApp us at:",
-            closeBtn: "Close"
-          },
-          hi: {
-            navFeatures: "Features",
-            navHowItWorks: "How It Works",
-            navPricing: "Pricing",
-            navTestimonials: "Testimonials",
-            navContact: "Contact",
-            heroTitle: "AI से अपनी दुकान का dead stock कम करें",
-            heroText: "Saamagrii.AI आपकी दुकान के inventory को voice या text message से manage करने में help करता है - कोई app install करने की जरूरत नहीं!",
-            enrollBtn: "अभी Enroll करें",
-            featuresTitle: "Indian Stores के लिए Powerful Features",
-            featuresSubtitle: "Indian shopkeepers के लिए बनाया गया है जो time बचाता है और inventory waste कम करता है",
-            feature1Title: "Voice या Text से Update",
-            feature1Text: "अपनी inventory को voice note या text message से update करें। AI आपकी भाषा समझकर inventory automatically update कर देता है।",
-            feature2Title: "On-Demand Summary",
-            feature2Text: "WhatsApp पर 'Summary' भेजकर कभी भी अपनी inventory का short summary पाएं।",
-            feature3Title: "Daily Long Summary",
-            feature3Text: "हर दिन अपनी inventory के movements, sales और expire होने वाले items का detailed summary पाएं।",
-            feature4Title: "AI से Insights",
-            feature4Text: "आपकी inventory situation के आधार पर personalized recommendations पाएं, जैसे slow-moving items के लिए offers बनाने में help।",
-            howItWorksTitle: "Simple 4-Step Process",
-            howItWorksSubtitle: "Saamagrii.AI के साथ अपनी inventory efficiently manage करें",
-            step1Title: "Send Voice या Text",
-            step1Text: "WhatsApp पर voice या text message भेजकर update करें।",
-            step2Title: "AI Processing",
-            step2Text: "AI आपके message को समझकर inventory update करता है।",
-            step3Title: "Instant Confirmation",
-            step3Text: "Update की confirmation और current stock levels पाएं।",
-            step4Title: "AI Insights",
-            step4Text: "Personalized recommendations और alerts पाएं।",
-            pricingTitle: "Affordable Pricing Plans",
-            pricingSubtitle: "अपनी दुकान के लिए सबसे अच्छा plan चुनें। कोई छिपा हुआ charge नहीं!",
-            basicPlan: "Basic Plan",
-            proPlan: "Pro Plan",
-            businessPlan: "Business Plan",
-            perMonth: "प्रति महीना",
-            popularTag: "सबसे लोकप्रिय",
-            pricingEnroll: "अभी Enroll करें",
-            feature1: "अनलिमिटेड voice updates",
-            feature2: "रियल-टाइम inventory tracking",
-            feature3: "डेली summary (ऑप्शनल)",
-            feature4: "Dead stock alerts",
-            feature5: "WhatsApp support",
-            feature6: "सभी Basic features",
-            feature7: "स्मार्ट bundled offers",
-            feature8: "एक्सपायरी prediction alerts",
-            feature9: "सेल्स analytics reports",
-            feature10: "प्रायोरिटी support",
-            feature11: "मल्टी-यूजर access",
-            feature12: "सभी Pro features",
-            feature13: "मल्टीपल स्टोर management",
-            feature14: "सप्लायर management",
-            feature15: "कस्टम reporting",
-            feature16: "डेडिकेटेड account manager",
-            feature17: "24/7 support",
-            testimonialsTitle: "दुकानदार क्या कहते हैं",
-            testimonialsSubtitle: "Saamagrii.AI इस्तेमाल करने वाले Indian Shop owners से सुनें",
-            testimonial1: "\"Saamagrii.AI ने मेरे expire हुए सामान को 40% कम कर दिया! Voice note system busy shopkeepers जैसे मेरे लिए perfect है जिन्हें complex software के लिए time नहीं है।\"",
-            client1Name: "राजेश कुमार",
-            client1Store: "किराना स्टोर, दिल्ली",
-            testimonial2: "\"Bundled offer suggestions ने मुझे पुराना stock जल्दी clear करने में help की। मैंने एक महीने में ₹8,000 extra कमाए जो dead loss होता।\"",
-            client2Name: "प्रिया शर्मा",
-            client2Store: "जनरल स्टोर, मुंबई",
-            testimonial3: "\"55 साल के shopkeeper होने के नाते, मुझे technology की चिंता थी। लेकिन WhatsApp मैं जानता हूँ! Saamagrii.AI ने inventory management इतना simple बना दिया।\"",
-            client3Name: "विजय पटेल",
-            client3Store: "किराना स्टोर, अहमदाबाद",
-            ctaTitle: "अपना dead stock कम करने के लिए तैयार हैं?",
-            ctaSubtitle: "Saamagrii.AI के साथ पैसे बचा रहे और waste कम कर रहे हजारों Indian shopkeepers से जुड़ें",
-            ctaBtn: "WhatsApp पर फ्री ट्रायल शुरू करें",
-            footerAbout: "Saamagrii.AI के बारे में",
-            footerAboutText: "Saamagrii.AI simple WhatsApp-based inventory management के जरिए Indian shopkeepers को dead stock कम करने और profit बढ़ाने में help करता है।",
-            footerLinks: "त्वरित लिंक",
-            footerFaq: "FAQ",
-            footerContact: "हमसे संपर्क करें",
-            footerAddress: "गुड़गाँव, भारत",
-            footerCopyright: "Copyright@2025 Saamagrii.AI. सर्वाधिकार सुरक्षित। | Indian Shopkeepers के लिए ❤️ से बनाया गया",
-            enrollFormTitle: "अभी Enroll करें",
-            enrollFormSubtitle: "Saamagrii.AI इस्तेमाल करने के लिए अपनी डिटेल्स भरें",
-            mobileNumberLabel: "मोबाइल नंबर *",
-            shopNameLabel: "दुकान का नाम *",
-            stateLabel: "राज्य *",
-            countryLabel: "देश *",
-            submitBtn: "सबमिट करें",
-            thankYouTitle: "धन्यवाद!",
-            thankYouMessage: "हमें आपकी डिटेल्स मिल गई हैं। हमारी टीम जल्द ही आपसे आपके activation code के साथ संपर्क करेगी।",
-            whatsappHelp: "अगर आपके कोई सवाल हैं या आपको जल्द से जल्द अपना activation code चाहिए, तो हमें WhatsApp करें:",
-            closeBtn: "बंद करें"
-          },
-          bn: {
-            navFeatures: "Features",
-            navHowItWorks: "How It Works",
-            navPricing: "Pricing",
-            navTestimonials: "Testimonials",
-            navContact: "Contact",
-            heroTitle: "AI দিয়ে আপনার দোকানের dead stock কমান",
-            heroText: "Saamagrii.AI আপনার দোকানের inventory manage করতে help করে voice বা text message এর মাধ্যমে - কোনো app install করার প্রয়োজন নেই!",
-            enrollBtn: "এখনই Enroll করুন",
-            featuresTitle: "কিরানা স্টোরের জন্য Powerful Features",
-            featuresSubtitle: "Indian shopkeepers এর জন্য তৈরি করা হয়েছে যা time বাঁচায় এবং inventory waste কমায়",
-            feature1Title: "Voice বা Text দিয়ে Update",
-            feature1Text: "Voice note বা text message দিয়ে আপনার inventory update করুন। AI আপনার language বুঝে inventory automatically update করে দেয়।",
-            feature2Title: "On-Demand Summary",
-            feature2Text: "WhatsApp এ 'Summary' পাঠিয়ে যেকোনো সময় আপনার inventory এর short summary পান।",
-            feature3Title: "Daily Long Summary",
-            feature3Text: "প্রতিদিন আপনার inventory এর movements, sales এবং expire হওয়া items এর detailed summary পান।",
-            feature4Title: "AI থেকে Insights",
-            feature4Text: "আপনার inventory situation এর উপর ভিত্তি করে personalized recommendations পান, যেমন slow-moving items এর জন্য offers তৈরি করতে help।",
-            howItWorksTitle: "Simple 4-Step Process",
-            howItWorksSubtitle: "Saamagrii.AI দিয়ে আপনার inventory efficiently manage করুন",
-            step1Title: "Send Voice বা Text",
-            step1Text: "WhatsApp এ voice বা text message পাঠিয়ে update করুন।",
-            step2Title: "AI Processing",
-            step2Text: "AI আপনার message বুঝে inventory update করে।",
-            step3Title: "Instant Confirmation",
-            step3Text: "Update এর confirmation এবং current stock levels পান।",
-            step4Title: "AI Insights",
-            step4Text: "Personalized recommendations এবং alerts পান।",
-            pricingTitle: "Affordable Pricing Plans",
-            pricingSubtitle: "আপনার দোকানের জন্য সেরা plan বেছে নিন। কোনো লুকানো charge নেই!",
-            basicPlan: "Basic Plan",
-            proPlan: "Pro Plan",
-            businessPlan: "Business Plan",
-            perMonth: "প্রতি মাসে",
-            popularTag: "সবচেয়ে জনপ্রিয়",
-            pricingEnroll: "এখনই Enroll করুন",
-            feature1: "আনলিমিটেড voice updates",
-            feature2: "রিয়েল-টাইম inventory tracking",
-            feature3: "ডেইলি summary (ঐচ্ছিক)",
-            feature4: "Dead stock alerts",
-            feature5: "WhatsApp support",
-            feature6: "সব Basic features",
-            feature7: "স্মার্ট bundled offers",
-            feature8: "এক্সপায়ারি prediction alerts",
-            feature9: "সেলস analytics reports",
-            feature10: "প্রায়োরিটি support",
-            feature11: "মাল্টি-ইউজার access",
-            feature12: "সব Pro features",
-            feature13: "মাল্টিপল স্টোর management",
-            feature14: "সাপ্লায়ার management",
-            feature15: "কাস্টম reporting",
-            feature16: "ডেডিকেটেড account manager",
-            feature17: "24/7 support",
-            testimonialsTitle: "দোকানদাররা কি বলেন",
-            testimonialsSubtitle: "Saamagrii.AI ব্যবহারকারী Indian Shop owners এর কাছ থেকে শুনুন",
-            testimonial1: "\"Saamagrii.AI আমার expired পণ্য 40% কমিয়ে দিয়েছে! Voice note system busy shopkeepers এর জন্য perfect যাদের complex software এর জন্য time নেই।\"",
-            client1Name: "রাজেশ কুমার",
-            client1Store: "গ্রোসারি স্টোর, দিল্লি",
-            testimonial2: "\"Bundled offer suggestions আমাকে পুরনো stock দ্রুত clear করতে help করেছে। আমি এক মাসে ₹8,000 extra আয় করেছি যা dead loss হত।\"",
-            client2Name: "প্রিয়া শর্মা",
-            client2Store: "জেনারেল স্টোর, মুম্বাই",
-            testimonial3: "\"55 বছরের shopkeeper হিসেবে, আমি technology নিয়ে চিন্তিত ছিলাম। কিন্তু WhatsApp আমি জানি! Saamagrii.AI inventory management এত সহজ করে দিয়েছে।\"",
-            client3Name: "বিজয় প্যাটেল",
-            client3Store: "কিরানা স্টোর, আহমেদাবাদ",
-            ctaTitle: "আপনার dead stock কমাতে প্রস্তুত?",
-            ctaSubtitle: "Saamagrii.AI এর সাথে টাকা বাঁচানো এবং waste কমানো হাজারো Indian shopkeepers এর সাথে যোগ দিন",
-            ctaBtn: "WhatsApp এ ফ্রি ট্রায়াল শুরু করুন",
-            footerAbout: "Saamagrii.AI সম্পর্কে",
-            footerAboutText: "Saamagrii.AI simple WhatsApp-based inventory management এর মাধ্যমে Indian shopkeepers কে dead stock কমাতে এবং profit বাড়াতে help করে।",
-            footerLinks: "দ্রুত লিংক",
-            footerFaq: "FAQ",
-            footerContact: "যোগাযোগ করুন",
-            footerAddress: "গুড়গাঁও, ভারত",
-            footerCopyright: "Copyright@2025 Saamagrii.AI. সর্বস্বত্ব সংরক্ষিত। | Indian Shopkeepers এর জন্য ❤️ দিয়ে তৈরি",
-            enrollFormTitle: "এখনই Enroll করুন",
-            enrollFormSubtitle: "Saamagrii.AI ব্যবহার করতে আপনার বিবরণ পূরণ করুন",
-            mobileNumberLabel: "মোবাইল নম্বর *",
-            shopNameLabel: "দোকানের নাম *",
-            stateLabel: "রাজ্য *",
-            countryLabel: "দেশ *",
-            submitBtn: "জমা দিন",
-            thankYouTitle: "ধন্যবাদ!",
-            thankYouMessage: "আমরা আপনার বিবরণ পেয়েছি। আমাদের টিম শীঘ্রই আপনার activation code নিয়ে আপনার সাথে যোগাযোগ করবে।",
-            whatsappHelp: "যদি আপনার কোনো প্রশ্ন থাকে বা আপনি আপনার activation code জরুরি ভিত্তিতে চান, তাহলে আমাদের WhatsApp করুন:",
-            closeBtn: "বন্ধ করুন"
-          },
-          mr: {
-            navFeatures: "Features",
-            navHowItWorks: "How It Works",
-            navPricing: "Pricing",
-            navTestimonials: "Testimonials",
-            navContact: "Contact",
-            heroTitle: "AI ने आपल्या दुकानचे dead stock कमी करा",
-            heroText: "Saamagrii.AI तुमच्या दुकानच्या inventory ला voice किंवा text message वर manage करण्यास मदत करते - कोणतेही app install करण्याची गरज नाही!",
-            enrollBtn: "आत्ताच Enroll करा",
-            featuresTitle: "किराणा स्टोअर्ससाठी Powerful Features",
-            featuresSubtitle: "Indian shopkeepers साठी बनवले आहे जे time वाचवते आणि inventory waste कमी करते",
-            feature1Title: "Voice किंवा Text ने Update",
-            feature1Text: "Voice note किंवा text message वर तुमचे inventory update करा. AI तुमची भाषा समजून आपोआप inventory update करते.",
-            feature2Title: "On-Demand Summary",
-            feature2Text: "WhatsApp वर 'Summary' पाठवून कधीही तुमच्या inventory चे short summary मिळवा.",
-            feature3Title: "Daily Long Summary",
-            feature3Text: "दररोज तुमच्या inventory च्या movements, sales आणि expire होणाऱ्या items चे detailed summary मिळवा.",
-            feature4Title: "AI पासून Insights",
-            feature4Text: "तुमच्या inventory situation च्या आधारावर personalized recommendations मिळवा, जसे slow-moving items साठी offers तयार करण्यास मदत.",
-            howItWorksTitle: "Simple 4-Step Process",
-            howItWorksSubtitle: "Saamagri.AI सह तुमचे inventory efficiently manage करा",
-            step1Title: "Send Voice किंवा Text",
-            step1Text: "WhatsApp वर voice किंवा text message पाठवून update करा.",
-            step2Title: "AI Processing",
-            step2Text: "AI तुमचे message समजून inventory update करते.",
-            step3Title: "Instant Confirmation",
-            step3Text: "Update ची confirmation आणि current stock levels मिळवा.",
-            step4Title: "AI Insights",
-            step4Text: "Personalized recommendations आणि alerts मिळवा.",
-            pricingTitle: "Affordable Pricing Plans",
-            pricingSubtitle: "तुमच्या दुकानासाठी सर्वोत्तम plan निवडा. कोणतेही लपवलेले charges नाहीत!",
-            basicPlan: "Basic Plan",
-            proPlan: "Pro Plan",
-            businessPlan: "Business Plan",
-            perMonth: "प्रति महिना",
-            popularTag: "सर्वात लोकप्रिय",
-            pricingEnroll: "आत्ताच Enroll करा",
-            feature1: "अमर्यादित voice updates",
-            feature2: "रिअल-टाइम inventory tracking",
-            feature3: "दैनिक summary (पर्यायी)",
-            feature4: "Dead stock alerts",
-            feature5: "WhatsApp support",
-            feature6: "सर्व Basic features",
-            feature7: "स्मार्ट bundled offers",
-            feature8: "एक्सपायरी prediction alerts",
-            feature9: "सेल्स analytics reports",
-            feature10: "प्राधान्य support",
-            feature11: "मल्टी-यूजर access",
-            feature12: "सर्व Pro features",
-            feature13: "मल्टिपल स्टोअर management",
-            feature14: "सप्लायर management",
-            feature15: "कस्टम reporting",
-            feature16: "डेडिकेटेड account manager",
-            feature17: "24/7 support",
-            testimonialsTitle: "दुकानदार काय म्हणतात",
-            testimonialsSubtitle: "Saamagrii.AI वापरणाऱ्या Indian Shop मालकांकडून ऐका",
-            testimonial1: "\"Saamagrii.AI ने माझे expired सामान 40% कमी केले! Voice note system व्यस्त दुकानदारांसाठी परिपूर्ण आहे ज्यांना complex software साठी वेळ नाही.",
-            client1Name: "राजेश कुमार",
-            client1Store: "किराणा दुकान, दिल्ली",
-            testimonial2: "\"Bundled offer suggestions ने मला जुने स्टॉक जलद साफ करण्यास मदत केली. मी एका महिन्यात ₹8,000 अतिरिक्त कमवले जे dead loss होते.",
-            client2Name: "प्रिया शर्मा",
-            client2Store: "सामान्य दुकान, मुंबई",
-            testimonial3: "\"55 वर्षांचा दुकानदार म्हणून, मला तंत्रज्ञानाची काळजी होती. पण WhatsApp मला माहित आहे! Saamagrii.AI ने inventory management इतके सोपे केले.",
-            client3Name: "विजय पाटील",
-            client3Store: "किराणा दुकान, अहमदाबाद",
-            ctaTitle: "तुमचे dead stock कमी करण्यास तयार आहात का?",
-            ctaSubtitle: "Saamagri.AI सह पैसे वाचवणाऱ्या आणि कचरा कमी करणाऱ्या हजारो भारतीय दुकानदारांमध्ये सामील व्हा",
-            ctaBtn: "WhatsApp वर फ्री ट्रायल सुरू करा",
-            footerAbout: "Saamagri.AI बद्दल",
-            footerAboutText: "Saamagri.AI सोप्या WhatsApp-आधारित inventory management द्वारे भारतीय दुकानदारांना dead stock कमी करण्यास आणि नफा वाढवण्यास मदत करते.",
-            footerLinks: "द्रुत दुवे",
-            footerFaq: "FAQ",
-            footerContact: "आमच्याशी संपर्क साधा",
-            footerAddress: "गुड़गाँव, भारत",
-            footerCopyright: "Copyright@2025 Saamagri.AI. सर्व हक्क राखीव. | भारतीय दुकानदारांसाठी ❤️ ने डिझाइन केले",
-            enrollFormTitle: "आत्ताच Enroll करा",
-            enrollFormSubtitle: "Saamagri.AI वापरण्यासाठी तुमचे तपशील भरा",
-            mobileNumberLabel: "मोबाइल नंबर *",
-            shopNameLabel: "दुकानाचे नाव *",
-            stateLabel: "राज्य *",
-            countryLabel: "देश *",
-            submitBtn: "सबमिट करा",
-            thankYouTitle: "धन्यवाद!",
-            thankYouMessage: "आम्ही तुमचे तपशील मिळवले आहे. आमची टीम लवकरच तुमच्या activation code सह तुमच्याशी संपर्क साधेल.",
-            whatsappHelp: "जर तुमच्याकडे कोणतेही प्रश्न असतील किंवा तुम्हाला तुमचा activation code लवकर हवा असेल, तर आम्हाला WhatsApp करा:",
-            closeBtn: "बंद करा"
-          },
-          ta: {
-            navFeatures: "Features",
-            navHowItWorks: "How It Works",
-            navPricing: "Pricing",
-            navTestimonials: "Testimonials",
-            navContact: "Contact",
-            heroTitle: "AI மூலம் உங்கள் கடையின் dead stock ஐ குறைக்கவும்",
-            heroText: "Saamagrii.AI உங்கள் கடையின் inventory ஐ voice அல்லது text message மூலம் manage செய்ய உதவுகிறது - எந்த app உமிழ்வதும் தேவையில்லை!",
-            enrollBtn: "இப்போது Enroll செய்யவும்",
-            featuresTitle: "கிரானா ஸ்டோர்களுக்கு Powerful Features",
-            featuresSubtitle: "Indian shopkeepers க்கு வடிவமைக்கப்பட்டது, இது time சேமிக்கிறது மற்றும் inventory waste ஐ குறைக்கிறது",
-            feature1Title: "Voice அல்லது Text மூலம் Update",
-            feature1Text: "Voice note அல்லது text message மூலம் உங்கள் inventory ஐ update செய்யவும். AI உங்கள் language ஐ புரிந்துகொண்டு inventory ஐ தானாகவே update செய்கிறது.",
-            feature2Title: "On-Demand Summary",
-            feature2Text: "WhatsApp இல் 'Summary' அனுப்புவதன் மூலம் எப்போதும் உங்கள் inventory இன் short summary ஐ பெறுங்கள்.",
-            feature3Title: "Daily Long Summary",
-            feature3Text: "தினமும் உங்கள் inventory இன் movements, sales மற்றும் expire ஆகும் items இன் detailed summary ஐ பெறுங்கள்.",
-            feature4Title: "AI இலிருந்து Insights",
-            feature4Text: "உங்கள் inventory situation அடிப்படையில் personalized recommendations பெறுங்கள், போன்ற slow-moving items க்கு offers உருவாக்க உதவி.",
-            howItWorksTitle: "Simple 4-Step Process",
-            howItWorksSubtitle: "Saamagrii.AI உடன் உங்கள் inventory ஐ திறம்படுத்தப்படுத்துங்கள்",
-            step1Title: "Send Voice அல்லது Text",
-            step1Text: "WhatsApp இல் voice அல்லது text message அனுப்புவதன் மூலம் update செய்யவும்.",
-            step2Title: "AI Processing",
-            step2Text: "AI உங்கள் message ஐ புரிந்துகொண்டு inventory ஐ update செய்கிறது.",
-            step3Title: "Instant Confirmation",
-            step3Text: "Update இன் confirmation மற்றும் current stock levels ஐ பெறுங்கள்.",
-            step4Title: "AI Insights",
-            step4Text: "Personalized recommendations மற்றும் alerts ஐ பெறுங்கள்.",
-            pricingTitle: "Affordable Pricing Plans",
-            pricingSubtitle: "உங்கள் கடைக்கு சிறந்ததாக வேலை செய்யும் திட்டத்தைத் தேர்ந்தெடுக்கவும். மறைக்கப்பட்ட கட்டணங்கள் இல்லை!",
-            basicPlan: "Basic Plan",
-            proPlan: "Pro Plan",
-            businessPlan: "Business Plan",
-            perMonth: "மாதத்திற்கு",
-            popularTag: "மிகவும் பிரபலமானது",
-            pricingEnroll: "இப்போது Enroll செய்யவும்",
-            feature1: "வரம்பற்ற voice updates",
-            feature2: "ரியல்-டைம் inventory tracking",
-            feature3: "தினசரி summary (விருப்பு)",
-            feature4: "Dead stock alerts",
-            feature5: "WhatsApp support",
-            feature6: "அனைத்து Basic features",
-            feature7: "ஸ்மார்ட் bundled offers",
-            feature8: "எக்ஸ்பைரி prediction alerts",
-            feature9: "விற்பனை analytics reports",
-            feature10: "முன்னுரிமை support",
-            feature11: "மல்டி-யூசர் access",
-            feature12: "அனைத்து Pro features",
-            feature13: "மல்டிபிள் ஸ்டோர் management",
-            feature14: "சப்ளையர் management",
-            feature15: "கஸ்டம் reporting",
-            feature16: "டெடிகேட்டட் account manager",
-            feature17: "24/7 support",
-            testimonialsTitle: "கடைக்காரர்கள் என்ன சொல்கிறார்கள்",
-            testimonialsSubtitle: "Saamagrii.AI ஐ பயன்படுத்தும் Indian Shop owners இடமிருந்து கேளுங்கள்",
-            testimonial1: "\"Saamagrii.AI எனது expired பொருட்களை 40% குறைத்தது! Voice note system பிஸியான கடைக்காரர்களுக்கு பரிபூரணமானது, நாம் போன்றவர்களுக்கு காம்ப்ளெக்ஸ் சாப்ட்வேருக்கு நேரம் இல்லை.",
-            client1Name: "ராஜேஷ் குமார்",
-            client1Store: "கிராகரி ஸ்டோர், டெல்லி",
-            testimonial2: "\"Bundled offer suggestions எனகு பழைய ஸ்டாக் வேகமாக அழிக்க உதவியது. நான் ஒரு மாதத்தில் ₹8,000 கூடுதலாக சம்பாதித்தேன், அது dead loss ஆகியிருந்தது!",
-            client2Name: "பிரியா சர்மா",
-            client2Store: "ஜெனரல் ஸ்டோர், மும்பை",
-            testimonial3: "\"55 வயது கடைக்காரராக, நான் தொழில்நுட்பத்தைப் பற்றி கவலைப்பட்டேன். ஆனால் WhatsApp எனக்குத் தெரியும்! Saamagrii.AI inventory management ஐ இத்தனி எளிதாக்கியது.",
-            client3Name: "விஜய் படேல்",
-            client3Store: "கிரானா ஸ்டோர், அகமதாபாத்",
-            ctaTitle: "உங்கள் dead stock ஐ குறைக்கத் தயாரா?",
-            ctaSubtitle: "Saamagrii.AI உடன் பணத்தைச் சேமிக்கும் மற்றும் கழிவைக் குறைக்கும் ஆயிரக்கணக்கான இந்திய கடைக்காரர்களுடன் இணையுங்கள்",
-            ctaBtn: "WhatsApp இல் இலவச சோதனையைத் தொடங்கவும்",
-            footerAbout: "Saamagrii.AI பற்றி",
-            footerAboutText: "Saamagrii.AI எளிய WhatsApp-அடிப்படையிலான inventory management மூலம் இந்திய கடைக்காரர்களுக்கு dead stock ஐக் குறைக்கவும் லாபத்தை அதிகரிக்கவும் உதவுகிறது.",
-            footerLinks: "வேகமான இணைப்புகள்",
-            footerFaq: "FAQ",
-            footerContact: "எங்களைத் தொடர்பு கொள்ளவும்",
-            footerAddress: "குர்கான், இந்தியா",
-            footerCopyright: "Copyright@2025 Saamagrii.AI. அனைத்து உரிமைகளும் பாதுகாக்கப்பட்டவை. | இந்திய கடைக்காரர்களுக்கு ❤️ உடன் வடிவமைக்கப்பட்டது",
-            enrollFormTitle: "இப்போது Enroll செய்யவும்",
-            enrollFormSubtitle: "Saamagrii.AI ஐப் பயன்படுத்த உங்கள் விவரங்களை நிரப்பவும்",
-            mobileNumberLabel: "மொபைல் எண் *",
-            shopNameLabel: "கடை பெயர் *",
-            stateLabel: "மாநிலம் *",
-            countryLabel: "நாடு *",
-            submitBtn: "சமர்ப்பிக்கவும்",
-            thankYouTitle: "நன்றி!",
-            thankYouMessage: "உங்கள் விவரங்களைப் பெற்றோம். எங்கள் குழு விரைவில் உங்கள் activation code உடன் உங்களைத் தொடர்பு கொள்ளும்.",
-            whatsappHelp: "உங்களுக்கு எந்தக் கேள்விகள் இருந்தாலோ அல்லது உங்களுக்கு உங்கள் activation code அவசரம் தேவைப்பட்டாலோ, எங்களை WhatsApp செய்யவும்:",
-            closeBtn: "மூடுக"
-          },
-          te: {
-            navFeatures: "Features",
-            navHowItWorks: "How It Works",
-            navPricing: "Pricing",
-            navTestimonials: "Testimonials",
-            navContact: "Contact",
-            heroTitle: "AIతో మీ దుకానం dead stock తగ్గించండి",
-            heroText: "Saamagrii.AI మీ దుకానం inventory ని voice లేదా text message ద్వారా manage చేయడంలో help చేస్తుంది - ఏదైనా app install చేయాల్సిన అవసరం లేదు!",
-            enrollBtn: "ఇప్పుడు Enroll చేయండి",
-            featuresTitle: "కిరాణా స్టోర్ల కోసం Powerful Features",
-            featuresSubtitle: "Indian shopkeepers కోసం రూపొందించబడింది, ఇది time ఆదా చేస్తుంది మరియు inventory waste తగ్గిస్తుంది",
-            feature1Title: "Voice లేదా Text తో Update",
-            feature1Text: "Voice note లేదా text message తో మీ inventory ని update చేయండి. AI మీ భాషను అర్థం చేసుకుని inventory ని స్వయంచాలకంగా update చేస్తుంది.",
-            feature2Title: "On-Demand Summary",
-            feature2Text: "WhatsApp పై 'Summary' పంపించడం ద్వారా ఎప్పుడైనా మీ inventory యొక్క short summary పొందండి.",
-            feature3Title: "Daily Long Summary",
-            feature3Text: "ప్రతి రోజూ మీ inventory యొక్క movements, sales మరియు expire అయ్యే items యొక్క detailed summary పొందండి.",
-            feature4Title: "AI నుండి Insights",
-            feature4Text: "మీ inventory situation ఆధారంగా personalized recommendations పొందండి, ఉదాహరణకు slow-moving items కోసం offers రూపొందించడంలో help.",
-            howItWorksTitle: "Simple 4-Step Process",
-            howItWorksSubtitle: "Saamagrii.AIతో మీ inventory ని సమర్థవంతంగా manage చేయండి",
-            step1Title: "Send Voice లేదా Text",
-            step1Text: "WhatsApp పై voice లేదా text message పంపించడం ద్వారా update చేయండి.",
-            step2Title: "AI Processing",
-            step2Text: "AI మీ message ని అర్థం చేసుకుని inventory ని update చేస్తుంది.",
-            step3Title: "Instant Confirmation",
-            step3Text: "Update యొక్క confirmation మరియు current stock levels పొందండి.",
-            step4Title: "AI Insights",
-            step4Text: "Personalized recommendations మరియు alerts పొందండి.",
-            pricingTitle: "Affordable Pricing Plans",
-            pricingSubtitle: "మీ దుకానానికి ఉత్తమంగా పనిచేసే ప్లాన్ ఎంచుకోండి. దాచిన ఛార్జీలు లేవు!",
-            basicPlan: "Basic Plan",
-            proPlan: "Pro Plan",
-            businessPlan: "Business Plan",
-            perMonth: "నెలకు",
-            popularTag: "అత్యంత ప్రాచుర్యం",
-            pricingEnroll: "ఇప్పుడు Enroll చేయండి",
-            feature1: "అపరిమితమైన voice updates",
-            feature2: "రియల్-టైమ్ inventory tracking",
-            feature3: "రోజువారీ summary (ఐచ్ఛికం)",
-            feature4: "Dead stock alerts",
-            feature5: "WhatsApp support",
-            feature6: "అన్ని Basic features",
-            feature7: "స్మార్ట్ bundled offers",
-            feature8: "ఎక్స్పైరీ prediction alerts",
-            feature9: "అమ్మైన్ల యానలిటిక్స్ నివేదికలు",
-            feature10: "ప్రాధాన్య support",
-            feature11: "మల్టీ-యూజర్ యాక్సెస్",
-            feature12: "అన్ని Pro features",
-            feature13: "బహుళ స్టోర్ నిర్వహణ",
-            feature14: "సరఫర్ నిర్వహణ",
-            feature15: "అనుకూలీకృత నివేదికలు",
-            feature16: "అంకితమైన ఖాతా నిర్వాహకుడు",
-            feature17: "24/7 support",
-            testimonialsTitle: "దుకానదారులు ఏమి చెబుతున్నారు",
-            testimonialsSubtitle: "Saamagrii.AI ఉపయోగించే Indian Shop యజమానుల నుండి వినండి",
-            testimonial1: "\"Saamagrii.AI నా expired వస్తువులను 40% తగ్గించింది! Voice note system నా వంటి వ్యస్త దుకానదారులకు పరిపూర్ణంగా ఉపయోగపడుతుంది, వారికి క్లిష్ట్ సాఫ్ట్‌వేర్ కోసం సమయం లేదు.",
-            client1Name: "రాజేష్ కుమార్",
-            client1Store: "కిరాణా స్టోర్, ఢిల్లీ",
-            testimonial2: "\"Bundled offer suggestions నాకు పాత స్టాక్‌ను త్వరగా క్లియర్ చేయడంలో సహాయపడింది. నేను ఒక నెలలో ₹8,000 అదనపు సంపాదించాను, అది dead loss అయ్యేది!",
-            client2Name: "ప్రియా శర్మ",
-            client2Store: "జనరల్ స్టోర్, ముంబై",
-            testimonial3: "\"55 ఏళ్ల దుకానదారుగా, నాకు టెక్నాలజీ గురించి ఆందోళన ఉంది. కానీ WhatsApp నాకు తెలుసు! Saamagrii.AI inventory నిర్వహణను ఇంత సులభం చేసింది.",
-            client3Name: "విజయ్ పటేల్",
-            client3Store: "కిరాణా స్టోర్, అహ్మదాబాద్",
-            ctaTitle: "మీ dead stock తగ్గించడానికి సిద్ధంగా ఉన్నారా?",
-            ctaSubtitle: "Saamagrii.AIతో డబ్బులు ఆదా చేసే మరియు వ్యర్థాన్ని తగ్గించే వేలాది భారతీయ దుకానదారులతో చేరండి",
-            ctaBtn: "WhatsAppలో ఉచిత ప్రయత్నను ప్రారంభించండి",
-            footerAbout: "Saamagrii.AI గురించి",
-            footerAboutText: "Saamagrii.AI సరళ WhatsApp-ఆధారిత inventory నిర్వహణ ద్వారా భారతీయ దుకానదారులకు dead stock తగ్గించడంలో మరియు లాభాలను పెంచడంలో సహాయపడుతుంది.",
-            footerLinks: "త్వరిత లింకులు",
-            footerFaq: "FAQ",
-            footerContact: "మాతో సంప్రదించండి",
-            footerAddress: "గుర్గావ్, భారతదేశం",
-            footerCopyright: "Copyright@2025 Saamagrii.AI. అన్ని హక్కులు సంరక్షించబడ్డాయి. | భారతీయ దుకానదారుల కోసం ❤️తో రూపొందించబడింది",
-            enrollFormTitle: "ఇప్పుడు Enroll చేయండి",
-            enrollFormSubtitle: "Saamagrii.AI ఉపయోగించడానికి మీ వివరాలను నింపండి",
-            mobileNumberLabel: "మొబైల్ నంబర్ *",
-            shopNameLabel: "దుకాన పేరు *",
-            stateLabel: "రాష్ట్రం *",
-            countryLabel: "దేశం *",
-            submitBtn: "సమర్పించు",
-            thankYouTitle: "ధన్యవాదాలు!",
-            thankYouMessage: "మేము మీ వివరాలను అందుకున్నాము. మా బృందం త్వరలో మీ activation code తో మీతో సంప్రదిస్తుంది.",
-            whatsappHelp: "మీకు ఏవైనా ప్రశ్నలు ఉంటే లేదా మీకు మీ activation code అత్యవసరంగా కావాలంటే, దయచేసి మాకు WhatsApp చేయండి:",
-            closeBtn: "మూసివేయి"
-          }
+            en: {
+                navFeatures: "Features",
+                navHowItWorks: "How It Works",
+                navPricing: "Pricing",
+                navTestimonials: "Testimonials",
+                navContact: "Contact",
+                heroTitle: "Reduce Dead Stock with AI",
+                heroText: "Saamagrii.AI helps Indian shopkeepers manage inventory, reduce waste, and increase profits using voice or text messages - no apps to install!",
+                enrollBtn: "Enroll Now",
+                featuresTitle: "Powerful Features for Indian Stores",
+                featuresSubtitle: "Designed specifically for Indian shopkeepers to save time and reduce inventory waste",
+                feature1Title: "Voice or Text Updates",
+                feature1Text: "Update inventory with simple voice notes or text messages in your language. AI understands your language and updates inventory automatically.",
+                feature2Title: "On-Demand Summary",
+                feature2Text: "Get a short summary of your inventory anytime by sending 'Summary' on WhatsApp.",
+                feature3Title: "Daily Long Summary",
+                feature3Text: "Receive a detailed daily summary of inventory movements, sales, and expiring items.",
+                feature4Title: "AI Insights",
+                feature4Text: "Get personalized recommendations based on your inventory situation, like help creating offers for slow-moving items.",
+                howItWorksTitle: "Simple 4-Step Process",
+                howItWorksSubtitle: "Manage your inventory efficiently with Saamagrii.AI",
+                step1Title: "Send Voice or Text",
+                step1Text: "Update purchases or sales via WhatsApp voice or text message in your language.",
+                step2Title: "AI Processing",
+                step2Text: "AI understands your message and updates inventory automatically in real-time.",
+                step3Title: "Instant Confirmation",
+                step3Text: "Get immediate confirmation with current stock levels.",
+                step4Title: "AI Insights",
+                step4Text: "Receive personalized recommendations and alerts for your inventory.",
+                pricingTitle: "Affordable Pricing Plans",
+                pricingSubtitle: "Choose the plan that works best for your shop. No hidden charges!",
+                basicPlan: "Basic Plan",
+                proPlan: "Pro Plan",
+                businessPlan: "Business Plan",
+                perMonth: "per month",
+                popularTag: "MOST POPULAR",
+                pricingEnroll: "Enroll Now",
+                feature1: "Unlimited voice updates",
+                feature2: "Real-time inventory tracking",
+                feature3: "Daily summary (opt-in)",
+                feature4: "Dead stock alerts",
+                feature5: "WhatsApp support",
+                feature6: "All Basic features",
+                feature7: "Smart bundled offers",
+                feature8: "Expiry prediction alerts",
+                feature9: "Sales analytics reports",
+                feature10: "Priority support",
+                feature11: "Multi-user access",
+                feature12: "All Pro features",
+                feature13: "Multiple store management",
+                feature14: "Supplier management",
+                feature15: "Custom reporting",
+                feature16: "Dedicated account manager",
+                feature17: "24/7 support",
+                testimonialsTitle: "What Shopkeepers Say",
+                testimonialsSubtitle: "Hear from Indian Shop owners using Saamagrii.AI",
+                testimonial1: "\"Saamagrii.AI reduced my expired goods by 40%! The voice note system is perfect for busy shopkeepers like me who don't have time for complex software.\"",
+                client1Name: "Rajesh Kumar",
+                client1Store: "Grocery Store, Delhi",
+                testimonial2: "\"The bundled offer suggestions helped me clear old stock quickly. I made ₹8,000 extra in a month that would have been dead loss!\"",
+                client2Name: "Priya Sharma",
+                client2Store: "General Store, Mumbai",
+                testimonial3: "\"As a 55-year-old shopkeeper, I was worried about technology. But WhatsApp I know! Saamagrii.AI made inventory management so simple.\"",
+                client3Name: "Vijay Patel",
+                client3Store: "Shop Store, Ahmedabad",
+                ctaTitle: "Ready to Reduce Your Dead Stock?",
+                ctaSubtitle: "Join thousands of Indian shopkeepers who are saving money and reducing waste with Saamagrii.AI",
+                ctaBtn: "Enroll Now",
+                footerAbout: "About Saamagrii.AI",
+                footerAboutText: "Saamagrii.AI helps Indian shopkeepers reduce dead stock and increase profits through simple WhatsApp-based inventory management.",
+                footerLinks: "Quick Links",
+                footerFaq: "FAQ",
+                footerContact: "Contact Us",
+                footerAddress: "Gurgaon, India",
+                footerCopyright: "Copyright@2025 Saamagrii.AI. All Rights Reserved. | Designed with ❤️ for Indian Shopkeepers",
+                modalTitle: "Enroll with Saamagrii.AI",
+                modalSubtitle: "Fill in your details to get started with our inventory management system",
+                mobileLabel: "Mobile Number *",
+                shopNameLabel: "Shop Name *",
+                stateLabel: "State *",
+                countryLabel: "Country *",
+                submitBtn: "Submit Enrollment",
+                thankYouTitle: "Thank You for Enrolling!",
+                thankYouText: "Your enrollment details have been submitted successfully. Our team will review your information and send you an activation code shortly.",
+                whatsappHelpTitle: "Need Help or Have Questions?",
+                whatsappHelpText: "Feel free to reach out to us on WhatsApp for any assistance or if you need your activation code urgently.",
+                whatsappHelpText2: "Just send a message saying \"I need help with Saamagrii.AI\" and our team will assist you.",
+                closeBtn: "Close"
+            },
+            hi: {
+                navFeatures: "Features",
+                navHowItWorks: "How It Works",
+                navPricing: "Pricing",
+                navTestimonials: "Testimonials",
+                navContact: "Contact",
+                heroTitle: "AI से अपनी दुकान का dead stock कम करें",
+                heroText: "Saamagrii.AI आपकी दुकान के inventory को voice या text message से manage करने में help करता है - कोई app install करने की जरूरत नहीं!",
+                enrollBtn: "अभी Enroll करें",
+                featuresTitle: "Indian Stores के लिए Powerful Features",
+                featuresSubtitle: "Indian shopkeepers के लिए बनाया गया है जो time बचाता है और inventory waste कम करता है",
+                feature1Title: "Voice या Text से Update",
+                feature1Text: "अपनी inventory को voice note या text message से update करें। AI आपकी भाषा समझकर inventory automatically update कर देता है।",
+                feature2Title: "On-Demand Summary",
+                feature2Text: "WhatsApp पर 'Summary' भेजकर कभी भी अपनी inventory का short summary पाएं।",
+                feature3Title: "Daily Long Summary",
+                feature3Text: "हर दिन अपनी inventory के movements, sales और expire होने वाले items का detailed summary पाएं।",
+                feature4Title: "AI से Insights",
+                feature4Text: "आपकी inventory situation के आधार पर personalized recommendations पाएं, जैसे slow-moving items के लिए offers बनाने में help।",
+                howItWorksTitle: "Simple 4-Step Process",
+                howItWorksSubtitle: "Saamagrii.AI के साथ अपनी inventory efficiently manage करें",
+                step1Title: "Send Voice या Text",
+                step1Text: "WhatsApp पर voice या text message भेजकर update करें।",
+                step2Title: "AI Processing",
+                step2Text: "AI आपके message को समझकर inventory update करता है।",
+                step3Title: "Instant Confirmation",
+                step3Text: "Update की confirmation और current stock levels पाएं।",
+                step4Title: "AI Insights",
+                step4Text: "Personalized recommendations और alerts पाएं।",
+                pricingTitle: "Affordable Pricing Plans",
+                pricingSubtitle: "अपनी दुकान के लिए सबसे अच्छा plan चुनें। कोई छिपा हुआ charge नहीं!",
+                basicPlan: "Basic Plan",
+                proPlan: "Pro Plan",
+                businessPlan: "Business Plan",
+                perMonth: "प्रति महीना",
+                popularTag: "सबसे लोकप्रिय",
+                pricingEnroll: "अभी Enroll करें",
+                feature1: "अनलिमिटेड voice updates",
+                feature2: "रियल-टाइम inventory tracking",
+                feature3: "डेली summary (ऑप्शनल)",
+                feature4: "Dead stock alerts",
+                feature5: "WhatsApp support",
+                feature6: "सभी Basic features",
+                feature7: "स्मार्ट bundled offers",
+                feature8: "एक्सपायरी prediction alerts",
+                feature9: "सेल्स analytics reports",
+                feature10: "प्रायोरिटी support",
+                feature11: "मल्टी-यूजर access",
+                feature12: "सभी Pro features",
+                feature13: "मल्टीपल स्टोर management",
+                feature14: "सप्लायर management",
+                feature15: "कस्टम reporting",
+                feature16: "डेडिकेटेड account manager",
+                feature17: "24/7 support",
+                testimonialsTitle: "दुकानदार क्या कहते हैं",
+                testimonialsSubtitle: "Saamagrii.AI इस्तेमाल करने वाले Indian Shop owners से सुनें",
+                testimonial1: "\"Saamagrii.AI ने मेरे expire हुए सामान को 40% कम कर दिया! Voice note system busy shopkeepers जैसे मेरे लिए perfect है जिन्हें complex software के लिए time नहीं है।\"",
+                client1Name: "राजेश कुमार",
+                client1Store: "किराना स्टोर, दिल्ली",
+                testimonial2: "\"Bundled offer suggestions ने मुझे पुराना stock जल्दी clear करने में help की। मैंने एक महीने में ₹8,000 extra कमाए जो dead loss होता।\"",
+                client2Name: "प्रिया शर्मा",
+                client2Store: "जनरल स्टोर, मुंबई",
+                testimonial3: "\"55 साल के shopkeeper होने के नाते, मुझे technology की चिंता थी। लेकिन WhatsApp मैं जानता हूँ! Saamagrii.AI ने inventory management इतना simple बना दिया।\"",
+                client3Name: "विजय पटेल",
+                client3Store: "किराना स्टोर, अहमदाबाद",
+                ctaTitle: "अपना dead stock कम करने के लिए तैयार हैं?",
+                ctaSubtitle: "Saamagrii.AI के साथ पैसे बचा रहे और waste कम कर रहे हजारों Indian shopkeepers से जुड़ें",
+                ctaBtn: "अभी Enroll करें",
+                footerAbout: "Saamagrii.AI के बारे में",
+                footerAboutText: "Saamagrii.AI simple WhatsApp-based inventory management के जरिए Indian shopkeepers को dead stock कम करने और profit बढ़ाने में help करता है।",
+                footerLinks: "त्वरित लिंक",
+                footerFaq: "FAQ",
+                footerContact: "हमसे संपर्क करें",
+                footerAddress: "गुड़गाँव, भारत",
+                footerCopyright: "Copyright@2025 Saamagrii.AI. सर्वाधिकार सुरक्षित। | Indian Shopkeepers के लिए ❤️ से बनाया गया",
+                modalTitle: "Saamagrii.AI के साथ Enroll करें",
+                modalSubtitle: "हमारी inventory management system शुरू करने के लिए अपना विवरण भरें",
+                mobileLabel: "मोबाइल नंबर *",
+                shopNameLabel: "दुकान का नाम *",
+                stateLabel: "राज्य *",
+                countryLabel: "देश *",
+                submitBtn: "Enrollment सबमिट करें",
+                thankYouTitle: "Enroll करने के लिए धन्यवाद!",
+                thankYouText: "आपका enrollment विवरण सफलतापूर्वक सबमिट कर दिया गया है। हमारी टीम आपकी जानकारी की समीक्षा करेगी और शीघ्र ही आपको एक activation code भेजेगी।",
+                whatsappHelpTitle: "Help चाहिए या कोई प्रश्न है?",
+                whatsappHelpText: "किसी भी सहायता के लिए या यदि आपको तुरंत अपना activation code चाहिए, तो कृपया WhatsApp पर हमसे संपर्क करें।",
+                whatsappHelpText2: "बस \"I need help with Saamagrii.AI\" कहते हुए एक message भेजें और हमारी टीम आपकी सहायता करेगी।",
+                closeBtn: "बंद करें"
+            },
+            bn: {
+                navFeatures: "Features",
+                navHowItWorks: "How It Works",
+                navPricing: "Pricing",
+                navTestimonials: "Testimonials",
+                navContact: "Contact",
+                heroTitle: "AI দিয়ে আপনার দোকানের dead stock কমান",
+                heroText: "Saamagrii.AI আপনার দোকানের inventory manage করতে help করে voice বা text message এর মাধ্যমে - কোনো app install করার প্রয়োজন নেই!",
+                enrollBtn: "এখনই Enroll করুন",
+                featuresTitle: "কিরানা স্টোরের জন্য Powerful Features",
+                featuresSubtitle: "Indian shopkeepers এর জন্য তৈরি করা হয়েছে যা time বাঁচায় এবং inventory waste কমায়",
+                feature1Title: "Voice বা Text দিয়ে Update",
+                feature1Text: "Voice note বা text message দিয়ে আপনার inventory update করুন। AI আপনার language বুঝে inventory automatically update করে দেয়।",
+                feature2Title: "On-Demand Summary",
+                feature2Text: "WhatsApp এ 'Summary' পাঠিয়ে যেকোনো সময় আপনার inventory এর short summary পান।",
+                feature3Title: "Daily Long Summary",
+                feature3Text: "প্রতিদিন আপনার inventory এর movements, sales এবং expire হওয়া items এর detailed summary পান।",
+                feature4Title: "AI থেকে Insights",
+                feature4Text: "আপনার inventory situation এর উপর ভিত্তি করে personalized recommendations পান, যেমন slow-moving items এর জন্য offers তৈরি করতে help।",
+                howItWorksTitle: "Simple 4-Step Process",
+                howItWorksSubtitle: "Saamagrii.AI দিয়ে আপনার inventory efficiently manage করুন",
+                step1Title: "Send Voice বা Text",
+                step1Text: "WhatsApp এ voice বা text message পাঠিয়ে update করুন।",
+                step2Title: "AI Processing",
+                step2Text: "AI আপনার message বুঝে inventory update করে।",
+                step3Title: "Instant Confirmation",
+                step3Text: "Update এর confirmation এবং current stock levels পান।",
+                step4Title: "AI Insights",
+                step4Text: "Personalized recommendations এবং alerts পান।",
+                pricingTitle: "Affordable Pricing Plans",
+                pricingSubtitle: "আপনার দোকানের জন্য সেরা plan বেছে নিন। কোনো লুকানো charge নেই!",
+                basicPlan: "Basic Plan",
+                proPlan: "Pro Plan",
+                businessPlan: "Business Plan",
+                perMonth: "প্রতি মাসে",
+                popularTag: "সবচেয়ে জনপ্রিয়",
+                pricingEnroll: "এখনই Enroll করুন",
+                feature1: "আনলিমিটেড voice updates",
+                feature2: "রিয়েল-টাইম inventory tracking",
+                feature3: "ডেইলি summary (ঐচ্ছিক)",
+                feature4: "Dead stock alerts",
+                feature5: "WhatsApp support",
+                feature6: "সব Basic features",
+                feature7: "স্মার্ট bundled offers",
+                feature8: "এক্সপায়ারি prediction alerts",
+                feature9: "সেলস analytics reports",
+                feature10: "প্রায়োরিটি support",
+                feature11: "মাল্টি-ইউজার access",
+                feature12: "সব Pro features",
+                feature13: "মাল্টিপল স্টোর management",
+                feature14: "সাপ্লায়ার management",
+                feature15: "কাস্টম reporting",
+                feature16: "ডেডিকেটেড account manager",
+                feature17: "24/7 support",
+                testimonialsTitle: "দোকানদাররা কি বলেন",
+                testimonialsSubtitle: "Saamagrii.AI ব্যবহারকারী Indian Shop owners এর কাছ থেকে শুনুন",
+                testimonial1: "\"Saamagrii.AI আমার expired পণ্য 40% কমিয়ে দিয়েছে! Voice note system busy shopkeepers এর জন্য perfect যাদের complex software এর জন্য time নেই।\"",
+                client1Name: "রাজেশ কুমার",
+                client1Store: "গ্রোসারি স্টোর, দিল্লি",
+                testimonial2: "\"Bundled offer suggestions আমাকে পুরনো stock দ্রুত clear করতে help করেছে। আমি এক মাসে ₹8,000 extra আয় করেছি যা dead loss হত।\"",
+                client2Name: "প্রিয়া শর্মা",
+                client2Store: "জেনারেল স্টোর, মুম্বাই",
+                testimonial3: "\"55 বছরের shopkeeper হিসেবে, আমি technology নিয়ে চিন্তিত ছিলাম। কিন্তু WhatsApp আমি জানি! Saamagrii.AI inventory management এত সহজ করে দিয়েছে।\"",
+                client3Name: "বিজয় প্যাটেল",
+                client3Store: "কিরানা স্টোর, আহমেদাবাদ",
+                ctaTitle: "আপনার dead stock কমাতে প্রস্তুত?",
+                ctaSubtitle: "Saamagrii.AI এর সাথে টাকা বাঁচানো এবং waste কমানো হাজারো Indian shopkeepers এর সাথে যোগ দিন",
+                ctaBtn: "এখনই Enroll করুন",
+                footerAbout: "Saamagrii.AI সম্পর্কে",
+                footerAboutText: "Saamagrii.AI simple WhatsApp-based inventory management এর মাধ্যমে Indian shopkeepers কে dead stock কমাতে এবং profit বাড়াতে help করে।",
+                footerLinks: "দ্রুত লিংক",
+                footerFaq: "FAQ",
+                footerContact: "যোগাযোগ করুন",
+                footerAddress: "গুড়গাঁও, ভারত",
+                footerCopyright: "Copyright@2025 Saamagrii.AI. সর্বস্বত্ব সংরক্ষিত। | Indian Shopkeepers এর জন্য ❤️ দিয়ে তৈরি",
+                modalTitle: "Saamagrii.AI এর সাথে Enroll করুন",
+                modalSubtitle: "আমাদের inventory management system শুরু করতে আপনার বিবরণ পূরণ করুন",
+                mobileLabel: "মোবাইল নম্বর *",
+                shopNameLabel: "দোকানের নাম *",
+                stateLabel: "রাজ্য *",
+                countryLabel: "দেশ *",
+                submitBtn: "Enrollment জমা দিন",
+                thankYouTitle: "Enroll করার জন্য ধন্যবাদ!",
+                thankYouText: "আপনার enrollment বিবরণ সফলভাবে জমা দেওয়া হয়েছে। আমাদের টিম আপনার তথ্য পর্যালোচনা করবে এবং শীঘ্রই আপনাকে একটি activation code পাঠাবে।",
+                whatsappHelpTitle: "Help প্রয়োজন বা কোনো প্রশ্ন আছে?",
+                whatsappHelpText: "যেকোনো সহায়তার জন্য বা আপনি যদি তাড়াতাড়ি আপনার activation code প্রয়োজন, দয়া করে WhatsApp এ আমাদের সাথে যোগাযোগ করুন।",
+                whatsappHelpText2: "শুধু \"I need help with Saamagrii.AI\" বলে একটি message পাঠান এবং আমাদের টিম আপনাকে সাহায্য করবে।",
+                closeBtn: "বন্ধ করুন"
+            },
+            mr: {
+                navFeatures: "Features",
+                navHowItWorks: "How It Works",
+                navPricing: "Pricing",
+                navTestimonials: "Testimonials",
+                navContact: "Contact",
+                heroTitle: "AI ने आपल्या दुकानचे dead stock कमी करा",
+                heroText: "Saamagrii.AI तुमच्या दुकानच्या inventory ला voice किंवा text message वर manage करण्यास मदत करते - कोणतेही app install करण्याची गरज नाही!",
+                enrollBtn: "आत्ताच Enroll करा",
+                featuresTitle: "किराणा स्टोअर्ससाठी Powerful Features",
+                featuresSubtitle: "Indian shopkeepers साठी बनवले आहे जे time वाचवते आणि inventory waste कमी करते",
+                feature1Title: "Voice किंवा Text ने Update",
+                feature1Text: "Voice note किंवा text message वर तुमचे inventory update करा. AI तुमची भाषा समजून आपोआप inventory update करते.",
+                feature2Title: "On-Demand Summary",
+                feature2Text: "WhatsApp वर 'Summary' पाठवून कधीही तुमच्या inventory चे short summary मिळवा.",
+                feature3Title: "Daily Long Summary",
+                feature3Text: "दररोज तुमच्या inventory च्या movements, sales आणि expire होणाऱ्या items चे detailed summary मिळवा.",
+                feature4Title: "AI पासून Insights",
+                feature4Text: "तुमच्या inventory situation च्या आधारावर personalized recommendations मिळवा, जसे slow-moving items साठी offers तयार करण्यास मदत.",
+                howItWorksTitle: "Simple 4-Step Process",
+                howItWorksSubtitle: "Saamagrii.AI सह तुमचे inventory efficiently manage करा",
+                step1Title: "Send Voice किंवा Text",
+                step1Text: "WhatsApp वर voice किंवा text message पाठवून update करा.",
+                step2Title: "AI Processing",
+                step2Text: "AI तुमचे message समजून inventory update करते.",
+                step3Title: "Instant Confirmation",
+                step3Text: "Update ची confirmation आणि current stock levels मिळवा.",
+                step4Title: "AI Insights",
+                step4Text: "Personalized recommendations आणि alerts मिळवा.",
+                pricingTitle: "Affordable Pricing Plans",
+                pricingSubtitle: "तुमच्या दुकानासाठी सर्वोत्तम plan निवडा. कोणतेही लपवलेले charges नाहीत!",
+                basicPlan: "Basic Plan",
+                proPlan: "Pro Plan",
+                businessPlan: "Business Plan",
+                perMonth: "प्रति महिना",
+                popularTag: "सर्वात लोकप्रिय",
+                pricingEnroll: "आत्ताच Enroll करा",
+                feature1: "अमर्यादित voice updates",
+                feature2: "रिअल-टाइम inventory tracking",
+                feature3: "दैनिक summary (पर्यायी)",
+                feature4: "Dead stock alerts",
+                feature5: "WhatsApp support",
+                feature6: "सर्व Basic features",
+                feature7: "स्मार्ट bundled offers",
+                feature8: "एक्सपायरी prediction alerts",
+                feature9: "सेल्स analytics reports",
+                feature10: "प्राधान्य support",
+                feature11: "मल्टी-यूजर access",
+                feature12: "सर्व Pro features",
+                feature13: "मल्टिपल स्टोअर management",
+                feature14: "सप्लायर management",
+                feature15: "कस्टम reporting",
+                feature16: "डेडिकेटेड account manager",
+                feature17: "24/7 support",
+                testimonialsTitle: "दुकानदार काय म्हणतात",
+                testimonialsSubtitle: "Saamagrii.AI वापरणाऱ्या Indian Shop मालकांकडून ऐका",
+                testimonial1: "\"Saamagrii.AI ने माझे expired सामान 40% कमी केले! Voice note system व्यस्त दुकानदारांसाठी परिपूर्ण आहे ज्यांना complex software साठी वेळ नाही.",
+                client1Name: "राजेश कुमार",
+                client1Store: "किराणा दुकान, दिल्ली",
+                testimonial2: "\"Bundled offer suggestions ने मला जुने स्टॉक जलद साफ करण्यास मदत केली. मी एका महिन्यात ₹8,000 अतिरिक्त कमवले जे dead loss होते.",
+                client2Name: "प्रिया शर्मा",
+                client2Store: "सामान्य दुकान, मुंबई",
+                testimonial3: "\"55 वर्षांचा दुकानदार म्हणून, मला तंत्रज्ञानाची काळजी होती. पण WhatsApp मला माहित आहे! Saamagrii.AI ने inventory management इतके सोपे केले.",
+                client3Name: "विजय पाटील",
+                client3Store: "किराणा दुकान, अहमदाबाद",
+                ctaTitle: "तुमचे dead stock कमी करण्यास तयार आहात का?",
+                ctaSubtitle: "Saamagrii.AI सह पैसे वाचवणाऱ्या आणि कचरा कमी करणाऱ्या हजारो भारतीय दुकानदारांमध्ये सामील व्हा",
+                ctaBtn: "आत्ताच Enroll करा",
+                footerAbout: "Saamagrii.AI बद्दल",
+                footerAboutText: "Saamagrii.AI सोप्या WhatsApp-आधारित inventory management द्वारे भारतीय दुकानदारांना dead stock कमी करण्यास आणि नफा वाढवण्यास मदत करते.",
+                footerLinks: "द्रुत दुवे",
+                footerFaq: "FAQ",
+                footerContact: "आमच्याशी संपर्क साधा",
+                footerAddress: "गुड़गाँव, भारत",
+                footerCopyright: "Copyright@2025 Saamagrii.AI. सर्व हक्क राखीव. | भारतीय दुकानदारांसाठी ❤️ ने डिझाइन केले",
+                modalTitle: "Saamagrii.AI सह Enroll करा",
+                modalSubtitle: "आमची inventory management system सुरू करण्यासाठी तुमचे तपशील भरा",
+                mobileLabel: "मोबाइल नंबर *",
+                shopNameLabel: "दुकानाचे नाव *",
+                stateLabel: "राज्य *",
+                countryLabel: "देश *",
+                submitBtn: "Enrollment सबमिट करा",
+                thankYouTitle: "Enroll केल्याबद्दल धन्यवाद!",
+                thankYouText: "तुमचे enrollment तपशील यशस्वीरित्या सबमिट केले आहेत. आमची टीम तुमची माहिती तपासेल आणि लवकरच तुम्हाला activation code पाठवेल.",
+                whatsappHelpTitle: "मदत हवी का किंवा कोणतेही प्रश्न आहेत का?",
+                whatsappHelpText: "कोणत्याही सहायतेसाठी किंवा तुम्हाला तुमचा activation code लवकर हवा असल्यास, कृपया आम्हाला WhatsApp करा.",
+                whatsappHelpText2: "फक्त \"I need help with Saamagrii.AI\" म्हणून एक message पाठवा आणि आमची टीम तुम्हाला मदत करेल.",
+                closeBtn: "बंद करा"
+            },
+            ta: {
+                navFeatures: "Features",
+                navHowItWorks: "How It Works",
+                navPricing: "Pricing",
+                navTestimonials: "Testimonials",
+                navContact: "Contact",
+                heroTitle: "AI மூலம் உங்கள் கடையின் dead stock ஐ குறைக்கவும்",
+                heroText: "Saamagrii.AI உங்கள் கடையின் inventory ஐ voice அல்லது text message மூலம் manage செய்ய உதவுகிறது - எந்த app உமிழ்வதும் தேவையில்லை!",
+                enrollBtn: "இப்போது Enroll செய்யவும்",
+                featuresTitle: "கிரானா ஸ்டோர்களுக்கு Powerful Features",
+                featuresSubtitle: "Indian shopkeepers க்கு வடிவமைக்கப்பட்டது, இது time சேமிக்கிறது மற்றும் inventory waste ஐ குறைக்கிறது",
+                feature1Title: "Voice அல்லது Text மூலம் Update",
+                feature1Text: "Voice note அல்லது text message மூலம் உங்கள் inventory ஐ update செய்யவும். AI உங்கள் language ஐ புரிந்துகொண்டு inventory ஐ தானாகவே update செய்கிறது.",
+                feature2Title: "On-Demand Summary",
+                feature2Text: "WhatsApp இல் 'Summary' அனுப்புவதன் மூலம் எப்போதும் உங்கள் inventory இன் short summary ஐ பெறுங்கள்.",
+                feature3Title: "Daily Long Summary",
+                feature3Text: "தினமும் உங்கள் inventory இன் movements, sales மற்றும் expire ஆகும் items இன் detailed summary ஐ பெறுங்கள்.",
+                feature4Title: "AI இலிருந்து Insights",
+                feature4Text: "உங்கள் inventory situation அடிப்படையில் personalized recommendations பெறுங்கள், போன்ற slow-moving items க்கு offers உருவாக்க உதவி.",
+                howItWorksTitle: "Simple 4-Step Process",
+                howItWorksSubtitle: "Saamagrii.AI உடன் உங்கள் inventory ஐ திறம்படுத்தப்படுத்துங்கள்",
+                step1Title: "Send Voice அல்லது Text",
+                step1Text: "WhatsApp இல் voice அல்லது text message அனுப்புவதன் மூலம் update செய்யவும்.",
+                step2Title: "AI Processing",
+                step2Text: "AI உங்கள் message ஐ புரிந்துகொண்டு inventory ஐ update செய்கிறது.",
+                step3Title: "Instant Confirmation",
+                step3Text: "Update இன் confirmation மற்றும் current stock levels ஐ பெறுங்கள்.",
+                step4Title: "AI Insights",
+                step4Text: "Personalized recommendations மற்றும் alerts ஐ பெறுங்கள்.",
+                pricingTitle: "Affordable Pricing Plans",
+                pricingSubtitle: "உங்கள் கடைக்கு சிறந்ததாக வேலை செய்யும் திட்டத்தைத் தேர்ந்தெடுக்கவும். மறைக்கப்பட்ட கட்டணங்கள் இல்லை!",
+                basicPlan: "Basic Plan",
+                proPlan: "Pro Plan",
+                businessPlan: "Business Plan",
+                perMonth: "மாதத்திற்கு",
+                popularTag: "மிகவும் பிரபலமானது",
+                pricingEnroll: "இப்போது Enroll செய்யவும்",
+                feature1: "வரம்பற்ற voice updates",
+                feature2: "ரியல்-டைம் inventory tracking",
+                feature3: "தினசரி summary (விருப்பு)",
+                feature4: "Dead stock alerts",
+                feature5: "WhatsApp support",
+                feature6: "அனைத்து Basic features",
+                feature7: "ஸ்மார்ட் bundled offers",
+                feature8: "எக்ஸ்பைரி prediction alerts",
+                feature9: "விற்பனை analytics reports",
+                feature10: "முன்னுரிமை support",
+                feature11: "மல்டி-யூசர் access",
+                feature12: "அனைத்து Pro features",
+                feature13: "மல்டிபிள் ஸ்டோர் management",
+                feature14: "சப்ளையர் management",
+                feature15: "கஸ்டம் reporting",
+                feature16: "டெடிகேட்டட் account manager",
+                feature17: "24/7 support",
+                testimonialsTitle: "கடைக்காரர்கள் என்ன சொல்கிறார்கள்",
+                testimonialsSubtitle: "Saamagrii.AI ஐ பயன்படுத்தும் Indian Shop owners இடமிருந்து கேளுங்கள்",
+                testimonial1: "\"Saamagrii.AI எனது expired பொருட்களை 40% குறைத்தது! Voice note system பிஸியான கடைக்காரர்களுக்கு பரிபூரணமானது, நாம் போன்றவர்களுக்கு காம்ப்ளெக்ஸ் சாப்ட்வேருக்கு நேரம் இல்லை.",
+                client1Name: "ராஜேஷ் குமார்",
+                client1Store: "கிராகரி ஸ்டோர், டெல்லி",
+                testimonial2: "\"Bundled offer suggestions எனகு பழைய ஸ்டாக் வேகமாக அழிக்க உதவியது. நான் ஒரு மாதத்தில் ₹8,000 கூடுதலாக சம்பாதித்தேன், அது dead loss ஆகியிருந்தது!",
+                client2Name: "பிரியா சர்மா",
+                client2Store: "ஜெனரல் ஸ்டோர், மும்பை",
+                testimonial3: "\"55 வயது கடைக்காரராக, நான் தொழில்நுட்பத்தைப் பற்றி கவலைப்பட்டேன். ஆனால் WhatsApp எனக்குத் தெரியும்! Saamagrii.AI inventory management ஐ இத்தனி எளிதாக்கியது.",
+                client3Name: "விஜய் படேல்",
+                client3Store: "கிரானா ஸ்டோர், அகமதாபாத்",
+                ctaTitle: "உங்கள் dead stock ஐ குறைக்கத் தயாரா?",
+                ctaSubtitle: "Saamagrii.AI உடன் பணத்தைச் சேமிக்கும் மற்றும் கழிவைக் குறைக்கும் ஆயிரக்கணக்கான இந்திய கடைக்காரர்களுடன் இணையுங்கள்",
+                ctaBtn: "இப்போது Enroll செய்யவும்",
+                footerAbout: "Saamagrii.AI பற்றி",
+                footerAboutText: "Saamagrii.AI எளிய WhatsApp-அடிப்படையிலான inventory management மூலம் இந்திய கடைக்காரர்களுக்கு dead stock ஐக் குறைக்கவும் லாபத்தை அதிகரிக்கவும் உதவுகிறது.",
+                footerLinks: "வேகமான இணைப்புகள்",
+                footerFaq: "FAQ",
+                footerContact: "எங்களைத் தொடர்பு கொள்ளவும்",
+                footerAddress: "குர்கான், இந்தியா",
+                footerCopyright: "Copyright@2025 Saamagrii.AI. அனைத்து உரிமைகளும் பாதுகாக்கப்பட்டவை. | இந்திய கடைக்காரர்களுக்கு ❤️ உடன் வடிவமைக்கப்பட்டது",
+                modalTitle: "Saamagrii.AI உடன் Enroll செய்யுங்கள்",
+                modalSubtitle: "எங்கள் inventory management system ஐத் தொடங்க உங்கள் விவரங்களை நிரப்பவும்",
+                mobileLabel: "மொபைல் எண் *",
+                shopNameLabel: "கடை பெயர் *",
+                stateLabel: "மாநிலம் *",
+                countryLabel: "நாடு *",
+                submitBtn: "Enrollment சமர்ப்பிக்கவும்",
+                thankYouTitle: "Enroll செய்ததற்கு நன்றி!",
+                thankYouText: "உங்கள் enrollment விவரங்கள் வெற்றிகரமாக சமர்ப்பிக்கப்பட்டுள்ளன. எங்கள் குழு உங்கள் தகவலை மதிப்பாய்வு செய்து விரைவில் ஒரு activation code அனுப்பும்.",
+                whatsappHelpTitle: "உதவி தேவையா அல்லது எந்த கேள்விகள் உள்ளனவா?",
+                whatsappHelpText: "எந்தவொரு உதவிக்கும் அல்லது உங்களுக்கு உங்கள் activation code அவசரமாக தேவைப்பட்டால், தயவுசெய்து WhatsApp இல் எங்களைத் தொடர்பு கொள்ளுங்கள்.",
+                whatsappHelpText2: "வெறும் \"I need help with Saamagrii.AI\" என்று ஒரு message அனுப்பவும், எங்கள் குழு உங்களுக்கு உதவும்.",
+                closeBtn: "மூடுக"
+            },
+            te: {
+                navFeatures: "Features",
+                navHowItWorks: "How It Works",
+                navPricing: "Pricing",
+                navTestimonials: "Testimonials",
+                navContact: "Contact",
+                heroTitle: "AIతో మీ దుకానం dead stock తగ్గించండి",
+                heroText: "Saamagrii.AI మీ దుకానం inventory ని voice లేదా text message ద్వారా manage చేయడంలో help చేస్తుంది - ఏదైనా app install చేయాల్సిన అవసరం లేదు!",
+                enrollBtn: "ఇప్పుడు Enroll చేయండి",
+                featuresTitle: "కిరాణా స్టోర్ల కోసం Powerful Features",
+                featuresSubtitle: "Indian shopkeepers కోసం రూపొందించబడింది, ఇది time ఆదా చేస్తుంది మరియు inventory waste తగ్గిస్తుంది",
+                feature1Title: "Voice లేదా Text తో Update",
+                feature1Text: "Voice note లేదా text message తో మీ inventory ని update చేయండి. AI మీ భాషను అర్థం చేసుకుని inventory ని స్వయంచాలకంగా update చేస్తుంది.",
+                feature2Title: "On-Demand Summary",
+                feature2Text: "WhatsApp పై 'Summary' పంపించడం ద్వారా ఎప్పుడైనా మీ inventory యొక్క short summary పొందండి.",
+                feature3Title: "Daily Long Summary",
+                feature3Text: "ప్రతి రోజూ మీ inventory యొక్క movements, sales మరియు expire అయ్యే items యొక్క detailed summary పొందండి.",
+                feature4Title: "AI నుండి Insights",
+                feature4Text: "మీ inventory situation ఆధారంగా personalized recommendations పొందండి, ఉదాహరణకు slow-moving items కోసం offers రూపొందించడంలో help.",
+                howItWorksTitle: "Simple 4-Step Process",
+                howItWorksSubtitle: "Saamagrii.AIతో మీ inventory ని సమర్థవంతంగా manage చేయండి",
+                step1Title: "Send Voice లేదా Text",
+                step1Text: "WhatsApp పై voice లేదా text message పంపించడం ద్వారా update చేయండి.",
+                step2Title: "AI Processing",
+                step2Text: "AI మీ message ని అర్థం చేసుకుని inventory ని update చేస్తుంది.",
+                step3Title: "Instant Confirmation",
+                step3Text: "Update యొక్క confirmation మరియు current stock levels పొందండి.",
+                step4Title: "AI Insights",
+                step4Text: "Personalized recommendations మరియు alerts పొందండి.",
+                pricingTitle: "Affordable Pricing Plans",
+                pricingSubtitle: "మీ దుకానానికి ఉత్తమంగా పనిచేసే ప్లాన్ ఎంచుకోండి. దాచిన ఛార్జీలు లేవు!",
+                basicPlan: "Basic Plan",
+                proPlan: "Pro Plan",
+                businessPlan: "Business Plan",
+                perMonth: "నెలకు",
+                popularTag: "అత్యంత ప్రాచుర్యం",
+                pricingEnroll: "ఇప్పుడు Enroll చేయండి",
+                feature1: "అపరిమితమైన voice updates",
+                feature2: "రియల్-టైమ్ inventory tracking",
+                feature3: "రోజువారీ summary (ఐచ్ఛికం)",
+                feature4: "Dead stock alerts",
+                feature5: "WhatsApp support",
+                feature6: "అన్ని Basic features",
+                feature7: "స్మార్ట్ bundled offers",
+                feature8: "ఎక్స్పైరీ prediction alerts",
+                feature9: "అమ్మైన్ల యానలిటిక్స్ నివేదికలు",
+                feature10: "ప్రాధాన్య support",
+                feature11: "మల్టీ-యూజర్ యాక్సెస్",
+                feature12: "అన్ని Pro features",
+                feature13: "బహుళ స్టోర్ నిర్వహణ",
+                feature14: "సరఫర్ నిర్వహణ",
+                feature15: "అనుకూలీకృత నివేదికలు",
+                feature16: "అంకితమైన ఖాతా నిర్వాహకుడు",
+                feature17: "24/7 support",
+                testimonialsTitle: "దుకానదారులు ఏమి చెబుతున్నారు",
+                testimonialsSubtitle: "Saamagrii.AI ఉపయోగించే Indian Shop యజమానుల నుండి వినండి",
+                testimonial1: "\"Saamagrii.AI నా expired వస్తువులను 40% తగ్గించింది! Voice note system నా వంటి వ్యస్త దుకానదారులకు పరిపూర్ణంగా ఉపయోగపడుతుంది, వారికి క్లిష్ట్ సాఫ్ట్‌వేర్ కోసం సమయం లేదు.",
+                client1Name: "రాజేష్ కుమార్",
+                client1Store: "కిరాణా స్టోర్, ఢిల్లీ",
+                testimonial2: "\"Bundled offer suggestions నాకు పాత స్టాక్‌ను త్వరగా క్లియర్ చేయడంలో సహాయపడింది. నేను ఒక నెలలో ₹8,000 అదనపు సంపాదించాను, అది dead loss అయ్యేది!",
+                client2Name: "ప్రియా శర్మ",
+                client2Store: "జనరల్ స్టోర్, ముంబై",
+                testimonial3: "\"55 ఏళ్ల దుకానదారుగా, నాకు టెక్నాలజీ గురించి ఆందోళన ఉంది. కానీ WhatsApp నాకు తెలుసు! Saamagrii.AI inventory నిర్వహణను ఇంత సులభం చేసింది.",
+                client3Name: "విజయ్ పటేల్",
+                client3Store: "కిరాణా స్టోర్, అహ్మదాబాద్",
+                ctaTitle: "మీ dead stock తగ్గించడానికి సిద్ధంగా ఉన్నారా?",
+                ctaSubtitle: "Saamagrii.AIతో డబ్బులు ఆదా చేసే మరియు వ్యర్థాన్ని తగ్గించే వేలాది భారతీయ దుకానదారులతో చేరండి",
+                ctaBtn: "ఇప్పుడు Enroll చేయండి",
+                footerAbout: "Saamagrii.AI గురించి",
+                footerAboutText: "Saamagrii.AI సరళ WhatsApp-ఆధారిత inventory నిర్వహణ ద్వారా భారతీయ దుకానదారులకు dead stock తగ్గించడంలో మరియు లాభాలను పెంచడంలో సహాయపడుతుంది.",
+                footerLinks: "త్వరిత లింకులు",
+                footerFaq: "FAQ",
+                footerContact: "మాతో సంప్రదించండి",
+                footerAddress: "గుర్గావ్, భారతదేశం",
+                footerCopyright: "Copyright@2025 Saamagrii.AI. అన్ని హక్కులు సంరక్షించబడ్డాయి. | భారతీయ దుకానదారుల కోసం ❤️తో రూపొందించబడింది",
+                modalTitle: "Saamagrii.AIతో Enroll చేయండి",
+                modalSubtitle: "మా inventory నిర్వహణ వ్యవస్థను ప్రారంభించడానికి మీ వివరాలను నింపండి",
+                mobileLabel: "మొబైల్ నంబర్ *",
+                shopNameLabel: "దుకాన పేరు *",
+                stateLabel: "రాష్ట్రం *",
+                countryLabel: "దేశం *",
+                submitBtn: "Enrollment సమర్పించండి",
+                thankYouTitle: "Enroll చేసినందుకు ధన్యవాదాలు!",
+                thankYouText: "మీ Enroll వివరాలు విజయవంతంగా సమర్పించబడ్డాయి. మా బృందం మీ సమాచారాన్ని సమీక్షిస్తుంది మరియు త్వరలో మీకు యాక్టివేషన్ కోడ్ పంపుతుంది.",
+                whatsappHelpTitle: "Help అవసరమా లేదా ఏవైనా ప్రశ్నలు ఉన్నాయా?",
+                whatsappHelpText: "ఏదైనా సహాయం కోసం లేదా మీకు మీ యాక్టివేషన్ కోడ్ అత్యవసరంగా అవసరమైతే, దయచేసి మాకు WhatsApp చేయండి.",
+                whatsappHelpText2: "కేవలం \"I need help with Saamagrii.AI\" అని ఒక message పంపండి మరియు మా బృందం మీకు సహాయం చేస్తుంది.",
+                closeBtn: "మూసివేయి"
+            }
         };
         
         // Smooth scrolling for navigation links
@@ -2124,16 +2081,17 @@
         document.querySelectorAll('.btn-whatsapp').forEach(button => {
             button.addEventListener('click', function(e) {
                 e.preventDefault();
-                alert('In the live version, this would open WhatsApp with our business number. Currently configured to: +919013283687');
+                window.open('https://wa.me/919013283687', '_blank');
             });
         });
         
         // Enrollment modal functionality
         const enrollModal = document.getElementById('enrollModal');
-        const enrollBtns = document.querySelectorAll('#enrollBtn, #ctaEnrollBtn, .enroll-pricing');
+        const enrollBtns = document.querySelectorAll('.btn-enroll, .enroll-pricing');
         const closeBtn = document.querySelector('.close');
         const enrollForm = document.getElementById('enrollForm');
         const thankYouPage = document.getElementById('thankYouPage');
+        const closeThankYouBtn = document.querySelector('.close-thankyou');
         
         // Open modal when any enroll button is clicked
         enrollBtns.forEach(button => {
@@ -2180,6 +2138,12 @@
             
             // Scroll to top
             window.scrollTo(0, 0);
+        });
+        
+        // Close thank you page
+        closeThankYouBtn.addEventListener('click', function() {
+            thankYouPage.style.display = 'none';
+            document.querySelector('.hero, .features, .how-it-works, .pricing, .testimonials, .cta-section, footer').style.display = 'block';
         });
         
         // Mobile menu toggle
@@ -2264,132 +2228,11 @@
         
         // Set default language to Hindi
         document.addEventListener('DOMContentLoaded', () => {
-          // Set default language to Hindi
-          changeLanguage('hi');
-          // Update the current language display
-          document.querySelector('.current-language').textContent = 'हिंदी';
+            // Set default language to Hindi
+            changeLanguage('hi');
+            // Update the current language display
+            document.querySelector('.current-language').textContent = 'हिंदी';
         });
-        
-        // Add this to the existing JavaScript
-        // Modal functionality
-        const enrollModal = document.getElementById('enrollModal');
-        const thankYouModal = document.getElementById('thankYouModal');
-        const enrollBtns = document.querySelectorAll('.btn-enroll');
-        const closeBtns = document.querySelectorAll('.close');
-        const closeThankYouBtn = document.querySelector('.close-thankyou');
-        const enrollForm = document.getElementById('enrollForm');
-        
-        // Open enroll modal when clicking any enroll button
-        enrollBtns.forEach(btn => {
-          btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            enrollModal.style.display = 'block';
-          });
-        });
-        
-        // Close modals
-        closeBtns.forEach(btn => {
-          btn.addEventListener('click', () => {
-            enrollModal.style.display = 'none';
-          });
-        });
-        
-        closeThankYouBtn.addEventListener('click', () => {
-          thankYouModal.style.display = 'none';
-        });
-        
-        // Close modal when clicking outside
-        window.addEventListener('click', (e) => {
-          if (e.target === enrollModal) {
-            enrollModal.style.display = 'none';
-          }
-          if (e.target === thankYouModal) {
-            thankYouModal.style.display = 'none';
-          }
-        });
-        
-        // Handle form submission
-        enrollForm.addEventListener('submit', (e) => {
-          e.preventDefault();
-          
-          // Get form values
-          const mobileNumber = document.getElementById('mobileNumber').value;
-          const shopName = document.getElementById('shopName').value;
-          const state = document.getElementById('state').value;
-          const country = document.getElementById('country').value;
-          
-          // Here you would typically send the data to your server
-          console.log('Form submitted:', { mobileNumber, shopName, state, country });
-          
-          // Close enroll modal and show thank you modal
-          enrollModal.style.display = 'none';
-          thankYouModal.style.display = 'block';
-          
-          // Reset form
-          enrollForm.reset();
-        });
-        
     </script>
-<!-- Add this before the closing body tag -->
-<!-- Enroll Modal -->
-<div id="enrollModal" class="modal">
-  <div class="modal-content">
-    <span class="close">&times;</span>
-    <h2 data-translate="enrollFormTitle">Enroll Now</h2>
-    <p data-translate="enrollFormSubtitle">Fill your details to start using Saamagrii.AI</p>
-    <form id="enrollForm">
-      <div class="form-group">
-        <label for="mobileNumber" data-translate="mobileNumberLabel">Mobile Number *</label>
-        <input type="tel" id="mobileNumber" name="mobileNumber" required>
-      </div>
-      <div class="form-group">
-        <label for="shopName" data-translate="shopNameLabel">Shop Name *</label>
-        <input type="text" id="shopName" name="shopName" required>
-      </div>
-      <div class="form-group">
-        <label for="state" data-translate="stateLabel">State *</label>
-        <select id="state" name="state" required>
-          <option value="" disabled selected>Select State</option>
-          <option value="Andhra Pradesh">Andhra Pradesh</option>
-          <option value="Assam">Assam</option>
-          <option value="Bihar">Bihar</option>
-          <option value="Gujarat">Gujarat</option>
-          <option value="Haryana">Haryana</option>
-          <option value="Karnataka">Karnataka</option>
-          <option value="Kerala">Kerala</option>
-          <option value="Madhya Pradesh">Madhya Pradesh</option>
-          <option value="Maharashtra">Maharashtra</option>
-          <option value="Odisha">Odisha</option>
-          <option value="Punjab">Punjab</option>
-          <option value="Rajasthan">Rajasthan</option>
-          <option value="Tamil Nadu">Tamil Nadu</option>
-          <option value="Telangana">Telangana</option>
-          <option value="Uttar Pradesh">Uttar Pradesh</option>
-          <option value="West Bengal">West Bengal</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="country" data-translate="countryLabel">Country *</label>
-        <input type="text" id="country" name="country" value="India" readonly>
-      </div>
-      <button type="submit" class="btn btn-enroll" data-translate="submitBtn">Submit</button>
-    </form>
-  </div>
-</div>
-
-<!-- Thank You Modal -->
-<div id="thankYouModal" class="modal">
-  <div class="modal-content">
-    <h2 data-translate="thankYouTitle">Thank You!</h2>
-    <p data-translate="thankYouMessage">We have received your details. Our team will contact you soon with your activation code.</p>
-    <p data-translate="whatsappHelp">If you have any queries or need your activation code urgently, WhatsApp us at:</p>
-    <div class="whatsapp-contact">
-      <a href="https://wa.me/919013283687" target="_blank">
-        <i class="fab fa-whatsapp"></i> +91 90132 83687
-      </a>
-    </div>
-    <button class="btn btn-enroll close-thankyou" data-translate="closeBtn">Close</button>
-  </div>
-</div>
 </body>
 </html>
