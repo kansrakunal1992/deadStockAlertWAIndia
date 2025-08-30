@@ -1466,6 +1466,350 @@ async function deactivateUser(shopId) {
   }
 }
 
+// Add these functions to the module.exports object
+
+// Get today's sales summary
+async function getTodaySalesSummary(shopId) {
+  const context = `Get Today Sales Summary ${shopId}`;
+  try {
+    // Get today's date in ISO format
+    const today = new Date();
+    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    
+    // Format dates for Airtable formula
+    const startStr = startOfDay.toISOString();
+    const endStr = endOfDay.toISOString();
+    
+    const filterFormula = `AND({ShopID} = '${shopId}', {Quantity} < 0, IS_AFTER({SaleDate}, "${startStr}"), IS_BEFORE({SaleDate}, "${endStr}"))`;
+    
+    const result = await airtableSalesRequest({
+      method: 'get',
+      params: {
+        filterByFormula: filterFormula
+      }
+    }, context);
+    
+    // Calculate summary
+    let totalItems = 0;
+    let totalValue = 0;
+    const productSales = {};
+    
+    result.records.forEach(record => {
+      const product = record.fields.Product;
+      const quantity = Math.abs(record.fields.Quantity || 0);
+      const salePrice = record.fields.SalePrice || 0;
+      const unit = record.fields.Units || '';
+      
+      totalItems += quantity;
+      totalValue += quantity * salePrice;
+      
+      if (!productSales[product]) {
+        productSales[product] = { quantity: 0, unit, value: 0 };
+      }
+      
+      productSales[product].quantity += quantity;
+      productSales[product].value += quantity * salePrice;
+    });
+    
+    // Sort products by quantity sold
+    const topProducts = Object.entries(productSales)
+      .sort((a, b) => b[1].quantity - a[1].quantity)
+      .slice(0, 5)
+      .map(([name, data]) => ({
+        name,
+        quantity: data.quantity,
+        unit: data.unit,
+        value: data.value
+      }));
+    
+    return {
+      totalItems,
+      totalValue,
+      topProducts
+    };
+  } catch (error) {
+    logError(context, error);
+    return {
+      totalItems: 0,
+      totalValue: 0,
+      topProducts: []
+    };
+  }
+}
+
+// Get inventory summary
+async function getInventorySummary(shopId) {
+  const context = `Get Inventory Summary ${shopId}`;
+  try {
+    const filterFormula = `{ShopID} = '${shopId}'`;
+    
+    const result = await airtableRequest({
+      method: 'get',
+      params: {
+        filterByFormula: filterFormula
+      }
+    }, context);
+    
+    // Calculate summary
+    let totalProducts = 0;
+    let totalValue = 0;
+    const inventory = {};
+    
+    result.records.forEach(record => {
+      const product = record.fields.Product;
+      const quantity = record.fields.Quantity || 0;
+      const unit = record.fields.Units || '';
+      
+      totalProducts++;
+      
+      // Estimate value (this could be enhanced with actual product prices)
+      const estimatedValue = quantity * 10; // Simple estimation
+      totalValue += estimatedValue;
+      
+      inventory[product] = {
+        quantity,
+        unit,
+        estimatedValue
+      };
+    });
+    
+    return {
+      totalProducts,
+      totalValue,
+      inventory
+    };
+  } catch (error) {
+    logError(context, error);
+    return {
+      totalProducts: 0,
+      totalValue: 0,
+      inventory: {}
+    };
+  }
+}
+
+// Get low stock products
+async function getLowStockProducts(shopId, threshold = 5) {
+  const context = `Get Low Stock Products ${shopId}`;
+  try {
+    const filterFormula = `{ShopID} = '${shopId}'`;
+    
+    const result = await airtableRequest({
+      method: 'get',
+      params: {
+        filterByFormula: filterFormula
+      }
+    }, context);
+    
+    // Find products with quantity below threshold
+    const lowStockProducts = [];
+    
+    result.records.forEach(record => {
+      const product = record.fields.Product;
+      const quantity = record.fields.Quantity || 0;
+      const unit = record.fields.Units || '';
+      
+      if (quantity < threshold && quantity > 0) {
+        lowStockProducts.push({
+          name: product,
+          quantity,
+          unit
+        });
+      }
+    });
+    
+    // Sort by quantity (lowest first)
+    lowStockProducts.sort((a, b) => a.quantity - b.quantity);
+    
+    return lowStockProducts;
+  } catch (error) {
+    logError(context, error);
+    return [];
+  }
+}
+
+// Get expiring products
+async function getExpiringProducts(shopId, daysAhead = 7) {
+  const context = `Get Expiring Products ${shopId}`;
+  try {
+    // Calculate date N days ahead
+    const today = new Date();
+    const nDaysAhead = new Date(today);
+    nDaysAhead.setDate(today.getDate() + daysAhead);
+    
+    // Format date for Airtable formula
+    const dateStr = nDaysAhead.toISOString();
+    
+    const filterFormula = `AND({ShopID} = '${shopId}', IS_BEFORE({ExpiryDate}, "${dateStr}"), {ExpiryDate} != BLANK())`;
+    
+    const result = await airtableBatchRequest({
+      method: 'get',
+      params: {
+        filterByFormula: filterFormula,
+        sort: [{ field: 'ExpiryDate', direction: 'asc' }]
+      }
+    }, context);
+    
+    // Process expiring products
+    const expiringProducts = [];
+    
+    result.records.forEach(record => {
+      const product = record.fields.Product;
+      const expiryDate = record.fields.ExpiryDate;
+      const quantity = record.fields.Quantity || 0;
+      
+      if (quantity > 0) {
+        expiringProducts.push({
+          name: product,
+          expiryDate: new Date(expiryDate),
+          quantity
+        });
+      }
+    });
+    
+    return expiringProducts;
+  } catch (error) {
+    logError(context, error);
+    return [];
+  }
+}
+
+// Get sales data for a period
+async function getSalesDataForPeriod(shopId, startDate, endDate) {
+  const context = `Get Sales Data For Period ${shopId}`;
+  try {
+    // Format dates for Airtable formula
+    const startStr = startDate.toISOString();
+    const endStr = endDate.toISOString();
+    
+    const filterFormula = `AND({ShopID} = '${shopId}', {Quantity} < 0, IS_AFTER({SaleDate}, "${startStr}"), IS_BEFORE({SaleDate}, "${endStr}"))`;
+    
+    const result = await airtableSalesRequest({
+      method: 'get',
+      params: {
+        filterByFormula: filterFormula
+      }
+    }, context);
+    
+    // Calculate summary
+    let totalItems = 0;
+    let totalValue = 0;
+    const productSales = {};
+    
+    result.records.forEach(record => {
+      const product = record.fields.Product;
+      const quantity = Math.abs(record.fields.Quantity || 0);
+      const salePrice = record.fields.SalePrice || 0;
+      const unit = record.fields.Units || '';
+      
+      totalItems += quantity;
+      totalValue += quantity * salePrice;
+      
+      if (!productSales[product]) {
+        productSales[product] = { quantity: 0, unit, value: 0 };
+      }
+      
+      productSales[product].quantity += quantity;
+      productSales[product].value += quantity * salePrice;
+    });
+    
+    // Sort products by quantity sold
+    const topProducts = Object.entries(productSales)
+      .sort((a, b) => b[1].quantity - a[1].quantity)
+      .slice(0, 10)
+      .map(([name, data]) => ({
+        name,
+        quantity: data.quantity,
+        unit: data.unit,
+        value: data.value
+      }));
+    
+    return {
+      totalItems,
+      totalValue,
+      topProducts,
+      records: result.records
+    };
+  } catch (error) {
+    logError(context, error);
+    return {
+      totalItems: 0,
+      totalValue: 0,
+      topProducts: [],
+      records: []
+    };
+  }
+}
+
+// Get purchase data for a period
+async function getPurchaseDataForPeriod(shopId, startDate, endDate) {
+  const context = `Get Purchase Data For Period ${shopId}`;
+  try {
+    // Format dates for Airtable formula
+    const startStr = startDate.toISOString();
+    const endStr = endDate.toISOString();
+    
+    const filterFormula = `AND({ShopID} = '${shopId}', IS_AFTER({PurchaseDate}, "${startStr}"), IS_BEFORE({PurchaseDate}, "${endStr}"))`;
+    
+    const result = await airtableBatchRequest({
+      method: 'get',
+      params: {
+        filterByFormula: filterFormula
+      }
+    }, context);
+    
+    // Calculate summary
+    let totalItems = 0;
+    let totalValue = 0;
+    const productPurchases = {};
+    
+    result.records.forEach(record => {
+      const product = record.fields.Product;
+      const quantity = record.fields.Quantity || 0;
+      const unit = record.fields.Units || '';
+      
+      // Estimate purchase value (this could be enhanced with actual purchase prices)
+      const estimatedValue = quantity * 8; // Simple estimation
+      totalItems += quantity;
+      totalValue += estimatedValue;
+      
+      if (!productPurchases[product]) {
+        productPurchases[product] = { quantity: 0, unit, value: 0 };
+      }
+      
+      productPurchases[product].quantity += quantity;
+      productPurchases[product].value += estimatedValue;
+    });
+    
+    // Sort products by quantity purchased
+    const topProducts = Object.entries(productPurchases)
+      .sort((a, b) => b[1].quantity - a[1].quantity)
+      .slice(0, 10)
+      .map(([name, data]) => ({
+        name,
+        quantity: data.quantity,
+        unit: data.unit,
+        value: data.value
+      }));
+    
+    return {
+      totalItems,
+      totalValue,
+      topProducts,
+      records: result.records
+    };
+  } catch (error) {
+    logError(context, error);
+    return {
+      totalItems: 0,
+      totalValue: 0,
+      topProducts: [],
+      records: []
+    };
+  }
+}
+
 module.exports = {
   updateInventory,
   testConnection,
@@ -1496,5 +1840,11 @@ module.exports = {
   getUserStateFromDB,
   deleteUserStateFromDB,
   isUserAuthorized,
-  deactivateUser
+  deactivateUser,
+  getTodaySalesSummary,
+  getInventorySummary,
+  getLowStockProducts,
+  getExpiringProducts,
+  getSalesDataForPeriod,
+  getPurchaseDataForPeriod
 };
