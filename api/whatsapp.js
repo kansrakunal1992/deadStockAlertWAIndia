@@ -33,7 +33,6 @@ const {
 } = require('../database');
 
 // Add this at the top of the file after the imports
-const fs = require('fs');
 const path = require('path');
 const SUMMARY_TRACK_FILE = path.join(__dirname, 'summary_tracker.json');
 
