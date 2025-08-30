@@ -2954,7 +2954,52 @@ module.exports = async (req, res) => {
       res.send('<Response></Response>');
       return;
     }
-
+    
+    // ADD BUTTON HANDLING HERE - RIGHT AFTER AUTHENTICATION
+    // Handle button responses
+    if (ButtonText) {
+      console.log(`[${requestId}] Button response received: "${ButtonText}"`);
+      
+      // Get user's preferred language
+      let userLanguage = 'en';
+      try {
+        const userPref = await getUserPreference(shopId);
+        if (userPref.success) {
+          userLanguage = userPref.language;
+        }
+      } catch (error) {
+        console.warn(`[${requestId}] Failed to get user preference:`, error.message);
+      }
+      
+      // Handle summary buttons
+      if (ButtonText === 'Instant Summary' || ButtonText === 'तत्काल सारांश' || ButtonText === 'তাত্ক্ষণিক সারসংক্ষেপ' || 
+          ButtonText === 'உடனடிச் சுருக்கம்' || ButtonText === 'తక్షణ సారాంశం' || ButtonText === 'ತಕ್ಷಣ ಸಾರಾಂಶ' || 
+          ButtonText === 'તાત્કાલિક સારાંશ' || ButtonText === 'त्वरित सारांश') {
+        // Instant summary
+        const summary = await generateInstantSummary(shopId, userLanguage, requestId);
+        await sendMessageViaAPI(From, summary);
+        res.send('<Response></Response>');
+        return;
+      } else if (ButtonText === 'Detailed Summary' || ButtonText === 'विस्तृत सारांश' || ButtonText === 'বিস্তারিত সারসংক্ষেপ' || 
+                 ButtonText === 'விரிவான சுருக்கம்' || ButtonText === 'వివరణాత్మక సారాంశం' || ButtonText === 'ವಿಸ್ತೃತ ಸಾರಾಂಶ' || 
+                 ButtonText === 'વિગતવાર સારાંશ' || ButtonText === 'तपशीलवार सारांश') {
+        // Full summary
+        const generatingMessage = await generateMultiLanguageResponse(
+          'Generating your detailed summary with insights... This may take a moment.',
+          userLanguage,
+          requestId
+        );
+        
+        // Send initial message
+        await sendMessageViaAPI(From, generatingMessage);
+        
+        // Generate and send full summary
+        const fullSummary = await generateFullScaleSummary(shopId, userLanguage, requestId);
+        await sendMessageViaAPI(From, fullSummary);
+        res.send('<Response></Response>');
+        return;
+      }
+    }
     
     // STATE-AWARE PROCESSING START
     // ============================
