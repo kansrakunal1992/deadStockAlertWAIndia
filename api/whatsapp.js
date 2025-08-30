@@ -123,16 +123,16 @@ async function sendDailySummaries() {
             console.warn(`Failed to get user preference for shop ${shopId}:`, error.message);
           }
           
-          // Generate instant summary
-          const summary = await generateInstantSummary(shopId, userLanguage, `daily-${shopId}`);
+          // Use processShopSummary from dailySummary.js
+          const result = await processShopSummary(shopId);
           
-          // Send summary
-          await sendMessageViaAPI(shopId, summary);
+          // Update tracker if successful
+          if (result.success) {
+            updateSummaryTracker(shopId, dateStr);
+          }
           
-          // Update tracker
-          updateSummaryTracker(shopId, dateStr);
+          return result;
           
-          return { shopId, success: true };
         } catch (error) {
           console.error(`Error processing shop ${shopId}:`, error.message);
           return { shopId, success: false, error: error.message };
