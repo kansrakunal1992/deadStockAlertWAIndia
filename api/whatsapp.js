@@ -3578,6 +3578,41 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   console.log(`[${requestId}] Handling new interaction`);
   const shopId = From.replace('whatsapp:', '');
 
+   // ✅ Get user's language preference for personalized processing message
+  let userLanguage = 'en';
+  try {
+    const userPref = await getUserPreference(shopId);
+    if (userPref.success) {
+      userLanguage = userPref.language;
+    }
+  } catch (error) {
+    console.warn(`[${requestId}] Failed to get user preference:`, error.message);
+  }
+  
+  // ✅ Send immediate "Processing..." response in user's language
+  try {
+    // Create processing message in native script + Roman transliteration
+    const processingMessages = {
+      'hi': `आपके संदेश को संसाधित किया जा रहा है...\n\nAapke sandesh ko sansadhit kiya ja raha hai...`,
+      'bn': `আপনার বার্তা প্রক্রিয়া করা হচ্ছে...\n\nApnā bārtā prakriẏā karā haẏēchē...`,
+      'ta': `உங்கள் செய்தி செயலாக்கப்படுகிறது...\n\nUṅkaḷ ceyti ceyalākkappaṭukiṟatu...`,
+      'te': `మీ సందేశం ప్రాసెస్ అవుతోంది...\n\nMī sandēśaṁ prāsēs avutōndi...`,
+      'kn': `ನಿಮ್ಮ ಸಂದೇಶವನ್ನು ಪ್ರಕ್ರಿಯೆಗೊಳಿಸಲಾಗುತ್ತಿದೆ...\n\nNim'ma sandēśavannu prakriyegoḷisalāguttide...`,
+      'gu': `તમારા સંદેશને પ્રક્રિયા કરવામાં આવે છે...\n\nTamārā sandēśanē prakriyā karavāmāṁ āvē chē...`,
+      'mr': `तुमचा संदेश प्रक्रिया केला जात आहे...\n\nTumcā sandēś prakriyā kēlā jāt āhē...`,
+      'en': `Processing your message...`  // ✅ Only once for English
+    };
+    
+    const processingMessage = processingMessages[userLanguage] || processingMessages['en'];
+    
+    await sendMessageViaAPI(From, processingMessage);
+    
+    // ✅ Add 2-second delay before actual processing
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+  } catch (error) {
+    console.warn(`[${requestId}] Failed to send processing message:`, error.message);
+  }
   
   // Check for greetings
   if (Body) {
