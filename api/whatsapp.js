@@ -822,21 +822,18 @@ Return only valid JSON with no additional text, markdown formatting, or code blo
       const updatesArray = Array.isArray(parsed) ? parsed : [parsed];
       
       return updatesArray.map(update => {
-        let quantity = update.quantity ?? 0;
-        if (update.action === 'sold') quantity = -Math.abs(quantity);
-        else quantity = Math.abs(quantity);
+      let quantity = update.quantity ?? 0;
+      if (update.action === 'sold') quantity = -Math.abs(quantity);
+      else quantity = Math.abs(quantity);
       
-        return {
-          product: extractProductName(update.product || ''),  // Extract clean product name
-          quantity,
-          unit: update.unit || '',
-          action: update.action || (quantity >= 0 ? 'purchased' : 'sold'),
-          isKnown: products.some(p =>
-            normalize(p).includes(normalize(update.product)) ||
-            normalize(update.product).includes(normalize(p))
-          )
-        };
-      });
+      return {
+        product: extractProductName(update.product || ''),
+        quantity,
+        unit: update.unit || '',
+        action: update.action || (quantity >= 0 ? 'purchased' : 'sold'),
+        isKnown: products.some(p => isProductMatch(update.product, p))
+      };
+    });
     } catch (parseError) {
       console.error(`[${requestId}] Failed to parse AI response as JSON:`, parseError.message);
       return null;
@@ -1386,6 +1383,53 @@ async function sendSystemMessage(message, from, detectedLanguage, requestId, res
     response.message(message);
     return message;
   }
+}
+
+// Add this with your other helper functions
+function isProductMatch(userInput, knownProduct) {
+  if (!userInput || !knownProduct) return false;
+  
+  const normalize = (str) => {
+    if (!str) return '';
+    return str.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+  };
+  
+  const userNorm = normalize(userInput);
+  const knownNorm = normalize(knownProduct);
+  
+  // 1. Exact match
+  if (userNorm === knownNorm) return true;
+  
+  // 2. Substring match (either contains the other)
+  if (userNorm.includes(knownNorm) || knownNorm.includes(userNorm)) return true;
+  
+  // 3. Word-based matching for multi-word products
+  const userWords = userNorm.split(/\s+/).filter(word => word.length > 2);
+  const knownWords = knownNorm.split(/\s+/).filter(word => word.length > 2);
+  
+  if (userWords.length === 0 || knownWords.length === 0) return false;
+  
+  // Check if any significant word from user input matches known product
+  const hasWordMatch = userWords.some(userWord => 
+    knownWords.some(knownWord => 
+      userWord.includes(knownWord) || knownWord.includes(userWord)
+    )
+  );
+  
+  // Additional check: known product words in user input
+  const hasReverseMatch = knownWords.some(knownWord =>
+    userWords.some(userWord => 
+      userWord.includes(knownWord) || knownWord.includes(userWord)
+    )
+  );
+  
+  return hasWordMatch || hasReverseMatch;
+}
+
+// Add this function near the top of your file (around line 50-60)
+function normalize(str) {
+  if (!str) return '';
+  return str.toLowerCase().replace(/[^a-z0-9]/gi, '').trim();
 }
 
 // Add these functions after the existing helper functions
