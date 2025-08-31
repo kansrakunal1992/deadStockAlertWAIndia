@@ -799,7 +799,7 @@ Return only valid JSON with no additional text, markdown formatting, or code blo
       },
       {
         headers: {
-          'Authorization': `Bearer ${process.env.DEPSEEK_API_KEY}`,
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
           'Content-Type': 'application/json'
         },
         timeout: 10000
