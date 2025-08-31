@@ -772,77 +772,95 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
           {
             role: "system",
             content: `You are an inventory parsing assistant. Extract inventory information from the user's message and return it in JSON format.
-Extract the following fields:
-1. product: The name of the product (e.g., "Parle-G", "sugar", "milk") - ONLY the product name, no quantities or units
-2. quantity: The numerical quantity (as a number)
-3. unit: The unit of measurement (e.g., "packets", "kg", "liters", "pieces")
-4. action: The action being performed ("purchased", "sold", "remaining")
-For the action field:
-- Use "purchased" for words like "bought", "purchased", "buy", "खरीदा", "खरीदे", "लिया", "खरीदी", "khareeda"
-- Use "sold" for words like "sold", "बेचा", "बेचे", "becha", "बिक्री", "becha"
-- Use "remaining" for words like "remaining", "left", "बचा", "बचे", "बाकी", "bacha"
-If no action is specified, default to "purchased" for positive quantities and "sold" for negative quantities.
-If no unit is specified, infer the most appropriate unit based on the product type:
-- For biscuits, chips, etc.: "packets"
-- For milk, water, oil: "liters"
-- For flour, sugar, salt: "kg"
-- For individual items: "pieces"
-Return only valid JSON with no additional text, markdown formatting, or code blocks.`
-          },
-          {
-            role: "user",
-            content: transcript
+          Extract the following fields:
+          1. product: The name of the product (e.g., "Parle-G", "sugar", "milk") - ONLY the product name, no quantities or units
+          2. quantity: The numerical quantity (as a number)
+          3. unit: The unit of measurement (e.g., "packets", "kg", "liters", "pieces")
+          4. action: The action being performed ("purchased", "sold", "remaining")
+          For the action field:
+          - Use "purchased" for words like "bought", "purchased", "buy", "खरीदा", "खरीदे", "लिया", "खरीदी", "khareeda"
+          - Use "sold" for words like "sold", "बेचा", "बेचे", "becha", "बिक्री", "becha"
+          - Use "remaining" for words like "remaining", "left", "बचा", "बचे", "बाकी", "bacha"
+          If no action is specified, default to "purchased" for positive quantities and "sold" for negative quantities.
+          If no unit is specified, infer the most appropriate unit based on the product type:
+          - For biscuits, chips, etc.: "packets"
+          - For milk, water, oil: "liters"
+          - For flour, sugar, salt: "kg"
+          - For individual items: "pieces"
+          Return only valid JSON with no additional text, markdown formatting, or code blocks.`
+                    },
+                    {
+                      role: "user",
+                      content: transcript
+                    }
+                  ],
+                  max_tokens: 150,
+                  temperature: 0.1
+                },
+                {
+                  headers: {
+                    'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+                    'Content-Type': 'application/json'
+                  },
+                  timeout: 10000
+                }
+              );
+              
+              let content = response.data.choices[0].message.content.trim();
+              console.log(`[${requestId}] AI parsing result: ${content}`);
+              
+              // Clean up the response to remove markdown code blocks if present
+              if (content.startsWith('```json')) {
+                content = content.replace(/```json\n?/, '').replace(/\n?```$/, '');
+              } else if (content.startsWith('```')) {
+                content = content.replace(/```\n?/, '').replace(/\n?```$/, '');
+              }
+              
+              // Parse the JSON response
+              try {
+                const parsed = safeJsonParse(content);
+                if (!parsed) {
+                  console.error(`[${requestId}] Failed to parse AI response as JSON after cleanup`);
+                  return null;
+                }
+                const updatesArray = Array.isArray(parsed) ? parsed : [parsed];
+                
+                return updatesArray.map(update => {
+                  // Convert quantity to number and ensure proper sign
+                  let quantity = typeof update.quantity === 'string' ? 
+                                parseInt(update.quantity.replace(/[^\d.-]/g, '')) || 0 : 
+                                Number(update.quantity) || 0;
+                  
+                  // Ensure action is properly set based on quantity
+                  let action = update.action || '';
+                  if (!action) {
+                    action = quantity >= 0 ? 'purchased' : 'sold';
+                  }
+                  
+                  // Ensure unit has a proper default
+                  const unit = update.unit || 'pieces';
+                  
+                  // Use AI-parsed product directly - NO re-processing!
+                  const product = String(update.product || '').trim();
+                  
+                  return {
+                    product: product,
+                    quantity: Math.abs(quantity), // Always store positive quantity
+                    unit: unit,
+                    action: action,
+                    isKnown: products.some(p => isProductMatch(product, p))
+                  };
+                });
+              } catch (parseError) {
+                console.error(`[${requestId}] Failed to parse AI response as JSON:`, parseError.message);
+                console.error(`[${requestId}] Raw AI response:`, content);
+                return null;
+              }
+            } catch (error) {
+              console.error(`[${requestId}] AI parsing error:`, error.message);
+              return null;
+            }
           }
-        ],
-        max_tokens: 150,
-        temperature: 0.1
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 10000
-      }
-    );
-    
-    let content = response.data.choices[0].message.content.trim();
-    console.log(`[${requestId}] AI parsing result: ${content}`);
-    
-    // Clean up the response to remove markdown code blocks if present
-    if (content.startsWith('```json')) {
-      content = content.replace(/```json\n?/, '').replace(/\n?```$/, '');
-    } else if (content.startsWith('```')) {
-      content = content.replace(/```\n?/, '').replace(/\n?```$/, '');
-    }
-    
-    // Parse the JSON response
-    try {
-      const parsed = JSON.parse(content);
-      const updatesArray = Array.isArray(parsed) ? parsed : [parsed];
-      
-      return updatesArray.map(update => {
-      let quantity = update.quantity ?? 0;
-      if (update.action === 'sold') quantity = -Math.abs(quantity);
-      else quantity = Math.abs(quantity);
-      
-      return {
-        product: extractProductName(update.product || ''),
-        quantity,
-        unit: update.unit || '',
-        action: update.action || (quantity >= 0 ? 'purchased' : 'sold'),
-        isKnown: products.some(p => isProductMatch(update.product, p))
-      };
-    });
-    } catch (parseError) {
-      console.error(`[${requestId}] Failed to parse AI response as JSON:`, parseError.message);
-      return null;
-    }
-  } catch (error) {
-    console.error(`[${requestId}] AI parsing error:`, error.message);
-    return null;
-  }
-}
 
 // Parse multiple inventory updates from transcript
 async function parseMultipleUpdates(transcript) {
@@ -852,19 +870,19 @@ async function parseMultipleUpdates(transcript) {
   try {
     console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);
     const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
-    if (aiUpdate && aiUpdate.product && aiUpdate.quantity !== 0) {
-      // Extract just the product name before translation
-      const cleanProduct = extractProductName(aiUpdate.product);
-      aiUpdate.product = cleanProduct;
-      
-      console.log(`[AI Parsing] Successfully parsed: ${aiUpdate.quantity} ${aiUpdate.unit} of ${aiUpdate.product} (${aiUpdate.action})`);
-      updates.push(aiUpdate);
-      return updates;
+    
+    // ✅ RETURN AI RESULTS IMMEDIATELY if successful
+    if (aiUpdate && aiUpdate.length > 0 && aiUpdate[0].product) {
+      console.log(`[AI Parsing] Successfully parsed ${aiUpdate.length} updates using AI`);
+      return aiUpdate;
     }
+    
+    console.log(`[AI Parsing] No valid AI results, falling back to rule-based parsing`);
   } catch (error) {
     console.warn(`[AI Parsing] Failed, falling back to rule-based parsing:`, error.message);
   }
-  // Fallback to rule-based parsing if AI fails
+  
+  // Fallback to rule-based parsing ONLY if AI fails
   // Better sentence splitting to handle conjunctions
   const sentences = transcript.split(regexPatterns.conjunctions);
   for (const sentence of sentences) {
@@ -873,6 +891,7 @@ async function parseMultipleUpdates(transcript) {
       try {
         let update = parseSingleUpdate(trimmed);
         if (update && update.product) {
+          // Only translate if not already processed by AI
           update.product = await translateProductName(update.product, 'rule-parsing');
         }
         if (isValidInventoryUpdate(update)) {
@@ -1382,6 +1401,34 @@ async function sendSystemMessage(message, from, detectedLanguage, requestId, res
     // Fallback to original message in English
     response.message(message);
     return message;
+  }
+}
+
+// Add this helper function for robust JSON parsing
+function safeJsonParse(str) {
+  try {
+    // First try direct JSON parse
+    return JSON.parse(str);
+  } catch (e) {
+    try {
+      // Remove any non-JSON content
+      const jsonMatch = str.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
+      }
+      
+      // Try to fix common JSON issues
+      let fixed = str
+        .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":') // Fix keys without quotes
+        .replace(/'/g, '"') // Replace single quotes with double quotes
+        .replace(/(\w):(\s*)([^"\d][^,}\]\s]*)/g, '"$1":$2"$3"') // Fix unquoted string values
+        .replace(/,(\s*[}\]])/g, '$1'); // Remove trailing commas
+      
+      return JSON.parse(fixed);
+    } catch (e2) {
+      console.error('JSON parsing failed even after cleanup:', e2.message);
+      return null;
+    }
   }
 }
 
