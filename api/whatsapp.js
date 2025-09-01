@@ -1824,6 +1824,7 @@ Keep the response under 500 words and focus on actionable insights.`;
       
       lastError = error;
       console.warn(`[${requestId}] AI API call attempt ${attempt} failed:`, error.message);
+      console.error(`[${requestId}] Full error:`, JSON.stringify(error, null, 2));
       
       if (error.response) {
         console.error(`[${requestId}] API response status:`, error.response.status);
