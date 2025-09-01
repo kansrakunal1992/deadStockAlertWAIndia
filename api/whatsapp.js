@@ -1786,7 +1786,7 @@ async function generateSummaryInsights(data, languageCode, requestId) {
       const expiringLimit = 5;
       
       // Prepare a more concise prompt
-      const prompt = `You are an inventory analysis assistant. Analyze the following shop data and provide insights in Nativeglish (${nativeLanguage} mixed with English).
+      const prompt = `You are an inventory analysis assistant. Analyze the following shop data and provide insights in Nativeglish (${nativeLanguage} mixed with English) - ensure response is formal and respectful.
       Sales Data (last 30 days):
       - Total items sold: ${data.salesData.totalItems || 0}
       - Total sales value: ₹${(data.salesData.totalValue || 0).toFixed(2)}
@@ -1824,7 +1824,7 @@ async function generateSummaryInsights(data, languageCode, requestId) {
           messages: [
             {
               role: "system",
-              content: `You are an expert inventory analyst providing concise, actionable insights for small business owners. Your response should be in Nativeglish (${nativeLanguage} mixed with English) for better readability and understanding. Keep your response under 1200 characters.`
+              content: `You are an expert inventory analyst providing concise, actionable insights for small business owners. Your response should be in Nativeglish (${nativeLanguage} mixed with English) for better readability and understanding but should be formal and respectful. Keep your response under 1500 characters.`
             },
             {
               role: "user",
