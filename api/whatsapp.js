@@ -1767,7 +1767,7 @@ Keep the response under 500 words and focus on actionable insights.`;
       timeoutId = setTimeout(() => {
         console.log(`[${requestId}] Request timeout reached, aborting...`);
         controller.abort();
-      }, 25000); // 25 second timeout
+      }, 250000); // 250 second timeout
 
       const response = await axios.post(
         'https://api.deepseek.com/v1/chat/completions',
