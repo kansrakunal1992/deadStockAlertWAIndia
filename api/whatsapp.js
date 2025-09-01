@@ -1,6 +1,8 @@
 const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
+const { http, https } = require('http');
+const { generateMultiLanguageResponse, formatDateForDisplay } = require('./whatsapp');
 const { execSync } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -1695,32 +1697,54 @@ async function generateFullScaleSummary(shopId, languageCode, requestId) {
 
 // Generate AI-powered insights for full summary
 async function generateSummaryInsights(data, languageCode, requestId) {
+  const maxRetries = 3;
+  let lastError;
+  
+  // Validate configuration
   try {
-    console.log(`[${requestId}] Generating AI insights for summary`);
-    
-    // Prepare prompt for AI
-    const prompt = `
-You are an inventory analysis assistant. Analyze the following shop data and provide insights in ${languageCode}.
+    if (!process.env.DEEPSEEK_API_KEY) {
+      throw new Error('DEEPSEEK_API_KEY environment variable is not set');
+    }
+  } catch (error) {
+    console.error(`[${requestId}] Configuration error:`, error.message);
+    return generateFallbackSummary(data, languageCode, requestId);
+  }
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`[${requestId}] AI API call attempt ${attempt}/${maxRetries}`);
+      
+      // Limit the amount of data sent to prevent oversized requests
+      const topSalesLimit = 5;
+      const lowStockLimit = 5;
+      const expiringLimit = 5;
+      
+      // Prepare a more concise prompt
+      const prompt = `You are an inventory analysis assistant. Analyze the following shop data and provide insights in ${languageCode}.
 
 Sales Data (last 30 days):
 - Total items sold: ${data.salesData.totalItems || 0}
 - Total sales value: ₹${(data.salesData.totalValue || 0).toFixed(2)}
-- Top selling products: ${data.salesData.topProducts ? data.salesData.topProducts.map(p => `${p.name} (${p.quantity} ${p.unit})`).join(', ') : 'None'}
+- Top selling products: ${data.salesData.topProducts ? 
+    data.salesData.topProducts.slice(0, topSalesLimit).map(p => `${p.name} (${p.quantity} ${p.unit})`).join(', ') : 'None'}
 
 Purchase Data (last 30 days):
 - Total items purchased: ${data.purchaseData.totalItems || 0}
 - Total purchase value: ₹${(data.purchaseData.totalValue || 0).toFixed(2)}
-- Most purchased products: ${data.purchaseData.topProducts ? data.purchaseData.topProducts.map(p => `${p.name} (${p.quantity} ${p.unit})`).join(', ') : 'None'}
+- Most purchased products: ${data.purchaseData.topProducts ? 
+    data.purchaseData.topProducts.slice(0, topSalesLimit).map(p => `${p.name} (${p.quantity} ${p.unit})`).join(', ') : 'None'}
 
 Current Inventory:
 - Total unique products: ${data.inventorySummary.totalProducts || 0}
 - Total inventory value: ₹${(data.inventorySummary.totalValue || 0).toFixed(2)}
 
 Low Stock Products:
-${data.lowStockProducts.length > 0 ? data.lowStockProducts.map(p => `- ${p.name}: ${p.quantity} ${p.unit} left`).join('\n') : 'None'}
+${data.lowStockProducts.length > 0 ? 
+    data.lowStockProducts.slice(0, lowStockLimit).map(p => `- ${p.name}: ${p.quantity} ${p.unit} left`).join('\n') : 'None'}
 
 Expiring Products (next 7 days):
-${data.expiringProducts.length > 0 ? data.expiringProducts.map(p => `- ${p.name}: Expires on ${formatDateForDisplay(p.expiryDate)}`).join('\n') : 'None'}
+${data.expiringProducts.length > 0 ? 
+    data.expiringProducts.slice(0, expiringLimit).map(p => `- ${p.name}: Expires on ${formatDateForDisplay(p.expiryDate)}`).join('\n') : 'None'}
 
 Provide a comprehensive analysis with:
 1. Sales trends and patterns
@@ -1733,71 +1757,100 @@ Format your response in two parts:
 Part 1: Analysis in native script
 Part 2: Analysis in Roman script transliteration
 
-Keep the response under 500 words and focus on actionable insights.
-`;
-    
-    // Call AI API
-    const response = await axios.post(
-      'https://api.deepseek.com/v1/chat/completions',
-      {
-        model: "deepseek-chat",
-        messages: [
-          {
-            role: "system",
-            content: "You are an expert inventory analyst providing concise, actionable insights for small business owners."
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        max_tokens: 600,
-        temperature: 0.5
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-          'Content-Type': 'application/json'
+Keep the response under 500 words and focus on actionable insights.`;
+      
+      const response = await axios.post(
+        'https://api.deepseek.com/v1/chat/completions',
+        {
+          model: "deepseek-chat",
+          messages: [
+            {
+              role: "system",
+              content: "You are an expert inventory analyst providing concise, actionable insights for small business owners."
+            },
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+          max_tokens: 800,
+          temperature: 0.5
         },
-        timeout: 15000
+        {
+          headers: {
+            'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 30000,
+          maxRedirects: 3,
+          httpAgent: new http.Agent({ keepAlive: true }),
+          httpsAgent: new https.Agent({ keepAlive: true })
+        }
+      );
+      
+      let insights = response.data.choices[0].message.content.trim();
+      
+      // Post-process to ensure proper formatting
+      insights = insights.replace(/\[Roman Script\]/gi, '');
+      insights = insights.replace(/\[Native Script\]/gi, '');
+      insights = insights.replace(/<translation in roman script>/gi, '');
+      insights = insights.replace(/<translation in native script>/gi, '');
+      insights = insights.replace(/^"(.*)"$/, '$1');
+      insights = insights.replace(/"/g, '');
+      insights = insights.replace(/\n\s*\n\s*\n/g, '\n\n');
+      insights = insights.replace(/^\s+|\s+$/g, '');
+      
+      return insights;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[${requestId}] AI API call attempt ${attempt} failed:`, error.message);
+      
+      if (error.response) {
+        console.error(`[${requestId}] API response status:`, error.response.status);
+        console.error(`[${requestId}] API response data:`, error.response.data);
       }
-    );
-    
-    let insights = response.data.choices[0].message.content.trim();
-    
-    // Post-process to ensure proper formatting
-    insights = insights.replace(/\[Roman Script\]/gi, '');
-    insights = insights.replace(/\[Native Script\]/gi, '');
-    insights = insights.replace(/<translation in roman script>/gi, '');
-    insights = insights.replace(/<translation in native script>/gi, '');
-    insights = insights.replace(/^"(.*)"$/, '$1');
-    insights = insights.replace(/"/g, '');
-    insights = insights.replace(/\n\s*\n\s*\n/g, '\n\n');
-    insights = insights.replace(/^\s+|\s+$/g, '');
-    
-    return insights;
-  } catch (error) {
-    console.error(`[${requestId}] Error generating AI insights:`, error.message);
-    
-    // Fallback summary without AI
-    let fallbackSummary = `📊 30-Day Business Summary:\n\n`;
-    fallbackSummary += `💰 Sales: ${data.salesData.totalItems || 0} items (₹${(data.salesData.totalValue || 0).toFixed(2)})\n`;
-    fallbackSummary += `📦 Purchases: ${data.purchaseData.totalItems || 0} items (₹${(data.purchaseData.totalValue || 0).toFixed(2)})\n`;
-    fallbackSummary += `📋 Inventory: ${data.inventorySummary.totalProducts || 0} unique products (₹${(data.inventorySummary.totalValue || 0).toFixed(2)})\n`;
-    
-    if (data.lowStockProducts.length > 0) {
-      fallbackSummary += `\n⚠️ Low Stock: ${data.lowStockProducts.length} products need restocking\n`;
+      
+      if (error.code === 'ECONNABORTED') {
+        console.error(`[${requestId}] Request was aborted (likely timeout)`);
+      }
+      
+      // If this is the last attempt, throw the error
+      if (attempt === maxRetries) {
+        break;
+      }
+      
+      // Wait before retrying (exponential backoff)
+      const delay = Math.pow(2, attempt) * 1000;
+      console.log(`[${requestId}] Retrying in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
-    
-    if (data.expiringProducts.length > 0) {
-      fallbackSummary += `\n⏰ Expiring Soon: ${data.expiringProducts.length} products\n`;
-    }
-    
-    fallbackSummary += `\nConsider reviewing your sales patterns and inventory turnover for better business decisions.`;
-    
-    return await generateMultiLanguageResponse(fallbackSummary, languageCode, requestId);
   }
+  
+  // If all retries failed, use fallback
+  console.error(`[${requestId}] All AI API attempts failed, using fallback`);
+  return generateFallbackSummary(data, languageCode, requestId);
 }
+
+function generateFallbackSummary(data, languageCode, requestId) {
+  let fallbackSummary = `📊 30-Day Business Summary:\n\n`;
+  fallbackSummary += `💰 Sales: ${data.salesData.totalItems || 0} items (₹${(data.salesData.totalValue || 0).toFixed(2)})\n`;
+  fallbackSummary += `📦 Purchases: ${data.purchaseData.totalItems || 0} items (₹${(data.purchaseData.totalValue || 0).toFixed(2)})\n`;
+  fallbackSummary += `📋 Inventory: ${data.inventorySummary.totalProducts || 0} unique products (₹${(data.inventorySummary.totalValue || 0).toFixed(2)})\n`;
+  
+  if (data.lowStockProducts.length > 0) {
+    fallbackSummary += `\n⚠️ Low Stock: ${data.lowStockProducts.length} products need restocking\n`;
+  }
+  
+  if (data.expiringProducts.length > 0) {
+    fallbackSummary += `\n⏰ Expiring Soon: ${data.expiringProducts.length} products\n`;
+  }
+  
+  fallbackSummary += `\nConsider reviewing your sales patterns and inventory turnover for better business decisions.`;
+  
+  return generateMultiLanguageResponse(fallbackSummary, languageCode, requestId);
+}
+
+module.exports = { generateSummaryInsights };
 
 // Add this function after the existing helper functions
 
