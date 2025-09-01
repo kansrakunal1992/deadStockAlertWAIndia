@@ -1810,6 +1810,47 @@ async function getPurchaseDataForPeriod(shopId, startDate, endDate) {
   }
 }
 
+// Add this function to database.js
+async function getShopDetails(shopId) {
+  const context = `Get Shop Details ${shopId}`;
+  try {
+    const escapedShopId = shopId.replace(/'/g, "''");
+    const filterFormula = `{ShopID} = '${escapedShopId}'`;
+    
+    const result = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula },
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`
+    }, context);
+
+    if (result.records.length > 0) {
+      const record = result.records[0];
+      return {
+        success: true,
+        shopDetails: {
+          id: record.id,
+          shopId: record.fields.ShopID,
+          name: record.fields.Name || '',
+          gstin: record.fields.GSTIN || '',
+          phone: record.fields.Phone || '',
+          address: record.fields.Address || ''
+        }
+      };
+    }
+
+    return { success: false, error: 'Shop not found' };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Add to module.exports
+module.exports = {
+  // ... existing exports ...
+  getShopDetails,
+};
+
 module.exports = {
   updateInventory,
   testConnection,
