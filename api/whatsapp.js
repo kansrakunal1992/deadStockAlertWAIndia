@@ -1461,11 +1461,15 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
       throw new Error(`PDF file not found: ${pdfPath}`);
     }
     
+    // Get file stats for logging
+    const stats = fs.statSync(pdfPath);
+    console.log(`[sendPDFViaWhatsApp] PDF file size: ${stats.size} bytes`);
+    
     // Read the PDF file as base64
     const pdfBuffer = fs.readFileSync(pdfPath);
     const pdfBase64 = pdfBuffer.toString('base64');
     
-    console.log(`[sendPDFViaWhatsApp] PDF file size: ${pdfBuffer.length} bytes`);
+    console.log(`[sendPDFViaWhatsApp] PDF read successfully, converting to base64`);
     
     // Send using Twilio's media URL with base64 data
     const message = await client.messages.create({
@@ -1481,7 +1485,7 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
   } catch (error) {
     console.error(`[sendPDFViaWhatsApp] Error:`, error.message);
     
-    // Fallback: Try with public URL if base64 fails
+    // Try fallback with public URL
     try {
       const fileName = path.basename(pdfPath);
       const baseUrl = process.env.PUBLIC_URL || `https://${process.env.RAILWAY_SERVICE_NAME}.railway.app`;
