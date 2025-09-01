@@ -1145,7 +1145,7 @@ if (validBatches.length > 0) {
   }
 }
       // Update the inventory using translated product name
-      const result = await updateInventory(shopId, product, update.quantity, update.unit);
+      const result = await updateInventory(shopId, product, update.action === 'sold' ? -update.quantity : update.quantity, update.unit);
       // Create batch record for purchases only
 if (update.action === 'purchased' && result.success) {
   console.log(`[Update ${shopId} - ${product}] Creating batch record for purchase`);
@@ -1204,9 +1204,9 @@ if (update.action === 'purchased' && result.success) {
                   // Generate invoice PDF
                   const pdfPath = await generateInvoicePDF(shopDetailsResult.shopDetails, saleRecordForInvoice);
                   
-                  // Send the PDF to the shop owner
-                  await sendPDFViaWhatsApp(From, pdfPath);
-                  console.log(`[Update ${shopId} - ${product}] Invoice sent to ${From}`);
+                  // Send the PDF to the shop owner - FIX: Construct From from shopId
+                  await sendPDFViaWhatsApp(`whatsapp:${shopId}`, pdfPath);
+                  console.log(`[Update ${shopId} - ${product}] Invoice sent to whatsapp:${shopId}`);
                 } else {
                   console.warn(`[Update ${shopId} - ${product}] Could not get shop details: ${shopDetailsResult.error}`);
                 }
