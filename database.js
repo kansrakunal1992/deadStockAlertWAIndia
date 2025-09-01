@@ -1845,12 +1845,6 @@ async function getShopDetails(shopId) {
   }
 }
 
-// Add to module.exports
-module.exports = {
-  // ... existing exports ...
-  getShopDetails,
-};
-
 module.exports = {
   updateInventory,
   testConnection,
@@ -1887,5 +1881,6 @@ module.exports = {
   getLowStockProducts,
   getExpiringProducts,
   getSalesDataForPeriod,
-  getPurchaseDataForPeriod
+  getPurchaseDataForPeriod,
+  getShopDetails
 };
