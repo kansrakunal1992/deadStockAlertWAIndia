@@ -1176,7 +1176,7 @@ if (update.action === 'purchased' && result.success) {
           const salesResult = await createSalesRecord({
             shopId,
             product: product,
-            quantity: update.quantity,
+            quantity: -Math.abs(update.quantity),
             unit: update.unit,
             saleDate: new Date().toISOString(),
             batchCompositeKey: selectedBatchCompositeKey, // Uses composite key
@@ -1221,7 +1221,7 @@ if (update.action === 'purchased' && result.success) {
               try {
                 const batchUpdateResult = await updateBatchQuantityByCompositeKey(
                   selectedBatchCompositeKey, 
-                  update.quantity
+                  -Math.abs(update.quantity)
                 );
                 
                 if (batchUpdateResult.success) {
