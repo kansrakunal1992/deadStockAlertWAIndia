@@ -13,9 +13,13 @@ const {
 // Helper function to format dates for display (DD/MM/YYYY)
 function formatDateForDisplay(date) {
     if (date instanceof Date) {
-        const day = date.getDate().toString().padStart(2, '0');
-        const month = (date.getMonth() + 1).toString().padStart(2, '0');
-        const year = date.getFullYear();
+        // Convert to IST (UTC+5:30)
+        const istOffset = 5.5 * 60 * 60 * 1000; // 5.5 hours in milliseconds
+        const istTime = new Date(date.getTime() + istOffset);
+        
+        const day = istTime.getUTCDate().toString().padStart(2, '0');
+        const month = (istTime.getUTCMonth() + 1).toString().padStart(2, '0');
+        const year = istTime.getUTCFullYear();
         return `${day}/${month}/${year}`;
     }
     return date;
