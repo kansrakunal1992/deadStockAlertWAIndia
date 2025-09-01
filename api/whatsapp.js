@@ -1787,7 +1787,7 @@ Keep the response under 500 words and focus on actionable insights.`;
             'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
             'Content-Type': 'application/json'
           },
-          timeout: 25000,
+          timeout: 250000,
           maxRedirects: 3,
           signal: controller.signal
         }
