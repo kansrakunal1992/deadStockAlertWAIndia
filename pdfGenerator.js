@@ -2,12 +2,25 @@ const PDFDocument = require('pdfkit');
 const moment = require('moment');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { getTodaySalesSummary, getSalesDataForPeriod } = require('./database');
 
 // Create a temporary directory for PDFs if it doesn't exist
-const tempDir = path.join(__dirname, 'temp');
+const tempDir = process.env.NODE_ENV === 'production' 
+  ? '/tmp'  // Use system temp directory in production
+  : path.join(__dirname, 'temp');  // Use local temp directory in development
+
+// Ensure temp directory exists
 if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir, { recursive: true });
+  console.log(`[PDF Generator] Created temp directory: ${tempDir}`);
+}
+
+// Also create an invoices directory for better organization
+const invoicesDir = path.join(tempDir, 'invoices');
+if (!fs.existsSync(invoicesDir)) {
+  fs.mkdirSync(invoicesDir, { recursive: true });
+  console.log(`[PDF Generator] Created invoices directory: ${invoicesDir}`);
 }
 
 // Color scheme for the PDF
@@ -483,10 +496,14 @@ async function generateInvoicePDF(shopDetails, saleRecord) {
     try {
       console.log(`[PDF Generator] Generating invoice for shop ${shopDetails.shopId}`);
       
-      // Generate filename
+      // Generate filename with timestamp
       const timestamp = moment().format('YYYYMMDD_HHmmss');
       const fileName = `invoice_${shopDetails.shopId.replace(/\D/g, '')}_${timestamp}.pdf`;
-      const filePath = path.join(tempDir, fileName);
+      
+      // Use the invoices directory
+      const filePath = path.join(invoicesDir, fileName);
+      
+      console.log(`[PDF Generator] File path: ${filePath}`);
       
       // Create PDF document
       const doc = new PDFDocument({
@@ -494,8 +511,15 @@ async function generateInvoicePDF(shopDetails, saleRecord) {
         size: 'A4'
       });
       
+      // Ensure the directory exists before writing
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      
       // Pipe to file
-      doc.pipe(fs.createWriteStream(filePath));
+      const stream = fs.createWriteStream(filePath);
+      doc.pipe(stream);
       
       // Add invoice header
       addInvoiceHeader(doc, shopDetails);
@@ -509,13 +533,29 @@ async function generateInvoicePDF(shopDetails, saleRecord) {
       // Add footer
       addInvoiceFooter(doc);
       
-      // Finalize PDF
+      // Finalize PDF and wait for it to be written
       doc.end();
       
-      console.log(`[PDF Generator] Invoice generated: ${filePath}`);
-      resolve(filePath);
+      stream.on('finish', () => {
+        console.log(`[PDF Generator] PDF generation completed: ${filePath}`);
+        
+        // Verify the file was actually created
+        if (fs.existsSync(filePath)) {
+          const stats = fs.statSync(filePath);
+          console.log(`[PDF Generator] File size: ${stats.size} bytes`);
+          resolve(filePath);
+        } else {
+          reject(new Error(`PDF file was not created: ${filePath}`));
+        }
+      });
+      
+      stream.on('error', (error) => {
+        console.error(`[PDF Generator] Stream error:`, error);
+        reject(error);
+      });
+      
     } catch (error) {
-      console.error('[PDF Generator] Error generating invoice:', error);
+      console.error('[PDF Generator] Error generating PDF:', error);
       reject(error);
     }
   });
