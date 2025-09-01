@@ -25,22 +25,22 @@ if (!fs.existsSync(invoicesDir)) {
 
 // Color scheme for the PDF
 const colors = {
-  primary: '#2c3e50',      // Dark blue
-  secondary: '#3498db',   // Medium blue
-  accent: '#e74c3c',      // Red accent
-  success: '#27ae60',     // Green
-  warning: '#f39c12',     // Orange
-  light: '#ecf0f1',      // Light gray
-  dark: '#34495e',       // Dark gray
-  header: '#2980b9',     // Header blue
-  tableHeader: '#34495e', // Table header
-  evenRow: '#f8f9fa',    // Even row color
+  primary: '#1a237e',      // Deep blue
+  secondary: '#3949ab',   // Medium blue
+  accent: '#d32f2f',      // Red accent
+  success: '#388e3c',     // Green
+  warning: '#f57c00',     // Orange
+  light: '#f5f5f5',      // Light gray
+  dark: '#263238',       // Dark gray
+  header: '#283593',     // Header blue
+  tableHeader: '#37474f', // Table header
+  evenRow: '#eceff1',    // Even row color
   oddRow: '#ffffff',     // Odd row color
-  gst5: '#27ae60',       // Green for 5% GST
-  gst12: '#e67e22',      // Orange for 12% GST
-  gst18: '#e74c3c',      // Red for 18% GST
-  gst28: '#8e44ad',      // Purple for 28% GST
-  gst0: '#95a5a6'        // Gray for 0% GST
+  gst5: '#388e3c',       // Green for 5% GST
+  gst12: '#f57c00',      // Orange for 12% GST
+  gst18: '#d32f2f',      // Red for 18% GST
+  gst28: '#7b1fa2',      // Purple for 28% GST
+  gst0: '#78909c'        // Gray for 0% GST
 };
 
 /**
@@ -381,108 +381,192 @@ async function generateSalesPDF(shopId, period = 'today', startDate = null, endD
 }
 
 // Invoice-specific functions
+
 /**
- * Add invoice header
+ * Add a professional invoice header
  */
 function addInvoiceHeader(doc, shopDetails) {
   // Header background
-  doc.rect(0, 0, doc.page.width, 80).fill(colors.header);
+  doc.rect(0, 0, doc.page.width, 100).fill(colors.header);
   
-  // Shop details in white
+  // Company details in white
   doc.fillColor('white');
-  doc.fontSize(14);
+  doc.fontSize(18);
   doc.text('TAX INVOICE', 50, 30, { align: 'center' });
   
-  doc.fontSize(10);
-  doc.text(shopDetails.name, 50, 50, { align: 'center' });
+  doc.fontSize(14);
+  doc.text(shopDetails.name, 50, 55, { align: 'center' });
   
   if (shopDetails.gstin && shopDetails.gstin !== 'N/A') {
-    doc.text(`GSTIN: ${shopDetails.gstin}`, 50, 65, { align: 'center' });
+    doc.text(`GSTIN: ${shopDetails.gstin}`, 50, 75, { align: 'center' });
   }
   
-  // Invoice number and date
+  // Invoice details on the right
   const invoiceNumber = `INV-${shopDetails.shopId.replace(/\D/g, '')}-${moment().format('YYYYMMDDHHmmss')}`;
   doc.fillColor(colors.light);
   doc.fontSize(12);
-  doc.text(`Invoice No: ${invoiceNumber}`, 50, 95, { align: 'center' });
-  doc.text(`Date: ${moment().format('DD/MM/YYYY')}`, 50, 110, { align: 'center' });
   
-  doc.moveDown(30);
+  // Create a two-column layout for invoice details
+  const leftColumn = 50;
+  const rightColumn = 350;
+  
+  doc.text('Invoice Details', leftColumn, 110);
+  doc.text(`Invoice No: ${invoiceNumber}`, leftColumn, 125);
+  doc.text(`Date: ${moment().format('DD/MM/YYYY')}`, leftColumn, 140);
+  doc.text(`Time: ${moment().format('HH:mm')}`, leftColumn, 155);
+  
+  doc.text('Billing Information', rightColumn, 110);
+  doc.text(shopDetails.name, rightColumn, 125);
+  if (shopDetails.address) {
+    doc.text(shopDetails.address, rightColumn, 140);
+  }
+  
+  doc.moveDown(50);
 }
 
 /**
- * Add sale details to invoice
+ * Add sale details in a professional table format
  */
 function addSaleDetails(doc, saleRecord) {
-  // Table header
-  doc.rect(50, doc.y, doc.page.width - 100, 25).fill(colors.tableHeader);
+  // Add section title
+  doc.fontSize(14);
+  doc.fillColor(colors.primary);
+  doc.text('Invoice Details', 50, doc.y);
+  doc.moveDown(10);
   
+  // Table header background
+  doc.rect(50, doc.y, doc.page.width - 100, 30).fill(colors.tableHeader);
+  
+  // Table headers in white
   doc.fillColor('white');
-  doc.fontSize(10);
-  doc.text('Description', 55, doc.y + 15, { width: 200 });
-  doc.text('HSN/SAC', 255, doc.y + 15, { width: 70 });
-  doc.text('Qty', 325, doc.y + 15, { width: 40 });
-  doc.text('Rate', 365, doc.y + 15, { width: 50 });
-  doc.text('Taxable Value', 415, doc.y + 15, { width: 70 });
+  doc.fontSize(11);
+  doc.text('Description', 60, doc.y + 18, { width: 150 });
+  doc.text('HSN/SAC', 210, doc.y + 18, { width: 60 });
+  doc.text('Qty', 270, doc.y + 18, { width: 40 });
+  doc.text('Rate (₹)', 310, doc.y + 18, { width: 60 });
+  doc.text('Amount (₹)', 370, doc.y + 18, { width: 80 });
   
-  doc.moveDown(30);
+  doc.moveDown(35);
   
-  // Product row
-  doc.rect(50, doc.y, doc.page.width - 100, 25).fill(colors.oddRow);
+  // Product row with alternating color
+  doc.rect(50, doc.y, doc.page.width - 100, 30).fill(colors.oddRow);
   
   doc.fillColor(colors.dark);
   doc.fontSize(10);
-  doc.text(saleRecord.product, 55, doc.y + 15, { width: 200 });
-  doc.text('N/A', 255, doc.y + 15, { width: 70 }); // HSN code not available
-  doc.text(saleRecord.quantity, 325, doc.y + 15, { width: 40 });
-  doc.text(saleRecord.rate.toFixed(2), 365, doc.y + 15, { width: 50 });
-  doc.text((saleRecord.quantity * saleRecord.rate).toFixed(2), 415, doc.y + 15, { width: 70 });
+  doc.text(saleRecord.product, 60, doc.y + 18, { width: 150 });
+  doc.text('N/A', 210, doc.y + 18, { width: 60 });
+  doc.text(saleRecord.quantity.toString(), 270, doc.y + 18, { width: 40 });
+  doc.text(saleRecord.rate.toFixed(2), 310, doc.y + 18, { width: 60 });
+  doc.text((saleRecord.quantity * saleRecord.rate).toFixed(2), 370, doc.y + 18, { width: 80 });
   
-  doc.moveDown(40);
+  doc.moveDown(50);
 }
 
 /**
- * Add invoice totals
+ * Add invoice totals with GST breakdown
  */
 function addInvoiceTotals(doc, saleRecord) {
   const taxableValue = saleRecord.quantity * saleRecord.rate;
-  const gstRate = 0.18; // Default 18% GST
-  const gstAmount = taxableValue * gstRate;
-  const total = taxableValue + gstAmount;
+  const gstRate = 0.18; // 18% GST
+  const cgst = taxableValue * (gstRate / 2);
+  const sgst = taxableValue * (gstRate / 2);
+  const total = taxableValue + cgst + sgst;
   
-  // Taxable value
-  doc.fontSize(10);
-  doc.text('Taxable Value:', 400, doc.y, { width: 100, align: 'right' });
-  doc.text(taxableValue.toFixed(2), 510, doc.y, { width: 70, align: 'right' });
-  
+  // Add section title
+  doc.fontSize(14);
+  doc.fillColor(colors.primary);
+  doc.text('Payment Details', 50, doc.y);
   doc.moveDown(15);
   
-  // GST
-  doc.text(`CGST @${gstRate*100}%:`, 400, doc.y, { width: 100, align: 'right' });
-  doc.text((gstAmount/2).toFixed(2), 510, doc.y, { width: 70, align: 'right' });
+  // Create totals box
+  const totalsX = 350;
+  const totalsWidth = 200;
   
+  // Subtotal
+  doc.fontSize(11);
+  doc.fillColor(colors.dark);
+  doc.text('Subtotal:', totalsX, doc.y, { width: 100, align: 'right' });
+  doc.text(`₹${taxableValue.toFixed(2)}`, totalsX + 110, doc.y, { width: 80, align: 'right' });
   doc.moveDown(15);
   
-  doc.text(`SGST @${gstRate*100}%:`, 400, doc.y, { width: 100, align: 'right' });
-  doc.text((gstAmount/2).toFixed(2), 510, doc.y, { width: 70, align: 'right' });
-  
+  // CGST
+  doc.text(`CGST (${(gstRate/2)*100}%):`, totalsX, doc.y, { width: 100, align: 'right' });
+  doc.text(`₹${cgst.toFixed(2)}`, totalsX + 110, doc.y, { width: 80, align: 'right' });
   doc.moveDown(15);
+  
+  // SGST
+  doc.text(`SGST (${(gstRate/2)*100}%):`, totalsX, doc.y, { width: 100, align: 'right' });
+  doc.text(`₹${sgst.toFixed(2)}`, totalsX + 110, doc.y, { width: 80, align: 'right' });
+  doc.moveDown(20);
+  
+  // Total line
+  doc.rect(totalsX - 10, doc.y, totalsWidth + 20, 2).fill(colors.accent);
+  doc.moveDown(10);
   
   // Total
-  doc.fontSize(12);
-  doc.text('Total:', 400, doc.y, { width: 100, align: 'right' });
-  doc.text(total.toFixed(2), 510, doc.y, { width: 70, align: 'right' });
+  doc.fontSize(14);
+  doc.fillColor(colors.accent);
+  doc.text('Total:', totalsX, doc.y, { width: 100, align: 'right' });
+  doc.text(`₹${total.toFixed(2)}`, totalsX + 110, doc.y, { width: 80, align: 'right' });
+  
+  // Amount in words
+  doc.moveDown(30);
+  doc.fontSize(10);
+  doc.fillColor(colors.dark);
+  doc.text('Amount in Words:', 50, doc.y);
+  doc.text(`${numberToWords(total)} Rupees Only`, 50, doc.y + 15);
   
   doc.moveDown(40);
 }
 
 /**
- * Add invoice footer
+ * Add professional invoice footer
  */
 function addInvoiceFooter(doc) {
-  doc.fontSize(8);
-  doc.text('This is a computer-generated invoice.', 50, doc.y);
-  doc.text(`Generated on ${moment().format('DD/MM/YYYY HH:mm')}`, 50, doc.y + 15);
+  // Footer background
+  const footerY = doc.page.height - 100;
+  doc.rect(0, footerY, doc.page.width, 100).fill(colors.dark);
+  
+  // Footer content in white
+  doc.fillColor('white');
+  doc.fontSize(10);
+  doc.text('This is a computer-generated invoice.', 50, footerY + 20);
+  doc.text(`Generated on ${moment().format('DD/MM/YYYY HH:mm')}`, 50, footerY + 35);
+  doc.text('Thank you for your business!', 50, footerY + 50);
+  
+  // Add signature line
+  doc.text('Authorized Signatory', 400, footerY + 50);
+  doc.lineJoin('miter').rect(400, footerY + 65, 150, 1).stroke();
+}
+
+/**
+ * Helper function to convert numbers to words
+ */
+function numberToWords(num) {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  
+  const convert = (n) => {
+    if (n < 10) return ones[n];
+    if (n >= 10 && n < 20) return teens[n - 10];
+    if (n >= 20 && n < 100) return tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '');
+    if (n >= 100 && n < 1000) return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' and ' + convert(n % 100) : '');
+    return n.toString();
+  };
+  
+  const rupees = Math.floor(num);
+  const paise = Math.round((num - rupees) * 100);
+  
+  let result = convert(rupees);
+  if (rupees === 1) result += ' Rupee'; else result += ' Rupees';
+  
+  if (paise > 0) {
+    result += ' and ' + convert(paise);
+    if (paise === 1) result += ' Paisa'; else result += ' Paise';
+  }
+  
+  return result;
 }
 
 /**
