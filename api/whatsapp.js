@@ -3905,18 +3905,45 @@ if (Body) {
     // Determine summary type
     if (lowerBody.includes('full')) {
       // Full summary
+      // Flag to track if summary has been sent
+      let summarySent = false;
+      
+      // Send initial "processing" message
       const generatingMessage = await generateMultiLanguageResponse(
-        'Generating your detailed summary with insights... This may take a moment.',
+        '🔍 Generating your detailed summary with insights... This may take a moment.',
         userLanguage,
         requestId
       );
-      
-      // Send initial message
       await sendMessageViaAPI(From, generatingMessage);
+      
+      // Schedule fun facts only if summary hasn't been sent
+      setTimeout(async () => {
+        if (!summarySent) {
+          const tip1 = await generateMultiLanguageResponse(
+            '💡 Tip: Products with expiry dates under 7 days are 3x more likely to go unsold. Consider bundling or discounting them!',
+            userLanguage,
+            requestId
+          );
+          await sendMessageViaAPI(From, tip1);
+        }
+      }, 5000);
+      
+      setTimeout(async () => {
+        if (!summarySent) {
+          const tip2 = await generateMultiLanguageResponse(
+            '📦 Did you know? Low-stock alerts help prevent missed sales. Check your inventory weekly!',
+            userLanguage,
+            requestId
+          );
+          await sendMessageViaAPI(From, tip2);
+        }
+      }, 10000);
       
       // Generate and send full summary
       const fullSummary = await generateFullScaleSummary(shopId, userLanguage, requestId);
+      summarySent = true;
       await sendMessageViaAPI(From, fullSummary);
+      
     } else {
       // Instant summary
       const instantSummary = await generateInstantSummary(shopId, userLanguage, requestId);
