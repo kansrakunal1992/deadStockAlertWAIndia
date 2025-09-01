@@ -108,14 +108,14 @@ function addGSTTable(doc, gstBreakdown) {
   doc.rect(50, doc.y, doc.page.width - 100, 25).fill(colors.tableHeader);
   
   // Table headers in white
-  doc.fillColor('white')
-     .fontSize(10)
-     .text('Description', 50, doc.y + 15, { width: 120 });
-     .text('Taxable Value (₹)', 170, doc.y + 15, { width: 100 });
-     .text('CGST (₹)', 270, doc.y + 15, { width: 70 });
-     .text('SGST (₹)', 340, doc.y + 15, { width: 70 });
-     .text('IGST (₹)', 410, doc.y + 15, { width: 70 });
-     .text('Total Tax (₹)', 480, doc.y + 15, { width: 80 });
+  doc.fillColor('white');
+  doc.fontSize(10);
+  doc.text('Description', 50, doc.y + 15, { width: 120 });
+  doc.text('Taxable Value (₹)', 170, doc.y + 15, { width: 100 });
+  doc.text('CGST (₹)', 270, doc.y + 15, { width: 70 });
+  doc.text('SGST (₹)', 340, doc.y + 15, { width: 70 });
+  doc.text('IGST (₹)', 410, doc.y + 15, { width: 70 });
+  doc.text('Total Tax (₹)', 480, doc.y + 15, { width: 80 });
   
   doc.moveDown(30);
   
@@ -134,16 +134,16 @@ function addGSTTable(doc, gstBreakdown) {
     doc.rect(50, doc.y, doc.page.width - 100, 25).fill(rowColor);
     
     // Row text
-    doc.fillColor(colors.dark)
-       .fontSize(9)
-       .text(`${rateLabel} (${data.category})`, 55, doc.y + 15, { width: 115 });
+    doc.fillColor(colors.dark);
+    doc.fontSize(9);
+    doc.text(`${rateLabel} (${data.category})`, 55, doc.y + 15, { width: 115 });
     
-    doc.fillColor(textColor)
-       .text(data.taxableValue.toFixed(2), 170, doc.y + 15, { width: 100 })
-       .text(data.cgst.toFixed(2), 270, doc.y + 15, { width: 70 })
-       .text(data.sgst.toFixed(2), 340, doc.y + 15, { width: 70 })
-       .text(data.igst.toFixed(2), 410, doc.y + 15, { width: 70 })
-       .text(data.totalTax.toFixed(2), 480, doc.y + 15, { width: 80 });
+    doc.fillColor(textColor);
+    doc.text(data.taxableValue.toFixed(2), 170, doc.y + 15, { width: 100 });
+    doc.text(data.cgst.toFixed(2), 270, doc.y + 15, { width: 70 });
+    doc.text(data.sgst.toFixed(2), 340, doc.y + 15, { width: 70 });
+    doc.text(data.igst.toFixed(2), 410, doc.y + 15, { width: 70 });
+    doc.text(data.totalTax.toFixed(2), 480, doc.y + 15, { width: 80 });
     
     doc.moveDown(30);
     isEvenRow = !isEvenRow;
@@ -152,14 +152,14 @@ function addGSTTable(doc, gstBreakdown) {
   // Total row with accent color
   doc.rect(50, doc.y, doc.page.width - 100, 25).fill(colors.accent);
   
-  doc.fillColor('white')
-     .fontSize(10)
-     .text('Total', 55, doc.y + 15, { width: 115, underline: true })
-     .text(gstBreakdown.totalTaxableValue.toFixed(2), 170, doc.y + 15, { width: 100 })
-     .text(gstBreakdown.totalCGST.toFixed(2), 270, doc.y + 15, { width: 70 })
-     .text(gstBreakdown.totalSGST.toFixed(2), 340, doc.y + 15, { width: 70 })
-     .text(gstBreakdown.totalIGST.toFixed(2), 410, doc.y + 15, { width: 70 })
-     .text(gstBreakdown.totalTax.toFixed(2), 480, doc.y + 15, { width: 80 });
+  doc.fillColor('white');
+  doc.fontSize(10);
+  doc.text('Total', 55, doc.y + 15, { width: 115, underline: true });
+  doc.text(gstBreakdown.totalTaxableValue.toFixed(2), 170, doc.y + 15, { width: 100 });
+  doc.text(gstBreakdown.totalCGST.toFixed(2), 270, doc.y + 15, { width: 70 });
+  doc.text(gstBreakdown.totalSGST.toFixed(2), 340, doc.y + 15, { width: 70 });
+  doc.text(gstBreakdown.totalIGST.toFixed(2), 410, doc.y + 15, { width: 70 });
+  doc.text(gstBreakdown.totalTax.toFixed(2), 480, doc.y + 15, { width: 80 });
   
   doc.moveDown(40);
 }
@@ -172,17 +172,17 @@ function addSalesTable(doc, salesData) {
   doc.rect(50, doc.y, doc.page.width - 100, 25).fill(colors.tableHeader);
   
   // Table headers in white
-  doc.fillColor('white')
-     .fontSize(8)
-     .text('HSN Code', 50, doc.y + 15, { width: 60 })
-     .text('Product Name', 110, doc.y + 15, { width: 90 })
-     .text('Qty', 200, doc.y + 15, { width: 30 })
-     .text('Unit', 230, doc.y + 15, { width: 40 })
-     .text('Rate (₹)', 270, doc.y + 15, { width: 50 })
-     .text('Taxable Val', 320, doc.y + 15, { width: 60 })
-     .text('GST Rate', 380, doc.y + 15, { width: 50 })
-     .text('GST Amt', 430, doc.y + 15, { width: 50 })
-     .text('Total (₹)', 480, doc.y + 15, { width: 60 });
+  doc.fillColor('white');
+  doc.fontSize(8);
+  doc.text('HSN Code', 50, doc.y + 15, { width: 60 });
+  doc.text('Product Name', 110, doc.y + 15, { width: 90 });
+  doc.text('Qty', 200, doc.y + 15, { width: 30 });
+  doc.text('Unit', 230, doc.y + 15, { width: 40 });
+  doc.text('Rate (₹)', 270, doc.y + 15, { width: 50 });
+  doc.text('Taxable Val', 320, doc.y + 15, { width: 60 });
+  doc.text('GST Rate', 380, doc.y + 15, { width: 50 });
+  doc.text('GST Amt', 430, doc.y + 15, { width: 50 });
+  doc.text('Total (₹)', 480, doc.y + 15, { width: 60 });
   
   doc.moveDown(30);
   
@@ -204,19 +204,19 @@ function addSalesTable(doc, salesData) {
                        gstRate === 0.18 ? colors.gst18 : colors.gst28;
       
       // Row text
-      doc.fillColor(colors.dark)
-         .fontSize(8)
-         .text(product.hsnCode || 'N/A', 55, doc.y + 15, { width: 55 })
-         .text(product.name, 110, doc.y + 15, { width: 90 })
-         .text(product.quantity, 200, doc.y + 15, { width: 30 })
-         .text(product.unit, 230, doc.y + 15, { width: 40 })
-         .text(product.rate.toFixed(2), 270, doc.y + 15, { width: 50 })
-         .text(product.taxableValue.toFixed(2), 320, doc.y + 15, { width: 60 });
+      doc.fillColor(colors.dark);
+      doc.fontSize(8);
+      doc.text(product.hsnCode || 'N/A', 55, doc.y + 15, { width: 55 });
+      doc.text(product.name, 110, doc.y + 15, { width: 90 });
+      doc.text(product.quantity, 200, doc.y + 15, { width: 30 });
+      doc.text(product.unit, 230, doc.y + 15, { width: 40 });
+      doc.text(product.rate.toFixed(2), 270, doc.y + 15, { width: 50 });
+      doc.text(product.taxableValue.toFixed(2), 320, doc.y + 15, { width: 60 });
       
-      doc.fillColor(gstColor)
-         .text(`${(gstRate * 100).toFixed(0)}%`, 380, doc.y + 15, { width: 50 })
-         .text(product.gstAmount.toFixed(2), 430, doc.y + 15, { width: 50 })
-         .text(product.totalWithTax.toFixed(2), 480, doc.y + 15, { width: 60 });
+      doc.fillColor(gstColor);
+      doc.text(`${(gstRate * 100).toFixed(0)}%`, 380, doc.y + 15, { width: 50 });
+      doc.text(product.gstAmount.toFixed(2), 430, doc.y + 15, { width: 50 });
+      doc.text(product.totalWithTax.toFixed(2), 480, doc.y + 15, { width: 60 });
       
       doc.moveDown(30);
       isEvenRow = !isEvenRow;
@@ -380,23 +380,23 @@ function addInvoiceHeader(doc, shopDetails) {
   doc.rect(0, 0, doc.page.width, 80).fill(colors.header);
   
   // Shop details in white
-  doc.fillColor('white')
-     .fontSize(14)
-     .text('TAX INVOICE', 50, 30, { align: 'center' });
+  doc.fillColor('white');
+  doc.fontSize(14);
+  doc.text('TAX INVOICE', 50, 30, { align: 'center' });
   
-  doc.fontSize(10)
-     .text(shopDetails.name, 50, 50, { align: 'center' });
+  doc.fontSize(10);
+  doc.text(shopDetails.name, 50, 50, { align: 'center' });
   
-  if (shopDetails.gstin) {
+  if (shopDetails.gstin && shopDetails.gstin !== 'N/A') {
     doc.text(`GSTIN: ${shopDetails.gstin}`, 50, 65, { align: 'center' });
   }
   
   // Invoice number and date
   const invoiceNumber = `INV-${shopDetails.shopId.replace(/\D/g, '')}-${moment().format('YYYYMMDDHHmmss')}`;
-  doc.fillColor(colors.light)
-     .fontSize(12)
-     .text(`Invoice No: ${invoiceNumber}`, 50, 95, { align: 'center' })
-     .text(`Date: ${moment().format('DD/MM/YYYY')}`, 50, 110, { align: 'center' });
+  doc.fillColor(colors.light);
+  doc.fontSize(12);
+  doc.text(`Invoice No: ${invoiceNumber}`, 50, 95, { align: 'center' });
+  doc.text(`Date: ${moment().format('DD/MM/YYYY')}`, 50, 110, { align: 'center' });
   
   doc.moveDown(30);
 }
@@ -436,27 +436,27 @@ function addInvoiceTotals(doc, saleRecord) {
   const total = taxableValue + gstAmount;
   
   // Taxable value
-  doc.fontSize(10)
-     .text('Taxable Value:', 400, doc.y, { width: 100, align: 'right' })
-     .text(taxableValue.toFixed(2), 510, doc.y, { width: 70, align: 'right' });
+  doc.fontSize(10);
+  doc.text('Taxable Value:', 400, doc.y, { width: 100, align: 'right' });
+  doc.text(taxableValue.toFixed(2), 510, doc.y, { width: 70, align: 'right' });
   
   doc.moveDown(15);
   
   // GST
-  doc.text(`CGST @${gstRate*100}%:`, 400, doc.y, { width: 100, align: 'right' })
-     .text((gstAmount/2).toFixed(2), 510, doc.y, { width: 70, align: 'right' });
+  doc.text(`CGST @${gstRate*100}%:`, 400, doc.y, { width: 100, align: 'right' });
+  doc.text((gstAmount/2).toFixed(2), 510, doc.y, { width: 70, align: 'right' });
   
   doc.moveDown(15);
   
-  doc.text(`SGST @${gstRate*100}%:`, 400, doc.y, { width: 100, align: 'right' })
-     .text((gstAmount/2).toFixed(2), 510, doc.y, { width: 70, align: 'right' });
+  doc.text(`SGST @${gstRate*100}%:`, 400, doc.y, { width: 100, align: 'right' });
+  doc.text((gstAmount/2).toFixed(2), 510, doc.y, { width: 70, align: 'right' });
   
   doc.moveDown(15);
   
   // Total
-  doc.fontSize(12)
-     .text('Total:', 400, doc.y, { width: 100, align: 'right' })
-     .text(total.toFixed(2), 510, doc.y, { width: 70, align: 'right' });
+  doc.fontSize(12);
+  doc.text('Total:', 400, doc.y, { width: 100, align: 'right' });
+  doc.text(total.toFixed(2), 510, doc.y, { width: 70, align: 'right' });
   
   doc.moveDown(40);
 }
