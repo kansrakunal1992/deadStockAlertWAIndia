@@ -1730,45 +1730,39 @@ async function generateSummaryInsights(data, languageCode, requestId) {
       
       // Prepare a more concise prompt
       const prompt = `You are an inventory analysis assistant. Analyze the following shop data and provide insights in ${languageCode}.
-Sales Data (last 30 days):
-- Total items sold: ${data.salesData.totalItems || 0}
-- Total sales value: ₹${(data.salesData.totalValue || 0).toFixed(2)}
-- Top selling products: ${data.salesData.topProducts ? 
-    data.salesData.topProducts.slice(0, topSalesLimit).map(p => `${p.name} (${p.quantity} ${p.unit})`).join(', ') : 'None'}
-Purchase Data (last 30 days):
-- Total items purchased: ${data.purchaseData.totalItems || 0}
-- Total purchase value: ₹${(data.purchaseData.totalValue || 0).toFixed(2)}
-- Most purchased products: ${data.purchaseData.topProducts ? 
-    data.purchaseData.topProducts.slice(0, topSalesLimit).map(p => `${p.name} (${p.quantity} ${p.unit})`).join(', ') : 'None'}
-Current Inventory:
-- Total unique products: ${data.inventorySummary.totalProducts || 0}
-- Total inventory value: ₹${(data.inventorySummary.totalValue || 0).toFixed(2)}
-Low Stock Products:
-${data.lowStockProducts.length > 0 ? 
-    data.lowStockProducts.slice(0, lowStockLimit).map(p => `- ${p.name}: ${p.quantity} ${p.unit} left`).join('\n') : 'None'}
-Expiring Products (next 7 days):
-${data.expiringProducts.length > 0 ? 
-    data.expiringProducts.slice(0, expiringLimit).map(p => `- ${p.name}: Expires on ${formatDateForDisplay(p.expiryDate)}`).join('\n') : 'None'}
-Provide a comprehensive analysis with:
-1. Sales trends and patterns
-2. Inventory performance
-3. Recommendations for restocking
-4. Suggestions for reducing waste
-5. Actionable insights for business growth
-Format your response in two parts:
-Part 1: Analysis in native script
-Part 2: Analysis in Roman script transliteration
-Keep the response under 500 words and focus on actionable insights.`;
-
+    Sales Data (last 30 days):
+    - Total items sold: ${data.salesData.totalItems || 0}
+    - Total sales value: ₹${(data.salesData.totalValue || 0).toFixed(2)}
+    - Top selling products: ${data.salesData.topProducts ? 
+        data.salesData.topProducts.slice(0, topSalesLimit).map(p => `${p.name} (${p.quantity} ${p.unit})`).join(', ') : 'None'}
+    Purchase Data (last 30 days):
+    - Total items purchased: ${data.purchaseData.totalItems || 0}
+    - Total purchase value: ₹${(data.purchaseData.totalValue || 0).toFixed(2)}
+    - Most purchased products: ${data.purchaseData.topProducts ? 
+        data.purchaseData.topProducts.slice(0, topSalesLimit).map(p => `${p.name} (${p.quantity} ${p.unit})`).join(', ') : 'None'}
+    Current Inventory:
+    - Total unique products: ${data.inventorySummary.totalProducts || 0}
+    - Total inventory value: ₹${(data.inventorySummary.totalValue || 0).toFixed(2)}
+    Low Stock Products:
+    ${data.lowStockProducts.length > 0 ? 
+        data.lowStockProducts.slice(0, lowStockLimit).map(p => `- ${p.name}: ${p.quantity} ${p.unit} left`).join('\n') : 'None'}
+    Expiring Products (next 7 days):
+    ${data.expiringProducts.length > 0 ? 
+        data.expiringProducts.slice(0, expiringLimit).map(p => `- ${p.name}: Expires on ${formatDateForDisplay(p.expiryDate)}`).join('\n') : 'None'}
+    Provide a comprehensive analysis with:
+    1. Sales trends and patterns
+    2. Inventory performance
+    3. Recommendations for restocking
+    4. Suggestions for reducing waste
+    5. Actionable insights for business growth
+    Format your response in two parts:
+    Part 1: Analysis in native script
+    Part 2: Analysis in Roman script transliteration
+    Keep the response under 500 words and focus on actionable insights.`;
+      
       console.log(`[${requestId}] Prompt length: ${prompt.length} characters`);
       console.log(`[${requestId}] Making API request to Deepseek...`);
-
-      const controller = new AbortController();
-      timeoutId = setTimeout(() => {
-        console.log(`[${requestId}] Request timeout reached, aborting...`);
-        controller.abort();
-      }, 25000); // 25 second timeout
-
+      
       const response = await axios.post(
         'https://api.deepseek.com/v1/chat/completions',
         {
@@ -1791,14 +1785,10 @@ Keep the response under 500 words and focus on actionable insights.`;
             'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
             'Content-Type': 'application/json'
           },
-          timeout: 25000,
-          maxRedirects: 3,
-          signal: controller.signal
+          timeout: 60000 // Increased timeout to 60 seconds
         }
       );
       
-      // Clear the timeout since the request completed
-      clearTimeout(timeoutId);
       console.log(`[${requestId}] API response received, status: ${response.status}`);
       
       let insights = response.data.choices[0].message.content.trim();
@@ -1817,14 +1807,8 @@ Keep the response under 500 words and focus on actionable insights.`;
       return insights;
       
     } catch (error) {
-      // Clear the timeout if it exists
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-      
       lastError = error;
       console.warn(`[${requestId}] AI API call attempt ${attempt} failed:`, error.message);
-      console.error(`[${requestId}] Full error:`, JSON.stringify(error, null, 2));
       
       if (error.response) {
         console.error(`[${requestId}] API response status:`, error.response.status);
@@ -1833,10 +1817,6 @@ Keep the response under 500 words and focus on actionable insights.`;
       
       if (error.code === 'ECONNABORTED') {
         console.error(`[${requestId}] Request was aborted (likely timeout)`);
-      }
-      
-      if (error.name === 'AbortError') {
-        console.error(`[${requestId}] Request was manually aborted due to timeout`);
       }
       
       // If this is the last attempt, throw the error
