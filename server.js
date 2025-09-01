@@ -7,25 +7,38 @@ const { runDailySummary } = require('./dailySummary');
 const app = express();
 const tempDir = path.join(__dirname, 'temp');
 
+// PDF serving route
 app.get('/invoice/:fileName', (req, res) => {
   try {
     const fileName = req.params.fileName;
-    const filePath = path.join(__dirname, 'temp', fileName);
-    
-    console.log(`[PDF Server] Request for: ${fileName}`);
-    console.log(`[PDF Server] Full path: ${filePath}`);
     
     // Security check: ensure fileName is safe
-    if (fileName.includes('..') || fileName.includes('/')) {
+    if (!fileName || fileName.includes('..') || fileName.includes('/') || !fileName.endsWith('.pdf')) {
       console.error(`[PDF Server] Invalid filename: ${fileName}`);
       return res.status(400).send('Invalid filename');
     }
     
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      console.error(`[PDF Server] File not found: ${filePath}`);
+    // Try multiple possible paths
+    const possiblePaths = [
+      path.join('/tmp', 'invoices', fileName),  // Production path
+      path.join(__dirname, 'temp', 'invoices', fileName),  // Development path
+      path.join(__dirname, 'temp', fileName),  // Legacy path
+    ];
+    
+    let filePath = null;
+    for (const possiblePath of possiblePaths) {
+      if (fs.existsSync(possiblePath)) {
+        filePath = possiblePath;
+        break;
+      }
+    }
+    
+    if (!filePath) {
+      console.error(`[PDF Server] File not found. Tried paths:`, possiblePaths);
       return res.status(404).send('Invoice not found');
     }
+    
+    console.log(`[PDF Server] Serving file: ${filePath}`);
     
     // Send the file
     res.sendFile(filePath, {
@@ -34,8 +47,6 @@ app.get('/invoice/:fileName', (req, res) => {
         'Content-Disposition': `inline; filename="${fileName}"`
       }
     });
-    
-    console.log(`[PDF Server] Successfully sent: ${fileName}`);
     
   } catch (error) {
     console.error(`[PDF Server] Error:`, error.message);
