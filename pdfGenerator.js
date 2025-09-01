@@ -367,8 +367,54 @@ async function generateSalesPDF(shopId, period = 'today', startDate = null, endD
   });
 }
 
-// Invoice functions remain the same as before...
-
+/**
+ * Generate an invoice PDF for a sale
+ * @param {Object} shopDetails - Shop details from AuthUsers
+ * @param {Object} saleRecord - Sale record details
+ * @returns {Promise<string>} - Path to generated PDF file
+ */
+async function generateInvoicePDF(shopDetails, saleRecord) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      console.log(`[PDF Generator] Generating invoice for shop ${shopDetails.shopId}`);
+      
+      // Generate filename
+      const timestamp = moment().format('YYYYMMDD_HHmmss');
+      const fileName = `invoice_${shopDetails.shopId.replace(/\D/g, '')}_${timestamp}.pdf`;
+      const filePath = path.join(tempDir, fileName);
+      
+      // Create PDF document
+      const doc = new PDFDocument({
+        margin: 50,
+        size: 'A4'
+      });
+      
+      // Pipe to file
+      doc.pipe(fs.createWriteStream(filePath));
+      
+      // Add invoice header
+      addInvoiceHeader(doc, shopDetails);
+      
+      // Add sale details
+      addSaleDetails(doc, saleRecord);
+      
+      // Add totals
+      addInvoiceTotals(doc, saleRecord);
+      
+      // Add footer
+      addInvoiceFooter(doc);
+      
+      // Finalize PDF
+      doc.end();
+      
+      console.log(`[PDF Generator] Invoice generated: ${filePath}`);
+      resolve(filePath);
+    } catch (error) {
+      console.error('[PDF Generator] Error generating invoice:', error);
+      reject(error);
+    }
+  });
+}
 // Export the functions
 module.exports = { 
   generateSalesPDF,
