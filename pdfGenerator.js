@@ -251,7 +251,7 @@ function addColoredFooter(doc) {
  * @returns {Promise<string>} - Path to generated PDF file
  */
 async function generateSalesPDF(shopId, period = 'today', startDate = null, endDate = null) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     try {
       console.log(`[PDF Generator] Generating sales PDF for shop ${shopId}, period: ${period}`);
       
@@ -330,9 +330,14 @@ async function generateSalesPDF(shopId, period = 'today', startDate = null, endD
   });
 }
 
-// Add this function to pdfGenerator.js
+/**
+ * Generate an invoice PDF for a sale
+ * @param {Object} shopDetails - Shop details from AuthUsers
+ * @param {Object} saleRecord - Sale record details
+ * @returns {Promise<string>} - Path to generated PDF file
+ */
 async function generateInvoicePDF(shopDetails, saleRecord) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     try {
       console.log(`[PDF Generator] Generating invoice for shop ${shopDetails.shopId}`);
       
@@ -467,6 +472,32 @@ function addInvoiceFooter(doc) {
   doc.fontSize(8)
      .text('This is a computer-generated invoice.', 50, footerY)
      .text(`Generated on ${moment().format('DD/MM/YYYY HH:mm')}`, 50, footerY + 15);
+}
+
+function calculateGSTBreakdown(salesData) {
+  // Simple GST calculation - you can enhance this based on your needs
+  const totalTaxableValue = salesData.totalValue || 0;
+  const totalTax = totalTaxableValue * 0.18; // 18% GST
+  const totalWithTax = totalTaxableValue + totalTax;
+  
+  return {
+    totalTaxableValue,
+    totalCGST: totalTax / 2,
+    totalSGST: totalTax / 2,
+    totalIGST: 0,
+    totalTax,
+    totalWithTax,
+    byRate: {
+      '0.18': {
+        category: 'Standard',
+        taxableValue: totalTaxableValue,
+        cgst: totalTax / 2,
+        sgst: totalTax / 2,
+        igst: 0,
+        totalTax: totalTax
+      }
+    }
+  };
 }
 
 // Update module.exports
