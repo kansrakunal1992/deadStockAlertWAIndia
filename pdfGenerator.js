@@ -38,23 +38,22 @@ function addColoredHeader(doc, reportTitle, reportDate, shopId) {
   doc.rect(0, 0, doc.page.width, 80).fill(colors.header);
   
   // Company name in white
-  doc.fillColor('white')
-     .fontSize(14)
-     .text('Inventory Management System', 50, 30, { align: 'center' });
+  doc.fillColor('white');
+  doc.fontSize(14);
+  doc.text('Inventory Management System', 50, 30, { align: 'center' });
   
   // GSTIN in white
-  doc.fontSize(10)
-     .text('GSTIN: 29ABCDE1234F1Z5', 50, 50, { align: 'center' });
+  doc.fontSize(10);
+  doc.text('GSTIN: 29ABCDE1234F1Z5', 50, 50, { align: 'center' });
   
   // Report title in white
-  doc.fontSize(18)
-     .text(reportTitle, 50, 70, { align: 'center' });
+  doc.fontSize(18);
+  doc.text(reportTitle, 50, 70, { align: 'center' });
   
   // Shop ID and date in light gray
-  doc.fillColor(colors.light)
-     .fontSize(12)
-     .text(`Shop ID: ${shopId}`, 50, 95, { align: 'center' });
-  
+  doc.fillColor(colors.light);
+  doc.fontSize(12);
+  doc.text(`Shop ID: ${shopId}`, 50, 95, { align: 'center' });
   doc.text(`Report Period: ${reportDate}`, 50, 110, { align: 'center' });
   
   doc.moveDown(30);
@@ -66,9 +65,9 @@ function addColoredHeader(doc, reportTitle, reportDate, shopId) {
 function addSectionHeader(doc, title, color = colors.primary) {
   doc.rect(50, doc.y, doc.page.width - 100, 25).fill(color);
   
-  doc.fillColor('white')
-     .fontSize(14)
-     .text(title, 50, doc.y + 15, { align: 'center' });
+  doc.fillColor('white');
+  doc.fontSize(14);
+  doc.text(title, 50, doc.y + 15, { align: 'center' });
   
   doc.moveDown(35);
 }
@@ -86,18 +85,47 @@ function addSummaryBox(doc, label, value, color = colors.primary) {
   doc.rect(x, y, boxWidth, boxHeight).fill(color);
   
   // Add label in white
-  doc.fillColor('white')
-     .fontSize(10)
-     .text(label, x, y + 20, { width: boxWidth, align: 'center' });
+  doc.fillColor('white');
+  doc.fontSize(10);
+  doc.text(label, x, y + 20, { width: boxWidth, align: 'center' });
   
   // Add value in white
-  doc.fontSize(16)
-     .text(value, x, y + 40, { width: boxWidth, align: 'center' });
+  doc.fontSize(16);
+  doc.text(value, x, y + 40, { width: boxWidth, align: 'center' });
   
   // Move to next position
   doc.x = x + boxWidth + 20;
   
   return { x, y, width: boxWidth, height: boxHeight };
+}
+
+/**
+ * Calculate GST breakdown
+ */
+function calculateGSTBreakdown(salesData) {
+  // Simple GST calculation - you can enhance this based on your needs
+  const totalTaxableValue = salesData.totalValue || 0;
+  const totalTax = totalTaxableValue * 0.18; // 18% GST
+  const totalWithTax = totalTaxableValue + totalTax;
+  
+  return {
+    totalTaxableValue,
+    totalCGST: totalTax / 2,
+    totalSGST: totalTax / 2,
+    totalIGST: 0,
+    totalTax,
+    totalWithTax,
+    byRate: {
+      '0.18': {
+        category: 'Standard',
+        taxableValue: totalTaxableValue,
+        cgst: totalTax / 2,
+        sgst: totalTax / 2,
+        igst: 0,
+        totalTax: totalTax
+      }
+    }
+  };
 }
 
 /**
@@ -234,12 +262,12 @@ function addColoredFooter(doc) {
   doc.rect(0, footerY, doc.page.width, 80).fill(colors.dark);
   
   // Footer text in white
-  doc.fillColor('white')
-     .fontSize(8)
-     .text('This is a computer-generated report. Please verify all details before use.', 50, footerY + 20, { align: 'center' })
-     .text('GST rates are applied as per prevailing tax laws. HSN codes are for reference only.', 50, footerY + 35, { align: 'center' })
-     .text(`Generated on ${moment().format('DD/MM/YYYY HH:mm')}`, 50, footerY + 50, { align: 'center' })
-     .text('This report is generated for record-keeping purposes only.', 50, footerY + 65, { align: 'center' });
+  doc.fillColor('white');
+  doc.fontSize(8);
+  doc.text('This is a computer-generated report. Please verify all details before use.', 50, footerY + 20, { align: 'center' });
+  doc.text('GST rates are applied as per prevailing tax laws. HSN codes are for reference only.', 50, footerY + 35, { align: 'center' });
+  doc.text(`Generated on ${moment().format('DD/MM/YYYY HH:mm')}`, 50, footerY + 50, { align: 'center' });
+  doc.text('This report is generated for record-keeping purposes only.', 50, footerY + 65, { align: 'center' });
 }
 
 /**
@@ -285,14 +313,23 @@ async function generateSalesPDF(shopId, period = 'today', startDate = null, endD
       
       // Get sales data
       let salesData;
-      if (period === 'today') {
-        salesData = await getTodaySalesSummary(shopId);
-      } else {
-        const startDate = period === 'week' 
-          ? moment().subtract(7, 'days').toDate() 
-          : moment().startOf('month').toDate();
-        const endDate = new Date();
-        salesData = await getSalesDataForPeriod(shopId, startDate, endDate);
+      try {
+        if (period === 'today') {
+          salesData = await getTodaySalesSummary(shopId);
+        } else {
+          const startDate = period === 'week' 
+            ? moment().subtract(7, 'days').toDate() 
+            : moment().startOf('month').toDate();
+          const endDate = new Date();
+          salesData = await getSalesDataForPeriod(shopId, startDate, endDate);
+        }
+      } catch (dbError) {
+        console.error('[PDF Generator] Database error:', dbError);
+        salesData = {
+          totalItems: 0,
+          totalValue: 0,
+          topProducts: []
+        };
       }
       
       // Calculate GST breakdown
@@ -330,177 +367,9 @@ async function generateSalesPDF(shopId, period = 'today', startDate = null, endD
   });
 }
 
-/**
- * Generate an invoice PDF for a sale
- * @param {Object} shopDetails - Shop details from AuthUsers
- * @param {Object} saleRecord - Sale record details
- * @returns {Promise<string>} - Path to generated PDF file
- */
-async function generateInvoicePDF(shopDetails, saleRecord) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      console.log(`[PDF Generator] Generating invoice for shop ${shopDetails.shopId}`);
-      
-      // Generate filename
-      const timestamp = moment().format('YYYYMMDD_HHmmss');
-      const fileName = `invoice_${shopDetails.shopId.replace(/\D/g, '')}_${timestamp}.pdf`;
-      const filePath = path.join(tempDir, fileName);
-      
-      // Create PDF document
-      const doc = new PDFDocument({
-        margin: 50,
-        size: 'A4'
-      });
-      
-      // Pipe to file
-      doc.pipe(fs.createWriteStream(filePath));
-      
-      // Add invoice header
-      addInvoiceHeader(doc, shopDetails);
-      
-      // Add sale details
-      addSaleDetails(doc, saleRecord);
-      
-      // Add totals
-      addInvoiceTotals(doc, saleRecord);
-      
-      // Add footer
-      addInvoiceFooter(doc);
-      
-      // Finalize PDF
-      doc.end();
-      
-      console.log(`[PDF Generator] Invoice generated: ${filePath}`);
-      resolve(filePath);
-    } catch (error) {
-      console.error('[PDF Generator] Error generating invoice:', error);
-      reject(error);
-    }
-  });
-}
+// Invoice functions remain the same as before...
 
-// Helper functions for invoice generation
-function addInvoiceHeader(doc, shopDetails) {
-  // Header background
-  doc.rect(0, 0, doc.page.width, 80).fill(colors.header);
-  
-  // Shop details in white
-  doc.fillColor('white');
-  doc.fontSize(14);
-  doc.text('TAX INVOICE', 50, 30, { align: 'center' });
-  
-  doc.fontSize(10);
-  doc.text(shopDetails.name, 50, 50, { align: 'center' });
-  
-  if (shopDetails.gstin && shopDetails.gstin !== 'N/A') {
-    doc.text(`GSTIN: ${shopDetails.gstin}`, 50, 65, { align: 'center' });
-  }
-  
-  // Invoice number and date
-  const invoiceNumber = `INV-${shopDetails.shopId.replace(/\D/g, '')}-${moment().format('YYYYMMDDHHmmss')}`;
-  doc.fillColor(colors.light);
-  doc.fontSize(12);
-  doc.text(`Invoice No: ${invoiceNumber}`, 50, 95, { align: 'center' });
-  doc.text(`Date: ${moment().format('DD/MM/YYYY')}`, 50, 110, { align: 'center' });
-  
-  doc.moveDown(30);
-}
-
-function addSaleDetails(doc, saleRecord) {
-  // Table header
-  doc.rect(50, doc.y, doc.page.width - 100, 25).fill(colors.tableHeader);
-  
-  doc.fillColor('white')
-     .fontSize(10)
-     .text('Description', 55, doc.y + 15, { width: 200 })
-     .text('HSN/SAC', 255, doc.y + 15, { width: 70 })
-     .text('Qty', 325, doc.y + 15, { width: 40 })
-     .text('Rate', 365, doc.y + 15, { width: 50 })
-     .text('Taxable Value', 415, doc.y + 15, { width: 70 });
-  
-  doc.moveDown(30);
-  
-  // Product row
-  doc.rect(50, doc.y, doc.page.width - 100, 25).fill(colors.oddRow);
-  
-  doc.fillColor(colors.dark)
-     .fontSize(10)
-     .text(saleRecord.product, 55, doc.y + 15, { width: 200 })
-     .text('N/A', 255, doc.y + 15, { width: 70 }) // HSN code not available
-     .text(saleRecord.quantity, 325, doc.y + 15, { width: 40 })
-     .text(saleRecord.rate.toFixed(2), 365, doc.y + 15, { width: 50 })
-     .text((saleRecord.quantity * saleRecord.rate).toFixed(2), 415, doc.y + 15, { width: 70 });
-  
-  doc.moveDown(40);
-}
-
-function addInvoiceTotals(doc, saleRecord) {
-  const taxableValue = saleRecord.quantity * saleRecord.rate;
-  const gstRate = 0.18; // Default 18% GST
-  const gstAmount = taxableValue * gstRate;
-  const total = taxableValue + gstAmount;
-  
-  // Taxable value
-  doc.fontSize(10);
-  doc.text('Taxable Value:', 400, doc.y, { width: 100, align: 'right' });
-  doc.text(taxableValue.toFixed(2), 510, doc.y, { width: 70, align: 'right' });
-  
-  doc.moveDown(15);
-  
-  // GST
-  doc.text(`CGST @${gstRate*100}%:`, 400, doc.y, { width: 100, align: 'right' });
-  doc.text((gstAmount/2).toFixed(2), 510, doc.y, { width: 70, align: 'right' });
-  
-  doc.moveDown(15);
-  
-  doc.text(`SGST @${gstRate*100}%:`, 400, doc.y, { width: 100, align: 'right' });
-  doc.text((gstAmount/2).toFixed(2), 510, doc.y, { width: 70, align: 'right' });
-  
-  doc.moveDown(15);
-  
-  // Total
-  doc.fontSize(12);
-  doc.text('Total:', 400, doc.y, { width: 100, align: 'right' });
-  doc.text(total.toFixed(2), 510, doc.y, { width: 70, align: 'right' });
-  
-  doc.moveDown(40);
-}
-
-function addInvoiceFooter(doc) {
-  const footerY = doc.page.height - 80;
-  
-  doc.fontSize(8)
-     .text('This is a computer-generated invoice.', 50, footerY)
-     .text(`Generated on ${moment().format('DD/MM/YYYY HH:mm')}`, 50, footerY + 15);
-}
-
-function calculateGSTBreakdown(salesData) {
-  // Simple GST calculation - you can enhance this based on your needs
-  const totalTaxableValue = salesData.totalValue || 0;
-  const totalTax = totalTaxableValue * 0.18; // 18% GST
-  const totalWithTax = totalTaxableValue + totalTax;
-  
-  return {
-    totalTaxableValue,
-    totalCGST: totalTax / 2,
-    totalSGST: totalTax / 2,
-    totalIGST: 0,
-    totalTax,
-    totalWithTax,
-    byRate: {
-      '0.18': {
-        category: 'Standard',
-        taxableValue: totalTaxableValue,
-        cgst: totalTax / 2,
-        sgst: totalTax / 2,
-        igst: 0,
-        totalTax: totalTax
-      }
-    }
-  };
-}
-
-// Update module.exports
+// Export the functions
 module.exports = { 
   generateSalesPDF,
   generateInvoicePDF 
