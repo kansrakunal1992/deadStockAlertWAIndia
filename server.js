@@ -1,5 +1,6 @@
 const express = require('express');
 const whatsappHandler = require('./api/whatsapp');
+const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
 const { runDailySummary } = require('./dailySummary');
