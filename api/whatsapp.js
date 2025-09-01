@@ -181,31 +181,33 @@ async function sendDailySummaries() {
 
 // Schedule daily summary at 11 PM
 function scheduleDailySummary() {
-  const now = new Date();
-  const targetTime = new Date();
-  targetTime.setHours(23, 0, 0, 0); // 11 PM
-  
-  // If we've passed 11 PM today, schedule for tomorrow
-  if (now > targetTime) {
-    targetTime.setDate(targetTime.getDate() + 1);
-  }
-  
-  const msUntilTarget = targetTime - now;
-  
-  console.log(`Scheduling daily summary for ${targetTime.toISOString()} (in ${msUntilTarget}ms)`);
-  
-  setTimeout(() => {
-    sendDailySummaries()
-      .then(() => {
-        // Schedule for next day
-        scheduleDailySummary();
-      })
-      .catch(error => {
-        console.error('Daily summary job failed:', error.message);
-        // Retry in 1 hour
-        setTimeout(scheduleDailySummary, 60 * 60 * 1000);
-      });
-  }, msUntilTarget);
+    const now = new Date();
+    const targetTime = new Date();
+    
+    // Set to 11 PM IST (17:30 UTC)
+    targetTime.setUTCHours(17, 30, 0, 0);
+    
+    // If we've passed 17:30 UTC today, schedule for tomorrow
+    if (now > targetTime) {
+        targetTime.setUTCDate(targetTime.getUTCDate() + 1);
+    }
+    
+    const msUntilTarget = targetTime - now;
+    
+    console.log(`Scheduling daily summary for ${targetTime.toISOString()} (in ${msUntilTarget}ms)`);
+    
+    setTimeout(() => {
+        sendDailySummaries()
+            .then(() => {
+                // Schedule for next day
+                scheduleDailySummary();
+            })
+            .catch(error => {
+                console.error('Daily summary job failed:', error.message);
+                // Retry in 1 hour
+                setTimeout(scheduleDailySummary, 60 * 60 * 1000);
+            });
+    }, msUntilTarget);
 }
 
 // Start the scheduler when the module loads
