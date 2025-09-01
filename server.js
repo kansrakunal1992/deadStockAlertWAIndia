@@ -4,7 +4,6 @@ const path = require('path');
 const cron = require('node-cron');
 const { runDailySummary } = require('./dailySummary');
 const app = express();
-const path = require('path');
 const tempDir = path.join(__dirname, 'temp');
 
 app.get('/invoice/:fileName', (req, res) => {
