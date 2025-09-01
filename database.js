@@ -1810,7 +1810,7 @@ async function getPurchaseDataForPeriod(shopId, startDate, endDate) {
   }
 }
 
-// Add this function to database.js
+// In database.js, update the getShopDetails function
 async function getShopDetails(shopId) {
   const context = `Get Shop Details ${shopId}`;
   try {
@@ -1831,9 +1831,9 @@ async function getShopDetails(shopId) {
           id: record.id,
           shopId: record.fields.ShopID,
           name: record.fields.Name || '',
-          gstin: record.fields.GSTIN || '',
-          phone: record.fields.Phone || '',
-          address: record.fields.Address || ''
+          gstin: record.fields.GSTIN || 'N/A',  // Handle missing GSTIN
+          phone: record.fields.Phone || record.fields.ShopID || 'N/A',  // Fallback to ShopID
+          address: record.fields.Address || ''  // Handle missing address
         }
       };
     }
