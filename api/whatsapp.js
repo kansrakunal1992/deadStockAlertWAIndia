@@ -6,6 +6,8 @@ const fs = require('fs');
 const crypto = require('crypto');
 const authCache = new Map();
 const { processShopSummary } = require('../dailySummary');
+const { generateInvoicePDF } = require('../pdfGenerator');
+const { getShopDetails } = require('../database');
 const {
   updateInventory,
   testConnection,
@@ -1183,6 +1185,36 @@ if (update.action === 'purchased' && result.success) {
           
           if (salesResult.success) {
             console.log(`[Update ${shopId} - ${product}] Sales record created with ID: ${salesResult.id}`);
+
+            // Generate and send invoice (non-blocking)
+            (async () => {
+              try {
+                // Get shop details
+                const shopDetailsResult = await getShopDetails(shopId);
+                if (shopDetailsResult.success) {
+                  // Prepare sale record for invoice
+                  const saleRecordForInvoice = {
+                    product: product,
+                    quantity: Math.abs(update.quantity), // Convert to positive
+                    unit: update.unit,
+                    rate: 10, // Default rate - you might want to store this in your inventory
+                    saleDate: new Date().toISOString()
+                  };
+                  
+                  // Generate invoice PDF
+                  const pdfPath = await generateInvoicePDF(shopDetailsResult.shopDetails, saleRecordForInvoice);
+                  
+                  // Send the PDF to the shop owner
+                  await sendPDFViaWhatsApp(From, pdfPath);
+                  console.log(`[Update ${shopId} - ${product}] Invoice sent to ${From}`);
+                } else {
+                  console.warn(`[Update ${shopId} - ${product}] Could not get shop details: ${shopDetailsResult.error}`);
+                }
+              } catch (invoiceError) {
+                console.error(`[Update ${shopId} - ${product}] Error generating/sending invoice:`, invoiceError.message);
+              }
+            })();
+
             // Update batch quantity if a batch was selected
             if (selectedBatchCompositeKey) {
               console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${update.quantity}`);
@@ -1402,6 +1434,24 @@ async function sendSystemMessage(message, from, detectedLanguage, requestId, res
     response.message(message);
     return message;
   }
+}
+
+async function sendPDFViaWhatsApp(to, pdfPath) {
+  const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+  const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
+  
+  // Generate public URL for the PDF
+  const fileName = path.basename(pdfPath);
+  const publicUrl = `${process.env.PUBLIC_URL || 'http://localhost:3000'}/invoice/${fileName}`;
+  
+  const message = await client.messages.create({
+    body: 'Here is your invoice:',
+    mediaUrl: [publicUrl],
+    from: process.env.TWILIO_WHATSAPP_NUMBER,
+    to: formattedTo
+  });
+  
+  return message;
 }
 
 // Add this helper function for robust JSON parsing
