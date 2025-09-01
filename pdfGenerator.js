@@ -31,7 +31,7 @@ const colors = {
 };
 
 /**
- * Add a colored header section
+ * Add a colored header section for reports
  */
 function addColoredHeader(doc, reportTitle, reportDate, shopId) {
   // Header background
@@ -367,6 +367,111 @@ async function generateSalesPDF(shopId, period = 'today', startDate = null, endD
   });
 }
 
+// Invoice-specific functions
+/**
+ * Add invoice header
+ */
+function addInvoiceHeader(doc, shopDetails) {
+  // Header background
+  doc.rect(0, 0, doc.page.width, 80).fill(colors.header);
+  
+  // Shop details in white
+  doc.fillColor('white');
+  doc.fontSize(14);
+  doc.text('TAX INVOICE', 50, 30, { align: 'center' });
+  
+  doc.fontSize(10);
+  doc.text(shopDetails.name, 50, 50, { align: 'center' });
+  
+  if (shopDetails.gstin && shopDetails.gstin !== 'N/A') {
+    doc.text(`GSTIN: ${shopDetails.gstin}`, 50, 65, { align: 'center' });
+  }
+  
+  // Invoice number and date
+  const invoiceNumber = `INV-${shopDetails.shopId.replace(/\D/g, '')}-${moment().format('YYYYMMDDHHmmss')}`;
+  doc.fillColor(colors.light);
+  doc.fontSize(12);
+  doc.text(`Invoice No: ${invoiceNumber}`, 50, 95, { align: 'center' });
+  doc.text(`Date: ${moment().format('DD/MM/YYYY')}`, 50, 110, { align: 'center' });
+  
+  doc.moveDown(30);
+}
+
+/**
+ * Add sale details to invoice
+ */
+function addSaleDetails(doc, saleRecord) {
+  // Table header
+  doc.rect(50, doc.y, doc.page.width - 100, 25).fill(colors.tableHeader);
+  
+  doc.fillColor('white');
+  doc.fontSize(10);
+  doc.text('Description', 55, doc.y + 15, { width: 200 });
+  doc.text('HSN/SAC', 255, doc.y + 15, { width: 70 });
+  doc.text('Qty', 325, doc.y + 15, { width: 40 });
+  doc.text('Rate', 365, doc.y + 15, { width: 50 });
+  doc.text('Taxable Value', 415, doc.y + 15, { width: 70 });
+  
+  doc.moveDown(30);
+  
+  // Product row
+  doc.rect(50, doc.y, doc.page.width - 100, 25).fill(colors.oddRow);
+  
+  doc.fillColor(colors.dark);
+  doc.fontSize(10);
+  doc.text(saleRecord.product, 55, doc.y + 15, { width: 200 });
+  doc.text('N/A', 255, doc.y + 15, { width: 70 }); // HSN code not available
+  doc.text(saleRecord.quantity, 325, doc.y + 15, { width: 40 });
+  doc.text(saleRecord.rate.toFixed(2), 365, doc.y + 15, { width: 50 });
+  doc.text((saleRecord.quantity * saleRecord.rate).toFixed(2), 415, doc.y + 15, { width: 70 });
+  
+  doc.moveDown(40);
+}
+
+/**
+ * Add invoice totals
+ */
+function addInvoiceTotals(doc, saleRecord) {
+  const taxableValue = saleRecord.quantity * saleRecord.rate;
+  const gstRate = 0.18; // Default 18% GST
+  const gstAmount = taxableValue * gstRate;
+  const total = taxableValue + gstAmount;
+  
+  // Taxable value
+  doc.fontSize(10);
+  doc.text('Taxable Value:', 400, doc.y, { width: 100, align: 'right' });
+  doc.text(taxableValue.toFixed(2), 510, doc.y, { width: 70, align: 'right' });
+  
+  doc.moveDown(15);
+  
+  // GST
+  doc.text(`CGST @${gstRate*100}%:`, 400, doc.y, { width: 100, align: 'right' });
+  doc.text((gstAmount/2).toFixed(2), 510, doc.y, { width: 70, align: 'right' });
+  
+  doc.moveDown(15);
+  
+  doc.text(`SGST @${gstRate*100}%:`, 400, doc.y, { width: 100, align: 'right' });
+  doc.text((gstAmount/2).toFixed(2), 510, doc.y, { width: 70, align: 'right' });
+  
+  doc.moveDown(15);
+  
+  // Total
+  doc.fontSize(12);
+  doc.text('Total:', 400, doc.y, { width: 100, align: 'right' });
+  doc.text(total.toFixed(2), 510, doc.y, { width: 70, align: 'right' });
+  
+  doc.moveDown(40);
+}
+
+/**
+ * Add invoice footer
+ */
+function addInvoiceFooter(doc) {
+  doc.fontSize(8);
+  doc.text('This is a computer-generated invoice.', 50, doc.y);
+  doc.text(`Generated on ${moment().format('DD/MM/YYYY HH:mm')}`, 50, doc.y + 15);
+}
+
 /**
  * Generate an invoice PDF for a sale
  * @param {Object} shopDetails - Shop details from AuthUsers
@@ -415,6 +520,7 @@ async function generateInvoicePDF(shopDetails, saleRecord) {
     }
   });
 }
+
 // Export the functions
 module.exports = { 
   generateSalesPDF,
