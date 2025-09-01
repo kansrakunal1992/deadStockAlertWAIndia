@@ -2,7 +2,6 @@ const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
 const { http, https } = require('http');
-const { generateMultiLanguageResponse, formatDateForDisplay } = require('./whatsapp');
 const { execSync } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
