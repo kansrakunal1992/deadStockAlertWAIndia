@@ -8,6 +8,15 @@ const authCache = new Map();
 const { processShopSummary } = require('../dailySummary');
 const { generateInvoicePDF } = require('../pdfGenerator');
 const { getShopDetails } = require('../database');
+// Add this near the top of whatsapp.js
+const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_NAME;
+const isServerless = isRailway || process.env.VERCEL || process.env.NETLIFY;
+console.log('Environment detection:', {
+  isRailway: !!isRailway,
+  isServerless: !!isServerless,
+  nodeVersion: process.version,
+  platform: process.platform
+});
 const {
   updateInventory,
   testConnection,
@@ -1703,11 +1712,12 @@ async function generateSummaryInsights(data, languageCode, requestId) {
     if (!process.env.DEEPSEEK_API_KEY) {
       throw new Error('DEEPSEEK_API_KEY environment variable is not set');
     }
+    console.log(`[${requestId}] DEEPSEEK_API_KEY is set, length: ${process.env.DEEPSEEK_API_KEY.length}`);
   } catch (error) {
     console.error(`[${requestId}] Configuration error:`, error.message);
     return generateFallbackSummary(data, languageCode, requestId);
   }
-  
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[${requestId}] AI API call attempt ${attempt}/${maxRetries}`);
@@ -1719,71 +1729,72 @@ async function generateSummaryInsights(data, languageCode, requestId) {
       
       // Prepare a more concise prompt
       const prompt = `You are an inventory analysis assistant. Analyze the following shop data and provide insights in ${languageCode}.
-
 Sales Data (last 30 days):
 - Total items sold: ${data.salesData.totalItems || 0}
 - Total sales value: ₹${(data.salesData.totalValue || 0).toFixed(2)}
 - Top selling products: ${data.salesData.topProducts ? 
     data.salesData.topProducts.slice(0, topSalesLimit).map(p => `${p.name} (${p.quantity} ${p.unit})`).join(', ') : 'None'}
-
 Purchase Data (last 30 days):
 - Total items purchased: ${data.purchaseData.totalItems || 0}
 - Total purchase value: ₹${(data.purchaseData.totalValue || 0).toFixed(2)}
 - Most purchased products: ${data.purchaseData.topProducts ? 
     data.purchaseData.topProducts.slice(0, topSalesLimit).map(p => `${p.name} (${p.quantity} ${p.unit})`).join(', ') : 'None'}
-
 Current Inventory:
 - Total unique products: ${data.inventorySummary.totalProducts || 0}
 - Total inventory value: ₹${(data.inventorySummary.totalValue || 0).toFixed(2)}
-
 Low Stock Products:
 ${data.lowStockProducts.length > 0 ? 
     data.lowStockProducts.slice(0, lowStockLimit).map(p => `- ${p.name}: ${p.quantity} ${p.unit} left`).join('\n') : 'None'}
-
 Expiring Products (next 7 days):
 ${data.expiringProducts.length > 0 ? 
     data.expiringProducts.slice(0, expiringLimit).map(p => `- ${p.name}: Expires on ${formatDateForDisplay(p.expiryDate)}`).join('\n') : 'None'}
-
 Provide a comprehensive analysis with:
 1. Sales trends and patterns
 2. Inventory performance
 3. Recommendations for restocking
 4. Suggestions for reducing waste
 5. Actionable insights for business growth
-
 Format your response in two parts:
 Part 1: Analysis in native script
 Part 2: Analysis in Roman script transliteration
+Keep the response under 500 words and focus on actionable insights.`;
 
-Keep the response under 600 words and focus on actionable insights.`;
-      
-        const response = await axios.post(
-          'https://api.deepseek.com/v1/chat/completions',
-          {
-            model: "deepseek-chat",
-            messages: [
-              {
-                role: "system",
-                content: "You are an expert inventory analyst providing concise, actionable insights for small business owners."
-              },
-              {
-                role: "user",
-                content: prompt
-              }
-            ],
-            max_tokens: 800,
-            temperature: 0.5
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-              'Content-Type': 'application/json'
+      console.log(`[${requestId}] Prompt length: ${prompt.length} characters`);
+      console.log(`[${requestId}] Making API request to Deepseek...`);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 second timeout
+
+      const response = await axios.post(
+        'https://api.deepseek.com/v1/chat/completions',
+        {
+          model: "deepseek-chat",
+          messages: [
+            {
+              role: "system",
+              content: "You are an expert inventory analyst providing concise, actionable insights for small business owners."
             },
-            timeout: 30000,
-            maxRedirects: 3
-            // Removed httpAgent and httpsAgent as they're not compatible with Railway.app
-          }
-        );
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+          max_tokens: 800,
+          temperature: 0.5
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 25000,
+          maxRedirects: 3,
+          signal: controller.signal
+        }
+      );
+      
+      clearTimeout(timeoutId);
+      console.log(`[${requestId}] API response received, status: ${response.status}`);
       
       let insights = response.data.choices[0].message.content.trim();
       
@@ -1797,8 +1808,11 @@ Keep the response under 600 words and focus on actionable insights.`;
       insights = insights.replace(/\n\s*\n\s*\n/g, '\n\n');
       insights = insights.replace(/^\s+|\s+$/g, '');
       
+      console.log(`[${requestId}] Successfully generated insights, length: ${insights.length}`);
       return insights;
+      
     } catch (error) {
+      clearTimeout(timeoutId);
       lastError = error;
       console.warn(`[${requestId}] AI API call attempt ${attempt} failed:`, error.message);
       
@@ -1809,6 +1823,10 @@ Keep the response under 600 words and focus on actionable insights.`;
       
       if (error.code === 'ECONNABORTED') {
         console.error(`[${requestId}] Request was aborted (likely timeout)`);
+      }
+      
+      if (error.name === 'AbortError') {
+        console.error(`[${requestId}] Request was manually aborted due to timeout`);
       }
       
       // If this is the last attempt, throw the error
@@ -1825,10 +1843,13 @@ Keep the response under 600 words and focus on actionable insights.`;
   
   // If all retries failed, use fallback
   console.error(`[${requestId}] All AI API attempts failed, using fallback`);
+  console.error(`[${requestId}] Last error:`, lastError.message);
   return generateFallbackSummary(data, languageCode, requestId);
 }
 
 function generateFallbackSummary(data, languageCode, requestId) {
+  console.log(`[${requestId}] Generating fallback summary for ${languageCode}`);
+  
   let fallbackSummary = `📊 30-Day Business Summary:\n\n`;
   fallbackSummary += `💰 Sales: ${data.salesData.totalItems || 0} items (₹${(data.salesData.totalValue || 0).toFixed(2)})\n`;
   fallbackSummary += `📦 Purchases: ${data.purchaseData.totalItems || 0} items (₹${(data.purchaseData.totalValue || 0).toFixed(2)})\n`;
@@ -1836,14 +1857,31 @@ function generateFallbackSummary(data, languageCode, requestId) {
   
   if (data.lowStockProducts.length > 0) {
     fallbackSummary += `\n⚠️ Low Stock: ${data.lowStockProducts.length} products need restocking\n`;
+    // Add top 3 low stock products
+    data.lowStockProducts.slice(0, 3).forEach(product => {
+      fallbackSummary += `• ${product.name}: Only ${product.quantity} ${product.unit} left\n`;
+    });
   }
   
   if (data.expiringProducts.length > 0) {
     fallbackSummary += `\n⏰ Expiring Soon: ${data.expiringProducts.length} products\n`;
+    // Add top 3 expiring products
+    data.expiringProducts.slice(0, 3).forEach(product => {
+      fallbackSummary += `• ${product.name}: Expires on ${formatDateForDisplay(product.expiryDate)}\n`;
+    });
   }
   
-  fallbackSummary += `\nConsider reviewing your sales patterns and inventory turnover for better business decisions.`;
+  // Add top-selling products if available
+  if (data.salesData.topProducts && data.salesData.topProducts.length > 0) {
+    fallbackSummary += `\n🏆 Top Sellers:\n`;
+    data.salesData.topProducts.slice(0, 3).forEach(product => {
+      fallbackSummary += `• ${product.name}: ${product.quantity} ${product.unit}\n`;
+    });
+  }
   
+  fallbackSummary += `\n💡 Consider reviewing your sales patterns and inventory turnover for better business decisions.`;
+  
+  console.log(`[${requestId}] Fallback summary generated, length: ${fallbackSummary.length}`);
   return generateMultiLanguageResponse(fallbackSummary, languageCode, requestId);
 }
 
