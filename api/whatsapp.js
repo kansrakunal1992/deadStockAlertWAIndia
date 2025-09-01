@@ -1532,6 +1532,49 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
   }
 }
 
+// Add this helper function to split messages
+function splitMessage(message, maxLength = 1600) {
+  if (message.length <= maxLength) {
+    return [message];
+  }
+  
+  const chunks = [];
+  let currentChunk = '';
+  
+  // Split by sentences first to avoid breaking in the middle of a sentence
+  const sentences = message.split(/(?<=[.!?])\s+/);
+  
+  for (const sentence of sentences) {
+    if (currentChunk.length + sentence.length + 1 <= maxLength) {
+      currentChunk += sentence + ' ';
+    } else {
+      // If adding this sentence would exceed the limit, push the current chunk and start a new one
+      if (currentChunk.trim().length > 0) {
+        chunks.push(currentChunk.trim());
+        currentChunk = sentence + ' ';
+      } else {
+        // If the sentence itself is longer than maxLength, split by words
+        const words = sentence.split(' ');
+        for (const word of words) {
+          if (currentChunk.length + word.length + 1 <= maxLength) {
+            currentChunk += word + ' ';
+          } else {
+            chunks.push(currentChunk.trim());
+            currentChunk = word + ' ';
+          }
+        }
+      }
+    }
+  }
+  
+  // Add the last chunk if it has content
+  if (currentChunk.trim().length > 0) {
+    chunks.push(currentChunk.trim());
+  }
+  
+  return chunks;
+}
+
 // Add this helper function for robust JSON parsing
 function safeJsonParse(str) {
   try {
@@ -1781,7 +1824,7 @@ async function generateSummaryInsights(data, languageCode, requestId) {
           messages: [
             {
               role: "system",
-              content: "You are an expert inventory analyst providing concise, actionable insights for small business owners. Your response should be in Nativeglish (${nativeLanguage} mixed with English) for better readability and understanding."
+              content: `You are an expert inventory analyst providing concise, actionable insights for small business owners. Your response should be in Nativeglish (${nativeLanguage} mixed with English) for better readability and understanding. Keep your response under 1200 characters.`
             },
             {
               role: "user",
@@ -2706,13 +2749,49 @@ async function sendMessageViaAPI(to, body) {
   try {
     const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
     const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
-    const message = await client.messages.create({
-      body: body,
-      from: process.env.TWILIO_WHATSAPP_NUMBER,
-      to: formattedTo
-    });
-    console.log(`Message sent successfully via API. SID: ${message.sid}`);
-    return message;
+    
+    console.log(`[sendMessageViaAPI] Preparing to send message to: ${formattedTo}`);
+    console.log(`[sendMessageViaAPI] Message length: ${body.length} characters`);
+    
+    // Check if the message exceeds the WhatsApp limit (1600 characters)
+    const MAX_LENGTH = 1600;
+    if (body.length <= MAX_LENGTH) {
+      const message = await client.messages.create({
+        body: body,
+        from: process.env.TWILIO_WHATSAPP_NUMBER,
+        to: formattedTo
+      });
+      console.log(`[sendMessageViaAPI] Message sent successfully. SID: ${message.sid}`);
+      return message;
+    } else {
+      // Split the message into chunks
+      const chunks = splitMessage(body, MAX_LENGTH);
+      console.log(`[sendMessageViaAPI] Splitting message into ${chunks.length} chunks`);
+      
+      const messageSids = [];
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        // Add part indicator for multi-part messages
+        const partIndicator = `\n\n(Part ${i+1} of ${chunks.length})`;
+        const chunkWithIndicator = chunk + partIndicator;
+        
+        const message = await client.messages.create({
+          body: chunkWithIndicator,
+          from: process.env.TWILIO_WHATSAPP_NUMBER,
+          to: formattedTo
+        });
+        messageSids.push(message.sid);
+        console.log(`[sendMessageViaAPI] Part ${i+1} sent successfully. SID: ${message.sid}`);
+        
+        // Add a small delay between parts to avoid rate limiting
+        if (i < chunks.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      
+      // Return the first message SID as the primary one
+      return { sid: messageSids[0], parts: messageSids };
+    }
   } catch (error) {
     console.error('Error sending WhatsApp message via API:', error);
     throw error;
