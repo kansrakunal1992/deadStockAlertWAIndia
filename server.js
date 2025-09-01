@@ -296,6 +296,32 @@ process.on('exit', () => {
   console.log('Server process exiting');
 });
 
+// Add to server.js - clean up old PDFs daily
+const cleanupOldPDFs = () => {
+  const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days
+  const now = Date.now();
+  
+  fs.readdir(tempDir, (err, files) => {
+    if (err) return;
+    
+    files.forEach(file => {
+      const filePath = path.join(tempDir, file);
+      fs.stat(filePath, (err, stats) => {
+        if (err) return;
+        
+        if (now - stats.mtime.getTime() > maxAge) {
+          fs.unlink(filePath, err => {
+            if (err) console.error('Failed to delete old PDF:', err);
+          });
+        }
+      });
+    });
+  });
+};
+
+// Run daily
+setInterval(cleanupOldPDFs, 24 * 60 * 60 * 1000);
+
 // Add this to your server.js or a separate test file
 app.get('/test-correction-state', async (req, res) => {
   const shopId = req.query.shopId || 'test-shop';
