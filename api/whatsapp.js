@@ -3920,24 +3920,24 @@ if (Body) {
       setTimeout(async () => {
         if (!summarySent) {
           const tip1 = await generateMultiLanguageResponse(
-            '💡 Tip: Products with expiry dates under 7 days are 3x more likely to go unsold. Consider bundling or discounting them!',
+            '💡 Tip: Products with expiry dates under 7 days are 3x more likely to go unsold. Consider bundling or discounting them! Detailed summary being generated...',
             userLanguage,
             requestId
           );
           await sendMessageViaAPI(From, tip1);
         }
-      }, 5000);
+      }, 10000);
       
       setTimeout(async () => {
         if (!summarySent) {
           const tip2 = await generateMultiLanguageResponse(
-            '📦 Did you know? Low-stock alerts help prevent missed sales. Check your inventory weekly!',
+            '📦 Did you know? Low-stock alerts help prevent missed sales. Check your inventory weekly! Generating your summary right away...',
             userLanguage,
             requestId
           );
           await sendMessageViaAPI(From, tip2);
         }
-      }, 10000);
+      }, 20000);
       
       // Generate and send full summary
       const fullSummary = await generateFullScaleSummary(shopId, userLanguage, requestId);
