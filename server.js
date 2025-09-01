@@ -4,6 +4,20 @@ const path = require('path');
 const cron = require('node-cron');
 const { runDailySummary } = require('./dailySummary');
 const app = express();
+const path = require('path');
+const tempDir = path.join(__dirname, 'temp');
+
+app.get('/invoice/:fileName', (req, res) => {
+  const fileName = req.params.fileName;
+  const filePath = path.join(tempDir, fileName);
+  
+  // Check if file exists
+  if (fs.existsSync(filePath)) {
+    res.sendFile(filePath);
+  } else {
+    res.status(404).send('Invoice not found');
+  }
+});
 
 // Middleware for parsing JSON and URL-encoded bodies
 app.use(express.json({ limit: '10mb' }));
