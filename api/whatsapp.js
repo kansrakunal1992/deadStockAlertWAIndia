@@ -1719,6 +1719,7 @@ async function generateSummaryInsights(data, languageCode, requestId) {
   }
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    let timeoutId;
     try {
       console.log(`[${requestId}] AI API call attempt ${attempt}/${maxRetries}`);
       
@@ -1763,7 +1764,10 @@ Keep the response under 500 words and focus on actionable insights.`;
       console.log(`[${requestId}] Making API request to Deepseek...`);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 25000); // 25 second timeout
+      timeoutId = setTimeout(() => {
+        console.log(`[${requestId}] Request timeout reached, aborting...`);
+        controller.abort();
+      }, 25000); // 25 second timeout
 
       const response = await axios.post(
         'https://api.deepseek.com/v1/chat/completions',
@@ -1787,12 +1791,13 @@ Keep the response under 500 words and focus on actionable insights.`;
             'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
             'Content-Type': 'application/json'
           },
-          timeout: 250000,
+          timeout: 25000,
           maxRedirects: 3,
           signal: controller.signal
         }
       );
       
+      // Clear the timeout since the request completed
       clearTimeout(timeoutId);
       console.log(`[${requestId}] API response received, status: ${response.status}`);
       
@@ -1812,7 +1817,11 @@ Keep the response under 500 words and focus on actionable insights.`;
       return insights;
       
     } catch (error) {
-      clearTimeout(timeoutId);
+      // Clear the timeout if it exists
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      
       lastError = error;
       console.warn(`[${requestId}] AI API call attempt ${attempt} failed:`, error.message);
       
