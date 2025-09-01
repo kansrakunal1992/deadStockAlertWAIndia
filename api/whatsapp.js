@@ -90,7 +90,7 @@ async function sendDailySummaries() {
     console.log('Starting daily summary job...');
     
     // Get all shop IDs
-    const shopIds = await getAllShopIds();
+    const shopIds = await getAllShopIDs();
     console.log(`Found ${shopIds.length} shops to process`);
     
     if (shopIds.length === 0) {
