@@ -8,14 +8,38 @@ const app = express();
 const tempDir = path.join(__dirname, 'temp');
 
 app.get('/invoice/:fileName', (req, res) => {
-  const fileName = req.params.fileName;
-  const filePath = path.join(tempDir, fileName);
-  
-  // Check if file exists
-  if (fs.existsSync(filePath)) {
-    res.sendFile(filePath);
-  } else {
-    res.status(404).send('Invoice not found');
+  try {
+    const fileName = req.params.fileName;
+    const filePath = path.join(__dirname, 'temp', fileName);
+    
+    console.log(`[PDF Server] Request for: ${fileName}`);
+    console.log(`[PDF Server] Full path: ${filePath}`);
+    
+    // Security check: ensure fileName is safe
+    if (fileName.includes('..') || fileName.includes('/')) {
+      console.error(`[PDF Server] Invalid filename: ${fileName}`);
+      return res.status(400).send('Invalid filename');
+    }
+    
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      console.error(`[PDF Server] File not found: ${filePath}`);
+      return res.status(404).send('Invoice not found');
+    }
+    
+    // Send the file
+    res.sendFile(filePath, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `inline; filename="${fileName}"`
+      }
+    });
+    
+    console.log(`[PDF Server] Successfully sent: ${fileName}`);
+    
+  } catch (error) {
+    console.error(`[PDF Server] Error:`, error.message);
+    res.status(500).send('Error serving invoice');
   }
 });
 
