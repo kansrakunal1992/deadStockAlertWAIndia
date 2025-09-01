@@ -1189,29 +1189,42 @@ if (update.action === 'purchased' && result.success) {
             // Generate and send invoice (non-blocking)
             (async () => {
               try {
+                console.log(`[Update ${shopId} - ${product}] Starting invoice generation process`);
+                
                 // Get shop details
                 const shopDetailsResult = await getShopDetails(shopId);
-                if (shopDetailsResult.success) {
-                  // Prepare sale record for invoice
-                  const saleRecordForInvoice = {
-                    product: product,
-                    quantity: Math.abs(update.quantity), // Convert to positive
-                    unit: update.unit,
-                    rate: 10, // Default rate - you might want to store this in your inventory
-                    saleDate: new Date().toISOString()
-                  };
-                  
-                  // Generate invoice PDF
-                  const pdfPath = await generateInvoicePDF(shopDetailsResult.shopDetails, saleRecordForInvoice);
-                  
-                  // Send the PDF to the shop owner - FIX: Construct From from shopId
-                  await sendPDFViaWhatsApp(`whatsapp:${shopId}`, pdfPath);
-                  console.log(`[Update ${shopId} - ${product}] Invoice sent to whatsapp:${shopId}`);
-                } else {
+                if (!shopDetailsResult.success) {
                   console.warn(`[Update ${shopId} - ${product}] Could not get shop details: ${shopDetailsResult.error}`);
+                  return;
                 }
+                
+                // Prepare sale record for invoice
+                const saleRecordForInvoice = {
+                  product: product,
+                  quantity: Math.abs(update.quantity), // Convert to positive for display
+                  unit: update.unit,
+                  rate: 10, // Default rate - you might want to store this in your inventory
+                  saleDate: new Date().toISOString()
+                };
+                
+                console.log(`[Update ${shopId} - ${product}] Sale record prepared:`, saleRecordForInvoice);
+                
+                // Generate invoice PDF
+                const pdfPath = await generateInvoicePDF(shopDetailsResult.shopDetails, saleRecordForInvoice);
+                console.log(`[Update ${shopId} - ${product}] Invoice generated: ${pdfPath}`);
+                
+                // Verify PDF file exists
+                if (!fs.existsSync(pdfPath)) {
+                  throw new Error(`Generated PDF file not found: ${pdfPath}`);
+                }
+                
+                // Send the PDF to the shop owner
+                const message = await sendPDFViaWhatsApp(`whatsapp:${shopId}`, pdfPath);
+                console.log(`[Update ${shopId} - ${product}] Invoice sent to whatsapp:${shopId}. SID: ${message.sid}`);
+                
               } catch (invoiceError) {
                 console.error(`[Update ${shopId} - ${product}] Error generating/sending invoice:`, invoiceError.message);
+                console.error(`[Update ${shopId} - ${product}] Stack trace:`, invoiceError.stack);
               }
             })();
 
@@ -1440,18 +1453,58 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
   const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
   const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
   
-  // Generate public URL for the PDF
-  const fileName = path.basename(pdfPath);
-  const publicUrl = `${process.env.PUBLIC_URL || 'http://localhost:3000'}/invoice/${fileName}`;
+  console.log(`[sendPDFViaWhatsApp] Preparing to send PDF: ${pdfPath}`);
   
-  const message = await client.messages.create({
-    body: 'Here is your invoice:',
-    mediaUrl: [publicUrl],
-    from: process.env.TWILIO_WHATSAPP_NUMBER,
-    to: formattedTo
-  });
-  
-  return message;
+  try {
+    // Check if PDF file exists
+    if (!fs.existsSync(pdfPath)) {
+      throw new Error(`PDF file not found: ${pdfPath}`);
+    }
+    
+    // Read the PDF file as base64
+    const pdfBuffer = fs.readFileSync(pdfPath);
+    const pdfBase64 = pdfBuffer.toString('base64');
+    
+    console.log(`[sendPDFViaWhatsApp] PDF file size: ${pdfBuffer.length} bytes`);
+    
+    // Send using Twilio's media URL with base64 data
+    const message = await client.messages.create({
+      body: 'Here is your invoice:',
+      mediaUrl: [`data:application/pdf;base64,${pdfBase64}`],
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      to: formattedTo
+    });
+    
+    console.log(`[sendPDFViaWhatsApp] Message sent successfully. SID: ${message.sid}`);
+    return message;
+    
+  } catch (error) {
+    console.error(`[sendPDFViaWhatsApp] Error:`, error.message);
+    
+    // Fallback: Try with public URL if base64 fails
+    try {
+      const fileName = path.basename(pdfPath);
+      const baseUrl = process.env.PUBLIC_URL || `https://${process.env.RAILWAY_SERVICE_NAME}.railway.app`;
+      const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
+      const publicUrl = `${normalizedBaseUrl}/invoice/${fileName}`;
+      
+      console.log(`[sendPDFViaWhatsApp] Trying fallback URL: ${publicUrl}`);
+      
+      const fallbackMessage = await client.messages.create({
+        body: 'Here is your invoice:',
+        mediaUrl: [publicUrl],
+        from: process.env.TWILIO_WHATSAPP_NUMBER,
+        to: formattedTo
+      });
+      
+      console.log(`[sendPDFViaWhatsApp] Fallback message sent. SID: ${fallbackMessage.sid}`);
+      return fallbackMessage;
+      
+    } catch (fallbackError) {
+      console.error(`[sendPDFViaWhatsApp] Fallback also failed:`, fallbackError.message);
+      throw new Error(`Both base64 and URL methods failed. Base64 error: ${error.message}, URL error: ${fallbackError.message}`);
+    }
+  }
 }
 
 // Add this helper function for robust JSON parsing
