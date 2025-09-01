@@ -4010,7 +4010,7 @@ if (Body) {
           );
           await sendMessageViaAPI(From, tip1);
         }
-      }, 20000);
+      }, 10000);
       
       setTimeout(async () => {
         if (!summarySent) {
@@ -4021,7 +4021,7 @@ if (Body) {
           );
           await sendMessageViaAPI(From, tip2);
         }
-      }, 40000);
+      }, 30000);
       
       // Generate and send full summary
       const fullSummary = await generateFullScaleSummary(shopId, userLanguage, requestId);
