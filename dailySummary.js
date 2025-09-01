@@ -1,7 +1,7 @@
 const twilio = require('twilio');
 const axios = require('axios');
 const {
-    getAllShopIds,
+    getAllShopIDs,
     getDailyUpdates,
     getCurrentInventory,
     getUserPreference,
@@ -305,7 +305,7 @@ async function runDailySummary() {
         console.log(`DEEPSEEK_API_KEY set: ${!!process.env.DEEPSEEK_API_KEY}`);
         
         // Get all shop IDs
-        const shopIds = await getAllShopIds();
+        const shopIds = await getAllShopIDs();
         console.log(`Found ${shopIds.length} shops to process`);
         
         if (shopIds.length === 0) {
