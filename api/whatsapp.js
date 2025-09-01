@@ -425,36 +425,35 @@ function formatDateForAirtable(date) {
 
 // Helper function to format date for display (DD/MM/YYYY HH:MM)
 function formatDateForDisplay(date) {
-  if (date instanceof Date) {
-    const day = date.getDate().toString().padStart(2, '0');
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    const year = date.getFullYear();
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    return `${day}/${month}/${year} ${hours}:${minutes}`;
-  }
-  if (typeof date === 'string') {
-    if (date.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
-      // ISO format with time
-      const parsedDate = new Date(date);
-      const day = parsedDate.getDate().toString().padStart(2, '0');
-      const month = (parsedDate.getMonth() + 1).toString().padStart(2, '0');
-      const year = parsedDate.getFullYear();
-      const hours = parsedDate.getHours().toString().padStart(2, '0');
-      const minutes = parsedDate.getMinutes().toString().padStart(2, '0');
-      return `${day}/${month}/${year} ${hours}:${minutes}`;
+    if (date instanceof Date) {
+        // Convert to IST (UTC+5:30)
+        const istOffset = 5.5 * 60 * 60 * 1000; // 5.5 hours in milliseconds
+        const istTime = new Date(date.getTime() + istOffset);
+        
+        const day = istTime.getUTCDate().toString().padStart(2, '0');
+        const month = (istTime.getUTCMonth() + 1).toString().padStart(2, '0');
+        const year = istTime.getUTCFullYear();
+        const hours = istTime.getUTCHours().toString().padStart(2, '0');
+        const minutes = istTime.getUTCMinutes().toString().padStart(2, '0');
+        return `${day}/${month}/${year} ${hours}:${minutes}`;
     }
-    if (date.match(/^\d{4}-\d{2}-\d{2}$/)) {
-      // Date only
-      const [year, month, day] = date.split('-');
-      return `${day}/${month}/${year}`;
+    if (typeof date === 'string') {
+        if (date.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
+            // ISO format with time
+            const parsedDate = new Date(date);
+            return formatDateForDisplay(parsedDate);
+        }
+        if (date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            // Date only
+            const [year, month, day] = date.split('-');
+            return `${day}/${month}/${year}`;
+        }
+        const parsedDate = new Date(date);
+        if (!isNaN(parsedDate.getTime())) {
+            return formatDateForDisplay(parsedDate);
+        }
     }
-    const parsedDate = new Date(date);
-    if (!isNaN(parsedDate.getTime())) {
-      return formatDateForDisplay(parsedDate);
-    }
-  }
-  return date;
+    return date;
 }
 
 // Helper function to calculate days between two dates
