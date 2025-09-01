@@ -1,7 +1,6 @@
 const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
-const { http, https } = require('http');
 const { execSync } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -1756,36 +1755,35 @@ Format your response in two parts:
 Part 1: Analysis in native script
 Part 2: Analysis in Roman script transliteration
 
-Keep the response under 500 words and focus on actionable insights.`;
+Keep the response under 600 words and focus on actionable insights.`;
       
-      const response = await axios.post(
-        'https://api.deepseek.com/v1/chat/completions',
-        {
-          model: "deepseek-chat",
-          messages: [
-            {
-              role: "system",
-              content: "You are an expert inventory analyst providing concise, actionable insights for small business owners."
-            },
-            {
-              role: "user",
-              content: prompt
-            }
-          ],
-          max_tokens: 800,
-          temperature: 0.5
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-            'Content-Type': 'application/json'
+        const response = await axios.post(
+          'https://api.deepseek.com/v1/chat/completions',
+          {
+            model: "deepseek-chat",
+            messages: [
+              {
+                role: "system",
+                content: "You are an expert inventory analyst providing concise, actionable insights for small business owners."
+              },
+              {
+                role: "user",
+                content: prompt
+              }
+            ],
+            max_tokens: 800,
+            temperature: 0.5
           },
-          timeout: 30000,
-          maxRedirects: 3,
-          httpAgent: new http.Agent({ keepAlive: true }),
-          httpsAgent: new https.Agent({ keepAlive: true })
-        }
-      );
+          {
+            headers: {
+              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 30000,
+            maxRedirects: 3
+            // Removed httpAgent and httpsAgent as they're not compatible with Railway.app
+          }
+        );
       
       let insights = response.data.choices[0].message.content.trim();
       
