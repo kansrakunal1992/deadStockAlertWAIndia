@@ -808,7 +808,7 @@ async function getUserPreference(shopId) {
 }
 
 // Get all shop IDs from Inventory table
-async function getAllShopIds() {
+async function getAllShopIDs() {
   const context = 'Get All Shop IDs';
   try {
     const result = await airtableRequest({
@@ -1819,7 +1819,7 @@ module.exports = {
   airtableRequest,
   saveUserPreference,
   getUserPreference,
-  getAllShopIds,
+  getAllShopIDs,
   getDailyUpdates,
   getCurrentInventory,
   getShopBatchRecords,
