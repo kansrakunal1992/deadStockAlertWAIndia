@@ -441,7 +441,7 @@ async function addInvoiceHeader(doc, shopDetails) {
   
   // Invoice details - adjusted to avoid overlap
   const invoiceNumber = `INV-${shopDetails.shopId.replace(/\D/g, '')}-${moment().format('YYYYMMDDHHmmss')}`;
-  let yPos = 105; // Starting Y position for invoice details
+  let yPos = 105; // Moved down to avoid overlap with header
   
   // Two-column layout for invoice details with better spacing
   doc.fillColor(colors.dark);
@@ -450,7 +450,7 @@ async function addInvoiceHeader(doc, shopDetails) {
   // Left column (Invoice details) - adjusted positions
   doc.text('Invoice No:', 40, yPos);
   // Add invoice number with width constraint to prevent overlap
-  doc.text(invoiceNumber, 100, yPos, { width: 100 }); // Reduced width from 120 to 100
+  doc.text(invoiceNumber, 100, yPos, { width: 120 }); // Added width constraint
   
   yPos += 15;
   doc.text('Date:', 40, yPos);
@@ -462,36 +462,28 @@ async function addInvoiceHeader(doc, shopDetails) {
   
   // Right column (Billing info) - moved further right to avoid overlap
   yPos = 105; // Reset to same starting Y position
-  doc.text('Bill To:', 250, yPos); // Moved from 280 to 250 (more space)
+  doc.text('Bill To:', 280, yPos); // Moved from 300 to 280
   yPos += 15;
-  doc.text(shopDetails.name, 250, yPos); // Moved from 280 to 250
+  doc.text(shopDetails.name, 280, yPos); // Moved from 300 to 280
   
   if (shopDetails.address) {
     yPos += 15;
     // Added width constraint for address to prevent overflow
-    doc.text(shopDetails.address, 250, yPos, { width: 180 }); // Reduced width from 200 to 180
+    doc.text(shopDetails.address, 280, yPos, { width: 200 }); 
   }
-  
-  // Add extra vertical space before the next section
-  // This ensures no overlap with the Invoice Details section
-  return 180; // Return the next Y position for the next section
 }
 
 /**
  * Add sale details in a compact table format - SINGLE PAGE VERSION
  */
 function addSaleDetails(doc, saleRecord) {
-  // Get the next Y position from the header
-  const nextY = addInvoiceHeader(doc, saleRecord.shopDetails);
-  
-  // Section title - use the returned Y position
+  // Section title
   doc.fontSize(14);
   doc.fillColor(colors.primary);
-  doc.text('Invoice Details', 40, nextY); // Use nextY instead of fixed 180
+  doc.text('Invoice Details', 40, 180); // Adjusted position
   
-  // Table header - adjust based on nextY
-  let yPos = nextY + 25; // Add 25px spacing after title
-  
+  // Table header
+  let yPos = 205; // Adjusted position
   doc.rect(40, yPos, doc.page.width - 80, 25).fill(colors.tableHeader);
   
   doc.fillColor('white');
@@ -513,18 +505,12 @@ function addSaleDetails(doc, saleRecord) {
   doc.text(saleRecord.quantity.toString(), 255, yPos + 15, { width: 30 });
   doc.text(saleRecord.rate.toFixed(2), 285, yPos + 15, { width: 60 });
   doc.text((saleRecord.quantity * saleRecord.rate).toFixed(2), 345, yPos + 15, { width: 70 });
-  
-  // Return the next Y position for subsequent sections
-  return yPos + 35; // Add 35px spacing after the table
 }
 
 /**
  * Add invoice totals with GST breakdown - SINGLE PAGE VERSION
  */
 function addInvoiceTotals(doc, saleRecord) {
-  // Get the next Y position from the sale details
-  const nextY = addSaleDetails(doc, saleRecord);
-  
   const taxableValue = saleRecord.quantity * saleRecord.rate;
   const gstRate = 0.18; // 18% GST
   const cgst = taxableValue * (gstRate / 2);
@@ -534,7 +520,7 @@ function addInvoiceTotals(doc, saleRecord) {
   // Payment details box - compact
   const boxX = 300;
   const boxWidth = 200;
-  let yPos = nextY; // Use the returned Y position
+  let yPos = 270; // Adjusted position
   
   // Box background
   doc.rect(boxX - 10, yPos - 5, boxWidth + 20, 110).fill(colors.light);
@@ -564,22 +550,18 @@ function addInvoiceTotals(doc, saleRecord) {
   doc.text(`₹${total.toFixed(2)}`, boxX + 110, yPos);
   
   // Amount in words
-  yPos += 30; // Add spacing before amount in words
+  yPos = 340; // Adjusted position
   doc.fontSize(10);
   doc.fillColor(colors.dark);
   doc.text('Amount in Words:', 40, yPos);
   yPos += 15;
   doc.text(`${numberToWords(total)} Rupees Only`, 40, yPos);
-  
-  // Return the next Y position for the footer
-  return yPos + 40; // Add 40px spacing before footer
 }
 
 /**
  * Add professional invoice footer - SINGLE PAGE VERSION
  */
 function addInvoiceFooter(doc) {
-  // Calculate footer position dynamically
   const footerY = doc.page.height - 60;
   
   // Footer background - reduced height
@@ -595,6 +577,36 @@ function addInvoiceFooter(doc) {
   // Signature line
   doc.lineJoin('miter').rect(350, footerY + 35, 150, 1).stroke('white');
   doc.text('Authorized Signatory', 350, footerY + 45, { align: 'center' });
+}
+
+/**
+ * Helper function to convert numbers to words
+ */
+function numberToWords(num) {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  
+  const convert = (n) => {
+    if (n < 10) return ones[n];
+    if (n >= 10 && n < 20) return teens[n - 10];
+    if (n >= 20 && n < 100) return tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '');
+    if (n >= 100 && n < 1000) return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' and ' + convert(n % 100) : '');
+    return n.toString();
+  };
+  
+  const rupees = Math.floor(num);
+  const paise = Math.round((num - rupees) * 100);
+  
+  let result = convert(rupees);
+  if (rupees === 1) result += ' Rupee'; else result += ' Rupees';
+  
+  if (paise > 0) {
+    result += ' and ' + convert(paise);
+    if (paise === 1) result += ' Paisa'; else result += ' Paise';
+  }
+  
+  return result;
 }
 
 /**
@@ -635,13 +647,13 @@ async function generateInvoicePDF(shopDetails, saleRecord) {
       doc.pipe(stream);
       
       // Add invoice header
-      const headerEndY = await addInvoiceHeader(doc, shopDetails);
+      await addInvoiceHeader(doc, shopDetails);
       
       // Add sale details
-      const saleDetailsEndY = addSaleDetails(doc, saleRecord);
+      addSaleDetails(doc, saleRecord);
       
       // Add totals
-      const totalsEndY = addInvoiceTotals(doc, saleRecord);
+      addInvoiceTotals(doc, saleRecord);
       
       // Add footer
       addInvoiceFooter(doc);
