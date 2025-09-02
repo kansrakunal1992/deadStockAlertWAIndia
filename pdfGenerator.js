@@ -2,7 +2,6 @@ const PDFDocument = require('pdfkit');
 const moment = require('moment');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const { getTodaySalesSummary, getSalesDataForPeriod } = require('./database');
 
 // Create a temporary directory for PDFs if it doesn't exist
@@ -381,89 +380,94 @@ async function generateSalesPDF(shopId, period = 'today', startDate = null, endD
 }
 
 // Invoice-specific functions
-
 /**
- * Add a professional invoice header
+ * Add a professional invoice header - SINGLE PAGE VERSION
  */
 function addInvoiceHeader(doc, shopDetails) {
-  // Header background
-  doc.rect(0, 0, doc.page.width, 100).fill(colors.header);
+  // Header background - reduced height
+  doc.rect(0, 0, doc.page.width, 70).fill(colors.header);
   
-  // Company details in white
+  // Invoice title
   doc.fillColor('white');
-  doc.fontSize(18);
-  doc.text('TAX INVOICE', 50, 30, { align: 'center' });
+  doc.fontSize(20);
+  doc.text('TAX INVOICE', 0, 25, { align: 'center' });
   
-  doc.fontSize(14);
-  doc.text(shopDetails.name, 50, 55, { align: 'center' });
+  // Shop details
+  doc.fontSize(12);
+  doc.text(shopDetails.name, 0, 45, { align: 'center' });
   
   if (shopDetails.gstin && shopDetails.gstin !== 'N/A') {
-    doc.text(`GSTIN: ${shopDetails.gstin}`, 50, 75, { align: 'center' });
+    doc.text(`GSTIN: ${shopDetails.gstin}`, 0, 60, { align: 'center' });
   }
   
-  // Invoice details on the right
+  // Invoice details - compact layout
   const invoiceNumber = `INV-${shopDetails.shopId.replace(/\D/g, '')}-${moment().format('YYYYMMDDHHmmss')}`;
-  doc.fillColor(colors.light);
-  doc.fontSize(12);
+  let yPos = 85;
   
-  // Create a two-column layout for invoice details
-  const leftColumn = 50;
-  const rightColumn = 350;
+  // Two-column layout for invoice details
+  doc.fillColor(colors.dark);
+  doc.fontSize(10);
   
-  doc.text('Invoice Details', leftColumn, 110);
-  doc.text(`Invoice No: ${invoiceNumber}`, leftColumn, 125);
-  doc.text(`Date: ${moment().format('DD/MM/YYYY')}`, leftColumn, 140);
-  doc.text(`Time: ${moment().format('HH:mm')}`, leftColumn, 155);
+  // Left column
+  doc.text('Invoice No:', 40, yPos, { continued: true });
+  doc.text(invoiceNumber, 100, yPos);
   
-  doc.text('Billing Information', rightColumn, 110);
-  doc.text(shopDetails.name, rightColumn, 125);
+  yPos += 15;
+  doc.text('Date:', 40, yPos, { continued: true });
+  doc.text(moment().format('DD/MM/YYYY'), 100, yPos);
+  
+  yPos += 15;
+  doc.text('Time:', 40, yPos, { continued: true });
+  doc.text(moment().format('HH:mm'), 100, yPos);
+  
+  // Right column
+  yPos = 85;
+  doc.text('Bill To:', 300, yPos);
+  yPos += 15;
+  doc.text(shopDetails.name, 300, yPos);
+  
   if (shopDetails.address) {
-    doc.text(shopDetails.address, rightColumn, 140);
+    yPos += 15;
+    doc.text(shopDetails.address, 300, yPos, { width: 200 });
   }
-  
-  doc.moveDown(50);
 }
 
 /**
- * Add sale details in a professional table format
+ * Add sale details in a compact table format - SINGLE PAGE VERSION
  */
 function addSaleDetails(doc, saleRecord) {
-  // Add section title
+  // Section title
   doc.fontSize(14);
   doc.fillColor(colors.primary);
-  doc.text('Invoice Details', 50, doc.y);
-  doc.moveDown(10);
+  doc.text('Invoice Details', 40, 160);
   
-  // Table header background
-  doc.rect(50, doc.y, doc.page.width - 100, 30).fill(colors.tableHeader);
+  // Table header
+  let yPos = 185;
+  doc.rect(40, yPos, doc.page.width - 80, 25).fill(colors.tableHeader);
   
-  // Table headers in white
   doc.fillColor('white');
-  doc.fontSize(11);
-  doc.text('Description', 60, doc.y + 18, { width: 150 });
-  doc.text('HSN/SAC', 210, doc.y + 18, { width: 60 });
-  doc.text('Qty', 270, doc.y + 18, { width: 40 });
-  doc.text('Rate (₹)', 310, doc.y + 18, { width: 60 });
-  doc.text('Amount (₹)', 370, doc.y + 18, { width: 80 });
+  doc.fontSize(10);
+  doc.text('Description', 45, yPos + 15, { width: 150 });
+  doc.text('HSN/SAC', 195, yPos + 15, { width: 60 });
+  doc.text('Qty', 255, yPos + 15, { width: 30 });
+  doc.text('Rate (₹)', 285, yPos + 15, { width: 60 });
+  doc.text('Amount (₹)', 345, yPos + 15, { width: 70 });
   
-  doc.moveDown(35);
-  
-  // Product row with alternating color
-  doc.rect(50, doc.y, doc.page.width - 100, 30).fill(colors.oddRow);
+  // Product row
+  yPos += 25;
+  doc.rect(40, yPos, doc.page.width - 80, 25).fill(colors.oddRow);
   
   doc.fillColor(colors.dark);
   doc.fontSize(10);
-  doc.text(saleRecord.product, 60, doc.y + 18, { width: 150 });
-  doc.text('N/A', 210, doc.y + 18, { width: 60 });
-  doc.text(saleRecord.quantity.toString(), 270, doc.y + 18, { width: 40 });
-  doc.text(saleRecord.rate.toFixed(2), 310, doc.y + 18, { width: 60 });
-  doc.text((saleRecord.quantity * saleRecord.rate).toFixed(2), 370, doc.y + 18, { width: 80 });
-  
-  doc.moveDown(50);
+  doc.text(saleRecord.product, 45, yPos + 15, { width: 150 });
+  doc.text('N/A', 195, yPos + 15, { width: 60 });
+  doc.text(saleRecord.quantity.toString(), 255, yPos + 15, { width: 30 });
+  doc.text(saleRecord.rate.toFixed(2), 285, yPos + 15, { width: 60 });
+  doc.text((saleRecord.quantity * saleRecord.rate).toFixed(2), 345, yPos + 15, { width: 70 });
 }
 
 /**
- * Add invoice totals with GST breakdown
+ * Add invoice totals with GST breakdown - SINGLE PAGE VERSION
  */
 function addInvoiceTotals(doc, saleRecord) {
   const taxableValue = saleRecord.quantity * saleRecord.rate;
@@ -472,71 +476,66 @@ function addInvoiceTotals(doc, saleRecord) {
   const sgst = taxableValue * (gstRate / 2);
   const total = taxableValue + cgst + sgst;
   
-  // Add section title
-  doc.fontSize(14);
-  doc.fillColor(colors.primary);
-  doc.text('Payment Details', 50, doc.y);
-  doc.moveDown(15);
+  // Payment details box - compact
+  const boxX = 300;
+  const boxWidth = 200;
+  let yPos = 250;
   
-  // Create totals box
-  const totalsX = 350;
-  const totalsWidth = 200;
+  // Box background
+  doc.rect(boxX - 10, yPos - 5, boxWidth + 20, 110).fill(colors.light);
+  doc.rect(boxX - 10, yPos - 5, boxWidth + 20, 110).lineWidth(1).stroke(colors.dark);
   
-  // Subtotal
-  doc.fontSize(11);
+  // Totals
   doc.fillColor(colors.dark);
-  doc.text('Subtotal:', totalsX, doc.y, { width: 100, align: 'right' });
-  doc.text(`₹${taxableValue.toFixed(2)}`, totalsX + 110, doc.y, { width: 80, align: 'right' });
-  doc.moveDown(15);
+  doc.fontSize(10);
+  doc.text('Subtotal:', boxX, yPos, { width: 100, align: 'right' });
+  doc.text(`₹${taxableValue.toFixed(2)}`, boxX + 110, yPos);
   
-  // CGST
-  doc.text(`CGST (${(gstRate/2)*100}%):`, totalsX, doc.y, { width: 100, align: 'right' });
-  doc.text(`₹${cgst.toFixed(2)}`, totalsX + 110, doc.y, { width: 80, align: 'right' });
-  doc.moveDown(15);
+  yPos += 15;
+  doc.text(`CGST (${(gstRate/2)*100}%):`, boxX, yPos, { width: 100, align: 'right' });
+  doc.text(`₹${cgst.toFixed(2)}`, boxX + 110, yPos);
   
-  // SGST
-  doc.text(`SGST (${(gstRate/2)*100}%):`, totalsX, doc.y, { width: 100, align: 'right' });
-  doc.text(`₹${sgst.toFixed(2)}`, totalsX + 110, doc.y, { width: 80, align: 'right' });
-  doc.moveDown(20);
+  yPos += 15;
+  doc.text(`SGST (${(gstRate/2)*100}%):`, boxX, yPos, { width: 100, align: 'right' });
+  doc.text(`₹${sgst.toFixed(2)}`, boxX + 110, yPos);
   
-  // Total line
-  doc.rect(totalsX - 10, doc.y, totalsWidth + 20, 2).fill(colors.accent);
-  doc.moveDown(10);
+  yPos += 15;
+  doc.rect(boxX - 10, yPos, boxWidth + 20, 1).fill(colors.accent);
   
-  // Total
-  doc.fontSize(14);
+  yPos += 10;
+  doc.fontSize(12);
   doc.fillColor(colors.accent);
-  doc.text('Total:', totalsX, doc.y, { width: 100, align: 'right' });
-  doc.text(`₹${total.toFixed(2)}`, totalsX + 110, doc.y, { width: 80, align: 'right' });
+  doc.text('Total:', boxX, yPos, { width: 100, align: 'right' });
+  doc.text(`₹${total.toFixed(2)}`, boxX + 110, yPos);
   
   // Amount in words
-  doc.moveDown(30);
+  yPos = 320;
   doc.fontSize(10);
   doc.fillColor(colors.dark);
-  doc.text('Amount in Words:', 50, doc.y);
-  doc.text(`${numberToWords(total)} Rupees Only`, 50, doc.y + 15);
-  
-  doc.moveDown(40);
+  doc.text('Amount in Words:', 40, yPos);
+  yPos += 15;
+  doc.text(`${numberToWords(total)} Rupees Only`, 40, yPos);
 }
 
 /**
- * Add professional invoice footer
+ * Add professional invoice footer - SINGLE PAGE VERSION
  */
 function addInvoiceFooter(doc) {
-  // Footer background
-  const footerY = doc.page.height - 100;
-  doc.rect(0, footerY, doc.page.width, 100).fill(colors.dark);
+  const footerY = doc.page.height - 60;
   
-  // Footer content in white
+  // Footer background - reduced height
+  doc.rect(0, footerY, doc.page.width, 60).fill(colors.dark);
+  
+  // Footer content
   doc.fillColor('white');
-  doc.fontSize(10);
-  doc.text('This is a computer-generated invoice.', 50, footerY + 20);
-  doc.text(`Generated on ${moment().format('DD/MM/YYYY HH:mm')}`, 50, footerY + 35);
-  doc.text('Thank you for your business!', 50, footerY + 50);
+  doc.fontSize(9);
+  doc.text('This is a computer-generated invoice.', 0, footerY + 15, { align: 'center' });
+  doc.text(`Generated on ${moment().format('DD/MM/YYYY HH:mm')}`, 0, footerY + 30, { align: 'center' });
+  doc.text('Thank you for your business!', 0, footerY + 45, { align: 'center' });
   
-  // Add signature line
-  doc.text('Authorized Signatory', 400, footerY + 50);
-  doc.lineJoin('miter').rect(400, footerY + 65, 150, 1).stroke();
+  // Signature line
+  doc.lineJoin('miter').rect(350, footerY + 35, 150, 1).stroke('white');
+  doc.text('Authorized Signatory', 350, footerY + 45, { align: 'center' });
 }
 
 /**
@@ -570,7 +569,7 @@ function numberToWords(num) {
 }
 
 /**
- * Generate an invoice PDF for a sale
+ * Generate an invoice PDF for a sale - SINGLE PAGE VERSION
  * @param {Object} shopDetails - Shop details from AuthUsers
  * @param {Object} saleRecord - Sale record details
  * @returns {Promise<string>} - Path to generated PDF file
@@ -578,7 +577,7 @@ function numberToWords(num) {
 async function generateInvoicePDF(shopDetails, saleRecord) {
   return new Promise(async (resolve, reject) => {
     try {
-      console.log(`[PDF Generator] Generating invoice for shop ${shopDetails.shopId}`);
+      console.log(`[PDF Generator] Generating single-page invoice for shop ${shopDetails.shopId}`);
       
       // Generate filename with timestamp
       const timestamp = moment().format('YYYYMMDD_HHmmss');
@@ -589,10 +588,11 @@ async function generateInvoicePDF(shopDetails, saleRecord) {
       
       console.log(`[PDF Generator] File path: ${filePath}`);
       
-      // Create PDF document
+      // Create PDF document with single page settings
       const doc = new PDFDocument({
-        margin: 50,
-        size: 'A4'
+        margin: 40,
+        size: 'A4',
+        bufferPages: false // Disable page buffering to ensure single page
       });
       
       // Ensure the directory exists before writing
@@ -621,7 +621,7 @@ async function generateInvoicePDF(shopDetails, saleRecord) {
       doc.end();
       
       stream.on('finish', () => {
-        console.log(`[PDF Generator] PDF generation completed: ${filePath}`);
+        console.log(`[PDF Generator] Single-page PDF generation completed: ${filePath}`);
         
         // Verify the file was actually created
         if (fs.existsSync(filePath)) {
