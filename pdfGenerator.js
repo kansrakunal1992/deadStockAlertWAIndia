@@ -443,31 +443,33 @@ async function addInvoiceHeader(doc, shopDetails) {
   const invoiceNumber = `INV-${shopDetails.shopId.replace(/\D/g, '')}-${moment().format('YYYYMMDDHHmmss')}`;
   let yPos = 105; // Moved down to avoid overlap with header
   
-  // Two-column layout for invoice details
+  // Two-column layout for invoice details with better spacing
   doc.fillColor(colors.dark);
   doc.fontSize(10);
   
-  // Left column (Invoice details)
-  doc.text('Invoice No:', 40, yPos, { continued: true });
-  doc.text(invoiceNumber, 100, yPos);
+  // Left column (Invoice details) - adjusted positions
+  doc.text('Invoice No:', 40, yPos);
+  // Add invoice number with width constraint to prevent overlap
+  doc.text(invoiceNumber, 100, yPos, { width: 120 }); // Added width constraint
   
   yPos += 15;
-  doc.text('Date:', 40, yPos, { continued: true });
+  doc.text('Date:', 40, yPos);
   doc.text(moment().format('DD/MM/YYYY'), 100, yPos);
   
   yPos += 15;
-  doc.text('Time:', 40, yPos, { continued: true });
+  doc.text('Time:', 40, yPos);
   doc.text(moment().format('HH:mm'), 100, yPos);
   
-  // Right column (Billing info) - adjusted to same starting Y position
-  yPos = 105; // Same as left column start
-  doc.text('Bill To:', 300, yPos);
+  // Right column (Billing info) - moved further right to avoid overlap
+  yPos = 105; // Reset to same starting Y position
+  doc.text('Bill To:', 280, yPos); // Moved from 300 to 280
   yPos += 15;
-  doc.text(shopDetails.name, 300, yPos);
+  doc.text(shopDetails.name, 280, yPos); // Moved from 300 to 280
   
   if (shopDetails.address) {
     yPos += 15;
-    doc.text(shopDetails.address, 300, yPos, { width: 200 });
+    // Added width constraint for address to prevent overflow
+    doc.text(shopDetails.address, 280, yPos, { width: 200 }); 
   }
 }
 
