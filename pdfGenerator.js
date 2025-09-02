@@ -5,9 +5,9 @@ const path = require('path');
 const { getTodaySalesSummary, getSalesDataForPeriod } = require('./database');
 
 // Create a temporary directory for PDFs if it doesn't exist
-const tempDir = process.env.NODE_ENV === 'production' 
-  ? '/tmp'  // Use system temp directory in production
-  : path.join(__dirname, 'temp');  // Use local temp directory in development
+const tempDir = process.env.NODE_ENV === 'production'
+  ? '/tmp' // Use system temp directory in production
+  : path.join(__dirname, 'temp'); // Use local temp directory in development
 
 // Ensure temp directory exists
 if (!fs.existsSync(tempDir)) {
@@ -33,7 +33,6 @@ function getLogoImage() {
   if (logoImageBuffer) {
     return logoImageBuffer;
   }
-
   try {
     if (fs.existsSync(logoPath)) {
       logoImageBuffer = fs.readFileSync(logoPath);
@@ -51,22 +50,22 @@ function getLogoImage() {
 
 // Color scheme for the PDF
 const colors = {
-  primary: '#1a237e',      // Deep blue
-  secondary: '#3949ab',   // Medium blue
-  accent: '#d32f2f',      // Red accent
-  success: '#388e3c',     // Green
-  warning: '#f57c00',     // Orange
-  light: '#f5f5f5',      // Light gray
-  dark: '#263238',       // Dark gray
-  header: '#283593',     // Header blue
+  primary: '#1a237e', // Deep blue
+  secondary: '#3949ab', // Medium blue
+  accent: '#d32f2f', // Red accent
+  success: '#388e3c', // Green
+  warning: '#f57c00', // Orange
+  light: '#f5f5f5', // Light gray
+  dark: '#263238', // Dark gray
+  header: '#283593', // Header blue
   tableHeader: '#37474f', // Table header
-  evenRow: '#eceff1',    // Even row color
-  oddRow: '#ffffff',     // Odd row color
-  gst5: '#388e3c',       // Green for 5% GST
-  gst12: '#f57c00',      // Orange for 12% GST
-  gst18: '#d32f2f',      // Red for 18% GST
-  gst28: '#7b1fa2',      // Purple for 28% GST
-  gst0: '#78909c'        // Gray for 0% GST
+  evenRow: '#eceff1', // Even row color
+  oddRow: '#ffffff', // Odd row color
+  gst5: '#388e3c', // Green for 5% GST
+  gst12: '#f57c00', // Orange for 12% GST
+  gst18: '#d32f2f', // Red for 18% GST
+  gst28: '#7b1fa2', // Purple for 28% GST
+  gst0: '#78909c' // Gray for 0% GST
 };
 
 /**
@@ -188,14 +187,13 @@ function addGSTTable(doc, gstBreakdown) {
   
   // Table rows with alternating colors
   let isEvenRow = false;
-  
   Object.entries(gstBreakdown.byRate).forEach(([rate, data]) => {
     const rateLabel = rate === 0 ? 'Exempted' : `${rate * 100}%`;
     const rowColor = isEvenRow ? colors.evenRow : colors.oddRow;
-    const textColor = rate === 0 ? colors.gst0 : 
-                     rate === 0.05 ? colors.gst5 :
-                     rate === 0.12 ? colors.gst12 :
-                     rate === 0.18 ? colors.gst18 : colors.gst28;
+    const textColor = rate === 0 ? colors.gst0 :
+      rate === 0.05 ? colors.gst5 :
+      rate === 0.12 ? colors.gst12 :
+      rate === 0.18 ? colors.gst18 : colors.gst28;
     
     // Row background
     doc.rect(50, doc.y, doc.page.width - 100, 25).fill(rowColor);
@@ -204,7 +202,6 @@ function addGSTTable(doc, gstBreakdown) {
     doc.fillColor(colors.dark);
     doc.fontSize(9);
     doc.text(`${rateLabel} (${data.category})`, 55, doc.y + 15, { width: 115 });
-    
     doc.fillColor(textColor);
     doc.text(data.taxableValue.toFixed(2), 170, doc.y + 15, { width: 100 });
     doc.text(data.cgst.toFixed(2), 270, doc.y + 15, { width: 70 });
@@ -218,7 +215,6 @@ function addGSTTable(doc, gstBreakdown) {
   
   // Total row with accent color
   doc.rect(50, doc.y, doc.page.width - 100, 25).fill(colors.accent);
-  
   doc.fillColor('white');
   doc.fontSize(10);
   doc.text('Total', 55, doc.y + 15, { width: 115, underline: true });
@@ -255,7 +251,6 @@ function addSalesTable(doc, salesData) {
   
   // Table rows with alternating colors
   let isEvenRow = false;
-  
   if (salesData.topProducts && salesData.topProducts.length > 0) {
     salesData.topProducts.forEach(product => {
       const rowColor = isEvenRow ? colors.evenRow : colors.oddRow;
@@ -265,10 +260,10 @@ function addSalesTable(doc, salesData) {
       
       // GST rate color
       const gstRate = product.gstRate || 0;
-      const gstColor = gstRate === 0 ? colors.gst0 : 
-                       gstRate === 0.05 ? colors.gst5 :
-                       gstRate === 0.12 ? colors.gst12 :
-                       gstRate === 0.18 ? colors.gst18 : colors.gst28;
+      const gstColor = gstRate === 0 ? colors.gst0 :
+        gstRate === 0.05 ? colors.gst5 :
+        gstRate === 0.12 ? colors.gst12 :
+        gstRate === 0.18 ? colors.gst18 : colors.gst28;
       
       // Row text
       doc.fillColor(colors.dark);
@@ -279,7 +274,6 @@ function addSalesTable(doc, salesData) {
       doc.text(product.unit, 230, doc.y + 15, { width: 40 });
       doc.text(product.rate.toFixed(2), 270, doc.y + 15, { width: 50 });
       doc.text(product.taxableValue.toFixed(2), 320, doc.y + 15, { width: 60 });
-      
       doc.fillColor(gstColor);
       doc.text(`${(gstRate * 100).toFixed(0)}%`, 380, doc.y + 15, { width: 50 });
       doc.text(product.gstAmount.toFixed(2), 430, doc.y + 15, { width: 50 });
@@ -356,8 +350,8 @@ async function generateSalesPDF(shopId, period = 'today', startDate = null, endD
         if (period === 'today') {
           salesData = await getTodaySalesSummary(shopId);
         } else {
-          const startDate = period === 'week' 
-            ? moment().subtract(7, 'days').toDate() 
+          const startDate = period === 'week'
+            ? moment().subtract(7, 'days').toDate()
             : moment().startOf('month').toDate();
           const endDate = new Date();
           salesData = await getSalesDataForPeriod(shopId, startDate, endDate);
@@ -406,7 +400,6 @@ async function generateSalesPDF(shopId, period = 'today', startDate = null, endD
   });
 }
 
-// Invoice-specific functions
 /**
  * Add a professional invoice header - SINGLE PAGE VERSION
  */
@@ -431,17 +424,17 @@ async function addInvoiceHeader(doc, shopDetails) {
   doc.fontSize(20);
   doc.text('TAX INVOICE', 0, 25, { align: 'center' });
   
-  // Shop details - centered
+  // Shop details - centered (with safety checks)
   doc.fontSize(12);
-  doc.text(shopDetails.name, 0, 45, { align: 'center' });
+  doc.text(shopDetails?.name || 'Shop Name', 0, 45, { align: 'center' });
   
-  if (shopDetails.gstin && shopDetails.gstin !== 'N/A') {
+  if (shopDetails?.gstin && shopDetails.gstin !== 'N/A') {
     doc.text(`GSTIN: ${shopDetails.gstin}`, 0, 65, { align: 'center' });
   }
   
   // Invoice details - adjusted to avoid overlap
-  const invoiceNumber = `INV-${shopDetails.shopId.replace(/\D/g, '')}-${moment().format('YYYYMMDDHHmmss')}`;
-  let yPos = 105; // Moved down to avoid overlap with header
+  const invoiceNumber = `INV-${shopDetails?.shopId?.replace(/\D/g, '') || '000000'}-${moment().format('YYYYMMDDHHmmss')}`;
+  let yPos = 105; // Starting Y position for invoice details
   
   // Two-column layout for invoice details with better spacing
   doc.fillColor(colors.dark);
@@ -450,7 +443,7 @@ async function addInvoiceHeader(doc, shopDetails) {
   // Left column (Invoice details) - adjusted positions
   doc.text('Invoice No:', 40, yPos);
   // Add invoice number with width constraint to prevent overlap
-  doc.text(invoiceNumber, 100, yPos, { width: 120 }); // Added width constraint
+  doc.text(invoiceNumber, 100, yPos, { width: 100 });
   
   yPos += 15;
   doc.text('Date:', 40, yPos);
@@ -462,30 +455,30 @@ async function addInvoiceHeader(doc, shopDetails) {
   
   // Right column (Billing info) - moved further right to avoid overlap
   yPos = 105; // Reset to same starting Y position
-  doc.text('Bill To:', 280, yPos); // Moved from 300 to 280
+  doc.text('Bill To:', 250, yPos);
   yPos += 15;
-  doc.text(shopDetails.name, 280, yPos); // Moved from 300 to 280
+  doc.text(shopDetails?.name || 'Shop Name', 250, yPos);
   
-  if (shopDetails.address) {
+  if (shopDetails?.address) {
     yPos += 15;
-    // Added width constraint for address to prevent overflow
-    doc.text(shopDetails.address, 280, yPos, { width: 200 }); 
+    doc.text(shopDetails.address, 250, yPos, { width: 180 });
   }
+  
+  return yPos + 30;
 }
 
 /**
  * Add sale details in a compact table format - SINGLE PAGE VERSION
  */
-function addSaleDetails(doc, saleRecord) {
+function addSaleDetails(doc, shopDetails, saleRecord) {
   // Section title
   doc.fontSize(14);
   doc.fillColor(colors.primary);
-  doc.text('Invoice Details', 40, 180); // Adjusted position
+  doc.text('Invoice Details', 40, 180);
   
   // Table header
-  let yPos = 205; // Adjusted position
+  let yPos = 205;
   doc.rect(40, yPos, doc.page.width - 80, 25).fill(colors.tableHeader);
-  
   doc.fillColor('white');
   doc.fontSize(10);
   doc.text('Description', 45, yPos + 15, { width: 150 });
@@ -497,21 +490,31 @@ function addSaleDetails(doc, saleRecord) {
   // Product row
   yPos += 25;
   doc.rect(40, yPos, doc.page.width - 80, 25).fill(colors.oddRow);
-  
   doc.fillColor(colors.dark);
   doc.fontSize(10);
-  doc.text(saleRecord.product, 45, yPos + 15, { width: 150 });
+  
+  // Fix: Ensure rate is a valid number, default to 0 if NaN
+  const rate = isNaN(saleRecord.rate) ? 0 : Number(saleRecord.rate);
+  const quantity = isNaN(saleRecord.quantity) ? 0 : Number(saleRecord.quantity);
+  const amount = rate * quantity;
+  
+  doc.text(saleRecord.product || 'Product', 45, yPos + 15, { width: 150 });
   doc.text('N/A', 195, yPos + 15, { width: 60 });
-  doc.text(saleRecord.quantity.toString(), 255, yPos + 15, { width: 30 });
-  doc.text(saleRecord.rate.toFixed(2), 285, yPos + 15, { width: 60 });
-  doc.text((saleRecord.quantity * saleRecord.rate).toFixed(2), 345, yPos + 15, { width: 70 });
+  doc.text(quantity.toString(), 255, yPos + 15, { width: 30 });
+  doc.text(rate.toFixed(2), 285, yPos + 15, { width: 60 });
+  doc.text(amount.toFixed(2), 345, yPos + 15, { width: 70 });
+  
+  return yPos + 35;
 }
 
 /**
  * Add invoice totals with GST breakdown - SINGLE PAGE VERSION
  */
 function addInvoiceTotals(doc, saleRecord) {
-  const taxableValue = saleRecord.quantity * saleRecord.rate;
+  // Fix: Ensure rate and quantity are valid numbers
+  const rate = isNaN(saleRecord.rate) ? 0 : Number(saleRecord.rate);
+  const quantity = isNaN(saleRecord.quantity) ? 0 : Number(saleRecord.quantity);
+  const taxableValue = rate * quantity;
   const gstRate = 0.18; // 18% GST
   const cgst = taxableValue * (gstRate / 2);
   const sgst = taxableValue * (gstRate / 2);
@@ -520,7 +523,7 @@ function addInvoiceTotals(doc, saleRecord) {
   // Payment details box - compact
   const boxX = 300;
   const boxWidth = 200;
-  let yPos = 270; // Adjusted position
+  let yPos = 270;
   
   // Box background
   doc.rect(boxX - 10, yPos - 5, boxWidth + 20, 110).fill(colors.light);
@@ -550,18 +553,22 @@ function addInvoiceTotals(doc, saleRecord) {
   doc.text(`₹${total.toFixed(2)}`, boxX + 110, yPos);
   
   // Amount in words
-  yPos = 340; // Adjusted position
+  yPos += 30;
   doc.fontSize(10);
   doc.fillColor(colors.dark);
   doc.text('Amount in Words:', 40, yPos);
+  
   yPos += 15;
   doc.text(`${numberToWords(total)} Rupees Only`, 40, yPos);
+  
+  return yPos + 40;
 }
 
 /**
  * Add professional invoice footer - SINGLE PAGE VERSION
  */
 function addInvoiceFooter(doc) {
+  // Calculate footer position dynamically
   const footerY = doc.page.height - 60;
   
   // Footer background - reduced height
@@ -611,18 +618,15 @@ function numberToWords(num) {
 
 /**
  * Generate an invoice PDF for a sale - SINGLE PAGE VERSION
- * @param {Object} shopDetails - Shop details from AuthUsers
- * @param {Object} saleRecord - Sale record details
- * @returns {Promise<string>} - Path to generated PDF file
  */
 async function generateInvoicePDF(shopDetails, saleRecord) {
   return new Promise(async (resolve, reject) => {
     try {
-      console.log(`[PDF Generator] Generating single-page invoice for shop ${shopDetails.shopId}`);
+      console.log(`[PDF Generator] Generating single-page invoice for shop ${shopDetails?.shopId}`);
       
       // Generate filename with timestamp
       const timestamp = moment().format('YYYYMMDD_HHmmss');
-      const fileName = `invoice_${shopDetails.shopId.replace(/\D/g, '')}_${timestamp}.pdf`;
+      const fileName = `invoice_${shopDetails?.shopId?.replace(/\D/g, '') || '000000'}_${timestamp}.pdf`;
       
       // Use the invoices directory
       const filePath = path.join(invoicesDir, fileName);
@@ -647,13 +651,13 @@ async function generateInvoicePDF(shopDetails, saleRecord) {
       doc.pipe(stream);
       
       // Add invoice header
-      await addInvoiceHeader(doc, shopDetails);
+      await addInvoiceHeader(doc, shopDetails || {});
       
       // Add sale details
-      addSaleDetails(doc, saleRecord);
+      addSaleDetails(doc, shopDetails || {}, saleRecord || {});
       
       // Add totals
-      addInvoiceTotals(doc, saleRecord);
+      addInvoiceTotals(doc, saleRecord || {});
       
       // Add footer
       addInvoiceFooter(doc);
@@ -687,7 +691,7 @@ async function generateInvoicePDF(shopDetails, saleRecord) {
 }
 
 // Export the functions
-module.exports = { 
+module.exports = {
   generateSalesPDF,
-  generateInvoicePDF 
+  generateInvoicePDF
 };
