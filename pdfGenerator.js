@@ -432,36 +432,37 @@ async function addInvoiceHeader(doc, shopDetails) {
     doc.text(`GSTIN: ${shopDetails.gstin}`, 0, 65, { align: 'center' });
   }
   
-  // Invoice details - adjusted to avoid overlap
+  // Invoice details - adjusted positioning to prevent overlap
   const invoiceNumber = `INV-${shopDetails?.shopId?.replace(/\D/g, '') || '000000'}-${moment().format('YYYYMMDDHHmmss')}`;
-  let yPos = 105; // Starting Y position for invoice details
   
-  // Two-column layout for invoice details with better spacing
+  // Two-column layout with better spacing
   doc.fillColor(colors.dark);
   doc.fontSize(10);
   
-  // Left column (Invoice details) - adjusted positions
+  // Left column (Invoice details) - fixed positions with more spacing
+  let yPos = 105; // Starting Y position
+  
   doc.text('Invoice No:', 40, yPos);
   // Add invoice number with width constraint to prevent overlap
-  doc.text(invoiceNumber, 100, yPos, { width: 100 });
+  doc.text(invoiceNumber, 100, yPos, { width: 120 }); // Increased width from 100 to 120
   
-  yPos += 15;
+  yPos += 20; // Increased spacing from 15 to 20
   doc.text('Date:', 40, yPos);
   doc.text(moment().format('DD/MM/YYYY'), 100, yPos);
   
-  yPos += 15;
+  yPos += 20; // Increased spacing from 15 to 20
   doc.text('Time:', 40, yPos);
   doc.text(moment().format('HH:mm'), 100, yPos);
   
   // Right column (Billing info) - moved further right to avoid overlap
   yPos = 105; // Reset to same starting Y position
-  doc.text('Bill To:', 250, yPos);
-  yPos += 15;
-  doc.text(shopDetails?.name || 'Shop Name', 250, yPos);
+  doc.text('Bill To:', 280, yPos); // Moved from 250 to 280
+  yPos += 20; // Increased spacing
+  doc.text(shopDetails?.name || 'Shop Name', 280, yPos);
   
   if (shopDetails?.address) {
-    yPos += 15;
-    doc.text(shopDetails.address, 250, yPos, { width: 180 });
+    yPos += 20; // Increased spacing
+    doc.text(shopDetails.address, 280, yPos, { width: 180 });
   }
   
   return yPos + 30;
