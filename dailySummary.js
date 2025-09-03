@@ -33,7 +33,6 @@ function daysBetween(date1, date2) {
 }
 
 // Generate response in multiple languages and scripts without labels
-// In dailySummary.js, replace the generateMultiLanguageResponse function
 async function generateMultiLanguageResponse(message, languageCode) {
   try {
     // If the language is English, return the message as is
@@ -41,77 +40,52 @@ async function generateMultiLanguageResponse(message, languageCode) {
       return message;
     }
     
-    // Simplified translations for common messages
-    const simpleTranslations = {
+    // Common greetings with native and roman scripts
+    const commonGreetings = {
       'hi': {
-        'daily inventory summary': 'आज की इन्वेंट्री रिपोर्ट\n\nAaj ki inventory report',
-        'sales': 'बिक्री\n\nSales',
-        'no sales recorded': 'कोई बिक्री नहीं हुई\n\nKoi bikri nahi hui',
-        'low stock alerts': 'कम सामान की चेतावनी\n\nKam saman ki chetavni',
-        'expiring soon': 'जल्द खत्म हो रहा\n\nJald khatm ho raha',
-        'thank you': 'शुक्रिया\n\nShukriya'
+        native: 'नमस्ते',
+        roman: 'Namaste'
       },
       'bn': {
-        'daily inventory summary': 'আজকের ইনভেন্টরি রিপোর্ট\n\nAajker inventory report',
-        'sales': 'বিক্রি\n\nBikri',
-        'no sales recorded': 'কোনো বিক্রি রেকর্ড করা হয়নি\n\nKono bikri record kora hoyeni',
-        'low stock alerts': 'কম স্টক সতর্কতা\n\nKom stock sotorkota',
-        'expiring soon': 'শীঘ্রই মেয়াদ উত্তীর্ণ হচ্ছে\n\nShighroi meyar uttirno hochchhe',
-        'thank you': 'ধন্যবাদ\n\nDhonnobad'
+        native: 'হ্যালো',
+        roman: 'Hello'
       },
       'ta': {
-        'daily inventory summary': 'இன்றைய இன்வென்டரி சுருக்கம்\n\nInraiya inventory summary',
-        'sales': 'விற்பனை\n\nVippanai',
-        'no sales recorded': 'பதிவு செய்யப்பட்ட விற்பனை இல்லை\n\nPadu seyyappatta vippanai illai',
-        'low stock alerts': 'குறைந்த ஸ்டாக் எச்சரிக்கைகள்\n\nKurina stock alerts',
-        'expiring soon': 'விரைவில் காலாவதியும்\n\nViraivil kaalavadivum',
-        'thank you': 'நன்றி\n\nNandri'
+        native: 'வணக்கம்',
+        roman: 'Vanakkam'
       },
       'te': {
-        'daily inventory summary': 'నేడు ఇన్వెంటరీ సారాంశం\n\nNedu inventory saaramsham',
-        'sales': 'అమ్మకాలు\n\nAmmakaalu',
-        'no sales recorded': 'నమోదు చేసిన అమ్మకాలు లేవు\n\nNodu chesina ammakaalu levu',
-        'low stock alerts': 'తక్కువ స్టాక్ హెచ్చరికలు\n\nTakkuva stock hchharikalu',
-        'expiring soon': 'త్వరలో గడదీయబోయేవి\n\nTwralo gadadiboyevi',
-        'thank you': 'ధన్యవాదాలు\n\nDhanyavaadalu'
+        native: 'నమస్కారం',
+        roman: 'Namaskaram'
       },
       'kn': {
-        'daily inventory summary': 'ಇಂದಿನ ಇನ್ವೆಂಟರಿ ಸಾರಾಂಶ\n\nIndina inventory saaransha',
-        'sales': 'ಮಾರಾಟಗಳು\n\nMaarataḷu',
-        'no sales recorded': 'ದಾಖಲಾದ ಮಾರಾಟಗಳಿಲ್ಲ\n\nDaakhaada maaraṭagilla',
-        'low stock alerts': 'ಕಡಿಮೆ ಸ್ಟಾಕ್ ಎಚ್ಚರಿಕೆಗಳು\n\nKaḍime stock heccharikegaḷu',
-        'expiring soon': 'ಶೀಘ್ರವೇ ಮುಕ್ತಾಯವಾಗುತ್ತಿರುವುದು\n\nShighrave muktaayavaguttiruvudu',
-        'thank you': 'ಧನ್ಯವಾದಗಳು\n\nDhanyavaadagaḷu'
+        native: 'ನಮಸ್ಕಾರ',
+        roman: 'Namaskara'
       },
       'gu': {
-        'daily inventory summary': 'આજની ઇન્વેન્ટરી સારાંશ\n\nAajni inventory saaraansh',
-        'sales': 'વેચાણ\n\nVechaan',
-        'no sales recorded': 'નોંધાયેલ કોઈ વેચાણ નથી\n\nNodhaayel koi vechaan nathi',
-        'low stock alerts': 'ઓછા સ્ટોક ના અલર્ટ\n\nOchha stock na alert',
-        'expiring soon': 'ટૂંકમાં નિવૃત્તિ થઈ રહી છે\n\nToonkaam nivruti thi rahi che',
-        'thank you': 'આભાર\n\nAabhaar'
+        native: 'નમસ્તે',
+        roman: 'Namaste'
       },
       'mr': {
-        'daily inventory summary': 'आजचे इन्व्हेन्टरी सारांश\n\nAajche inventory saaransh',
-        'sales': 'विक्री\n\nVikri',
-        'no sales recorded': 'नोंदीविक्री नाही\n\nNodhivikri naahi',
-        'low stock alerts': 'कमी स्टॉक अलर्ट\n\nKami stock alert',
-        'expiring soon': 'लवकरच समाप्त होणारे\n\nLavakach samapt honaare',
-        'thank you': 'धन्यवाद\n\nDhanyavaad'
+        native: 'नमस्कार',
+        roman: 'Namaskar'
       }
     };
     
-    // Check if we have a simple translation for this message
+    // Check if this is a common greeting
     const lowerMessage = message.toLowerCase();
-    const translations = simpleTranslations[languageCode] || simpleTranslations['en'];
+    const isShortGreeting = lowerMessage.split(/\s+/).length <= 3;
     
-    for (const [key, value] of Object.entries(translations)) {
-      if (lowerMessage.includes(key)) {
-        return value;
-      }
+    if (isShortGreeting && (
+        lowerMessage.includes('hello') ||
+        lowerMessage.includes('hi') ||
+        lowerMessage.includes('नमस्ते')
+    )) {
+      const greeting = commonGreetings[languageCode] || commonGreetings['en'];
+      return `${greeting.native}\n\n${greeting.roman}`;
     }
     
-    // For other messages, try the API with a simplified prompt
+    // For other messages, try the API
     const response = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -119,17 +93,14 @@ async function generateMultiLanguageResponse(message, languageCode) {
         messages: [
           {
             role: "system",
-            content: `You are a multilingual assistant. Translate the given message to the target language using simple, everyday language that anyone can understand. Avoid formal or literary expressions.
-
+            content: `You are a multilingual assistant. Translate the given message to the target language and provide it in two formats:
 Format your response exactly as:
-Line 1: Translation in native script (simple, colloquial language)
+Line 1: Translation in native script (e.g., Devanagari for Hindi)
 Empty line
 Line 3: Translation in Roman script (transliteration using English alphabet)
-
 For example, for Hindi:
-हाय, आप कैसे हो?
-Haay, aap kaise ho?
-
+नमस्ते, आप कैसे हैं?
+Namaste, aap kaise hain?
 Do NOT include any labels like [Roman Script], [Native Script], <translation>, or any other markers. Just provide the translations one after the other with a blank line in between.`
           },
           {
