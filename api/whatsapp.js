@@ -4168,7 +4168,28 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
       if (updates.length > 0) {
         // Process the confirmed updates
         const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-        // ... rest of the confirmation handling ...
+        
+        let message = '✅ Updates processed:\n\n';
+        let successCount = 0;
+        
+        for (const result of results) {
+          if (result.success) {
+            successCount++;
+            const unitText = result.unit ? ` ${result.unit}` : '';
+            message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+          } else {
+            message += `• ${result.product}: Error - ${result.error}\n`;
+          }
+        }
+        
+        message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+        
+        // FIX: Send via WhatsApp API instead of synchronous response
+        const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+        await sendMessageViaAPI(From, formattedResponse);
+        
+        // Clear state after processing
+        await clearUserState(From);
       } else {
         // If parsing failed, ask to retry
         const errorMessage = await generateMultiLanguageResponse(
@@ -4180,7 +4201,15 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
         await clearUserState(From);
       }
     } catch (parseError) {
-      // ... error handling ...
+      console.error(`[${requestId}] Error parsing transcript for confirmation:`, parseError.message);
+      // If parsing failed, ask to retry
+      const errorMessage = await generateMultiLanguageResponse(
+        'Sorry, I had trouble processing your message. Please try again.',
+        detectedLanguage,
+        requestId
+      );
+      await sendMessageViaAPI(From, errorMessage);
+      await clearUserState(From);
     }
     
   } else if (noVariants.includes(Body.toLowerCase())) {
@@ -4195,8 +4224,7 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
         // Take the first update (assuming one product per message for correction)
         update = updates[0];
       } else {
-        // FIX: If parsing failed, create a default update object with the transcript as product
-        // This ensures we always enter the correction flow even when parsing fails
+        // If parsing failed, create a default update object with the transcript as product
         update = {
           product: pendingTranscript,
           quantity: 0,
@@ -4248,7 +4276,7 @@ Reply with:
     } catch (parseError) {
       console.error(`[${requestId}] Error parsing transcript for correction:`, parseError.message);
       
-      // FIX: Even if there's an error during parsing, create a default update object and proceed to correction
+      // Even if there's an error during parsing, create a default update object and proceed to correction
       const update = {
         product: pendingTranscript,
         quantity: 0,
