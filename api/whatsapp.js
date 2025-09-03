@@ -1308,14 +1308,12 @@ if (update.action === 'purchased' && result.success) {
 }
 
 // Generate response in multiple languages and scripts without labels
-// Replace the current generateMultiLanguageResponse function with this improved version
 async function generateMultiLanguageResponse(message, languageCode, requestId) {
   try {
     // If the language is English, return the message as is
     if (languageCode === 'en') {
       return message;
     }
-    
     // Check cache first
     const cacheKey = `${languageCode}:${message.substring(0, 50)}`;
     const cached = languageCache.get(cacheKey);
@@ -1323,141 +1321,59 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
       console.log(`[${requestId}] Using cached translation for ${languageCode}`);
       return cached.translation;
     }
-    
     console.log(`[${requestId}] Translating to ${languageCode}: "${message}"`);
-    
-    // For common messages, use simplified translations that are more colloquial
-    const simplifiedTranslations = {
+    // Fallback strategies:
+    // 1. For common greetings, use predefined translations with both scripts
+    const commonGreetings = {
       'hi': {
-        'hello': 'नमस्ते / हाय\n\nNamaste / Hi',
-        'welcome': 'स्वागत है!\n\nWelcome!',
-        'please select an option': 'कृपया एक विकल्प चुनें\n\nPlease select an option',
-        'processing your message': 'आपका मैसेज प्रोसेस हो रहा है...\n\nProcessing your message...',
-        'inventory update': 'इन्वेंटरी अपडेट\n\nInventory update',
-        'sales': 'बिक्री\n\nSales',
-        'purchase': 'खरीद\n\nPurchase',
-        'remaining': 'बचा हुआ\n\nRemaining',
-        'no sales recorded': 'कोई बिक्री दर्ज नहीं हुई\n\nNo sales recorded',
-        'low stock alerts': 'कम स्टॉक अलर्ट\n\nLow stock alerts',
-        'expiring soon': 'जल्दी एक्सपायर होने वाला\n\nExpiring soon',
-        'thank you': 'धन्यवाद!\n\nThank you!',
-        'error': 'गड़बड़ी हुई है\n\nError occurred',
-        'success': 'हो गया!\n\nSuccess!'
+        native: 'नमस्ते',
+        roman: 'Namaste'
       },
       'bn': {
-        'hello': 'নমস্কার / হ্যালো\n\nNomoskar / Hello',
-        'welcome': 'স্বাগতম!\n\nWelcome!',
-        'please select an option': 'একটি বিকল্প নির্বাচন করুন\n\nPlease select an option',
-        'processing your message': 'আপনার বার্তা প্রক্রিয়া করা হচ্ছে...\n\nProcessing your message...',
-        'inventory update': 'ইনভেন্টরি আপডেট\n\nInventory update',
-        'sales': 'বিক্রয়\n\nSales',
-        'purchase': 'ক্রয়\n\nPurchase',
-        'remaining': 'বাকি\n\nRemaining',
-        'no sales recorded': 'কোনো বিক্রয় রেকর্ড করা হয়নি\n\nNo sales recorded',
-        'low stock alerts': 'কম স্টক সতর্কতা\n\nLow stock alerts',
-        'expiring soon': 'শীঘ্রই মেয়াদ শেষ হচ্ছে\n\nExpiring soon',
-        'thank you': 'ধন্যবাদ!\n\nThank you!',
-        'error': 'একটি সমস্যাoccurred\n\nError occurred',
-        'success': 'সফল হয়েছে!\n\nSuccess!'
+        native: 'হ্যালো',
+        roman: 'Hello'
       },
       'ta': {
-        'hello': 'வணக்கம் / ஹாய்\n\nVanakkam / Hi',
-        'welcome': 'வரவேற்கிறோம்!\n\nWelcome!',
-        'please select an option': 'ஒரு விருப்பத்தைத் தேர்ந்தெடுக்கவும்\n\nPlease select an option',
-        'processing your message': 'உங்கள் செய்தி செயலாக்கப்படுகிறது...\n\nProcessing your message...',
-        'inventory update': 'இன்வென்டரி புதுப்பிப்பு\n\nInventory update',
-        'sales': 'விற்பனை\n\nSales',
-        'purchase': 'கொள்முதல்\n\nPurchase',
-        'remaining': 'மீதம்\n\nRemaining',
-        'no sales recorded': 'விற்பனை பதிவு செய்யப்படவில்லை\n\nNo sales recorded',
-        'low stock alerts': 'குறைந்த பங்கு எச்சரிக்கைகள்\n\nLow stock alerts',
-        'expiring soon': 'விரைவில் காலாவதியாகும்\n\nExpiring soon',
-        'thank you': 'நன்றி!\n\nThank you!',
-        'error': 'ஒரு பிழை ஏற்பட்டது\n\nError occurred',
-        'success': 'வெற்றி!\n\nSuccess!'
+        native: 'வணக்கம்',
+        roman: 'Vanakkam'
       },
       'te': {
-        'hello': 'నమస్కారం / హాయ్\n\nNamaskaram / Hi',
-        'welcome': 'స్వాగతం!\n\nWelcome!',
-        'please select an option': 'దయచేసి ఒక ఎంపికను ఎంచుకోండి\n\nPlease select an option',
-        'processing your message': 'మీ సందేశం ప్రాసెస్ అవుతుంది...\n\nProcessing your message...',
-        'inventory update': 'ఇన్వెంటరీ నవీకరణ\n\nInventory update',
-        'sales': 'అమ్మకాలు\n\nSales',
-        'purchase': 'కొనుగోలు\n\nPurchase',
-        'remaining': 'మిగిలిన\n\nRemaining',
-        'no sales recorded': 'అమ్మకాలు రికార్డ్ చేయబడలేదు\n\nNo sales recorded',
-        'low stock alerts': 'తక్కువ స్టాక్ హెచ్చరికలు\n\nLow stock alerts',
-        'expiring soon': 'త్వరలో కాలం చెల్లుతుంది\n\nExpiring soon',
-        'thank you': 'ధన్యవాదాలు!\n\nThank you!',
-        'error': 'ఒక లోపం ఏర్పడింది\n\nError occurred',
-        'success': 'విజయవంతమైంది!\n\nSuccess!'
+        native: 'నమస్కారం',
+        roman: 'Namaskaram'
       },
       'kn': {
-        'hello': 'ನಮಸ್ಕಾರ / ಹಾಯ್\n\nNamaskara / Hi',
-        'welcome': 'ಸ್ವಾಗತ!\n\nWelcome!',
-        'please select an option': 'ದಯವಿಟ್ಟು ಒಂದು ಆಯ್ಕೆಯನ್ನು ಆರಿಸಿ\n\nPlease select an option',
-        'processing your message': 'ನಿಮ್ಮ ಸಂದೇಶವನ್ನು ಪ್ರಕ್ರಿಯೆಗೊಳಿಸಲಾಗುತ್ತಿದೆ...\n\nProcessing your message...',
-        'inventory update': 'ಇನ್ವೆಂಟರಿ ನವೀಕರಣ\n\nInventory update',
-        'sales': 'ಮಾರಾಟ\n\nSales',
-        'purchase': 'ಖರೀದಿ\n\nPurchase',
-        'remaining': 'ಉಳಿದಿರುವ\n\nRemaining',
-        'no sales recorded': 'ಮಾರಾಟಗಳನ್ನು ದಾಖಲಿಸಲಾಗಿಲ್ಲ\n\nNo sales recorded',
-        'low stock alerts': 'ಕಡಿಮೆ ಸ್ಟಾಕ್ ಎಚ್ಚರಿಕೆಗಳು\n\nLow stock alerts',
-        'expiring soon': 'ಶೀಘ್ರದಲ್ಲೇ ಕಾಲಾವಧಿ ಮುಗಿಯುತ್ತದೆ\n\nExpiring soon',
-        'thank you': 'ಧನ್ಯವಾದ!\n\nThank you!',
-        'error': 'ಒಂದು ದೋಷ ಸಂಭವಿಸಿದೆ\n\nError occurred',
-        'success': 'ಯಶಸ್ವಿಯಾಗಿದೆ!\n\nSuccess!'
+        native: 'ನಮಸ್ಕಾರ',
+        roman: 'Namaskara'
       },
       'gu': {
-        'hello': 'નમસ્તે / હાય\n\nNamaste / Hi',
-        'welcome': 'સ્વાગત છે!\n\nWelcome!',
-        'please select an option': 'કૃપા કરીને એક વિકલ્પ પસંદ કરો\n\nPlease select an option',
-        'processing your message': 'તમારો સંદેશ પ્રક્રિયા કરવામાં આવી રહ્યો છે...\n\nProcessing your message...',
-        'inventory update': 'ઇન્વેન્ટરી અપડેટ\n\nInventory update',
-        'sales': 'વેચાણ\n\nSales',
-        'purchase': 'ખરીદી\n\nPurchase',
-        'remaining': 'બાકી\n\nRemaining',
-        'no sales recorded': 'કોઈ વેચાણ રેકોર્ડ નથી\n\nNo sales recorded',
-        'low stock alerts': 'ઓછા સ્ટોક સતર્કતા\n\nLow stock alerts',
-        'expiring soon': 'ટૂંક સમયમાં સમાપ્ત થાય છે\n\nExpiring soon',
-        'thank you': 'આભાર!\n\nThank you!',
-        'error': 'એક ભૂલ આવી છે\n\nError occurred',
-        'success': 'સફળતા!\n\nSuccess!'
+        native: 'નમસ્તે',
+        roman: 'Namaste'
       },
       'mr': {
-        'hello': 'नमस्कार / हाय\n\nNamaskar / Hi',
-        'welcome': 'स्वागत आहे!\n\nWelcome!',
-        'please select an option': 'कृपया एक पर्याय निवडा\n\nPlease select an option',
-        'processing your message': 'तुमचा संदेश प्रक्रिया करत आहे...\n\nProcessing your message...',
-        'inventory update': 'इन्व्हेंटरी अद्यतन\n\nInventory update',
-        'sales': 'विक्री\n\nSales',
-        'purchase': 'खरेदी\n\nPurchase',
-        'remaining': 'उर्वरित\n\nRemaining',
-        'no sales recorded': 'विक्री नोंदवलेली नाही\n\nNo sales recorded',
-        'low stock alerts': 'कमी स्टॉक सतर्कता\n\nLow stock alerts',
-        'expiring soon': 'लवकरच कालबाह्य होत आहे\n\nExpiring soon',
-        'thank you': 'धन्यवाद!\n\nThank you!',
-        'error': 'एक त्रुटी आली आहे\n\nError occurred',
-        'success': 'यशस्वी झाले!\n\nSuccess!'
+        native: 'नमस्कार',
+        roman: 'Namaskar'
+      },
+      'en': {
+        native: 'Hello',
+        roman: 'Hello'
       }
     };
-    
-    // Check if we have a simplified translation for this message
+    // Check if this is a common greeting
     const lowerMessage = message.toLowerCase();
-    const translations = simplifiedTranslations[languageCode] || simplifiedTranslations['en'];
     
-    for (const [key, value] of Object.entries(translations)) {
-      if (lowerMessage.includes(key)) {
-        // Cache the result
-        languageCache.set(cacheKey, {
-          translation: value,
-          timestamp: Date.now()
-        });
-        return value;
-      }
-    }
-    
-    // For other messages, try the API with a simplified prompt
+const isShortGreeting = lowerMessage.split(/\s+/).length <= 3;
+if (isShortGreeting && (
+    lowerMessage.includes('hello') ||
+    lowerMessage.includes('hi') ||
+    lowerMessage.includes('नमस्ते')
+)) {
+  const greeting = commonGreetings[languageCode] || commonGreetings['en'];
+  const fallback = `${greeting.native}\n\n${greeting.roman}`;
+  languageCache.set(cacheKey, { translation: fallback, timestamp: Date.now() });
+  return fallback;
+}
+
+    // 2. For other messages, try the API
     const response = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -1465,17 +1381,14 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
         messages: [
           {
             role: "system",
-            content: `You are a multilingual assistant. Translate the given message to the target language using simple, everyday language that anyone can understand. Avoid formal or literary expressions.
-
+            content: `You are a multilingual assistant. Translate the given message to the target language and provide it in two formats:
 Format your response exactly as:
-Line 1: Translation in native script (simple, colloquial language)
+Line 1: Translation in native script (e.g., Devanagari for Hindi)
 Empty line
 Line 3: Translation in Roman script (transliteration using English alphabet)
-
 For example, for Hindi:
-हाय, आप कैसे हो?
-Haay, aap kaise ho?
-
+नमस्ते, आप कैसे हैं?
+Namaste, aap kaise hain?
 Do NOT include any labels like [Roman Script], [Native Script], <translation>, or any other markers. Just provide the translations one after the other with a blank line in between.`
           },
           {
@@ -1491,12 +1404,11 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 5000
+        timeout: 15000 // Increased timeout for better reliability
       }
     );
-    
     let translated = response.data.choices[0].message.content.trim();
-    
+    console.log(`[${requestId}] Raw translation response:`, translated);
     // Post-process to remove any labels that might have been included
     translated = translated.replace(/<translation in roman script>/gi, '');
     translated = translated.replace(/<translation in native script>/gi, '');
@@ -1504,24 +1416,22 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
     translated = translated.replace(/\[native script\]/gi, '');
     translated = translated.replace(/translation in roman script:/gi, '');
     translated = translated.replace(/translation in native script:/gi, '');
-    
     // Remove quotes that might have been added
     translated = translated.replace(/^"(.*)"$/, '$1');
     translated = translated.replace(/"/g, '');
-    
     // Remove extra blank lines
     translated = translated.replace(/\n\s*\n\s*\n/g, '\n\n');
     translated = translated.replace(/^\s+|\s+$/g, '');
-    
     // Cache the result
     languageCache.set(cacheKey, {
       translation: translated,
       timestamp: Date.now()
     });
-    
     return translated;
   } catch (error) {
     console.warn(`[${requestId}] Translation failed, using original:`, error.message);
+    // 3. For other messages, return the original with a note in both scripts when possible
+    console.log(`[${requestId}] Using original message for ${languageCode}`);
     return message;
   }
 }
@@ -1876,7 +1786,7 @@ async function generateSummaryInsights(data, languageCode, requestId) {
       const expiringLimit = 5;
       
       // Prepare a more concise prompt
-      const prompt = `You are an inventory analysis assistant. Analyze the following shop data and provide insights in simple, everyday ${nativeLanguage} mixed with English words that's easy to understand for local shop owners - ensure response is formal and respectful.
+      const prompt = `You are an inventory analysis assistant. Analyze the following shop data and provide insights in Nativeglish (${nativeLanguage} mixed with English) - ensure response is formal and respectful.
       Sales Data (last 30 days):
       - Total items sold: ${data.salesData.totalItems || 0}
       - Total sales value: ₹${(data.salesData.totalValue || 0).toFixed(2)}
@@ -1896,13 +1806,13 @@ async function generateSummaryInsights(data, languageCode, requestId) {
       Expiring Products (next 7 days):
       ${data.expiringProducts.length > 0 ? 
           data.expiringProducts.slice(0, expiringLimit).map(p => `- ${p.name}: Expires on ${formatDateForDisplay(p.expiryDate)}`).join('\n') : 'None'}
-      Provide a comprehensive (but simple to understand by shop owners) analysis with:
-      1. Sales trends and patterns (use simple words like "अच्छी बिक्री" for good sales)
-      2. Inventory performance (use simple words like "कम स्टॉक" for low stock)
-      3. Recommendations for restocking (use simple words like "और खरीदें" for buy more)
-      4. Suggestions for reducing waste (use simple words like "wastage कम करें" for reduce waste)
-      5. Actionable insights for business growth (use simple words like "बिजनेस बढ़ाएं" for grow business)
-      Format your response in Nativeglish (${nativeLanguage} + English mix) that is easy to understand for local shop owners. Keep the response under 1000 words and focus on actionable insights.`;
+      Provide a comprehensive analysis with:
+      1. Sales trends and patterns
+      2. Inventory performance
+      3. Recommendations for restocking
+      4. Suggestions for reducing waste
+      5. Actionable insights for business growth
+      Format your response in Nativeglish (${nativeLanguage} + English mix) that is easy to understand for local shop owners. Keep the response under 500 words and focus on actionable insights.`;
       
       console.log(`[${requestId}] Prompt length: ${prompt.length} characters`);
       console.log(`[${requestId}] Making API request to Deepseek...`);
