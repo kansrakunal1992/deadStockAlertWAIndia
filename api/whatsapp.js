@@ -3876,7 +3876,6 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
       res.send('<Response></Response>');
       return;
     }
-  }
   
   // Process correction based on type
   if (correctionState.correctionType === 'selection') {
