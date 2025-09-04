@@ -227,10 +227,6 @@
             "logRetentionDays": 30
           }
         },
-        "engines": {
-          "node": ">=18.x",
-          "npm": ">=8.x"
-        },
         "os": [
           "darwin",
           "linux",
