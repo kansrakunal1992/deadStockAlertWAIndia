@@ -3904,13 +3904,26 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
     const results = await updateMultipleInventory(shopId, [updated], correctionState.detectedLanguage);
 
     if (results[0].success) {
-      await deleteCorrectionState(correctionState.id);
-      await clearUserState(From);
-
-      let message = `✅ Price updated: ${updated.product} at ₹${priceValue}/${updated.unit}\nInventory updated successfully.`;
-      const translated = await generateMultiLanguageResponse(message, correctionState.detectedLanguage, requestId);
-      await sendMessageViaAPI(From, translated);
-    } else {
+    await deleteCorrectionState(correctionState.id);
+    await clearUserState(From);
+  
+    const result = results[0];
+    const unitText = result.unit ? ` ${result.unit}` : '';
+    const value = priceValue * result.quantity;
+  
+    let message = `✅ Price updated: ${result.product} at ₹${priceValue}/${result.unit}\n\n`;
+  
+    message += `✅ Updates processed:\n\n• ${result.product}: ${result.quantity}${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})`;
+  
+    if (result.action === 'sold') {
+      message += `\n💰 Total sales value: ₹${value.toFixed(2)}`;
+    } else if (result.action === 'purchased') {
+      message += `\n📦 Total purchase value: ₹${value.toFixed(2)}`;
+    }
+  
+    const translated = await generateMultiLanguageResponse(message, correctionState.detectedLanguage, requestId);
+    await sendMessageViaAPI(From, translated);
+  } else {
       let message = `❌ Update failed: ${results[0].error ?? 'Unknown error'}\nPlease try again.`;
       const translated = await generateMultiLanguageResponse(message, correctionState.detectedLanguage, requestId);
       await sendMessageViaAPI(From, translated);
