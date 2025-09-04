@@ -238,7 +238,7 @@ async function getTodaySalesSummary(shopId) {
     const productSales = {};
     const categorySales = {};
     
-    result.records.forEach(record => {
+    for (const record of result.records) {
       const product = record.fields.Product;
       const quantity = Math.abs(record.fields.Quantity || 0);
       const salePrice = record.fields.SalePrice || 0;
@@ -252,7 +252,12 @@ async function getTodaySalesSummary(shopId) {
       let category = 'General';
       let gstRate = 0.18;
       try {
-        const productInfo = await getProductPrice(product);
+        let productInfo = {};
+          try {
+            productInfo = await getProductPrice(product);
+          } catch (error) {
+            console.warn(`Could not get product info for ${product}:`, error.message);
+          }
         if (productInfo.success) {
           category = productInfo.category;
           // Set GST rate based on category
@@ -347,7 +352,7 @@ async function getInventorySummary(shopId) {
     const inventory = {};
     const categoryInventory = {};
     
-    result.records.forEach(record => {
+    for (const record of result.records) {
       const product = record.fields.Product;
       const quantity = record.fields.Quantity || 0;
       const unit = record.fields.Units || '';
@@ -359,7 +364,12 @@ async function getInventorySummary(shopId) {
       let category = 'General';
       
       try {
-        const priceResult = await getProductPrice(product);
+          let priceResult = {};
+          try {
+            priceResult = await getProductPrice(product);
+          } catch (error) {
+            console.warn(`Could not get price for ${product}:`, error.message);
+          }
         if (priceResult.success) {
           productPrice = priceResult.price;
           category = priceResult.category;
