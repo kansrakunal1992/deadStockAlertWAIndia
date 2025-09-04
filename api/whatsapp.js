@@ -3832,7 +3832,8 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
   }
 
   if (correctionState.correctionType === 'price') {
-    const priceValue = parseFloat(Body.trim());
+    const priceMatch = Body.trim().match(/(\d+(\.\d+)?)/);
+    const priceValue = priceMatch ? parseFloat(priceMatch[1]) : NaN;
     if (!isNaN(priceValue) && priceValue > 0) {
       const updated = {
         ...correctionState.pendingUpdate,
