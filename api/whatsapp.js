@@ -1270,9 +1270,21 @@ if (validBatches.length > 0) {
           console.log(`[Update ${shopId} - ${product}] Batch record created with ID: ${batchResult.id}`);
           // Add batch date to result for display
           result.batchDate = formattedPurchaseDate;
-        } else {
+        } 
+        else {
           console.error(`[update] Failed to create batch record: ${batchResult.error}`);
         }
+            // ✅ Update product price in DB after purchase
+            try {
+              await upsertProduct({
+                name: product,
+                price: purchasePrice,
+                unit: update.unit
+              });
+              console.log(`[Update ${shopId} - ${product}] Product price updated in DB: ₹${purchasePrice}/${update.unit}`);
+            } catch (err) {
+              console.warn(`[Update ${shopId} - ${product}] Failed to update product price in DB:`, err.message);
+            }
       }
                  // Create sales record for sales only
             if (isSale && result.success) {
