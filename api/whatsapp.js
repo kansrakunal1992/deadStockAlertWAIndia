@@ -2493,7 +2493,9 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     // Send the message
     response.message(translatedMessage);
     return res.send(response.toString());
-  } catch (error) {
+  } 
+  }
+catch (error) {
     console.error(`[${requestId}] Error processing confirmed transcription:`, error.message);
     // Get user's preferred language for error message too
     let userLanguage = detectedLanguage;
