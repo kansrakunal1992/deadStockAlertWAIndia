@@ -88,30 +88,22 @@ scale_down_cooldown = "5m"
 [deploy.network]
 # Port mapping
 port = 3000
-
 # Health check port
 health_check_port = 3000
-
 # Security headers
 security_headers = true
-
 # CORS configuration
-cors = {
-  allowed_origins = ["https://yourdomain.com"],
-  allowed_methods = ["GET", "POST", "PUT", "DELETE"],
-  allowed_headers = ["Content-Type", "Authorization"]
-}
+cors_allowed_origins = ["https://yourdomain.com"]
+cors_allowed_methods = ["GET", "POST", "PUT", "DELETE"]
+cors_allowed_headers = ["Content-Type", "Authorization"]
 
 # Security configuration
 [deploy.security]
 # Run as non-root user
 user = "node"
-
 # Read-only root filesystem
 read_only_root_filesystem = true
-
 # Security context
-[deploy.security.context]
 run_as_non_root = true
 allow_privilege_escalation = false
 read_only_root_filesystem = true
@@ -122,7 +114,6 @@ run_as_group = 1000
 [volumes]
 # Temporary directory for audio processing
 tmp = "/tmp"
-
 # FFmpeg cache directory
 ffmpeg_cache = "/opt/ffmpeg/cache"
 
@@ -131,30 +122,28 @@ ffmpeg_cache = "/opt/ffmpeg/cache"
 maintainer = "your-email@example.com"
 version = "1.0.0"
 description = "WhatsApp Inventory Management System"
-org.opencontainers.image.title = "StockGuard"
-org.opencontainers.image.description = "WhatsApp-based inventory management system"
-org.opencontainers.image.version = "1.0.0"
-org.opencontainers.image.authors = "Your Name"
-org.opencontainers.image.vendor = "Your Company"
-org.opencontainers.image.documentation = "https://github.com/yourusername/stockguard#readme"
-org.opencontainers.image.source = "https://github.com/yourusername/stockguard"
-org.opencontainers.image.licenses = "MIT"
+org_opencontainers_image_title = "StockGuard"
+org_opencontainers_image_description = "WhatsApp-based inventory management system"
+org_opencontainers_image_version = "1.0.0"
+org_opencontainers_image_authors = "Your Name"
+org_opencontainers_image_vendor = "Your Company"
+org_opencontainers_image_documentation = "https://github.com/yourusername/stockguard#readme"
+org_opencontainers_image_source = "https://github.com/yourusername/stockguard"
+org_opencontainers_image_licenses = "MIT"
 
 # Annotations for additional metadata
 [annotations]
-com.example.commit.sha = "${COMMIT_SHA}"
-com.example.commit.ref = "${COMMIT_REF}"
-com.example.build.date = "${BUILD_DATE}"
-com.example.build.url = "${BUILD_URL}"
+com_example_commit_sha = "${COMMIT_SHA}"
+com_example_commit_ref = "${COMMIT_REF}"
+com_example_build_date = "${BUILD_DATE}"
+com_example_build_url = "${BUILD_URL}"
 
 # Cache configuration
 [cache]
 # NPM cache
 npm = "/root/.npm"
-
 # FFmpeg cache
 ffmpeg = "/opt/ffmpeg/cache"
-
 # Build cache
 build = "/app/.cache"
 
@@ -162,45 +151,27 @@ build = "/app/.cache"
 [experimental]
 # Enable experimental features
 enabled = true
-
 # Experimental build settings
-[experimental.build]
-# Use build cache
 use_build_cache = true
-
-# Use multi-stage builds
 use_multi_stage_builds = true
-
-# Optimize image size
 optimize_image_size = true
-
-# Enable AI features
 enable_ai_features = true
-
-# Enable advanced analytics
 enable_analytics = true
 
 # Development configuration (for dev environment)
 [dev]
 # Development environment variables
-[dev.env]
 NODE_ENV = "development"
 LOG_LEVEL = "debug"
-
 # Development start command
-[dev.start]
 command = "npm run dev"
-
 # Development health check
-[dev.health_check]
-path = "/health"
-interval = "10s"
-timeout = "5s"
-retries = 2
-start_period = "10s"
-
+health_check_path = "/health"
+health_check_interval = "10s"
+health_check_timeout = "5s"
+health_check_retries = 2
+health_check_start_period = "10s"
 # Development resource limits
-[dev.limits]
 cpu = "0.5"
 memory = "512Mi"
 pids = 50
@@ -208,39 +179,28 @@ pids = 50
 # Production configuration (for prod environment)
 [prod]
 # Production environment variables
-[prod.env]
 NODE_ENV = "production"
 LOG_LEVEL = "info"
-
 # Production start command
-[prod.start]
 command = "npm run start:prod"
-
 # Production health check
-[prod.health_check]
-path = "/health"
-interval = "30s"
-timeout = "10s"
-retries = 3
-start_period = "40s"
-
+health_check_path = "/health"
+health_check_interval = "30s"
+health_check_timeout = "10s"
+health_check_retries = 3
+health_check_start_period = "40s"
 # Production resource limits
-[prod.limits]
 cpu = "1"
 memory = "1Gi"
 pids = 100
-
 # Production scaling
-[prod.autoscaling]
 min_instances = 2
 max_instances = 5
 cpu_threshold = 70
 memory_threshold = 80
 scale_up_cooldown = "3m"
 scale_down_cooldown = "5m"
-
 # Production security
-[prod.security]
 run_as_non_root = true
 read_only_root_filesystem = true
 allow_privilege_escalation = false
@@ -248,14 +208,9 @@ allow_privilege_escalation = false
 # Caching configuration
 [caching]
 # Static file caching
-static_files = {
-  max_age = "1h"
-}
-
+static_files_max_age = "1h"
 # API response caching
-api_responses = {
-  max_age = "5m"
-}
+api_responses_max_age = "5m"
 
 # Database connection pooling
 [database]
@@ -266,19 +221,11 @@ max_lifetime = "1h"
 # Background job configuration
 [jobs]
 # Daily summary job
-daily_summary = {
-  schedule = "0 23 * * *"
-  timezone = "Asia/Kolkata"
-}
-
+daily_summary_schedule = "0 23 * * *"
+daily_summary_timezone = "Asia/Kolkata"
 # Price update reminder job
-price_reminder = {
-  schedule = "0 8 * * *"
-  timezone = "Asia/Kolkata"
-}
-
+price_reminder_schedule = "0 8 * * *"
+price_reminder_timezone = "Asia/Kolkata"
 # PDF cleanup job
-pdf_cleanup = {
-  schedule = "0 2 * * *"
-  timezone = "Asia/Kolkata"
-}
+pdf_cleanup_schedule = "0 2 * * *"
+pdf_cleanup_timezone = "Asia/Kolkata"
