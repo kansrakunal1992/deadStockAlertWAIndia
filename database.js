@@ -17,12 +17,14 @@ const TABLE_NAME = process.env.AIRTABLE_TABLE_NAME || 'Inventory';
 const BATCH_TABLE_NAME = process.env.AIRTABLE_BATCH_TABLE_NAME || 'InventoryBatches';
 const USER_PREFERENCES_TABLE_NAME = process.env.USER_PREFERENCES_TABLE_NAME || 'UserPreferences';
 const SALES_TABLE_NAME = process.env.AIRTABLE_SALES_TABLE_NAME || 'Sales';
+const PRODUCTS_TABLE_NAME = process.env.AIRTABLE_PRODUCTS_TABLE_NAME || 'Products';
 
 // URL construction
 const airtableBaseURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME;
 const airtableBatchURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + BATCH_TABLE_NAME;
 const airtableUserPreferencesURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + USER_PREFERENCES_TABLE_NAME;
 const airtableSalesURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + SALES_TABLE_NAME;
+const airtableProductsURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + PRODUCTS_TABLE_NAME;
 
 // Error logging
 function logError(context, error) {
@@ -210,6 +212,42 @@ async function airtableSalesRequest(config, context = 'Airtable Sales Request', 
   throw lastError;
 }
 
+// Airtable products request helper with timeout and retry logic
+async function airtableProductsRequest(config, context = 'Airtable Products Request', maxRetries = 2) {
+  const headers = {
+    'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
+    'Content-Type': 'application/json'
+  };
+  
+  let lastError;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await axios({
+        ...config,
+        url: config.url || airtableProductsURL,
+        headers,
+        timeout: 10000 // 10 second timeout
+      });
+      return response.data;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[${context}] Attempt ${attempt} failed:`, error.message);
+      
+      // If this is the last attempt, throw the error
+      if (attempt === maxRetries) {
+        break;
+      }
+      
+      // Wait before retrying (exponential backoff)
+      const delay = Math.pow(2, attempt) * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  logError(context, lastError);
+  throw lastError;
+}
+
 // Update inventory using delete and recreate approach with proper unit handling
 async function updateInventory(shopId, product, quantityChange, unit = '') {
   const context = `Update ${shopId} - ${product}`;
@@ -330,6 +368,9 @@ async function createBatchRecord(batchData) {
       console.log(`[${context}] Updated existing batch with ID: ${existingBatch.id}`);
       return { success: true, id: existingBatch.id, compositeKey };
     }
+
+    const purchasePrice = batchData.purchasePrice || 0;
+    const purchaseValue = purchasePrice * batchData.quantity;
     
     // Create new record
     const createData = {
@@ -341,7 +382,9 @@ async function createBatchRecord(batchData) {
         ExpiryDate: batchData.expiryDate,
         OriginalRecordID: batchData.batchId || '',
         Units: normalizedUnit,
-        CompositeKey: compositeKey
+        CompositeKey: compositeKey,
+        PurchasePrice: purchasePrice,
+        PurchaseValue: purchaseValue
       }
     };
     
@@ -535,6 +578,10 @@ async function createSalesRecord(salesData) {
     // Normalize unit before storing
     const normalizedUnit = salesData.unit ? normalizeUnit(salesData.unit) : 'pieces';
     
+    // Calculate sale value
+    const salePrice = salesData.salePrice || 0;
+    const saleValue = salePrice * Math.abs(salesData.quantity);
+    
     const createData = {
       fields: {
         ShopID: salesData.shopId,
@@ -542,7 +589,8 @@ async function createSalesRecord(salesData) {
         Quantity: salesData.quantity, // This will be negative
         SaleDate: salesData.saleDate,
         BatchCompositeKey: salesData.batchCompositeKey || '', // Uses composite key
-        SalePrice: salesData.salePrice || 0,
+        SalePrice: salePrice,
+        SaleValue: saleValue,
         Units: normalizedUnit
       }
     };
@@ -1845,6 +1893,164 @@ async function getShopDetails(shopId) {
   }
 }
 
+// Create or update product with price
+async function upsertProduct(productData) {
+  const context = `Upsert Product ${productData.name}`;
+  try {
+    const { name, price, unit, category, hsnCode } = productData;
+    
+    // Check if product already exists
+    const filterFormula = `{Name} = '${name.replace(/'/g, "''")}'`;
+    const findResult = await airtableProductsRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula }
+    }, `${context} - Find`);
+    
+    const productRecord = {
+      fields: {
+        Name: name,
+        Price: price || 0,
+        Unit: unit || 'pieces',
+        Category: category || 'General',
+        HSNCode: hsnCode || '',
+        LastUpdated: new Date().toISOString()
+      }
+    };
+    
+    if (findResult.records.length > 0) {
+      // Update existing product
+      const recordId = findResult.records[0].id;
+      await airtableProductsRequest({
+        method: 'patch',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PRODUCTS_TABLE_NAME}/${recordId}`,
+        data: productRecord
+      }, `${context} - Update`);
+      
+      return { success: true, id: recordId, action: 'updated' };
+    } else {
+      // Create new product
+      const result = await airtableProductsRequest({
+        method: 'post',
+        data: productRecord
+      }, `${context} - Create`);
+      
+      return { success: true, id: result.id, action: 'created' };
+    }
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get product price
+async function getProductPrice(productName) {
+  const context = `Get Product Price ${productName}`;
+  try {
+    const filterFormula = `{Name} = '${productName.replace(/'/g, "''")}'`;
+    const result = await airtableProductsRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula }
+    }, context);
+    
+    if (result.records.length > 0) {
+      const record = result.records[0];
+      return {
+        success: true,
+        price: record.fields.Price || 0,
+        unit: record.fields.Unit || 'pieces',
+        category: record.fields.Category || 'General',
+        hsnCode: record.fields.HSNCode || ''
+      };
+    }
+    
+    return { success: false, error: 'Product not found' };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get all products
+async function getAllProducts() {
+  const context = 'Get All Products';
+  try {
+    const result = await airtableProductsRequest({
+      method: 'get',
+      params: {
+        sort: [{ field: 'Name', direction: 'asc' }]
+      }
+    }, context);
+    
+    return result.records.map(record => ({
+      id: record.id,
+      name: record.fields.Name,
+      price: record.fields.Price || 0,
+      unit: record.fields.Unit || 'pieces',
+      category: record.fields.Category || 'General',
+      hsnCode: record.fields.HSNCode || '',
+      lastUpdated: record.fields.LastUpdated
+    }));
+  } catch (error) {
+    logError(context, error);
+    return [];
+  }
+}
+
+// Update product price
+async function updateProductPrice(productId, newPrice) {
+  const context = `Update Product Price ${productId}`;
+  try {
+    const updateData = {
+      fields: {
+        Price: newPrice,
+        LastUpdated: new Date().toISOString()
+      }
+    };
+    
+    await airtableProductsRequest({
+      method: 'patch',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PRODUCTS_TABLE_NAME}/${productId}`,
+      data: updateData
+    }, context);
+    
+    return { success: true };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get products needing price update (no price updated in last 7 days)
+async function getProductsNeedingPriceUpdate() {
+  const context = 'Get Products Needing Price Update';
+  try {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const dateStr = sevenDaysAgo.toISOString();
+    
+    const filterFormula = `OR({LastUpdated} < '${dateStr}', {LastUpdated} = BLANK(), {Price} = 0, {Price} = BLANK())`;
+    
+    const result = await airtableProductsRequest({
+      method: 'get',
+      params: {
+        filterByFormula: filterFormula,
+        sort: [{ field: 'LastUpdated', direction: 'asc' }]
+      }
+    }, context);
+    
+    return result.records.map(record => ({
+      id: record.id,
+      name: record.fields.Name,
+      currentPrice: record.fields.Price || 0,
+      unit: record.fields.Unit || 'pieces',
+      lastUpdated: record.fields.LastUpdated
+    }));
+  } catch (error) {
+    logError(context, error);
+    return [];
+  }
+}
+
 module.exports = {
   updateInventory,
   testConnection,
@@ -1882,5 +2088,10 @@ module.exports = {
   getExpiringProducts,
   getSalesDataForPeriod,
   getPurchaseDataForPeriod,
-  getShopDetails
+  getShopDetails,
+  upsertProduct,
+  getProductPrice,
+  getAllProducts,
+  updateProductPrice,
+  getProductsNeedingPriceUpdate
 };
