@@ -1323,7 +1323,7 @@ if (validBatches.length > 0) {
                   product: product,
                   quantity: Math.abs(update.quantity), // Convert to positive for display
                   unit: update.unit,
-                  rate: 10, // Default rate - you might want to store this in your inventory
+                  rate: finalPrice,
                   saleDate: new Date().toISOString()
                 };
                 
