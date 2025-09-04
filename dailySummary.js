@@ -397,7 +397,7 @@ async function getInventorySummary(shopId) {
       categoryInventory[category].quantity += quantity;
       categoryInventory[category].value += estimatedValue;
       categoryInventory[category].products.push(product);
-    });
+    };
     
     // Get total purchase value from batches
     try {
