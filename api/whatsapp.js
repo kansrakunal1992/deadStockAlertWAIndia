@@ -58,7 +58,12 @@ const {
   getExpiringProducts,
   getSalesDataForPeriod,
   getPurchaseDataForPeriod,
-  getAllShopIDs
+  getAllShopIDs,
+  upsertProduct,
+  getProductPrice,
+  getAllProducts,
+  updateProductPrice,
+  getProductsNeedingPriceUpdate
 } = require('../database');
 
 // Add this at the top of the file after the imports
@@ -800,6 +805,8 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
           2. quantity: The numerical quantity (as a number)
           3. unit: The unit of measurement (e.g., "packets", "kg", "liters", "pieces")
           4. action: The action being performed ("purchased", "sold", "remaining")
+          5. price: The price per unit (if mentioned, otherwise null)
+          6. totalPrice: The total price (if mentioned, otherwise null)
           For the action field:
           - Use "purchased" for words like "bought", "purchased", "buy", "खरीदा", "खरीदे", "लिया", "खरीदी", "khareeda"
           - Use "sold" for words like "sold", "बेचा", "बेचे", "becha", "बिक्री", "becha"
@@ -849,31 +856,44 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                 const updatesArray = Array.isArray(parsed) ? parsed : [parsed];
                 
                 return updatesArray.map(update => {
-                  // Convert quantity to number and ensure proper sign
-                  let quantity = typeof update.quantity === 'string' ? 
-                                parseInt(update.quantity.replace(/[^\d.-]/g, '')) || 0 : 
-                                Number(update.quantity) || 0;
-                  
-                  // Ensure action is properly set based on quantity
-                  let action = update.action || '';
-                  if (!action) {
-                    action = quantity >= 0 ? 'purchased' : 'sold';
-                  }
-                  
-                  // Ensure unit has a proper default
-                  const unit = update.unit || 'pieces';
-                  
-                  // Use AI-parsed product directly - NO re-processing!
-                  const product = String(update.product || '').trim();
-                  
-                  return {
-                    product: product,
-                    quantity: Math.abs(quantity), // Always store positive quantity
-                    unit: unit,
-                    action: action,
-                    isKnown: products.some(p => isProductMatch(product, p))
-                  };
-                });
+                // Convert quantity to number and ensure proper sign
+                let quantity = typeof update.quantity === 'string' ? 
+                              parseInt(update.quantity.replace(/[^\d.-]/g, '')) || 0 : 
+                              Number(update.quantity) || 0;
+                
+                // Ensure action is properly set based on quantity
+                let action = update.action || '';
+                if (!action) {
+                  action = quantity >= 0 ? 'purchased' : 'sold';
+                }
+                
+                // Extract price information
+                let price = update.price || 0;
+                let totalPrice = update.totalPrice || 0;
+                
+                // Calculate missing values
+                if (price > 0 && totalPrice === 0) {
+                  totalPrice = price * Math.abs(quantity);
+                } else if (totalPrice > 0 && price === 0 && quantity > 0) {
+                  price = totalPrice / quantity;
+                }
+                
+                // Ensure unit has a proper default
+                const unit = update.unit || 'pieces';
+                
+                // Use AI-parsed product directly - NO re-processing!
+                const product = String(update.product || '').trim();
+                
+                return {
+                  product: product,
+                  quantity: Math.abs(quantity), // Always store positive quantity
+                  unit: unit,
+                  action: action,
+                  price: price,
+                  totalPrice: totalPrice,
+                  isKnown: products.some(p => isProductMatch(product, p))
+                };
+              });
               } catch (parseError) {
                 console.error(`[${requestId}] Failed to parse AI response as JSON:`, parseError.message);
                 console.error(`[${requestId}] Raw AI response:`, content);
@@ -1113,6 +1133,35 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       console.log(`[Update ${shopId}] Using translated product: "${translatedProduct}"`);
       // Use translated product for all operations
       const product = translatedProduct;
+      
+      // Get product price from database
+      let productPrice = 0;
+      try {
+        const priceResult = await getProductPrice(product);
+        if (priceResult.success) {
+          productPrice = priceResult.price;
+        }
+      } catch (error) {
+        console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
+      }
+      
+      // For purchases, ask for price if not available
+      if (update.action === 'purchased' && productPrice === 0 && !update.price) {
+        // This will trigger a follow-up message asking for price
+        results.push({
+          product: product,
+          quantity: update.quantity,
+          unit: update.unit,
+          action: update.action,
+          success: false,
+          needsPrice: true
+        });
+        continue;
+      }
+      
+      // Use provided price or fall back to database price
+      const finalPrice = update.price || productPrice;
+      const finalTotalPrice = update.totalPrice || (finalPrice * update.quantity);
       // Rest of the function remains the same...
       console.log(`[Update ${shopId} - ${product}] Processing update: ${update.quantity} ${update.unit}`);
       // Check if this is a sale (negative quantity)
@@ -1167,20 +1216,25 @@ if (validBatches.length > 0) {
 }
       // Update the inventory using translated product name
       const result = await updateInventory(shopId, product, update.action === 'sold' ? -update.quantity : update.quantity, update.unit);
-      // Create batch record for purchases only
-if (update.action === 'purchased' && result.success) {
-  console.log(`[Update ${shopId} - ${product}] Creating batch record for purchase`);
-  // Format current date with time for Airtable
-  const formattedPurchaseDate = formatDateForAirtable(new Date());
-  console.log(`[Update ${shopId} - ${product}] Using timestamp: ${formattedPurchaseDate}`);
-  const batchResult = await createBatchRecord({
-    shopId,
-    product: product, // Use translated product
-    quantity: update.quantity,
-    unit: update.unit, // Pass the unit
-    purchaseDate: formattedPurchaseDate,
-    expiryDate: null // Will be updated later
-  });
+          // Create batch record for purchases only
+          if (update.action === 'purchased' && result.success) {
+            console.log(`[Update ${shopId} - ${product}] Creating batch record for purchase`);
+            // Format current date with time for Airtable
+            const formattedPurchaseDate = formatDateForAirtable(new Date());
+            console.log(`[Update ${shopId} - ${product}] Using timestamp: ${formattedPurchaseDate}`);
+            
+            // Use provided price or database price
+            const purchasePrice = finalPrice || 0;
+            
+            const batchResult = await createBatchRecord({
+              shopId,
+              product: product, // Use translated product
+              quantity: update.quantity,
+              unit: update.unit, // Pass the unit
+              purchaseDate: formattedPurchaseDate,
+              expiryDate: null, // Will be updated later
+              purchasePrice: purchasePrice // Pass the purchase price
+            });
         if (batchResult.success) {
           console.log(`[Update ${shopId} - ${product}] Batch record created with ID: ${batchResult.id}`);
           // Add batch date to result for display
@@ -1189,20 +1243,22 @@ if (update.action === 'purchased' && result.success) {
           console.error(`[update] Failed to create batch record: ${batchResult.error}`);
         }
       }
-           // Create sales record for sales only
-      if (isSale && result.success) {
-        console.log(`[Update ${shopId} - ${product}] Creating sales record`);
-        try {
-          // FIX: Pass the unit parameter to avoid undefined error
-          const salesResult = await createSalesRecord({
-            shopId,
-            product: product,
-            quantity: -Math.abs(update.quantity),
-            unit: update.unit,
-            saleDate: new Date().toISOString(),
-            batchCompositeKey: selectedBatchCompositeKey, // Uses composite key
-            salePrice: 0
-          });
+                 // Create sales record for sales only
+            if (isSale && result.success) {
+              console.log(`[Update ${shopId} - ${product}] Creating sales record`);
+              try {
+                // Use provided price or database price
+                const salePrice = finalPrice || 0;
+                
+                const salesResult = await createSalesRecord({
+                  shopId,
+                  product: product,
+                  quantity: -Math.abs(update.quantity),
+                  unit: update.unit,
+                  saleDate: new Date().toISOString(),
+                  batchCompositeKey: selectedBatchCompositeKey, // Uses composite key
+                  salePrice: salePrice
+                });
           
           if (salesResult.success) {
             console.log(`[Update ${shopId} - ${product}] Sales record created with ID: ${salesResult.id}`);
@@ -2025,6 +2081,227 @@ async function createSummaryMenu(from, languageCode, requestId) {
   }
 }
 
+// Handle price update command
+async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
+  const shopId = From.replace('whatsapp:', '');
+  
+  // Parse price update command: "update price product_name new_price"
+  const priceUpdateRegex = /update\s+price\s+([a-zA-Z\s]+)\s+(\d+(?:\.\d{1,2})?)/i;
+  const match = Body.match(priceUpdateRegex);
+  
+  if (match) {
+    const productName = match[1].trim();
+    const newPrice = parseFloat(match[2]);
+    
+    try {
+      // Get product ID
+      const products = await getAllProducts();
+      const product = products.find(p => 
+        p.name.toLowerCase() === productName.toLowerCase()
+      );
+      
+      if (product) {
+        // Update price
+        const updateResult = await updateProductPrice(product.id, newPrice);
+        
+        if (updateResult.success) {
+          const successMessage = `✅ Price updated for ${productName}: ₹${newPrice}`;
+          const formattedMessage = await generateMultiLanguageResponse(successMessage, detectedLanguage, requestId);
+          await sendMessageViaAPI(From, formattedMessage);
+          return;
+        }
+      }
+      
+      // Product not found, create it
+      const createResult = await upsertProduct({
+        name: productName,
+        price: newPrice,
+        unit: 'pieces'
+      });
+      
+      if (createResult.success) {
+        const successMessage = `✅ New product added with price: ${productName} - ₹${newPrice}`;
+        const formattedMessage = await generateMultiLanguageResponse(successMessage, detectedLanguage, requestId);
+        await sendMessageViaAPI(From, formattedMessage);
+        return;
+      }
+    } catch (error) {
+      console.error(`[${requestId}] Error updating price:`, error.message);
+    }
+  }
+  
+  // Invalid format
+  const errorMessage = 'Invalid format. Use: "update price product_name price" (e.g., "update price milk 60")';
+  const formattedMessage = await generateMultiLanguageResponse(errorMessage, detectedLanguage, requestId);
+  await sendMessageViaAPI(From, formattedMessage);
+}
+
+// Send price list to user
+async function sendPriceList(From, detectedLanguage, requestId) {
+  try {
+    const products = await getAllProducts();
+    
+    if (products.length === 0) {
+      const noProductsMessage = 'No products found in price list.';
+      const formattedMessage = await generateMultiLanguageResponse(noProductsMessage, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, formattedMessage);
+      return;
+    }
+    
+    let message = '📋 Current Price List:\n\n';
+    products.forEach(product => {
+      message += `• ${product.name}: ₹${product.price}/${product.unit}\n`;
+    });
+    
+    const formattedMessage = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, formattedMessage);
+  } catch (error) {
+    console.error(`[${requestId}] Error sending price list:`, error.message);
+    const errorMessage = 'Error fetching price list. Please try again.';
+    const formattedMessage = await generateMultiLanguageResponse(errorMessage, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, formattedMessage);
+  }
+}
+
+// Schedule daily price update reminder at 8 AM
+function schedulePriceUpdateReminder() {
+  const now = new Date();
+  const targetTime = new Date();
+  
+  // Set to 8 AM IST (2:30 UTC)
+  targetTime.setUTCHours(2, 30, 0, 0);
+  
+  // If we've passed 2:30 UTC today, schedule for tomorrow
+  if (now > targetTime) {
+    targetTime.setUTCDate(targetTime.getUTCDate() + 1);
+  }
+  
+  const msUntilTarget = targetTime - now;
+  
+  console.log(`Scheduling price update reminder for ${targetTime.toISOString()} (in ${msUntilTarget}ms)`);
+  
+  setTimeout(() => {
+    sendPriceUpdateReminders()
+      .then(() => {
+        // Schedule for next day
+        schedulePriceUpdateReminder();
+      })
+      .catch(error => {
+        console.error('Price update reminder job failed:', error.message);
+        // Retry in 1 hour
+        setTimeout(schedulePriceUpdateReminder, 60 * 60 * 1000);
+      });
+  }, msUntilTarget);
+}
+
+// Send price update reminders to all shops
+async function sendPriceUpdateReminders() {
+  try {
+    console.log('Starting price update reminder job...');
+    
+    // Get all shop IDs
+    const shopIds = await getAllShopIDs();
+    console.log(`Found ${shopIds.length} shops to process`);
+    
+    if (shopIds.length === 0) {
+      console.log('No shops found to process');
+      return;
+    }
+    
+    // Get products needing price updates
+    const productsNeedingUpdate = await getProductsNeedingPriceUpdate();
+    console.log(`Found ${productsNeedingUpdate.length} products needing price updates`);
+    
+    if (productsNeedingUpdate.length === 0) {
+      console.log('No products need price updates');
+      return;
+    }
+    
+    // Process shops with concurrency limit
+    const concurrencyLimit = 5;
+    const results = [];
+    
+    for (let i = 0; i < shopIds.length; i += concurrencyLimit) {
+      const batch = shopIds.slice(i, i + concurrencyLimit);
+      console.log(`Processing batch of ${batch.length} shops (${i + 1}-${i + batch.length} of ${shopIds.length})`);
+      
+      const batchPromises = batch.map(async (shopId) => {
+        try {
+          // Get user's preferred language
+          let userLanguage = 'en';
+          try {
+            const userPref = await getUserPreference(shopId);
+            if (userPref.success) {
+              userLanguage = userPref.language;
+            }
+          } catch (error) {
+            console.warn(`Failed to get user preference for shop ${shopId}:`, error.message);
+          }
+          
+          // Create reminder message
+          let message = '📢 Daily Price Update Reminder\n\n';
+          message += 'Please check if prices have changed for any of these items:\n\n';
+          
+          // List first 5 products needing update
+          productsNeedingUpdate.slice(0, 5).forEach(product => {
+            message += `• ${product.name}: Currently ₹${product.currentPrice}/${product.unit}\n`;
+          });
+          
+          if (productsNeedingUpdate.length > 5) {
+            message += `\n... and ${productsNeedingUpdate.length - 5} more items`;
+          }
+          
+          message += '\n\nTo update prices, reply with:\n';
+          message += '"update price [product_name] [new_price]"\n\n';
+          message += 'Example: "update price milk 60"';
+          
+          const formattedMessage = await generateMultiLanguageResponse(message, userLanguage, 'price-reminder');
+          
+          // Send reminder
+          await sendMessageViaAPI(`whatsapp:${shopId}`, formattedMessage);
+          
+          return { shopId, success: true };
+          
+        } catch (error) {
+          console.error(`Error processing shop ${shopId}:`, error.message);
+          return { shopId, success: false, error: error.message };
+        }
+      });
+      
+      const batchResults = await Promise.allSettled(batchPromises);
+      
+      // Process results
+      for (const result of batchResults) {
+        if (result.status === 'fulfilled') {
+          results.push(result.value);
+        } else {
+          console.error('Unexpected error in batch processing:', result.reason);
+        }
+      }
+      
+      // Add a small delay between batches to avoid rate limiting
+      if (i + concurrencyLimit < shopIds.length) {
+        console.log('Pausing between batches to avoid rate limiting...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+    
+    // Calculate success statistics
+    const successCount = results.filter(r => r.success).length;
+    const failureCount = results.filter(r => !r.success).length;
+    
+    console.log(`Price update reminder job completed: ${successCount} sent, ${failureCount} failed`);
+    
+    return results;
+  } catch (error) {
+    console.error('Error in price update reminder job:', error.message);
+    throw error;
+  }
+}
+
+// Start the scheduler when the module loads
+schedulePriceUpdateReminder();
+
 // Function to process confirmed transcription
 async function processConfirmedTranscription(transcript, from, detectedLanguage, requestId, response, res) {
   try {
@@ -2067,30 +2344,64 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     } catch (error) {
       console.warn(`[${requestId}] Failed to get user preference:`, error.message);
     }
-    // Create base message in English first
-    let baseMessage = '✅ Updates processed:\n\n';
-    let successCount = 0;
-    let hasSales = false;
-    for (const result of results) {
-      if (result.success) {
-        successCount++;
-        const unitText = result.unit ? ` ${result.unit}` : '';
-        // Format based on action type
-        if (result.action === 'purchased') {
-          baseMessage += `• ${result.product}: ${result.quantity} ${unitText} purchased (Stock: ${result.newQuantity}${unitText})\n`;
-          if (result.batchDate) {
-            baseMessage += ` Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
+        // Create base message in English first
+        let baseMessage = '✅ Updates processed:\n\n';
+        let successCount = 0;
+        let hasSales = false;
+        let totalSalesValue = 0;
+        let totalPurchaseValue = 0;
+        
+        for (const result of results) {
+          if (result.success) {
+            successCount++;
+            const unitText = result.unit ? ` ${result.unit}` : '';
+            
+            // Calculate value
+            let value = 0;
+            if (result.salePrice) {
+              value = Math.abs(result.quantity) * result.salePrice;
+            } else if (result.purchasePrice) {
+              value = Math.abs(result.quantity) * result.purchasePrice;
+            }
+            
+            // Format based on action type
+            if (result.action === 'purchased') {
+              baseMessage += `• ${result.product}: ${result.quantity} ${unitText} purchased (Stock: ${result.newQuantity}${unitText})`;
+              if (value > 0) {
+                baseMessage += ` (Value: ₹${value.toFixed(2)})`;
+                totalPurchaseValue += value;
+              }
+              baseMessage += `\n`;
+              
+              if (result.batchDate) {
+                baseMessage += ` Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
+              }
+            } else if (result.action === 'sold') {
+              baseMessage += `• ${result.product}: ${Math.abs(result.quantity)} ${unitText} sold (Stock: ${result.newQuantity}${unitText})`;
+              if (value > 0) {
+                baseMessage += ` (Value: ₹${value.toFixed(2)})`;
+                totalSalesValue += value;
+              }
+              baseMessage += `\n`;
+              hasSales = true;
+            } else if (result.action === 'remaining') {
+              baseMessage += `• ${result.product}: ${result.quantity} ${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
+            }
+          } else {
+            baseMessage += `• ${result.product}: Error - ${result.error}\n`;
           }
-        } else if (result.action === 'sold') {
-          baseMessage += `• ${result.product}: ${Math.abs(result.quantity)} ${unitText} sold (Stock: ${result.newQuantity}${unitText})\n`;
-          hasSales = true;
-        } else if (result.action === 'remaining') {
-          baseMessage += `• ${result.product}: ${result.quantity} ${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
         }
-      } else {
-        baseMessage += `• ${result.product}: Error - ${result.error}\n`;
-      }
-    }
+        
+        baseMessage += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+        
+        // Add summary values
+        if (totalSalesValue > 0) {
+          baseMessage += `\n💰 Total sales value: ₹${totalSalesValue.toFixed(2)}`;
+        }
+        
+        if (totalPurchaseValue > 0) {
+          baseMessage += `\n📦 Total purchase value: ₹${totalPurchaseValue.toFixed(2)}`;
+        }
     baseMessage += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
     if (hasSales) {
       baseMessage += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
@@ -3925,19 +4236,32 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     return;
   }
   
-  // Handle text messages
-  if (Body) {
-    // Try to parse as inventory update
-    const updates = await parseMultipleUpdates(Body);
-    if (updates.length > 0) {
-      console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
-      
-      // Set user state to inventory mode
-      const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
-      await setUserState(From, 'inventory', { updates, detectedLanguage });
-      
-      // Process the updates
-      const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+      // Handle text messages
+      if (Body) {
+        // Check for price management commands
+        const lowerBody = Body.toLowerCase();
+        
+        if (lowerBody.includes('update price')) {
+          await handlePriceUpdate(Body, From, detectedLanguage, requestId);
+          return;
+        }
+        
+        if (lowerBody.includes('price list') || lowerBody.includes('prices')) {
+          await sendPriceList(From, detectedLanguage, requestId);
+          return;
+        }
+        
+        // Try to parse as inventory update
+        const updates = await parseMultipleUpdates(Body);
+        if (updates.length > 0) {
+          console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
+          
+          // Set user state to inventory mode
+          const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
+          await setUserState(From, 'inventory', { updates, detectedLanguage });
+          
+          // Process the updates
+          const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
       
       let message = '✅ Updates processed:\n\n';
       let successCount = 0;
