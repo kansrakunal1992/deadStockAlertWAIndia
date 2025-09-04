@@ -4,6 +4,14 @@ const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
 const { runDailySummary } = require('./dailySummary');
+const { 
+  getAllProducts, 
+  getProductPrice, 
+  upsertProduct, 
+  updateProductPrice, 
+  getProductsNeedingPriceUpdate,
+  sendPriceUpdateReminders
+} = require('./database');
 const app = express();
 const tempDir = path.join(__dirname, 'temp');
 
@@ -40,11 +48,16 @@ app.get('/invoice/:fileName', (req, res) => {
     
     console.log(`[PDF Server] Serving file: ${filePath}`);
     
+    // Get file stats for logging
+    const stats = fs.statSync(filePath);
+    console.log(`[PDF Server] File size: ${stats.size} bytes, created: ${stats.birthtime}`);
+    
     // Send the file
     res.sendFile(filePath, {
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="${fileName}"`
+        'Content-Disposition': `inline; filename="${fileName}"`,
+        'Cache-Control': 'public, max-age=3600' // Cache for 1 hour
       }
     });
     
@@ -105,13 +118,14 @@ app.get('/health', (req, res) => {
     memory: process.memoryUsage(),
     checks: {
       database: 'unknown',
+      products: 'unknown',
       twilio: 'unknown',
       deepseek: 'unknown'
     }
   };
   
   // Check database connection
-  const { testConnection } = require('./database');
+  const { testConnection, getAllProducts } = require('./database');
   testConnection()
     .then(isConnected => {
       healthCheck.checks.database = isConnected ? 'ok' : 'error';
@@ -120,22 +134,33 @@ app.get('/health', (req, res) => {
       healthCheck.checks.database = 'error';
     })
     .finally(() => {
-      // Check Twilio connection
-      try {
-        const twilio = require('twilio')(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-        twilio.api.accounts(process.env.ACCOUNT_SID).fetch()
-          .then(() => {
-            healthCheck.checks.twilio = 'ok';
-            res.status(200).json(healthCheck);
-          })
-          .catch(() => {
+      // Check products table
+      getAllProducts()
+        .then(products => {
+          healthCheck.checks.products = 'ok';
+          healthCheck.productsCount = products.length;
+        })
+        .catch(() => {
+          healthCheck.checks.products = 'error';
+        })
+        .finally(() => {
+          // Check Twilio connection
+          try {
+            const twilio = require('twilio')(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+            twilio.api.accounts(process.env.ACCOUNT_SID).fetch()
+              .then(() => {
+                healthCheck.checks.twilio = 'ok';
+                res.status(200).json(healthCheck);
+              })
+              .catch(() => {
+                healthCheck.checks.twilio = 'error';
+                res.status(200).json(healthCheck);
+              });
+          } catch (error) {
             healthCheck.checks.twilio = 'error';
             res.status(200).json(healthCheck);
-          });
-      } catch (error) {
-        healthCheck.checks.twilio = 'error';
-        res.status(200).json(healthCheck);
-      }
+          }
+        });
     });
 });
 
@@ -203,6 +228,226 @@ app.post('/api/daily-summary', async (req, res) => {
     res.status(500).json({
       status: 'error',
       message: 'Failed to start daily summary',
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
+// Product management endpoints
+
+// Get all products
+app.get('/api/products', async (req, res) => {
+  const requestId = req.requestId;
+  
+  try {
+    console.log(`[${requestId}] Getting all products`);
+    
+    const products = await getAllProducts();
+    
+    res.status(200).json({
+      success: true,
+      count: products.length,
+      products: products,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error(`[${requestId}] Error getting products:`, error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get products',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
+// Get single product by name
+app.get('/api/products/:name', async (req, res) => {
+  const requestId = req.requestId;
+  const productName = decodeURIComponent(req.params.name);
+  
+  try {
+    console.log(`[${requestId}] Getting product: ${productName}`);
+    
+    const productInfo = await getProductPrice(productName);
+    
+    if (productInfo.success) {
+      res.status(200).json({
+        success: true,
+        product: {
+          name: productName,
+          price: productInfo.price,
+          unit: productInfo.unit,
+          category: productInfo.category,
+          hsnCode: productInfo.hsnCode
+        },
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        error: 'Product not found',
+        message: `Product '${productName}' not found in database`
+      });
+    }
+  } catch (error) {
+    console.error(`[${requestId}] Error getting product:`, error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get product',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
+// Create or update product
+app.post('/api/products', async (req, res) => {
+  const requestId = req.requestId;
+  
+  try {
+    console.log(`[${requestId}] Creating/updating product`);
+    
+    const { name, price, unit, category, hsnCode } = req.body;
+    
+    // Validate required fields
+    if (!name || price === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        message: 'Product name and price are required'
+      });
+    }
+    
+    const result = await upsertProduct({
+      name: name.trim(),
+      price: Number(price),
+      unit: unit || 'pieces',
+      category: category || 'General',
+      hsnCode: hsnCode || ''
+    });
+    
+    if (result.success) {
+      res.status(result.action === 'created' ? 201 : 200).json({
+        success: true,
+        action: result.action,
+        productId: result.id,
+        message: `Product ${result.action} successfully`,
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error,
+        message: 'Failed to create/update product'
+      });
+    }
+  } catch (error) {
+    console.error(`[${requestId}] Error creating/updating product:`, error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create/update product',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
+// Update product price
+app.put('/api/products/:id/price', async (req, res) => {
+  const requestId = req.requestId;
+  const productId = req.params.id;
+  
+  try {
+    console.log(`[${requestId}] Updating product price: ${productId}`);
+    
+    const { price } = req.body;
+    
+    if (price === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing price field',
+        message: 'Price is required'
+      });
+    }
+    
+    const result = await updateProductPrice(productId, Number(price));
+    
+    if (result.success) {
+      res.status(200).json({
+        success: true,
+        message: 'Product price updated successfully',
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        error: result.error,
+        message: 'Failed to update product price'
+      });
+    }
+  } catch (error) {
+    console.error(`[${requestId}] Error updating product price:`, error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update product price',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
+// Get products needing price update
+app.get('/api/products/needing-update', async (req, res) => {
+  const requestId = req.requestId;
+  
+  try {
+    console.log(`[${requestId}] Getting products needing price update`);
+    
+    const products = await getProductsNeedingPriceUpdate();
+    
+    res.status(200).json({
+      success: true,
+      count: products.length,
+      products: products,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error(`[${requestId}] Error getting products needing update:`, error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get products needing update',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
+// Trigger price update reminders
+app.post('/api/price-reminders', async (req, res) => {
+  const requestId = req.requestId;
+  
+  try {
+    console.log(`[${requestId}] Manual trigger for price update reminders`);
+    
+    // Send immediate response
+    res.status(202).json({
+      status: 'processing',
+      message: 'Price update reminders job started',
+      timestamp: new Date().toISOString()
+    });
+    
+    // Run the reminders in the background
+    sendPriceUpdateReminders()
+      .then(results => {
+        const successCount = results.filter(r => r.success).length;
+        const failureCount = results.filter(r => !r.success).length;
+        
+        console.log(`[${requestId}] Price update reminders completed: ${successCount} sent, ${failureCount} failed`);
+      })
+      .catch(error => {
+        console.error(`[${requestId}] Price update reminders failed:`, error.message);
+      });
+  } catch (error) {
+    console.error(`[${requestId}] Error triggering price update reminders:`, error.message);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to start price update reminders',
       error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
@@ -335,27 +580,70 @@ process.on('exit', () => {
 const cleanupOldPDFs = () => {
   const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days
   const now = Date.now();
+  let deletedCount = 0;
+  let totalSize = 0;
   
-  fs.readdir(tempDir, (err, files) => {
-    if (err) return;
+  const cleanDirectory = (dir) => {
+    if (!fs.existsSync(dir)) return;
     
-    files.forEach(file => {
-      const filePath = path.join(tempDir, file);
-      fs.stat(filePath, (err, stats) => {
-        if (err) return;
-        
-        if (now - stats.mtime.getTime() > maxAge) {
-          fs.unlink(filePath, err => {
-            if (err) console.error('Failed to delete old PDF:', err);
+    fs.readdir(dir, (err, files) => {
+      if (err) return;
+      
+      files.forEach(file => {
+        if (file.endsWith('.pdf')) {
+          const filePath = path.join(dir, file);
+          fs.stat(filePath, (err, stats) => {
+            if (err) return;
+            
+            if (now - stats.mtime.getTime() > maxAge) {
+              fs.unlink(filePath, err => {
+                if (err) {
+                  console.error('Failed to delete old PDF:', err);
+                } else {
+                  deletedCount++;
+                  totalSize += stats.size;
+                  console.log(`[Cleanup] Deleted old PDF: ${file} (${stats.size} bytes)`);
+                }
+              });
+            }
           });
         }
       });
     });
-  });
+  };
+  
+  // Clean both temp directories
+  cleanDirectory(path.join('/tmp', 'invoices'));
+  cleanDirectory(path.join(__dirname, 'temp', 'invoices'));
+  cleanDirectory(path.join(__dirname, 'temp'));
+  
+  if (deletedCount > 0) {
+    console.log(`[Cleanup] Completed: Deleted ${deletedCount} PDFs, freed ${totalSize} bytes`);
+  }
 };
 
-// Run daily
-setInterval(cleanupOldPDFs, 24 * 60 * 60 * 1000);
+// Run daily at 2 AM
+const scheduleCleanup = () => {
+  const now = new Date();
+  const targetTime = new Date(now);
+  targetTime.setHours(2, 0, 0, 0); // 2 AM
+  
+  // If we've passed 2 AM today, schedule for tomorrow
+  if (now > targetTime) {
+    targetTime.setDate(targetTime.getDate() + 1);
+  }
+  
+  const msUntilTarget = targetTime - now;
+  
+  setTimeout(() => {
+    cleanupOldPDFs();
+    // Schedule next cleanup
+    scheduleCleanup();
+  }, msUntilTarget);
+};
+
+// Start the scheduler
+scheduleCleanup();
 
 // Add this to your server.js or a separate test file
 app.get('/test-correction-state', async (req, res) => {
