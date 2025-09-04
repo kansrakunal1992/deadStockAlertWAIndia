@@ -3832,32 +3832,41 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
   }
 
   if (correctionState.correctionType === 'price') {
-    const priceMatch = Body.trim().match(/(\d+(\.\d+)?)/);
-    const priceValue = priceMatch ? parseFloat(priceMatch[1]) : NaN;
-    if (!isNaN(priceValue) && priceValue > 0) {
-      const updated = {
-        ...correctionState.pendingUpdate,
-        price: priceValue
-      };
-  
+  const priceMatch = Body.trim().match(/(\d+(\.\d+)?)/);
+  const priceValue = priceMatch ? parseFloat(priceMatch[1]) : NaN;
+
+  if (!isNaN(priceValue) && priceValue > 0) {
+    const updated = {
+      ...correctionState.pendingUpdate,
+      price: priceValue
+    };
+
+    const results = await updateMultipleInventory(shopId, [updated], correctionState.detectedLanguage);
+
+    if (results[0].success) {
       await deleteCorrectionState(correctionState.id);
       await clearUserState(From);
-  
-      const shopId = From.replace('whatsapp:', '');
-      const results = await updateMultipleInventory(shopId, [updated], correctionState.detectedLanguage);
-  
-      let message = `✅ Price updated: ${updated.product} at ₹${priceValue}/${updated.unit}\n`;
-      if (results[0].success) {
-        message += `Inventory updated successfully.`;
-      } else {
-        message += `Update failed: ${results[0].error ?? 'Unknown error'}`;
-      }
-  
+
+      let message = `✅ Price updated: ${updated.product} at ₹${priceValue}/${updated.unit}\nInventory updated successfully.`;
       const translated = await generateMultiLanguageResponse(message, correctionState.detectedLanguage, requestId);
       await sendMessageViaAPI(From, translated);
-      res.send('<Response></Response>');
-      return;
     } else {
+      let message = `❌ Update failed: ${results[0].error ?? 'Unknown error'}\nPlease try again.`;
+      const translated = await generateMultiLanguageResponse(message, correctionState.detectedLanguage, requestId);
+      await sendMessageViaAPI(From, translated);
+    }
+
+    return;
+  } else {
+    const retryMessage = await generateMultiLanguageResponse(
+      'Please enter a valid price (e.g., 15 or 20.5)',
+      correctionState.detectedLanguage,
+      requestId
+    );
+    await sendMessageViaAPI(From, retryMessage);
+    return;
+  }
+} else {
       const retryMessage = await generateMultiLanguageResponse(
         'Please enter a valid price (e.g., 15 or 20.5)',
         correctionState.detectedLanguage,
