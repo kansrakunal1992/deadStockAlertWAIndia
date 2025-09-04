@@ -210,7 +210,7 @@ async function sendWhatsAppMessage(to, body, maxRetries = 2) {
 }
 
 // Get today's sales summary
-async function getTodaySalesSummary(shopId) {
+async function getTodaySalesSummary(shopId) { 
   const context = `Get Today Sales Summary ${shopId}`;
   try {
     // Get today's date in ISO format
