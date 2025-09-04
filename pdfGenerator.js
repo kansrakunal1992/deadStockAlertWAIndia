@@ -2,7 +2,7 @@ const PDFDocument = require('pdfkit');
 const moment = require('moment');
 const fs = require('fs');
 const path = require('path');
-const { getTodaySalesSummary, getSalesDataForPeriod } = require('./database');
+const { getTodaySalesSummary, getSalesDataForPeriod, getProductPrice } = require('./database');
 
 // Create a temporary directory for PDFs if it doesn't exist
 const tempDir = process.env.NODE_ENV === 'production'
@@ -61,11 +61,12 @@ const colors = {
   tableHeader: '#37474f', // Table header
   evenRow: '#eceff1', // Even row color
   oddRow: '#ffffff', // Odd row color
+  gst0: '#78909c', // Gray for 0% GST
   gst5: '#388e3c', // Green for 5% GST
   gst12: '#f57c00', // Orange for 12% GST
   gst18: '#d32f2f', // Red for 18% GST
   gst28: '#7b1fa2', // Purple for 28% GST
-  gst0: '#78909c' // Gray for 0% GST
+  gstSpecial: '#009688' // Teal for special rates
 };
 
 /**
@@ -471,7 +472,7 @@ async function addInvoiceHeader(doc, shopDetails) {
 /**
  * Add sale details in a compact table format - SINGLE PAGE VERSION
  */
-function addSaleDetails(doc, shopDetails, saleRecord) {
+function addSaleDetails(doc, shopDetails, saleRecord, productInfo) {
   // Section title
   doc.fontSize(14);
   doc.fillColor(colors.primary);
@@ -486,7 +487,10 @@ function addSaleDetails(doc, shopDetails, saleRecord) {
   doc.text('HSN/SAC', 195, yPos + 15, { width: 60 });
   doc.text('Qty', 255, yPos + 15, { width: 30 });
   doc.text('Rate (₹)', 285, yPos + 15, { width: 60 });
-  doc.text('Amount (₹)', 345, yPos + 15, { width: 70 });
+  doc.text('Taxable Val', 320, yPos + 15, { width: 60 });
+  doc.text('GST Rate', 380, yPos + 15, { width: 50 });
+  doc.text('GST Amt', 430, yPos + 15, { width: 50 });
+  doc.text('Total (₹)', 480, yPos + 15, { width: 60 });
   
   // Product row
   yPos += 25;
@@ -494,32 +498,59 @@ function addSaleDetails(doc, shopDetails, saleRecord) {
   doc.fillColor(colors.dark);
   doc.fontSize(10);
   
-  // Fix: Ensure rate is a valid number, default to 0 if NaN
+  // Use dynamic rate and product info
   const rate = isNaN(saleRecord.rate) ? 0 : Number(saleRecord.rate);
   const quantity = isNaN(saleRecord.quantity) ? 0 : Number(saleRecord.quantity);
-  const amount = rate * quantity;
+  
+  // GST calculation based on product category
+  let gstRate = 0.18; // Default 18%
+  if (productInfo.category === 'Dairy') {
+    gstRate = 0.05; // 5% for dairy
+  } else if (productInfo.category === 'Essential') {
+    gstRate = 0; // 0% for essential items
+  } else if (productInfo.category === 'Packaged') {
+    gstRate = 0.12; // 12% for packaged goods
+  }
+  
+  const taxableValue = rate * quantity;
+  const gstAmount = taxableValue * gstRate;
+  const totalWithTax = taxableValue + gstAmount;
   
   doc.text(saleRecord.product || 'Product', 45, yPos + 15, { width: 150 });
-  doc.text('N/A', 195, yPos + 15, { width: 60 });
+  doc.text(productInfo.hsnCode || 'N/A', 195, yPos + 15, { width: 60 });
   doc.text(quantity.toString(), 255, yPos + 15, { width: 30 });
   doc.text(rate.toFixed(2), 285, yPos + 15, { width: 60 });
-  doc.text(amount.toFixed(2), 345, yPos + 15, { width: 70 });
+  doc.text(taxableValue.toFixed(2), 320, yPos + 15, { width: 60 });
   
-  return yPos + 35;
+  // GST rate with color coding
+  const gstColor = gstRate === 0 ? colors.gst0 :
+    gstRate === 0.05 ? colors.gst5 :
+    gstRate === 0.12 ? colors.gst12 :
+    gstRate === 0.18 ? colors.gst18 : colors.gst28;
+  
+  doc.fillColor(gstColor);
+  doc.text(`${(gstRate * 100).toFixed(0)}%`, 380, yPos + 15, { width: 50 });
+  doc.fillColor(colors.dark);
+  doc.text(gstAmount.toFixed(2), 430, yPos + 15, { width: 50 });
+  doc.text(totalWithTax.toFixed(2), 480, yPos + 15, { width: 60 });
+  
+  return {
+    yPos: yPos + 35,
+    taxableValue,
+    gstAmount,
+    totalWithTax,
+    gstRate
+  };
 }
 
 /**
  * Add invoice totals with GST breakdown - SINGLE PAGE VERSION
  */
-function addInvoiceTotals(doc, saleRecord) {
-  // Fix: Ensure rate and quantity are valid numbers
-  const rate = isNaN(saleRecord.rate) ? 0 : Number(saleRecord.rate);
-  const quantity = isNaN(saleRecord.quantity) ? 0 : Number(saleRecord.quantity);
-  const taxableValue = rate * quantity;
-  const gstRate = 0.18; // 18% GST
-  const cgst = taxableValue * (gstRate / 2);
-  const sgst = taxableValue * (gstRate / 2);
-  const total = taxableValue + cgst + sgst;
+function addInvoiceTotals(doc, saleDetails) {
+  const { taxableValue, gstAmount, totalWithTax, gstRate } = saleDetails;
+  
+  const cgst = gstAmount / 2;
+  const sgst = gstAmount / 2;
   
   // Payment details box - compact
   const boxX = 300;
@@ -527,13 +558,13 @@ function addInvoiceTotals(doc, saleRecord) {
   let yPos = 270;
   
   // Box background
-  doc.rect(boxX - 10, yPos - 5, boxWidth + 20, 110).fill(colors.light);
-  doc.rect(boxX - 10, yPos - 5, boxWidth + 20, 110).lineWidth(1).stroke(colors.dark);
+  doc.rect(boxX - 10, yPos - 5, boxWidth + 20, 130).fill(colors.light);
+  doc.rect(boxX - 10, yPos - 5, boxWidth + 20, 130).lineWidth(1).stroke(colors.dark);
   
   // Totals
   doc.fillColor(colors.dark);
   doc.fontSize(10);
-  doc.text('Subtotal:', boxX, yPos, { width: 100, align: 'right' });
+  doc.text('Taxable Value:', boxX, yPos, { width: 100, align: 'right' });
   doc.text(`₹${taxableValue.toFixed(2)}`, boxX + 110, yPos);
   
   yPos += 15;
@@ -545,13 +576,17 @@ function addInvoiceTotals(doc, saleRecord) {
   doc.text(`₹${sgst.toFixed(2)}`, boxX + 110, yPos);
   
   yPos += 15;
+  doc.text('GST Amount:', boxX, yPos, { width: 100, align: 'right' });
+  doc.text(`₹${gstAmount.toFixed(2)}`, boxX + 110, yPos);
+  
+  yPos += 15;
   doc.rect(boxX - 10, yPos, boxWidth + 20, 1).fill(colors.accent);
   
   yPos += 10;
   doc.fontSize(12);
   doc.fillColor(colors.accent);
   doc.text('Total:', boxX, yPos, { width: 100, align: 'right' });
-  doc.text(`₹${total.toFixed(2)}`, boxX + 110, yPos);
+  doc.text(`₹${totalWithTax.toFixed(2)}`, boxX + 110, yPos);
   
   // Amount in words
   yPos += 30;
@@ -560,7 +595,14 @@ function addInvoiceTotals(doc, saleRecord) {
   doc.text('Amount in Words:', 40, yPos);
   
   yPos += 15;
-  doc.text(`${numberToWords(total)} Rupees Only`, 40, yPos);
+  doc.text(`${numberToWords(totalWithTax)} Rupees Only`, 40, yPos);
+  
+  // Add GSTIN and tax information
+  yPos += 25;
+  doc.fontSize(9);
+  doc.text('GSTIN: 29ABCDE1234F1Z5', 40, yPos);
+  yPos += 12;
+  doc.text('Tax Rate: Applicable as per GST laws', 40, yPos);
   
   return yPos + 40;
 }
@@ -588,7 +630,7 @@ function addInvoiceFooter(doc) {
 }
 
 /**
- * Helper function to convert numbers to words
+ * Helper function to convert numbers to words (Indian currency)
  */
 function numberToWords(num) {
   const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
@@ -596,25 +638,33 @@ function numberToWords(num) {
   const teens = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
   
   const convert = (n) => {
+    if (n === 0) return 'Zero';
     if (n < 10) return ones[n];
     if (n >= 10 && n < 20) return teens[n - 10];
     if (n >= 20 && n < 100) return tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '');
     if (n >= 100 && n < 1000) return ones[Math.floor(n / 100)] + ' Hundred' + (n % 100 ? ' and ' + convert(n % 100) : '');
+    if (n >= 1000 && n < 100000) return convert(Math.floor(n / 1000)) + ' Thousand' + (n % 1000 ? ' ' + convert(n % 1000) : '');
+    if (n >= 100000 && n < 10000000) return convert(Math.floor(n / 100000)) + ' Lakh' + (n % 100000 ? ' ' + convert(n % 100000) : '');
     return n.toString();
   };
   
   const rupees = Math.floor(num);
   const paise = Math.round((num - rupees) * 100);
   
-  let result = convert(rupees);
-  if (rupees === 1) result += ' Rupee'; else result += ' Rupees';
+  let result = '';
   
-  if (paise > 0) {
-    result += ' and ' + convert(paise);
-    if (paise === 1) result += ' Paisa'; else result += ' Paise';
+  if (rupees > 0) {
+    result = convert(rupees);
+    result += rupees === 1 ? ' Rupee' : ' Rupees';
   }
   
-  return result;
+  if (paise > 0) {
+    if (rupees > 0) result += ' and ';
+    result += convert(paise);
+    result += paise === 1 ? ' Paisa' : ' Paise';
+  }
+  
+  return result || 'Zero Rupees';
 }
 
 /**
@@ -624,6 +674,27 @@ async function generateInvoicePDF(shopDetails, saleRecord) {
   return new Promise(async (resolve, reject) => {
     try {
       console.log(`[PDF Generator] Generating single-page invoice for shop ${shopDetails?.shopId}`);
+      
+      // Get product price from database
+      let productPrice = 0;
+      let productUnit = 'pieces';
+      let productCategory = 'General';
+      let hsnCode = 'N/A';
+      
+      try {
+        const priceResult = await getProductPrice(saleRecord.product);
+        if (priceResult.success) {
+          productPrice = priceResult.price;
+          productUnit = priceResult.unit;
+          productCategory = priceResult.category;
+          hsnCode = priceResult.hsnCode || 'N/A';
+        }
+      } catch (error) {
+        console.warn('[PDF Generator] Could not fetch product price:', error.message);
+      }
+      
+      // Use provided rate or fall back to database price
+      const rate = saleRecord.rate || productPrice;
       
       // Generate filename with timestamp
       const timestamp = moment().format('YYYYMMDD_HHmmss');
@@ -651,14 +722,26 @@ async function generateInvoicePDF(shopDetails, saleRecord) {
       const stream = fs.createWriteStream(filePath);
       doc.pipe(stream);
       
+      // Prepare product info
+      const productInfo = {
+        hsnCode: hsnCode,
+        category: productCategory,
+        unit: productUnit
+      };
+      
       // Add invoice header
       await addInvoiceHeader(doc, shopDetails || {});
       
-      // Add sale details
-      addSaleDetails(doc, shopDetails || {}, saleRecord || {});
+      // Add sale details with product info
+      const saleDetails = addSaleDetails(doc, shopDetails || {}, saleRecord || {}, productInfo);
       
-      // Add totals
-      addInvoiceTotals(doc, saleRecord || {});
+      // Add totals with calculated values
+      addInvoiceTotals(doc, {
+        taxableValue: saleDetails.taxableValue,
+        gstAmount: saleDetails.gstAmount,
+        totalWithTax: saleDetails.totalWithTax,
+        gstRate: saleDetails.gstRate
+      });
       
       // Add footer
       addInvoiceFooter(doc);
