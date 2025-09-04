@@ -1147,18 +1147,34 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       
       // For purchases, ask for price if not available
       if (update.action === 'purchased' && productPrice === 0 && !update.price) {
-      // Save pending update to database
-      await saveCorrectionState(shopId, 'price', update, languageCode);
+      // Save pending update to database and keep the id
+      const saveRes = await saveCorrectionState(shopId, 'price', update, languageCode);
+
     
       // Prompt user for price
       const promptMessage = await generateMultiLanguageResponse(
-        `What is the price per ${update.unit} for ${product}?`,
+        `What is the price per ${singularize(update.unit)} for ${product}?`,
         languageCode,
         'price-prompt'
       );
     
       await sendMessageViaAPI(`whatsapp:${shopId}`, promptMessage);
-    
+
+      
+  // Put the user into 'correction' mode for price so the next number is captured as price
+        try {
+          await setUserState(`whatsapp:${shopId}`, 'correction', {
+            correctionState: {
+              correctionType: 'price',
+              pendingUpdate: update,
+              detectedLanguage: languageCode,
+              id: saveRes && saveRes.id
+            }
+          });
+        } catch (e) {
+          console.warn(`[Update ${shopId} - ${product}] Failed to set user state for price correction:`, e.message);
+        }
+        
       results.push({
         product: product,
         quantity: update.quantity,
@@ -1166,7 +1182,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         action: update.action,
         success: false,
         needsPrice: true,
-        message: 'Prompted user for missing price'
+        message: 'Prompted user for missing price',
+        error: 'Missing price',
+        correctionId: saveRes && saveRes.id
       });
     
       continue;
@@ -1671,6 +1689,29 @@ function safeJsonParse(str) {
     }
   }
 }
+
+
+// Helper: singularize unit labels for nicer prompts (packet vs packets)
+function singularize(unit) {
+  if (!unit) return unit;
+  const map = {
+    packets: 'packet',
+    boxes: 'box',
+    pieces: 'piece',
+    liters: 'liter',
+    grams: 'gram',
+    kgs: 'kg',
+    mls: 'ml'
+  };
+  const u = String(unit).toLowerCase();
+  return map[u] || unit.replace(/s$/i, '');
+}
+
+// Helper: check if every result is still pending price
+function allPendingPrice(results) {
+  return Array.isArray(results) && results.length > 0 && results.every(r => r.needsPrice === true);
+}
+
 
 // Add this with your other helper functions
 function isProductMatch(userInput, knownProduct) {
@@ -2347,6 +2388,21 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     console.log(`[${requestId}] [8] Updating inventory for ${updates.length} items...`);
     const shopId = from.replace('whatsapp:', '');
     const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+    
+      if (allPendingPrice(results)) {
+        try {
+          await setUserState(from, 'correction', {
+            correctionState: {
+              correctionType: 'price',
+              pendingUpdate: results[0],
+              detectedLanguage,
+              id: results[0]?.correctionId
+            }
+          });
+        } catch (_) {}
+        // Price prompt already sent; do not send "Updates processed".
+        return res.send(response.toString());
+
     // Get user's preferred language for the response
     let userLanguage = detectedLanguage;
     try {
@@ -2364,7 +2420,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         let totalSalesValue = 0;
         let totalPurchaseValue = 0;
         
-        for (const result of results) {
+        for (const result of results.filter(r => !r.needsPrice)) {
           if (result.success) {
             successCount++;
             const unitText = result.unit ? ` ${result.unit}` : '';
@@ -2415,7 +2471,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         if (totalPurchaseValue > 0) {
           baseMessage += `\n📦 Total purchase value: ₹${totalPurchaseValue.toFixed(2)}`;
         }
-    baseMessage += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+    
     if (hasSales) {
       baseMessage += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
       // Set conversation state to await batch selection
@@ -4124,10 +4180,25 @@ async function handleInventoryState(Body, From, state, requestId, res) {
   try {
     const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
     
+    if (allPendingPrice(results)) {
+        try {
+          await setUserState(From, 'correction', {
+            correctionState: {
+              correctionType: 'price',
+              pendingUpdate: results[0],
+              detectedLanguage,
+              id: results[0]?.correctionId
+            }
+          });
+        } catch (_) {}
+        res.send('<Response></Response>');
+        return;
+      }
+
     let message = '✅ Updates processed:\n\n';
     let successCount = 0;
     
-    for (const result of results) {
+    for (const result of results.filter(r => !r.needsPrice)) {
       if (result.success) {
         successCount++;
         const unitText = result.unit ? ` ${result.unit}` : '';
@@ -4137,8 +4208,9 @@ async function handleInventoryState(Body, From, state, requestId, res) {
       }
     }
     
-    message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
-    
+    const totalProcessed = results.filter(r => !r.needsPrice).length;
+    message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
+  
     const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, formattedResponse);
     
@@ -4253,6 +4325,52 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   } catch (error) {
     console.warn(`[${requestId}] Failed to send processing message:`, error.message);
   }
+
+  
+  // --- Fallback: numeric-only message treated as a price reply if a price correction exists ---
+   if (Body && /^\s*\d+(?:\.\d+)?\s*$/.test(Body)) {
+     try {
+       const csRes = await getCorrectionState(shopId);
+       if (csRes && csRes.success && csRes.correctionState
+           && csRes.correctionState.correctionType === 'price') {
+         const priceValue = parseFloat(Body.trim());
+         if (!Number.isNaN(priceValue) && priceValue > 0) {
+           // pendingUpdate can be an object or a JSON string - normalize it
+           let pendingUpdate = csRes.correctionState.pendingUpdate;
+           if (typeof pendingUpdate === 'string') {
+             try { pendingUpdate = JSON.parse(pendingUpdate); } catch (_) {}
+           }
+           // apply the price and process
+           const detectedLanguage = csRes.correctionState.detectedLanguage || userLanguage || 'en';
+           const updated = { ...pendingUpdate, price: priceValue };
+           const results = await updateMultipleInventory(shopId, [updated], detectedLanguage);
+   
+           // clean up the correction record and any stale user state
+           try { await deleteCorrectionState(csRes.correctionState.id); } catch (_) {}
+           try { await clearUserState(From); } catch (_) {}
+   
+           // Build a short success/failure response (no need to over-message)
+           let msg = '✅ Update processed:\n\n';
+           const ok = results[0] && results[0].success;
+           if (ok) {
+             const r = results[0];
+             const unitText = r.unit ? ` ${r.unit}` : '';
+             msg += `• ${r.product}: ${r.quantity}${unitText} ${r.action} (Stock: ${r.newQuantity}${unitText})`;
+           } else {
+             msg += `• ${updated.product}: Error - ${results[0]?.error || 'Unknown error'}`;
+           }
+           const formatted = await generateMultiLanguageResponse(msg, detectedLanguage, requestId);
+           await sendMessageViaAPI(From, formatted);
+           res.send('<Response></Response>');
+           return;
+         }
+       }
+     } catch (e) {
+       console.warn(`[${requestId}] Numeric price fallback failed:`, e.message);
+       // continue with normal flow if fallback didn’t match
+     }
+   }
+
   
   // Check for greetings
   if (Body) {
@@ -4321,11 +4439,28 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           
           // Process the updates
           const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+          // If every item is waiting for price, a prompt has already been sent.
+              if (allPendingPrice(results)) {
+                // Move user into 'correction' flow with price type so the next number goes to price handler.
+                try {
+                  await setUserState(From, 'correction', {
+                    correctionState: {
+                      correctionType: 'price',
+                      pendingUpdate: results[0],
+                      detectedLanguage,
+                      id: results[0]?.correctionId
+                    }
+                  });
+                } catch (_) {}
+                res.send('<Response></Response>');
+                return;
+              }
+
       
       let message = '✅ Updates processed:\n\n';
       let successCount = 0;
       
-      for (const result of results) {
+      for (const result of results.filter(r => !r.needsPrice)) {
         if (result.success) {
           successCount++;
           const unitText = result.unit ? ` ${result.unit}` : '';
@@ -4334,8 +4469,10 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           message += `• ${result.product}: Error - ${result.error}\n`;
         }
       }
-      
-      message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+            
+      const totalProcessed = results.filter(r => !r.needsPrice).length;
+      message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`
+
       
       const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
       await sendMessageViaAPI(From, formattedResponse);
