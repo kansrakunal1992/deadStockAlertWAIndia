@@ -1,22 +1,27 @@
 [build]
 # Build phases configuration
 phases = [
-    { name = "install", commands = ["npm ci"] },
-    { name = "build", commands = ["npm run build"] },
-    { name = "postinstall", commands = ["chmod +x install-ffmpeg.sh && ./install-ffmpeg.sh"] }
+  { name = "install", commands = ["npm ci"] },
+  { name = "build", commands = ["npm run build"] },
+  { name = "postinstall", commands = ["chmod +x install-ffmpeg.sh && ./install-ffmpeg.sh"] },
+  { name = "migrate", commands = ["npm run migrate"] },
+  { name = "seed", commands = ["npm run seed:products"] }
 ]
 
 # System packages to install
 packages = [
-    "ffmpeg",
-    "libavcodec-extra",
-    "libavformat-dev",
-    "libswscale-dev",
-    "curl",
-    "wget",
-    "git",
-    "ca-certificates",
-    "gnupg"
+  "ffmpeg",
+  "libavcodec-extra",
+  "libavformat-dev",
+  "libswscale-dev",
+  "curl",
+  "wget",
+  "git",
+  "ca-certificates",
+  "gnupg",
+  "python3",
+  "python3-pip",
+  "build-essential"
 ]
 
 # Environment variables
@@ -24,10 +29,23 @@ packages = [
 NODE_ENV = "production"
 PORT = "3000"
 HOST = "0.0.0.0"
+# Pricing configuration
+DEFAULT_GST_RATE = "0.18"
+PRICE_UPDATE_REMINDER_TIME = "08:00"
+PDF_RETENTION_DAYS = "7"
+# Database configuration
+AIRTABLE_BASE_ID = ""
+AIRTABLE_API_KEY = ""
+AIRTABLE_PRODUCTS_TABLE_NAME = "Products"
+# API configuration
+DEEPSEEK_API_KEY = ""
+ACCOUNT_SID = ""
+AUTH_TOKEN = ""
+TWILIO_WHATSAPP_NUMBER = ""
 
 # Start command configuration
 [start]
-command = "npm start"
+command = "npm run start:prod"
 
 # Health check configuration
 [health_check]
@@ -36,6 +54,8 @@ interval = "30s"
 timeout = "10s"
 retries = 3
 start_period = "40s"
+success_threshold = 3
+failure_threshold = 5
 
 # Logging configuration
 [logging]
@@ -44,23 +64,25 @@ level = "info"
 
 # Resource limits
 [limits]
-cpu = "1"
-memory = "1Gi"
-pids = 100
+cpu = "1.5"
+memory = "1.5Gi"
+pids = 200
+max_file_descriptors = 8192
+open_files = 8192
 
 # Deployment configuration
 [deploy]
 # Number of instances to run
-instances = 1
+instances = 2
 
 # Auto-scaling configuration
 [deploy.autoscaling]
-min_instances = 1
-max_instances = 3
+min_instances = 2
+max_instances = 5
 cpu_threshold = 70
 memory_threshold = 80
-scale_up_cooldown = "5m"
-scale_down_cooldown = "10m"
+scale_up_cooldown = "3m"
+scale_down_cooldown = "5m"
 
 # Network configuration
 [deploy.network]
@@ -69,6 +91,16 @@ port = 3000
 
 # Health check port
 health_check_port = 3000
+
+# Security headers
+security_headers = true
+
+# CORS configuration
+cors = {
+  allowed_origins = ["https://yourdomain.com"],
+  allowed_methods = ["GET", "POST", "PUT", "DELETE"],
+  allowed_headers = ["Content-Type", "Authorization"]
+}
 
 # Security configuration
 [deploy.security]
@@ -142,6 +174,12 @@ use_multi_stage_builds = true
 # Optimize image size
 optimize_image_size = true
 
+# Enable AI features
+enable_ai_features = true
+
+# Enable advanced analytics
+enable_analytics = true
+
 # Development configuration (for dev environment)
 [dev]
 # Development environment variables
@@ -206,3 +244,41 @@ scale_down_cooldown = "5m"
 run_as_non_root = true
 read_only_root_filesystem = true
 allow_privilege_escalation = false
+
+# Caching configuration
+[caching]
+# Static file caching
+static_files = {
+  max_age = "1h"
+}
+
+# API response caching
+api_responses = {
+  max_age = "5m"
+}
+
+# Database connection pooling
+[database]
+pool_size = 10
+connection_timeout = "30s"
+max_lifetime = "1h"
+
+# Background job configuration
+[jobs]
+# Daily summary job
+daily_summary = {
+  schedule = "0 23 * * *"
+  timezone = "Asia/Kolkata"
+}
+
+# Price update reminder job
+price_reminder = {
+  schedule = "0 8 * * *"
+  timezone = "Asia/Kolkata"
+}
+
+# PDF cleanup job
+pdf_cleanup = {
+  schedule = "0 2 * * *"
+  timezone = "Asia/Kolkata"
+}
