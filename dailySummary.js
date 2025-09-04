@@ -288,7 +288,7 @@ async function getTodaySalesSummary(shopId) {
       categorySales[category].quantity += quantity;
       categorySales[category].value += saleValue;
       categorySales[category].gst += gstAmount;
-    });
+    };
     
     // Sort products by quantity sold
     const topProducts = Object.entries(productSales)
