@@ -3156,6 +3156,8 @@ async function sendMessageViaAPI(to, body) {
         // Add part indicator for multi-part messages
         const partIndicator = `\n\n(Part ${i+1} of ${chunks.length})`;
         const chunkWithIndicator = chunk + partIndicator;
+
+        console.log(`[sendMessageViaAPI] Final message body: "${body}"`);
         
         const message = await client.messages.create({
           body: chunkWithIndicator,
