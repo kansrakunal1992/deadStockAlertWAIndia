@@ -1147,17 +1147,30 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       
       // For purchases, ask for price if not available
       if (update.action === 'purchased' && productPrice === 0 && !update.price) {
-        // This will trigger a follow-up message asking for price
-        results.push({
-          product: product,
-          quantity: update.quantity,
-          unit: update.unit,
-          action: update.action,
-          success: false,
-          needsPrice: true
-        });
-        continue;
-      }
+      // Save pending update to database
+      await saveCorrectionState(shopId, 'price', update, languageCode);
+    
+      // Prompt user for price
+      const promptMessage = await generateMultiLanguageResponse(
+        `What is the price per ${update.unit} for ${product}?`,
+        languageCode,
+        'price-prompt'
+      );
+    
+      await sendMessageViaAPI(`whatsapp:${shopId}`, promptMessage);
+    
+      results.push({
+        product: product,
+        quantity: update.quantity,
+        unit: update.unit,
+        action: update.action,
+        success: false,
+        needsPrice: true,
+        message: 'Prompted user for missing price'
+      });
+    
+      continue;
+    }
       
       // Use provided price or fall back to database price
       const finalPrice = update.price || productPrice;
@@ -3816,6 +3829,43 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
     await sendMessageViaAPI(From, exitMessage);
     res.send('<Response></Response>');
     return;
+  }
+
+  if (correctionState.correctionType === 'price') {
+    const priceValue = parseFloat(Body.trim());
+    if (!isNaN(priceValue) && priceValue > 0) {
+      const updated = {
+        ...correctionState.pendingUpdate,
+        price: priceValue
+      };
+  
+      await deleteCorrectionState(correctionState.id);
+      await clearUserState(From);
+  
+      const shopId = From.replace('whatsapp:', '');
+      const results = await updateMultipleInventory(shopId, [updated], correctionState.detectedLanguage);
+  
+      let message = `✅ Price updated: ${updated.product} at ₹${priceValue}/${updated.unit}\n`;
+      if (results[0].success) {
+        message += `Inventory updated successfully.`;
+      } else {
+        message += `Update failed: ${results[0].error ?? 'Unknown error'}`;
+      }
+  
+      const translated = await generateMultiLanguageResponse(message, correctionState.detectedLanguage, requestId);
+      await sendMessageViaAPI(From, translated);
+      res.send('<Response></Response>');
+      return;
+    } else {
+      const retryMessage = await generateMultiLanguageResponse(
+        'Please enter a valid price (e.g., 15 or 20.5)',
+        correctionState.detectedLanguage,
+        requestId
+      );
+      await sendMessageViaAPI(From, retryMessage);
+      res.send('<Response></Response>');
+      return;
+    }
   }
   
   // Process correction based on type
