@@ -2,6 +2,7 @@ const axios = require('axios');
 const PENDING_TRANSCRIPTIONS_TABLE_NAME = process.env.AIRTABLE_PENDING_TRANSCRIPTIONS_TABLE_NAME || 'PendingTranscriptions';
 const CORRECTION_STATE_TABLE_NAME = process.env.AIRTABLE_CORRECTION_STATE_TABLE_NAME || 'CorrectionState';
 const USER_STATE_TABLE_NAME = process.env.AIRTABLE_USER_STATE_TABLE_NAME || 'UserState';
+const TRANSLATIONS_TABLE_NAME = process.env.AIRTABLE_TRANSLATIONS_TABLE_NAME || 'Translations';
 const STATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
@@ -25,6 +26,8 @@ const airtableBatchURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/'
 const airtableUserPreferencesURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + USER_PREFERENCES_TABLE_NAME;
 const airtableSalesURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + SALES_TABLE_NAME;
 const airtableProductsURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + PRODUCTS_TABLE_NAME;
+const airtableTranslationsURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TRANSLATIONS_TABLE_NAME;
+
 
 // Error logging
 function logError(context, error) {
@@ -2051,6 +2054,68 @@ async function getProductsNeedingPriceUpdate() {
   }
 }
 
+
+// ======== TRANSLATION PERSISTENT CACHE HELPERS ========
+async function getTranslationEntry(key, language) {
+  const context = `Get Translation ${language} ${key.slice(0,8)}…`;
+  try {
+    const esc = s => String(s).replace(/'/g, "''");
+    const filterFormula = `AND({Key}='${esc(key)}', {Language}='${esc(language)}')`;
+    const result = await airtableRequest({
+      method: 'get',
+      url: airtableTranslationsURL,
+      params: { filterByFormula: filterFormula, maxRecords: 1 }
+    }, context);
+    if (result.records && result.records.length > 0) {
+      const rec = result.records[0];
+      return {
+        success: true,
+        id: rec.id,
+        translatedText: rec.fields.TranslatedText || '',
+        sourceText: rec.fields.SourceText || ''
+      };
+    }
+    return { success: true, id: null, translatedText: null };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function upsertTranslationEntry({ key, language, sourceText, translatedText }) {
+  const context = `Upsert Translation ${language} ${key.slice(0,8)}…`;
+  try {
+    // Try find existing
+    const existing = await getTranslationEntry(key, language);
+    const nowISO = new Date().toISOString();
+    const fields = {
+      Key: key,
+      Language: language,
+      SourceText: sourceText,
+      TranslatedText: translatedText,
+      LastUpdated: nowISO
+    };
+    if (existing.success && existing.id) {
+      await airtableRequest({
+        method: 'patch',
+        url: `${airtableTranslationsURL}/${existing.id}`,
+        data: { fields }
+      }, `${context} - Update`);
+      return { success: true, id: existing.id, action: 'updated' };
+    }
+    const created = await airtableRequest({
+      method: 'post',
+      url: airtableTranslationsURL,
+      data: { fields }
+    }, `${context} - Create`);
+    return { success: true, id: created.id, action: 'created' };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+
 module.exports = {
   updateInventory,
   testConnection,
@@ -2093,5 +2158,7 @@ module.exports = {
   getProductPrice,
   getAllProducts,
   updateProductPrice,
-  getProductsNeedingPriceUpdate
+  getProductsNeedingPriceUpdate,
+  getTranslationEntry,
+  upsertTranslationEntry
 };
