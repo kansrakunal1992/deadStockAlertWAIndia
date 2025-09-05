@@ -1,28 +1,13 @@
 [build]
-# Build phases configuration
 phases = [
   { name = "install", commands = ["npm ci"] },
   { name = "build", commands = ["npm run build"] },
-  { name = "postinstall", commands = ["chmod +x install-ffmpeg.sh && ./install-ffmpeg.sh"] },
   { name = "migrate", commands = ["npm run migrate"] },
   { name = "seed", commands = ["npm run seed:products"] }
 ]
 
-# System packages to install
-packages = [
-  "ffmpeg",
-  "libavcodec-extra",
-  "libavformat-dev",
-  "libswscale-dev",
-  "curl",
-  "wget",
-  "git",
-  "ca-certificates",
-  "gnupg",
-  "python3",
-  "python3-pip",
-  "build-essential"
-]
+# Do not install OS packages via APT (prevents mirror/network failures).
+packages = []
 
 # Environment variables
 [env]
