@@ -1720,6 +1720,111 @@ function singularize(unit) {
   return map[u] || unit.replace(/s$/i, '');
 }
 
+
+// ============================
+// NEW HELPERS: PRICE IN WORDS
+// ============================
+// Clean typical currency markers and notations
+function normalizePriceText(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/₹/g, ' ')
+    .replace(/\brs\.?\b/ig, ' ')
+    .replace(/\/-?\s*$/g, ' ')
+    .replace(/[,\s]+/g, ' ')
+    .trim();
+}
+
+// Parse English number words like "sixty two", "one hundred and five", "two thousand", "sixty two point five"
+function parseEnglishWordsNumber(s) {
+  if (!s) return NaN;
+  const str = s.toLowerCase().replace(/-/g, ' ').replace(/\band\b/g, ' ').trim();
+  const units = {
+    zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9,
+    ten:10, eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18, nineteen:19
+  };
+  const tens = { twenty:20, thirty:30, forty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90 };
+  const mult = { hundred:100, thousand:1000, lakh:100000, million:1000000 };
+  const parts = str.split(/\s+/);
+  let total = 0, current = 0;
+  let readingFraction = false, frac = 0, fracDiv = 1;
+  for (const w of parts) {
+    if (w === 'point' || w === 'decimal') { readingFraction = true; continue; }
+    if (readingFraction) {
+      if (w in units) { frac = frac * 10 + units[w]; fracDiv *= 10; continue; }
+      if (w in tens) {
+        const val = tens[w];
+        frac = frac * 10 + Math.floor(val / 10);
+        fracDiv *= 10;
+        const rem = val % 10;
+        if (rem) { frac = frac * 10; fracDiv *= 10; }
+        continue;
+      }
+      break;
+    }
+    if (w in units) { current += units[w]; continue; }
+    if (w in tens) { current += tens[w]; continue; }
+    if (w in mult) {
+      if (current === 0) current = 1;
+      current *= mult[w];
+      if (mult[w] >= 1000) { total += current; current = 0; }
+      continue;
+    }
+  }
+  total += current;
+  const value = total + (readingFraction && fracDiv > 1 ? frac / fracDiv : 0);
+  return isFinite(value) ? value : NaN;
+}
+
+// Parse simple Hinglish words using existing `numberWords` map (defined earlier)
+// Handles words like "pachaas do" (50 2 => 52), "sau" (100), "hazaar" (1000), "lakh" (100000)
+function parseHindiRomanWordsNumber(s) {
+  try {
+    if (!s) return NaN;
+    const str = s.toLowerCase().replace(/-/g, ' ').trim();
+    const tokens = str.split(/\s+/);
+    const multipliers = { sau:100, hazaar:1000, hazar:1000, lakh:100000 };
+    let total = 0, current = 0;
+    for (const tok of tokens) {
+      if (multipliers[tok]) {
+        if (current === 0) current = 1;
+        current *= multipliers[tok];
+        if (multipliers[tok] >= 1000) { total += current; current = 0; }
+        continue;
+      }
+      if (typeof numberWords !== 'undefined' && numberWords && numberWords[tok] != null) {
+        current += Number(numberWords[tok]);
+      }
+    }
+    total += current;
+    return total > 0 ? total : NaN;
+  } catch (_) {
+    return NaN;
+  }
+}
+
+// Master parser: digits -> English words -> Hinglish words
+function parseNumberFromText(priceText) {
+  if (!priceText) return NaN;
+  const cleaned = normalizePriceText(priceText);
+  // Try digits first
+  const digitMatch = cleaned.match(/(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{1,2}))?/);
+  if (digitMatch) {
+    const intPart = (digitMatch[1] || '').replace(/,/g, '');
+    const fracPart = digitMatch[2] ? `.${digitMatch[2]}` : '';
+    const n = parseFloat(intPart + fracPart);
+    if (!Number.isNaN(n)) return n;
+  }
+  // Try English words
+  const en = parseEnglishWordsNumber(cleaned);
+  if (!Number.isNaN(en)) return en;
+  // Try Hinglish roman words
+  const hi = parseHindiRomanWordsNumber(cleaned);
+  if (!Number.isNaN(hi)) return hi;
+  return NaN;
+}
+
+
 // Helper: check if every result is still pending price
 function allPendingPrice(results) {
   return Array.isArray(results) && results.length > 0 && results.every(r => r.needsPrice === true);
@@ -2149,59 +2254,99 @@ async function createSummaryMenu(from, languageCode, requestId) {
 }
 
 // Handle price update command
+// === START: handlePriceUpdate (REPLACE WHOLE FUNCTION) ===
 async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
   const shopId = From.replace('whatsapp:', '');
-  
-  // Parse price update command: "update price product_name new_price"
-  const priceUpdateRegex = /update\s+price\s+([\p{L}\p{N}\s._-]+?)\s+(\d+(?:\.\d{1,2})?)/iu;
-  const match = Body.match(priceUpdateRegex);
-  
-  if (match) {
-    const productName = match[1].trim();
-    const newPrice = parseFloat(match[2]);
-    
+
+  // Pattern A: product + numeric price (digits) — tolerant with currency & separators
+  const digitsPattern =
+    /^\s*update\s+price\s+([\p{L}\p{N}\s._\-()]+?)\s*(?:[:=\-–—]\s*)?(?:₹\s*|rs\.?\s*)?(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{1,2}))?(?:\s*\/-?)?\s*$/iu;
+
+  // Pattern B: fallback — capture price text (words or digits); parse later with helpers
+  const wordsPattern =
+    /^\s*update\s+price\s+([\p{L}\p{N}\s._\-()]+?)\s*(?:[:=\-–—]\s*)?(.+?)\s*$/iu;
+
+  let productName = '';
+  let newPrice = NaN;
+
+  // Try numeric form first
+  let m = Body.match(digitsPattern);
+  if (m) {
+    productName = m[1].replace(/\s+/g, ' ').trim();
+    const intPart = (m[2] || '').replace(/,/g, '');
+    const fracPart = m[3] ? `.${m[3]}` : '';
+    newPrice = parseFloat(intPart + fracPart);
+  } else {
+    // Try free-text (words) fallback
+    const m2 = Body.match(wordsPattern);
+    if (m2) {
+      productName = m2[1].replace(/\s+/g, ' ').trim();
+      const priceText = m2[2];
+      newPrice = parseNumberFromText(priceText); // <-- from Part 1 helpers
+    }
+  }
+
+  // If we successfully parsed a product + price
+  if (!Number.isNaN(newPrice) && productName) {
+    console.log(
+      `[${requestId}] Price command parsed → product="${productName}", price=${newPrice}`
+    );
     try {
-      // Get product ID
+      // Try to find existing product
       const products = await getAllProducts();
-      const product = products.find(p => 
-        p.name.toLowerCase() === productName.toLowerCase()
+      const product = products.find(
+        p => p.name.toLowerCase() === productName.toLowerCase()
       );
-      
+
       if (product) {
-        // Update price
+        // Update price on existing product
         const updateResult = await updateProductPrice(product.id, newPrice);
-        
         if (updateResult.success) {
           const successMessage = `✅ Price updated for ${productName}: ₹${newPrice}`;
-          const formattedMessage = await generateMultiLanguageResponse(successMessage, detectedLanguage, requestId);
+          const formattedMessage = await generateMultiLanguageResponse(
+            successMessage,
+            detectedLanguage,
+            requestId
+          );
           await sendMessageViaAPI(From, formattedMessage);
           return;
         }
       }
-      
-      // Product not found, create it
+
+      // If not found, create new product entry with this price
       const createResult = await upsertProduct({
         name: productName,
         price: newPrice,
         unit: 'pieces'
       });
-      
       if (createResult.success) {
         const successMessage = `✅ New product added with price: ${productName} - ₹${newPrice}`;
-        const formattedMessage = await generateMultiLanguageResponse(successMessage, detectedLanguage, requestId);
+        const formattedMessage = await generateMultiLanguageResponse(
+          successMessage,
+          detectedLanguage,
+          requestId
+        );
         await sendMessageViaAPI(From, formattedMessage);
         return;
       }
     } catch (error) {
       console.error(`[${requestId}] Error updating price:`, error.message);
+      // Drop through to invalid-format message if we haven’t returned
     }
   }
-  
-  // Invalid format
-  const errorMessage = 'Invalid format. Use: "update price product_name price" (e.g., "update price milk 60")';
-  const formattedMessage = await generateMultiLanguageResponse(errorMessage, detectedLanguage, requestId);
+
+  // If nothing matched, guide user with examples
+  const errorMessage =
+    'Invalid format. Try: "update price milk 60", "update price दूध 60", or "update price milk sixty two".';
+  const formattedMessage = await generateMultiLanguageResponse(
+    errorMessage,
+    detectedLanguage,
+    requestId
+  );
   await sendMessageViaAPI(From, formattedMessage);
 }
+// === END: handlePriceUpdate ===
+
 
 // Send price list to user
 async function sendPriceList(From, detectedLanguage, requestId) {
