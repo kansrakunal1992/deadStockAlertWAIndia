@@ -65,7 +65,9 @@ const {
   getProductPrice,
   getAllProducts,
   updateProductPrice,
-  getProductsNeedingPriceUpdate
+  getProductsNeedingPriceUpdate,
+  getTranslationEntry,
+  upsertTranslationEntry
 } = require('../database');
 
 // Add this at the top of the file after the imports
@@ -1416,14 +1418,31 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
       return message;
     }
     // Check cache first  
-    const msgHash  = crypto.createHash('sha1').update(message).digest('hex');
-    const cacheKey = `${languageCode}:${msgHash}`;
+    // --- KEY: hash of FULL message prevents collisions and increases hits ---
+    const hash = crypto.createHash('sha1').update(`${languageCode}::${message}`).digest('hex');
+    const cacheKey = `${languageCode}:${hash}`;
+    // 0) In-memory cache first (fastest)
+
 
     const cached = languageCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp < LANGUAGE_CACHE_TTL)) {
       console.log(`[${requestId}] Using cached translation for ${languageCode}`);
       return cached.translation;
     }
+
+    
+// 1) Persistent cache (Airtable) next
+    try {
+      const hit = await getTranslationEntry(hash, languageCode);
+      if (hit.success && hit.translatedText) {
+        console.log(`[${requestId}] Translation cache hit in Airtable (${languageCode})`);
+        languageCache.set(cacheKey, { translation: hit.translatedText, timestamp: Date.now() });
+        return hit.translatedText;
+      }
+    } catch (e) {
+      console.warn(`[${requestId}] Translation Airtable lookup failed: ${e.message}`);
+    }
+
     console.log(`[${requestId}] Translating to ${languageCode}: "${message}"`);
     // Fallback strategies:
     // 1. For common greetings, use predefined translations with both scripts
@@ -1579,15 +1598,26 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
     if (translated.length > MAX_LENGTH) {
       const parts = translated.split(/\n{2,}/);
       if (parts.length >= 2) translated = parts[0];
+    }    
+    
+// After you have a valid `translated` value:
+    if (translated && translated.trim()) {
+      // 2) Save to Airtable (persistent cache) - non-blocking preferred, but safe to await
+      try {
+        await upsertTranslationEntry({
+          key: hash,
+          language: languageCode,
+          sourceText: message,
+          translatedText: translated
+        });
+      } catch (e) {
+        console.warn(`[${requestId}] Failed to persist translation: ${e.message}`);
+      }
+      // 3) Save to in-memory cache
+      languageCache.set(cacheKey, { translation: translated, timestamp: Date.now() });
+      return translated;
     }
 
-    
-    // Cache the result
-    languageCache.set(cacheKey, {
-      translation: translated,
-      timestamp: Date.now()
-    });
-    return translated;
   } catch (error) {
     console.warn(`[${requestId}] Translation failed, using original:`, error.message);
     // 3. For other messages, return the original with a note in both scripts when possible
