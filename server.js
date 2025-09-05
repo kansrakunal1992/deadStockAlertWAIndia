@@ -9,9 +9,9 @@ const {
   getProductPrice, 
   upsertProduct, 
   updateProductPrice, 
-  getProductsNeedingPriceUpdate,
-  sendPriceUpdateReminders
+  getProductsNeedingPriceUpdate
 } = require('./database');
+const sendPriceUpdateReminders = require('.api/whatsapp');
 const app = express();
 const tempDir = path.join(__dirname, 'temp');
 
