@@ -2,6 +2,8 @@ const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
 const { execSync } = require('child_process');
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+const ffprobePath = require('@ffprobe-installer/ffprobe').path; // if you ever need ffprobe
 const fs = require('fs');
 const crypto = require('crypto');
 const authCache = new Map();
@@ -3007,7 +3009,7 @@ async function convertToFLAC(oggBuffer) {
     console.log(`[2] Converting audio, input size: ${oggBuffer.length} bytes, MD5: ${inputHash}`);
     fs.writeFileSync('/tmp/input.ogg', oggBuffer);
     execSync(
-      'ffmpeg -i /tmp/input.ogg -ar 16000 -ac 1 -c:a flac -compression_level 5 /tmp/output.flac',
+      `"${ffmpegPath}" -i /tmp/input.ogg -ar 16000 -ac 1 -c:a flac -compression_level 5 /tmp/output.flac`,
       { timeout: 3000 }
     );
     const flacBuffer = fs.readFileSync('/tmp/output.flac');
