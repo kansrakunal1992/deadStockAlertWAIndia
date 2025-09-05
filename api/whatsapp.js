@@ -2153,7 +2153,7 @@ async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
   const shopId = From.replace('whatsapp:', '');
   
   // Parse price update command: "update price product_name new_price"
-  const priceUpdateRegex = /update\s+price\s+([a-zA-Z\s]+)\s+(\d+(?:\.\d{1,2})?)/i;
+  const priceUpdateRegex = /update\s+price\s+([\p{L}\p{N}\s._-]+?)\s+(\d+(?:\.\d{1,2})?)/iu;
   const match = Body.match(priceUpdateRegex);
   
   if (match) {
@@ -4357,6 +4357,18 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   }
 
   
+// NEW ✅: Detect language for this message; use it for command handlers & replies
+  let detectedLanguage = userLanguage || 'en';
+  try {
+    detectedLanguage = await checkAndUpdateLanguage(Body || '', From, userLanguage, requestId);
+  } catch (e) {
+    console.warn(
+      `[${requestId}] Language detection failed, defaulting to ${detectedLanguage}:`,
+      e.message
+    );
+  }
+  console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`);
+  
   // --- Fallback: numeric-only message treated as a price reply if a price correction exists ---
    if (Body && /^\s*\d+(?:\.\d+)?\s*$/.test(Body)) {
      try {
@@ -4400,6 +4412,26 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
        // continue with normal flow if fallback didn’t match
      }
    }
+
+  // NEW ✅: Handle the "update price ..." command EARLY and safely pass detectedLanguage
+  if (Body && /^\s*update\s+price\b/i.test(Body)) {
+    try {
+      // Assumes you already computed `detectedLanguage` earlier in this function.
+      // If not, see “Heads‑up” below.
+      await handlePriceUpdate(Body, From, detectedLanguage, requestId);
+      // Prevent fall-through / double responses
+      return res.send('<Response></Response>');
+    } catch (err) {
+      console.error(`[${requestId}] Error in handlePriceUpdate:`, err.message);
+      const msg = await generateMultiLanguageResponse(
+        'System error. Please try again with a clear message.',
+        detectedLanguage || 'en',
+        requestId
+      );
+      await sendMessageViaAPI(From, msg);
+      return res.send('<Response></Response>');
+    }
+  }
 
   
   // Check for greetings
