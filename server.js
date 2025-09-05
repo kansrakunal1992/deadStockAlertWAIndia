@@ -1,8 +1,5 @@
 const express = require('express');
-const {
-  whatsappHandler,
-  sendPriceUpdateReminders
-} = require('./api/whatsapp');
+const whatsappHandler = require('./api/whatsapp');
 const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
@@ -12,7 +9,8 @@ const {
   getProductPrice, 
   upsertProduct, 
   updateProductPrice, 
-  getProductsNeedingPriceUpdate
+  getProductsNeedingPriceUpdate,
+  sendPriceUpdateReminders
 } = require('./database');
 const app = express();
 const tempDir = path.join(__dirname, 'temp');
