@@ -1415,8 +1415,10 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
     if (languageCode === 'en') {
       return message;
     }
-    // Check cache first
-    const cacheKey = `${languageCode}:${message.substring(0, 50)}`;
+    // Check cache first  
+    const msgHash  = crypto.createHash('sha1').update(message).digest('hex');
+    const cacheKey = `${languageCode}:${msgHash}`;
+
     const cached = languageCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp < LANGUAGE_CACHE_TTL)) {
       console.log(`[${requestId}] Using cached translation for ${languageCode}`);
