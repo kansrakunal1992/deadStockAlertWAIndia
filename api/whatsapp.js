@@ -1496,7 +1496,9 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
             content: `Translate this message to ${languageCode}: "${message}"`
           }
         ],
-        max_tokens: 200,
+        // Allocate a generous token budget based on message length.
+        // (2x message chars is a safe heuristic; clamp to 2000 to stay well within model limits)
+        max_tokens: Math.min(2000, Math.max(400, Math.ceil(message.length * 2))),
         temperature: 0.3
       },
       {
@@ -1522,6 +1524,45 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
     // Remove extra blank lines
     translated = translated.replace(/\n\s*\n\s*\n/g, '\n\n');
     translated = translated.replace(/^\s+|\s+$/g, '');
+
+// Quick integrity check: ensure we have 2 blocks and not cut mid-sentence
+    const endsNeatly = /[.!?]$/.test(translated.trim());
+    const hasTwoBlocks = translated.includes('\n\n');
+    if (!hasTwoBlocks || !endsNeatly) {
+      try {
+        console.warn(`[${requestId}] Translation looks incomplete. Retrying with larger budget...`);
+        const retry = await axios.post(
+          'https://api.deepseek.com/v1/chat/completions',
+          {
+            model: "deepseek-chat",
+            messages: [
+              { role: "system", content: `Return COMPLETE translation as two blocks (native script, blank line, roman transliteration). Do not omit the ending punctuation.` },
+              { role: "user", content: `Translate this message to ${languageCode}: "${message}"` }
+            ],
+            max_tokens: Math.min(2000, Math.max(800, Math.ceil(message.length * 3))),
+            temperature: 0.2
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 20000
+          }
+        );
+        translated = retry.data.choices[0].message.content.trim();
+      } catch (e) {
+        console.warn(`[${requestId}] Retry translation failed, using first translation:`, e.message);
+      }
+    }
+    // Last-resort guard: if still too long, prefer native script only
+    const MAX_LENGTH = 1600;
+    if (translated.length > MAX_LENGTH) {
+      const parts = translated.split(/\n{2,}/);
+      if (parts.length >= 2) translated = parts[0];
+    }
+
+    
     // Cache the result
     languageCache.set(cacheKey, {
       translation: translated,
@@ -1559,9 +1600,18 @@ async function sendSystemMessage(message, from, detectedLanguage, requestId, res
     }
     // Generate multilingual response
     const formattedMessage = await generateMultiLanguageResponse(message, userLanguage, requestId);
-    // Send the message
+// If long, send via API (which auto-splits) and keep TwiML minimal
+    const MAX_LENGTH = 1600;
+    if (formattedMessage.length > MAX_LENGTH) {
+     await sendMessageViaAPI(from, formattedMessage);
+      // Optional: small ack so Twilio gets a valid TwiML
+      response.message('✅ Sent.');
+      return formattedMessage;
+    }
+    // Otherwise, TwiML is fine
     response.message(formattedMessage);
     return formattedMessage;
+    
   } catch (error) {
     console.error(`[${requestId}] Error sending system message:`, error.message);
     // Fallback to original message in English
@@ -1726,8 +1776,11 @@ function splitMessage(message, maxLength = 1600) {
   const chunks = [];
   let currentChunk = '';
   
-  // Split by sentences first to avoid breaking in the middle of a sentence
-  const sentences = message.split(/(?<=[.!?])\s+/);
+  // Split by paragraph breaks first, then by sentence-ending punctuation
+  const sentences = message
+    .split(/\n{2,}/)                               // paragraphs
+    .flatMap(p => p.match(/[^.!?]+[.!?]*/g) || [p]); // sentences (fallback to whole paragraph)
+
   
   for (const sentence of sentences) {
     if (currentChunk.length + sentence.length + 1 <= maxLength) {
@@ -3341,7 +3394,7 @@ async function sendMessageViaAPI(to, body) {
         const partIndicator = `\n\n(Part ${i+1} of ${chunks.length})`;
         const chunkWithIndicator = chunk + partIndicator;
 
-        console.log(`[sendMessageViaAPI] Final message body: "${body}"`);
+        console.log(`[sendMessageViaAPI] Sending part ${i+1}/${chunks.length} (${chunkWithIndicator.length} chars)`);
         
         const message = await client.messages.create({
           body: chunkWithIndicator,
