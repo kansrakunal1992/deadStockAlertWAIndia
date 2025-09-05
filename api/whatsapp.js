@@ -2259,12 +2259,13 @@ async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
   const shopId = From.replace('whatsapp:', '');
 
   // Pattern A: product + numeric price (digits) — tolerant with currency & separators
-  const digitsPattern =
-    /^\s*update\s+price\s+([\p{L}\p{N}\s._\-()]+?)\s*(?:[:=\-–—]\s*)?(?:₹\s*|rs\.?\s*)?(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{1,2}))?(?:\s*\/-?)?\s*$/iu;
+  
+  const digitsPattern = /^\s*update\s+price\s+([\p{L}\p{N}\s._\-()]+)\s*(?:[:=\-–—]\s*)?(?:₹\s*|rs\.?\s*)?(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{1,2}))?(?:\s*\/-?)?\s*$/iu;
 
   // Pattern B: fallback — capture price text (words or digits); parse later with helpers
-  const wordsPattern =
-    /^\s*update\s+price\s+([\p{L}\p{N}\s._\-()]+?)\s*(?:[:=\-–—]\s*)?(.+?)\s*$/iu;
+
+  const wordsPattern = /^\s*update\s+price\s+([\p{L}\p{N}\s._\-()]+)\s*(?:[:=\-–—]\s*)?(.+)\s*$/iu;
+
 
   let productName = '';
   let newPrice = NaN;
