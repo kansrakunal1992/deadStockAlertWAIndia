@@ -9,6 +9,7 @@ const authCache = new Map();
 const { processShopSummary } = require('../dailySummary');
 const { generateInvoicePDF } = require('../pdfGenerator');
 const { getShopDetails } = require('../database');
+const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS || 25000);
 const languageNames = {
   'hi': 'Hindi',
   'bn': 'Bengali',
@@ -1474,6 +1475,10 @@ if (isShortGreeting && (
 }
 
     // 2. For other messages, try the API
+     let translated = '';
+     let lastErr;
+     for (let attempt = 1; attempt <= 2; attempt++) {
+       try {
     const response = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -1496,9 +1501,7 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
             content: `Translate this message to ${languageCode}: "${message}"`
           }
         ],
-        // Allocate a generous token budget based on message length.
-        // (2x message chars is a safe heuristic; clamp to 2000 to stay well within model limits)
-        max_tokens: Math.min(2000, Math.max(400, Math.ceil(message.length * 2))),
+        max_tokens: 200,
         temperature: 0.3
       },
       {
@@ -1506,10 +1509,24 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
           'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 15000 // Increased timeout for better reliability
+        timeout: TRANSLATE_TIMEOUT_MS // Increased timeout for better reliability
       }
     );
-    let translated = response.data.choices[0].message.content.trim();
+    
+    translated = response.data.choices[0].message.content.trim();
+         if (translated) break; // success
+       } catch (err) {
+         lastErr = err;
+         const code = err?.code || err?.response?.status || 'unknown';
+         console.warn(`[${requestId}] Translate attempt ${attempt} failed: ${code}`);
+         if (attempt < 2) await new Promise(r => setTimeout(r, 600)); // small backoff
+       }
+     }
+     if (!translated) {
+       console.warn(`[${requestId}] Translation failed, using original: ${lastErr?.code || lastErr?.message || 'unknown'}`);
+       return message; // keep current fallback behavior
+     }
+
     console.log(`[${requestId}] Raw translation response:`, translated);
     // Post-process to remove any labels that might have been included
     translated = translated.replace(/<translation in roman script>/gi, '');
