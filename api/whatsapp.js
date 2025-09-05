@@ -2152,12 +2152,11 @@ async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
   const shopId = From.replace('whatsapp:', '');
   
   // Parse price update command: "update price product_name new_price"
-  const priceUpdateRegex = /update\s+price\s+([\p{L}\p{N}\-_.\s]+?)\s+₹?\s*(\d+(?:\.\d{1,2})?)/iu;
-
+  const priceUpdateRegex = /update\s+price\s+([a-zA-Z\s]+)\s+(\d+(?:\.\d{1,2})?)/i;
   const match = Body.match(priceUpdateRegex);
   
   if (match) {
-    const productName = match[1].replace(/\s+/g, ' ').trim();
+    const productName = match[1].trim();
     const newPrice = parseFloat(match[2]);
     
     try {
@@ -4331,8 +4330,6 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     console.warn(`[${requestId}] Failed to get user preference:`, error.message);
   }
   
-  let detectedLanguage = userLanguage;
-  
   // ✅ Send immediate "Processing..." response in user's language
   try {
     // Create processing message in native script + Roman transliteration
@@ -4450,9 +4447,8 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         // Check for price management commands
         const lowerBody = Body.toLowerCase();
         
-        if (lowerBody.includes('update price')) {          
-           const detectedLanguage = await checkAndUpdateLanguage(Body, From, userLanguage, requestId);
-           await handlePriceUpdate(Body, From, detectedLanguage, requestId);
+        if (lowerBody.includes('update price')) {
+          await handlePriceUpdate(Body, From, detectedLanguage, requestId);
           return;
         }
         
