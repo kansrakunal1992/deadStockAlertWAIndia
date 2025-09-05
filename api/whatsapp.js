@@ -3,7 +3,6 @@ const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
 const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
-const ffprobePath = require('@ffprobe-installer/ffprobe').path; // if you ever need ffprobe
 const fs = require('fs');
 const crypto = require('crypto');
 const authCache = new Map();
