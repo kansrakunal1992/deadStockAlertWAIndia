@@ -2150,27 +2150,27 @@ async function createSummaryMenu(from, languageCode, requestId) {
 }
 
 // Handle price update command
+// === START: handlePriceUpdate (PASTE-REPLACE) ===
 async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
   const shopId = From.replace('whatsapp:', '');
 
-  // Pattern: product name (any script) + numeric price
-  const priceUpdateRegex =
+  // Single-update pattern: product (any script) + numeric price
+  const singlePattern =
     /^\s*update\s+price\s+([\p{L}\p{N}\s._\-()]+)\s*(?:[:=\-–—]\s*)?(?:₹\s*|rs\.?\s*)?(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{1,2}))?(?:\s*\/-?)?\s*$/iu;
 
-  const match = Body.match(priceUpdateRegex);
-  if (match) {
-    const productName = match[1].replace(/\s+/g, ' ').trim();
-    const intPart = (match[2] || '').replace(/,/g, '');
-    const fracPart = match[3] ? `.${match[3]}` : '';
+  // 1) Try single update first (unchanged behavior)
+  let m = Body.match(singlePattern);
+  if (m) {
+    const productName = m[1].replace(/\s+/g, ' ').trim();
+    const intPart = (m[2] || '').replace(/,/g, '');
+    const fracPart = m[3] ? `.${m[3]}` : '';
     const newPrice = parseFloat(intPart + fracPart);
 
-    console.log(`[${requestId}] Parsed → product="${productName}", price=${newPrice}`);
+    console.log(`[${requestId}] Parsed (single) → product="${productName}", price=${newPrice}`);
 
     try {
       const products = await getAllProducts();
-      const product = products.find(
-        p => p.name.toLowerCase() === productName.toLowerCase()
-      );
+      const product = products.find(p => p.name.toLowerCase() === productName.toLowerCase());
 
       if (product) {
         const updateResult = await updateProductPrice(product.id, newPrice);
@@ -2182,12 +2182,7 @@ async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
         }
       }
 
-      // If product not found, create it
-      const createResult = await upsertProduct({
-        name: productName,
-        price: newPrice,
-        unit: 'pieces'
-      });
+      const createResult = await upsertProduct({ name: productName, price: newPrice, unit: 'pieces' });
       if (createResult.success) {
         const successMessage = `✅ New product added with price: ${productName} - ₹${newPrice}`;
         const formattedMessage = await generateMultiLanguageResponse(successMessage, detectedLanguage, requestId);
@@ -2195,16 +2190,102 @@ async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
         return;
       }
     } catch (error) {
-      console.error(`[${requestId}] Error updating price:`, error.message);
+      console.error(`[${requestId}] Error updating price (single):`, error.message);
+      // Fall through to bulk/invalid handling
     }
   }
 
-  // Invalid format fallback
+  // 2) BULK MODE
+  // Examples:
+  //   "update price mango 20, Parle-G 30, Milk 22"
+  //   "update price दूध 60 aur चीनी 45"
+  //   "update price Milk: 22 and Sugar - 30 & Parle-G = 50"
+  const prefixStripped = Body.replace(/^\s*update\s+price\s*/i, '');
+
+  // Enhanced separators: comma, semicolon, "and", "aur", "और", &, with surrounding spaces
+  const segments = prefixStripped
+    .split(/(?:[,;]|(?:\s+(?:and|aur|और)\s+)|\s*&\s*)+/iu)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  if (segments.length > 1) {
+    // Parse each "product + numeric price" pair, anchored to each segment
+    const pairPattern =
+      /^\s*([\p{L}\p{N}\s._\-()]+)\s*(?:[:=\-–—]\s*)?(?:₹\s*|rs\.?\s*)?(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{1,2}))?(?:\s*\/-?)?\s*$/iu;
+
+    const allProducts = await getAllProducts();
+    const productMap = new Map(allProducts.map(p => [p.name.toLowerCase(), p]));
+
+    const lines = [];
+    let updatedCount = 0;
+    let createdCount = 0;
+    let failedCount = 0;
+
+    for (const seg of segments) {
+      const mm = seg.match(pairPattern);
+      if (!mm) {
+        failedCount++;
+        lines.push(`• ${seg} — ❌ invalid format`);
+        continue;
+      }
+
+      const prodName = mm[1].replace(/\s+/g, ' ').trim();
+      const intPart = (mm[2] || '').replace(/,/g, '');
+      const fracPart = mm[3] ? `.${mm[3]}` : '';
+      const price = parseFloat(intPart + fracPart);
+
+      if (Number.isNaN(price)) {
+        failedCount++;
+        lines.push(`• ${prodName} — ❌ invalid price`);
+        continue;
+      }
+
+      try {
+        const existing = productMap.get(prodName.toLowerCase());
+        if (existing) {
+          const res = await updateProductPrice(existing.id, price);
+          if (res.success) {
+            updatedCount++;
+            lines.push(`• ${prodName}: ₹${price} — ✅ updated`);
+          } else {
+            failedCount++;
+            lines.push(`• ${prodName}: ₹${price} — ❌ ${res.error || 'update failed'}`);
+          }
+        } else {
+          const res = await upsertProduct({ name: prodName, price, unit: 'pieces' });
+          if (res.success) {
+            createdCount++;
+            productMap.set(prodName.toLowerCase(), { id: res.id, name: prodName, price });
+            lines.push(`• ${prodName}: ₹${price} — ✅ created`);
+          } else {
+            failedCount++;
+            lines.push(`• ${prodName}: ₹${price} — ❌ ${res.error || 'create failed'}`);
+          }
+        }
+      } catch (err) {
+        failedCount++;
+        lines.push(`• ${prodName}: ₹${price} — ❌ ${err.message}`);
+      }
+    }
+
+    let summary = '✅ Price updates processed:\n\n' + lines.join('\n');
+    summary += `\n\nUpdated: ${updatedCount}`;
+    summary += `  •  Created: ${createdCount}`;
+    if (failedCount > 0) summary += `  •  Failed: ${failedCount}`;
+
+    const formatted = await generateMultiLanguageResponse(summary, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, formatted);
+    return;
+  }
+
+  // 3) If neither single nor bulk matched, guide the user
   const errorMessage =
-    'Invalid format. Use: "update price product_name price" (e.g., "update price milk 60" or "update price दूध 60").';
+    'Invalid format. Use:\n• Single: "update price milk 60"\n• Multiple: "update price milk 60, sugar 30, Parle-G 50"\n  (You can also separate with: and / aur / और / & / ;)';
   const formattedMessage = await generateMultiLanguageResponse(errorMessage, detectedLanguage, requestId);
   await sendMessageViaAPI(From, formattedMessage);
 }
+// === END: handlePriceUpdate ===
+
 
 
 
