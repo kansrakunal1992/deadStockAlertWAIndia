@@ -1632,6 +1632,91 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
   }
 }
 
+// === START: AI price extractor ===
+async function aiExtractPriceUpdates(text, requestId) {
+  try {
+    // Strong, constrained instruction: return ONLY JSON we can parse.
+    const systemMsg = [
+      'You extract product price updates from user text.',
+      'Return ONLY a valid JSON array. No markdown, no commentary.',
+      'Each element: { "product": string, "price": number }',
+      'Rules:',
+      '1) Keep product name as user wrote it (same casing/script).',
+      '2) Price: convert number-words to a numeric rupee value (e.g., "thirty two" => 32).',
+      '3) If multiple items are present (comma/semicolon/and/aur/और/& separators), return each as a separate element.',
+      '4) Ignore currency symbols and suffixes (₹, rs., /-).',
+      '5) If an item lacks a numeric price, skip it.',
+      '6) Do NOT include keys other than "product" and "price".',
+    ].join(' ');
+
+    const userMsg = [
+      'Text:', text,
+      '',
+      'Return JSON array only, example:',
+      '[ { "product": "milk", "price": 60 }, { "product": "Parle-G", "price": 49.5 } ]'
+    ].join('\n');
+
+    const resp = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: [
+          { role: 'system', content: systemMsg },
+          { role: 'user',   content: userMsg }
+        ],
+        temperature: 0.1,
+        max_tokens: 200
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 12000
+      }
+    );
+
+    let content = resp.data?.choices?.[0]?.message?.content?.trim?.() || '';
+    // Strip code fences if any
+    if (content.startsWith('```')) {
+      content = content.replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim();
+    }
+
+    const parsed = safeJsonParse(content);
+    if (!parsed) {
+      console.warn(`[${requestId}] AI price extract: JSON parse failed. Raw:`, content);
+      return { success: false, items: [] };
+    }
+
+    const array = Array.isArray(parsed) ? parsed : [parsed];
+    const cleaned = [];
+    for (const row of array) {
+      const product = String(row?.product ?? '').trim();
+      let price = row?.price;
+
+      // Normalize price if AI returned string
+      if (typeof price === 'string') {
+        // Remove common symbols/spaces and parse
+        const digits = price.replace(/[^\d.,\-]/g, '').replace(/,/g, '');
+        price = parseFloat(digits);
+      }
+
+      if (product && Number.isFinite(price)) {
+        cleaned.push({ product, price: Number(price) });
+      }
+    }
+
+    return cleaned.length > 0
+      ? { success: true, items: cleaned }
+      : { success: false, items: [] };
+  } catch (err) {
+    console.warn(`[${requestId}] AI price extract failed:`, err.message);
+    return { success: false, items: [] };
+  }
+}
+// === END: AI price extractor ===
+
+
 // Add this helper function to split messages
 function splitMessage(message, maxLength = 1600) {
   if (message.length <= maxLength) {
@@ -2154,160 +2239,136 @@ async function createSummaryMenu(from, languageCode, requestId) {
 async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
   const shopId = From.replace('whatsapp:', '');
 
-  // Splitters for bulk: comma, semicolon, "and", "aur", "और", and "&".
-  const BULK_SPLIT = /(?:[,;]|(?:\s+(?:and|aur|और)\s+)|\s*&\s*)+/iu;
+  // Drop the prefix for AI & fallback parsing
+  const userText = Body.replace(/^\s*update\s+price\s*/iu, '').trim();
 
-  // End-anchored price extractor:
-  //  - consumes optional leading separator before price (:, -, =, –, —)
-  //  - optional currency (₹ or rs.)
-  //  - integer (with commas) + optional .fraction
-  //  - optional "/-" suffix
-  //  - ANCHORED to end ($) so we always take the rightmost price
+  // 0) Try AI first (handles words, multiple items, mixed separators & scripts)
+  const ai = await aiExtractPriceUpdates(userText, requestId);
+  if (ai.success && ai.items.length > 0) {
+    const results = await applyPriceUpdates(ai.items, shopId, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, results.message);
+    return;
+  }
+
+  // 1) Fallback: deterministic end-anchored numeric-only parser
+  //    (still supports multiple items, separators, ₹/rs, /-)
+  const BULK_SPLIT = /(?:[,;]|(?:\s+(?:and|aur|और)\s+)|\s*&\s*)+/iu;
   const PRICE_AT_END =
     /(?:[:=\-–—]\s*)?(?:₹\s*|rs\.?\s*)?(?<int>\d{1,3}(?:,\d{3})*|\d+)(?:\.(?<frac>\d{1,2}))?(?:\s*\/-?)?\s*$/iu;
 
-  // Parse a single segment like "Milk 22", "Parle-G = ₹50", "दूध 60/-"
   function parseSegment(seg) {
     if (!seg) return null;
     const m = seg.match(PRICE_AT_END);
     if (!m) return null;
 
-    // Product is everything BEFORE the price match
     let product = seg.slice(0, m.index)
-      .replace(/\s+$/u, '')          // trim trailing space
-      .replace(/[:=\-–—]\s*$/u, '')  // trim trailing separators if any
-      .trim();
+      .replace(/\s+$/u, '')
+      .replace(/[:=\-–—]\s*$/u, '')
+      .trim()
+      .replace(/\s+/g, ' ');
 
-    // Normalize product spacing
-    product = product.replace(/\s+/g, ' ');
-
-    // Build numeric price
     const intPart = (m.groups.int || '').replace(/,/g, '');
     const fracPart = m.groups.frac ? `.${m.groups.frac}` : '';
     const price = parseFloat(intPart + fracPart);
 
     if (!product || Number.isNaN(price)) return null;
-
     return { product, price };
   }
 
-  // Try single first: we keep the “update price” prefix to be permissive, but
-  // we’ll parse using end-anchored rule (robust to product digits).
-  const singleCandidate = Body.replace(/^\s*update\s+price\s*/iu, '').trim();
-
-  // If the message clearly contains bulk separators, go bulk; otherwise try single.
-  const looksBulk = BULK_SPLIT.test(singleCandidate);
-
+  // Decide single vs bulk based on separators
+  const looksBulk = BULK_SPLIT.test(userText);
   if (!looksBulk) {
-    const parsed = parseSegment(singleCandidate);
-    if (parsed) {
-      const { product, price } = parsed;
-      console.log(`[${requestId}] Parsed (single) → product="${product}", price=${price}`);
-
-      try {
-        const products = await getAllProducts();
-        const existing = products.find(p => p.name.toLowerCase() === product.toLowerCase());
-
-        if (existing) {
-          const res = await updateProductPrice(existing.id, price);
-          if (res.success) {
-            const msg = `✅ Price updated for ${product}: ₹${price}`;
-            const out = await generateMultiLanguageResponse(msg, detectedLanguage, requestId);
-            await sendMessageViaAPI(From, out);
-            return;
-          }
-          // fallthrough to error below if update failed
-        } else {
-          const res = await upsertProduct({ name: product, price, unit: 'pieces' });
-          if (res.success) {
-            const msg = `✅ New product added with price: ${product} - ₹${price}`;
-            const out = await generateMultiLanguageResponse(msg, detectedLanguage, requestId);
-            await sendMessageViaAPI(From, out);
-            return;
-          }
-        }
-      } catch (err) {
-        console.error(`[${requestId}] Error updating price (single):`, err.message);
-      }
-      // If we get here, single parse happened but DB op failed; fall through to generic error
-    } // else not a valid single; try bulk below
+    const single = parseSegment(userText);
+    if (single) {
+      const results = await applyPriceUpdates([single], shopId, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, results.message);
+      return;
+    }
   }
 
-  // BULK: strip prefix and split
-  const bulkText = singleCandidate;
-  const segments = bulkText
+  const segments = userText
     .split(BULK_SPLIT)
     .map(s => s.trim())
     .filter(Boolean);
 
   if (segments.length > 1) {
+    const pairs = segments.map(parseSegment).filter(Boolean);
+    if (pairs.length > 0) {
+      const results = await applyPriceUpdates(pairs, shopId, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, results.message);
+      return;
+    }
+  }
+
+  // 2) If neither AI nor fallback parsed anything
+  const errorMessage =
+    'Invalid format. Use:\n' +
+    '• Single: "update price milk 60"\n' +
+    '• Multiple: "update price milk 60, sugar 30, Parle-G 50"\n' +
+    '  (You can also separate with: and / aur / और / & / ;)\n' +
+    'You may also say prices in words (e.g., "milk sixty two") — I will convert them.';
+  const formatted = await generateMultiLanguageResponse(errorMessage, detectedLanguage, requestId);
+  await sendMessageViaAPI(From, formatted);
+}
+
+// Helper that applies updates and builds a localized summary
+async function applyPriceUpdates(items, shopId, detectedLanguage, requestId) {
+  try {
     const allProducts = await getAllProducts();
-    const productMap = new Map(allProducts.map(p => [p.name.toLowerCase(), p]));
+    const map = new Map(allProducts.map(p => [p.name.toLowerCase(), p]));
 
     const lines = [];
-    let updatedCount = 0;
-    let createdCount = 0;
-    let failedCount = 0;
+    let updated = 0, created = 0, failed = 0;
 
-    for (const seg of segments) {
-      const parsed = parseSegment(seg);
-      if (!parsed) {
-        failedCount++;
-        lines.push(`• ${seg} — ❌ invalid format`);
-        continue;
-      }
-      const { product, price } = parsed;
-
+    for (const { product, price } of items) {
       try {
         const key = product.toLowerCase();
-        const existing = productMap.get(key);
-
+        const existing = map.get(key);
         if (existing) {
           const res = await updateProductPrice(existing.id, price);
           if (res.success) {
-            updatedCount++;
+            updated++;
             lines.push(`• ${product}: ₹${price} — ✅ updated`);
           } else {
-            failedCount++;
+            failed++;
             lines.push(`• ${product}: ₹${price} — ❌ ${res.error || 'update failed'}`);
           }
         } else {
           const res = await upsertProduct({ name: product, price, unit: 'pieces' });
           if (res.success) {
-            createdCount++;
-            productMap.set(key, { id: res.id, name: product, price });
+            created++;
+            map.set(key, { id: res.id, name: product, price });
             lines.push(`• ${product}: ₹${price} — ✅ created`);
           } else {
-            failedCount++;
+            failed++;
             lines.push(`• ${product}: ₹${price} — ❌ ${res.error || 'create failed'}`);
           }
         }
       } catch (err) {
-        failedCount++;
+        failed++;
         lines.push(`• ${product}: ₹${price} — ❌ ${err.message}`);
       }
     }
 
-    let summary = '✅ Price updates processed:\n\n' + lines.join('\n');
-    summary += `\n\nUpdated: ${updatedCount}`;
-    summary += `  •  Created: ${createdCount}`;
-    if (failedCount > 0) summary += `  •  Failed: ${failedCount}`;
+    let summary = '✅ Price updates processed:\n\n' + (lines.join('\n') || 'No valid items found.');
+    summary += `\n\nUpdated: ${updated}`;
+    summary += `  •  Created: ${created}`;
+    if (failed > 0) summary += `  •  Failed: ${failed}`;
 
-    const out = await generateMultiLanguageResponse(summary, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, out);
-    return;
+    const formatted = await generateMultiLanguageResponse(summary, detectedLanguage, requestId);
+    return { message: formatted };
+  } catch (err) {
+    console.error(`[${requestId}] applyPriceUpdates error:`, err.message);
+    const fallback = await generateMultiLanguageResponse(
+      'System error while applying price updates. Please try again.',
+      detectedLanguage,
+      requestId
+    );
+    return { message: fallback };
   }
-
-  // Nothing matched -> guidance
-  const errorMessage =
-    'Invalid format. Use:\n' +
-    '• Single: "update price milk 60"\n' +
-    '• Multiple: "update price milk 60, sugar 30, Parle-G 50"\n' +
-    '  (You can also separate with: and / aur / और / & / ;)';
-  const formattedMessage = await generateMultiLanguageResponse(errorMessage, detectedLanguage, requestId);
-  await sendMessageViaAPI(From, formattedMessage);
 }
 // === END: handlePriceUpdate ===
+
 
 
 
