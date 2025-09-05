@@ -2154,65 +2154,93 @@ async function createSummaryMenu(from, languageCode, requestId) {
 async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
   const shopId = From.replace('whatsapp:', '');
 
-  // Single-update pattern: product (any script) + numeric price
-  const singlePattern =
-    /^\s*update\s+price\s+([\p{L}\p{N}\s._\-()]+)\s*(?:[:=\-–—]\s*)?(?:₹\s*|rs\.?\s*)?(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{1,2}))?(?:\s*\/-?)?\s*$/iu;
+  // Splitters for bulk: comma, semicolon, "and", "aur", "और", and "&".
+  const BULK_SPLIT = /(?:[,;]|(?:\s+(?:and|aur|और)\s+)|\s*&\s*)+/iu;
 
-  // 1) Try single update first (unchanged behavior)
-  let m = Body.match(singlePattern);
-  if (m) {
-    const productName = m[1].replace(/\s+/g, ' ').trim();
-    const intPart = (m[2] || '').replace(/,/g, '');
-    const fracPart = m[3] ? `.${m[3]}` : '';
-    const newPrice = parseFloat(intPart + fracPart);
+  // End-anchored price extractor:
+  //  - consumes optional leading separator before price (:, -, =, –, —)
+  //  - optional currency (₹ or rs.)
+  //  - integer (with commas) + optional .fraction
+  //  - optional "/-" suffix
+  //  - ANCHORED to end ($) so we always take the rightmost price
+  const PRICE_AT_END =
+    /(?:[:=\-–—]\s*)?(?:₹\s*|rs\.?\s*)?(?<int>\d{1,3}(?:,\d{3})*|\d+)(?:\.(?<frac>\d{1,2}))?(?:\s*\/-?)?\s*$/iu;
 
-    console.log(`[${requestId}] Parsed (single) → product="${productName}", price=${newPrice}`);
+  // Parse a single segment like "Milk 22", "Parle-G = ₹50", "दूध 60/-"
+  function parseSegment(seg) {
+    if (!seg) return null;
+    const m = seg.match(PRICE_AT_END);
+    if (!m) return null;
 
-    try {
-      const products = await getAllProducts();
-      const product = products.find(p => p.name.toLowerCase() === productName.toLowerCase());
+    // Product is everything BEFORE the price match
+    let product = seg.slice(0, m.index)
+      .replace(/\s+$/u, '')          // trim trailing space
+      .replace(/[:=\-–—]\s*$/u, '')  // trim trailing separators if any
+      .trim();
 
-      if (product) {
-        const updateResult = await updateProductPrice(product.id, newPrice);
-        if (updateResult.success) {
-          const successMessage = `✅ Price updated for ${productName}: ₹${newPrice}`;
-          const formattedMessage = await generateMultiLanguageResponse(successMessage, detectedLanguage, requestId);
-          await sendMessageViaAPI(From, formattedMessage);
-          return;
-        }
-      }
+    // Normalize product spacing
+    product = product.replace(/\s+/g, ' ');
 
-      const createResult = await upsertProduct({ name: productName, price: newPrice, unit: 'pieces' });
-      if (createResult.success) {
-        const successMessage = `✅ New product added with price: ${productName} - ₹${newPrice}`;
-        const formattedMessage = await generateMultiLanguageResponse(successMessage, detectedLanguage, requestId);
-        await sendMessageViaAPI(From, formattedMessage);
-        return;
-      }
-    } catch (error) {
-      console.error(`[${requestId}] Error updating price (single):`, error.message);
-      // Fall through to bulk/invalid handling
-    }
+    // Build numeric price
+    const intPart = (m.groups.int || '').replace(/,/g, '');
+    const fracPart = m.groups.frac ? `.${m.groups.frac}` : '';
+    const price = parseFloat(intPart + fracPart);
+
+    if (!product || Number.isNaN(price)) return null;
+
+    return { product, price };
   }
 
-  // 2) BULK MODE
-  // Examples:
-  //   "update price mango 20, Parle-G 30, Milk 22"
-  //   "update price दूध 60 aur चीनी 45"
-  //   "update price Milk: 22 and Sugar - 30 & Parle-G = 50"
-  const prefixStripped = Body.replace(/^\s*update\s+price\s*/i, '');
+  // Try single first: we keep the “update price” prefix to be permissive, but
+  // we’ll parse using end-anchored rule (robust to product digits).
+  const singleCandidate = Body.replace(/^\s*update\s+price\s*/iu, '').trim();
 
-  // Enhanced separators: comma, semicolon, "and", "aur", "और", &, with surrounding spaces
-  const segments = prefixStripped
-    .split(/(?:[,;]|(?:\s+(?:and|aur|और)\s+)|\s*&\s*)+/iu)
+  // If the message clearly contains bulk separators, go bulk; otherwise try single.
+  const looksBulk = BULK_SPLIT.test(singleCandidate);
+
+  if (!looksBulk) {
+    const parsed = parseSegment(singleCandidate);
+    if (parsed) {
+      const { product, price } = parsed;
+      console.log(`[${requestId}] Parsed (single) → product="${product}", price=${price}`);
+
+      try {
+        const products = await getAllProducts();
+        const existing = products.find(p => p.name.toLowerCase() === product.toLowerCase());
+
+        if (existing) {
+          const res = await updateProductPrice(existing.id, price);
+          if (res.success) {
+            const msg = `✅ Price updated for ${product}: ₹${price}`;
+            const out = await generateMultiLanguageResponse(msg, detectedLanguage, requestId);
+            await sendMessageViaAPI(From, out);
+            return;
+          }
+          // fallthrough to error below if update failed
+        } else {
+          const res = await upsertProduct({ name: product, price, unit: 'pieces' });
+          if (res.success) {
+            const msg = `✅ New product added with price: ${product} - ₹${price}`;
+            const out = await generateMultiLanguageResponse(msg, detectedLanguage, requestId);
+            await sendMessageViaAPI(From, out);
+            return;
+          }
+        }
+      } catch (err) {
+        console.error(`[${requestId}] Error updating price (single):`, err.message);
+      }
+      // If we get here, single parse happened but DB op failed; fall through to generic error
+    } // else not a valid single; try bulk below
+  }
+
+  // BULK: strip prefix and split
+  const bulkText = singleCandidate;
+  const segments = bulkText
+    .split(BULK_SPLIT)
     .map(s => s.trim())
     .filter(Boolean);
 
   if (segments.length > 1) {
-    // Parse each "product + numeric price" pair, anchored to each segment
-    const pairPattern =
-      /^\s*([\p{L}\p{N}\s._\-()]+)\s*(?:[:=\-–—]\s*)?(?:₹\s*|rs\.?\s*)?(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{1,2}))?(?:\s*\/-?)?\s*$/iu;
-
     const allProducts = await getAllProducts();
     const productMap = new Map(allProducts.map(p => [p.name.toLowerCase(), p]));
 
@@ -2222,49 +2250,41 @@ async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
     let failedCount = 0;
 
     for (const seg of segments) {
-      const mm = seg.match(pairPattern);
-      if (!mm) {
+      const parsed = parseSegment(seg);
+      if (!parsed) {
         failedCount++;
         lines.push(`• ${seg} — ❌ invalid format`);
         continue;
       }
-
-      const prodName = mm[1].replace(/\s+/g, ' ').trim();
-      const intPart = (mm[2] || '').replace(/,/g, '');
-      const fracPart = mm[3] ? `.${mm[3]}` : '';
-      const price = parseFloat(intPart + fracPart);
-
-      if (Number.isNaN(price)) {
-        failedCount++;
-        lines.push(`• ${prodName} — ❌ invalid price`);
-        continue;
-      }
+      const { product, price } = parsed;
 
       try {
-        const existing = productMap.get(prodName.toLowerCase());
+        const key = product.toLowerCase();
+        const existing = productMap.get(key);
+
         if (existing) {
           const res = await updateProductPrice(existing.id, price);
           if (res.success) {
             updatedCount++;
-            lines.push(`• ${prodName}: ₹${price} — ✅ updated`);
+            lines.push(`• ${product}: ₹${price} — ✅ updated`);
           } else {
             failedCount++;
-            lines.push(`• ${prodName}: ₹${price} — ❌ ${res.error || 'update failed'}`);
+            lines.push(`• ${product}: ₹${price} — ❌ ${res.error || 'update failed'}`);
           }
         } else {
-          const res = await upsertProduct({ name: prodName, price, unit: 'pieces' });
+          const res = await upsertProduct({ name: product, price, unit: 'pieces' });
           if (res.success) {
             createdCount++;
-            productMap.set(prodName.toLowerCase(), { id: res.id, name: prodName, price });
-            lines.push(`• ${prodName}: ₹${price} — ✅ created`);
+            productMap.set(key, { id: res.id, name: product, price });
+            lines.push(`• ${product}: ₹${price} — ✅ created`);
           } else {
             failedCount++;
-            lines.push(`• ${prodName}: ₹${price} — ❌ ${res.error || 'create failed'}`);
+            lines.push(`• ${product}: ₹${price} — ❌ ${res.error || 'create failed'}`);
           }
         }
       } catch (err) {
         failedCount++;
-        lines.push(`• ${prodName}: ₹${price} — ❌ ${err.message}`);
+        lines.push(`• ${product}: ₹${price} — ❌ ${err.message}`);
       }
     }
 
@@ -2273,18 +2293,22 @@ async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
     summary += `  •  Created: ${createdCount}`;
     if (failedCount > 0) summary += `  •  Failed: ${failedCount}`;
 
-    const formatted = await generateMultiLanguageResponse(summary, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, formatted);
+    const out = await generateMultiLanguageResponse(summary, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, out);
     return;
   }
 
-  // 3) If neither single nor bulk matched, guide the user
+  // Nothing matched -> guidance
   const errorMessage =
-    'Invalid format. Use:\n• Single: "update price milk 60"\n• Multiple: "update price milk 60, sugar 30, Parle-G 50"\n  (You can also separate with: and / aur / और / & / ;)';
+    'Invalid format. Use:\n' +
+    '• Single: "update price milk 60"\n' +
+    '• Multiple: "update price milk 60, sugar 30, Parle-G 50"\n' +
+    '  (You can also separate with: and / aur / और / & / ;)';
   const formattedMessage = await generateMultiLanguageResponse(errorMessage, detectedLanguage, requestId);
   await sendMessageViaAPI(From, formattedMessage);
 }
 // === END: handlePriceUpdate ===
+
 
 
 
