@@ -4331,6 +4331,8 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     console.warn(`[${requestId}] Failed to get user preference:`, error.message);
   }
   
+  let detectedLanguage = userLanguage;
+  
   // ✅ Send immediate "Processing..." response in user's language
   try {
     // Create processing message in native script + Roman transliteration
