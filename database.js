@@ -2145,122 +2145,122 @@ async function getProductInventory(shopId, productName) {
 }
 
 // Get items that are out of stock (<= 0)
-+async function getStockoutItems(shopId) {
-+  const context = `Get Stockout Items ${shopId}`;
-+  try {
-+    const filterFormula = `AND({ShopID} = '${shopId.replace(/'/g,"''")}', OR({Quantity} = 0, {Quantity} < 0, {Quantity} = BLANK()))`;
-+    const result = await airtableRequest({ method: 'get', params: { filterByFormula: filterFormula } }, context);
-+    return result.records.map(rec => ({
-+      name: rec.fields.Product,
-+      quantity: rec.fields.Quantity ?? 0,
-+      unit: rec.fields.Units ?? 'pieces'
-+    }));
-+  } catch (error) {
-+    logError(context, error);
-+    return [];
-+  }
-+}
-+
-+// Get positive-remaining batches for a product with purchase & expiry dates
-+async function getBatchesForProductWithRemaining(shopId, productName) {
-+  const context = `Get Batches For Product ${shopId} - ${productName}`;
-+  try {
-+    const filterFormula = `AND({ShopID}='${shopId.replace(/'/g,"''")}',{Product}='${productName.replace(/'/g,"''")}', {Quantity} > 0)`;
-+    const result = await airtableBatchRequest({
-+      method: 'get',
-+      params: { filterByFormula: filterFormula, sort: [{ field: 'PurchaseDate', direction: 'asc' }] }
-+    }, context);
-+    return result.records.map(r => ({
-+      id: r.id,
-+      product: r.fields.Product,
-+      quantity: r.fields.Quantity ?? 0,
-+      unit: r.fields.Units ?? 'pieces',
-+      purchaseDate: r.fields.PurchaseDate,
-+      expiryDate: r.fields.ExpiryDate ?? null,
-+      compositeKey: r.fields.CompositeKey
-+    }));
-+  } catch (error) {
-+    logError(context, error);
-+    return [];
-+  }
-+}
-+
-+// Rolling period helper (day, week, month)
-+function getPeriodWindow(period) {
-+  const now = new Date();
-+  if (!period) return { start: new Date(now.getFullYear(), now.getMonth(), now.getDate()), end: now };
-+  const p = period.toLowerCase();
-+  if (p === 'day' || p === 'today') {
-+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-+    return { start, end };
-+  }
-+  if (p.includes('week')) {
-+    // last 7 days rolling
-+    const start = new Date(now);
-+    start.setDate(now.getDate() - 7);
-+    return { start, end: now };
-+  }
-+  // default: this month-to-date
-+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-+  const end = now;
-+  return { start, end };
-+}
-+
-+// Sales summary by friendly period ("day|week|month")
-+async function getSalesSummaryPeriod(shopId, period = 'day') {
-+  const { start, end } = getPeriodWindow(period);
-+  return await getSalesDataForPeriod(shopId, start, end);
-+}
-+
-+// Top-N sellers by friendly period
-+async function getTopSellingProductsForPeriod(shopId, period = 'month', limit = 5) {
-+  const data = await getSalesSummaryPeriod(shopId, period);
-+  const top = (data.topProducts ?? []).slice(0, limit);
-+  return { success: true, top, totalItems: data.totalItems ?? 0, totalValue: data.totalValue ?? 0 };
-+}
-+
-+// Heuristic reorder suggestions: velocity-based with lead & safety days
-+async function getReorderSuggestions(shopId, { days = 30, leadTimeDays = 3, safetyDays = 2, minDailyRate = 0.2 } = {}) {
-+  const context = `Get Reorder Suggestions ${shopId}`;
-+  try {
-+    const now = new Date();
-+    const start = new Date(now);
-+    start.setDate(now.getDate() - days);
-+    const sales = await getSalesDataForPeriod(shopId, start, now);
-+    const inventoryRecords = await getCurrentInventory(shopId);
-+
-+    const soldMap = new Map(); // product -> qty sold
-+    for (const rec of (sales.records ?? [])) {
-+      const p = rec.fields.Product;
-+      const q = Math.abs(rec.fields.Quantity ?? 0);
-+      if (!p) continue;
-+      soldMap.set(p, (soldMap.get(p) ?? 0) + q);
-+    }
-+    const dayCount = Math.max(1, Math.round((now - start) / (24 * 60 * 60 * 1000)));
-+    const suggestions = [];
-+    for (const rec of (inventoryRecords ?? [])) {
-+      const product = rec.fields.Product;
-+      const currentQty = rec.fields.Quantity ?? 0;
-+      const unit = rec.fields.Units ?? 'pieces';
-+      const soldQty = soldMap.get(product) ?? 0;
-+      const dailyRate = soldQty / dayCount; // avg per day
-+      if (dailyRate < minDailyRate && currentQty > 0) continue; // very slow movers skip
-+      const coverNeeded = (leadTimeDays + safetyDays) * dailyRate;
-+      const reorderQty = Math.max(0, Math.ceil(coverNeeded - currentQty));
-+      if (reorderQty > 0) {
-+        suggestions.push({ name: product, unit, currentQty, dailyRate: Number(dailyRate.toFixed(2)), reorderQty });
-+      }
-+    }
-+    // Sort by (reorderQty descending, dailyRate descending)
-+    suggestions.sort((a, b) => (b.reorderQty - a.reorderQty) || (b.dailyRate - a.dailyRate));
-+    return { success: true, suggestions, days, leadTimeDays, safetyDays };
-+  } catch (error) {
-+    logError(context, error);
-+    return { success: false, error: error.message, suggestions: [] };
-+  }
-+}
-+
+async function getStockoutItems(shopId) {
+  const context = `Get Stockout Items ${shopId}`;
+  try {
+    const filterFormula = `AND({ShopID} = '${shopId.replace(/'/g,"''")}', OR({Quantity} = 0, {Quantity} < 0, {Quantity} = BLANK()))`;
+    const result = await airtableRequest({ method: 'get', params: { filterByFormula: filterFormula } }, context);
+    return result.records.map(rec => ({
+      name: rec.fields.Product,
+      quantity: rec.fields.Quantity ?? 0,
+      unit: rec.fields.Units ?? 'pieces'
+    }));
+  } catch (error) {
+    logError(context, error);
+    return [];
+  }
+}
+
+// Get positive-remaining batches for a product with purchase & expiry dates
+async function getBatchesForProductWithRemaining(shopId, productName) {
+  const context = `Get Batches For Product ${shopId} - ${productName}`;
+  try {
+    const filterFormula = `AND({ShopID}='${shopId.replace(/'/g,"''")}',{Product}='${productName.replace(/'/g,"''")}', {Quantity} > 0)`;
+    const result = await airtableBatchRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula, sort: [{ field: 'PurchaseDate', direction: 'asc' }] }
+    }, context);
+    return result.records.map(r => ({
+      id: r.id,
+      product: r.fields.Product,
+      quantity: r.fields.Quantity ?? 0,
+      unit: r.fields.Units ?? 'pieces',
+      purchaseDate: r.fields.PurchaseDate,
+      expiryDate: r.fields.ExpiryDate ?? null,
+      compositeKey: r.fields.CompositeKey
+    }));
+  } catch (error) {
+    logError(context, error);
+    return [];
+  }
+}
+
+// Rolling period helper (day, week, month)
+function getPeriodWindow(period) {
+  const now = new Date();
+  if (!period) return { start: new Date(now.getFullYear(), now.getMonth(), now.getDate()), end: now };
+  const p = period.toLowerCase();
+  if (p === 'day' || p === 'today') {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    return { start, end };
+  }
+  if (p.includes('week')) {
+    // last 7 days rolling
+    const start = new Date(now);
+    start.setDate(now.getDate() - 7);
+    return { start, end: now };
+  }
+  // default: this month-to-date
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  const end = now;
+  return { start, end };
+}
+
+// Sales summary by friendly period ("day|week|month")
+async function getSalesSummaryPeriod(shopId, period = 'day') {
+  const { start, end } = getPeriodWindow(period);
+  return await getSalesDataForPeriod(shopId, start, end);
+}
+
+// Top-N sellers by friendly period
+async function getTopSellingProductsForPeriod(shopId, period = 'month', limit = 5) {
+  const data = await getSalesSummaryPeriod(shopId, period);
+  const top = (data.topProducts ?? []).slice(0, limit);
+  return { success: true, top, totalItems: data.totalItems ?? 0, totalValue: data.totalValue ?? 0 };
+}
+
+// Heuristic reorder suggestions: velocity-based with lead & safety days
+async function getReorderSuggestions(shopId, { days = 30, leadTimeDays = 3, safetyDays = 2, minDailyRate = 0.2 } = {}) {
+  const context = `Get Reorder Suggestions ${shopId}`;
+  try {
+    const now = new Date();
+    const start = new Date(now);
+    start.setDate(now.getDate() - days);
+    const sales = await getSalesDataForPeriod(shopId, start, now);
+    const inventoryRecords = await getCurrentInventory(shopId);
+
+    const soldMap = new Map(); // product -> qty sold
+    for (const rec of (sales.records ?? [])) {
+      const p = rec.fields.Product;
+      const q = Math.abs(rec.fields.Quantity ?? 0);
+      if (!p) continue;
+      soldMap.set(p, (soldMap.get(p) ?? 0) + q);
+    }
+    const dayCount = Math.max(1, Math.round((now - start) / (24 * 60 * 60 * 1000)));
+    const suggestions = [];
+    for (const rec of (inventoryRecords ?? [])) {
+      const product = rec.fields.Product;
+      const currentQty = rec.fields.Quantity ?? 0;
+      const unit = rec.fields.Units ?? 'pieces';
+      const soldQty = soldMap.get(product) ?? 0;
+      const dailyRate = soldQty / dayCount; // avg per day
+      if (dailyRate < minDailyRate && currentQty > 0) continue; // very slow movers skip
+      const coverNeeded = (leadTimeDays + safetyDays) * dailyRate;
+      const reorderQty = Math.max(0, Math.ceil(coverNeeded - currentQty));
+      if (reorderQty > 0) {
+        suggestions.push({ name: product, unit, currentQty, dailyRate: Number(dailyRate.toFixed(2)), reorderQty });
+      }
+    }
+    // Sort by (reorderQty descending, dailyRate descending)
+    suggestions.sort((a, b) => (b.reorderQty - a.reorderQty) || (b.dailyRate - a.dailyRate));
+    return { success: true, suggestions, days, leadTimeDays, safetyDays };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message, suggestions: [] };
+  }
+}
+
 
 module.exports = {
   updateInventory,
