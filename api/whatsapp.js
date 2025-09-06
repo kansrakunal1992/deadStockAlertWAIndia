@@ -67,7 +67,13 @@ const {
   updateProductPrice,
   getProductsNeedingPriceUpdate,
   getTranslationEntry,
-  upsertTranslationEntry
+  upsertTranslationEntry,
+  getProductInventory,
+  getStockoutItems,
+  getBatchesForProductWithRemaining,
+  getSalesSummaryPeriod,
+  getTopSellingProductsForPeriod,
+  getReorderSuggestions
 } = require('../database');
 
 // Add this at the top of the file after the imports
