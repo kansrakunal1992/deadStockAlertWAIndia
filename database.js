@@ -2116,35 +2116,35 @@ async function upsertTranslationEntry({ key, language, sourceText, translatedTex
 }
 
 
-+// ====== NEW HELPERS FOR QUICK QUERIES ======
-+
-+// Get inventory record for a specific product
-+async function getProductInventory(shopId, productName) {
-+  const context = `Get Product Inventory ${shopId} - ${productName}`;
-+  try {
-+    const filterFormula = `AND({ShopID} = '${shopId.replace(/'/g,"''")}', {Product} = '${productName.replace(/'/g,"''")}')`;
-+    const result = await airtableRequest({
-+      method: 'get',
-+      params: { filterByFormula: filterFormula, maxRecords: 1 }
-+    }, context);
-+    if (result.records.length > 0) {
-+      const rec = result.records[0];
-+      return {
-+        success: true,
-+        product: rec.fields.Product,
-+        quantity: rec.fields.Quantity ?? 0,
-+        unit: rec.fields.Units ?? 'pieces',
-+        id: rec.id
-+      };
-+    }
-+    return { success: true, product: productName, quantity: 0, unit: 'pieces', id: null };
-+  } catch (error) {
-+    logError(context, error);
-+    return { success: false, error: error.message };
-+  }
-+}
-+
-+// Get items that are out of stock (<= 0)
+// ====== NEW HELPERS FOR QUICK QUERIES ======
+
+// Get inventory record for a specific product
+async function getProductInventory(shopId, productName) {
+  const context = `Get Product Inventory ${shopId} - ${productName}`;
+  try {
+    const filterFormula = `AND({ShopID} = '${shopId.replace(/'/g,"''")}', {Product} = '${productName.replace(/'/g,"''")}')`;
+    const result = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula, maxRecords: 1 }
+    }, context);
+     if (result.records.length > 0) {
+      const rec = result.records[0];
+      return {
+        success: true,
+        product: rec.fields.Product,
+        quantity: rec.fields.Quantity ?? 0,
+        unit: rec.fields.Units ?? 'pieces',
+        id: rec.id
+      };
+    }
+    return { success: true, product: productName, quantity: 0, unit: 'pieces', id: null };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get items that are out of stock (<= 0)
 +async function getStockoutItems(shopId) {
 +  const context = `Get Stockout Items ${shopId}`;
 +  try {
