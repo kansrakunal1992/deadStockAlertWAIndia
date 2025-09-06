@@ -73,7 +73,8 @@ const {
   getBatchesForProductWithRemaining,
   getSalesSummaryPeriod,
   getTopSellingProductsForPeriod,
-  getReorderSuggestions
+  getReorderSuggestions,
+  getCurrentInventory
 } = require('../database');
 
 // Add this at the top of the file after the imports
@@ -5138,6 +5139,18 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   
       // Handle text messages
       if (Body) {
+        
+  // 🔒 Quick-queries (English-only) — run BEFORE any inventory parsing
+      try {
+        const handledQuick = await handleQuickQueryEN(Body, From, detectedLanguage, requestId);
+        if (handledQuick) {
+          // Return an empty TwiML to end webhook; reply has been sent via API
+          return res.send('<Response></Response>');
+        }
+      } catch (e) {
+        console.warn(`[${requestId}] Quick-query (EN) routing failed; continuing.`, e?.message);
+      }
+  
         // Check for price management commands
         const lowerBody = Body.toLowerCase();
         
