@@ -1,5 +1,4 @@
 const twilio = require('twilio');
-
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
 const { execSync } = require('child_process');
@@ -501,6 +500,193 @@ function daysBetween(date1, date2) {
   return diffDays;
 }
 
+
+// ---------------- QUICK-QUERY ROUTER (English-only hotfix) ----------------
+function _periodWindow(period) {
+  const now = new Date();
+  const p = (period || '').toLowerCase();
+  if (p === 'today' || p === 'day') {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    return { start, end, label: 'today' };
+  }
+  if (p.includes('week')) {
+    const start = new Date(now); start.setDate(now.getDate() - 7);
+    return { start, end: now, label: 'week' };
+  }
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  return { start, end: now, label: 'month' };
+}
+
+function _norm(s) { return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,'').trim(); }
+
+async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
+  const text = String(rawBody || '').trim();
+  const shopId = From.replace('whatsapp:', '');
+
+  // 1) Stock for product
+  let m = text.match(/^(?:stock|inventory|qty)\s+(.+)$/i);
+  if (m) {
+    const productQuery = m[1].trim();
+    const inv = await getCurrentInventory(shopId);
+    const queryN = _norm(productQuery);
+    let best = null;
+    for (const r of inv) {
+      const name = r.fields.Product || '';
+      const n = _norm(name);
+      if (n === queryN || n.includes(queryN) || queryN.includes(n)) {
+        best = r; break;
+      }
+    }
+    let message;
+    if (!best) {
+      message = `📦 ${productQuery}: not found in inventory.`;
+    } else {
+      const qty = best.fields.Quantity ?? 0;
+      const unit = best.fields.Units ?? 'pieces';
+      message = `📦 Stock — ${best.fields.Product}: ${qty} ${unit}`;
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 2) Low stock / Stockout
+  if (/^(?:low\s*stock|stockout|out\s*of\s*stock)$/i.test(text)) {
+    const low = await getLowStockProducts(shopId, 5);
+    const all = await getCurrentInventory(shopId);
+    const out = all.filter(r => (r.fields.Quantity ?? 0) <= 0).map(r => ({
+      name: r.fields.Product, unit: r.fields.Units || 'pieces'
+    }));
+    let message = `⚠️ Low & Stockout:\n`;
+    if (low.length === 0 && out.length === 0) message += `Everything looks good.`;
+    else {
+      if (low.length) message += `\nLow stock (≤5):\n` + low.map(p=>`• ${p.name}: ${p.quantity} ${p.unit}`).join('\n');
+      if (out.length) message += `\n\nOut of stock:\n` + out.map(p=>`• ${p.name}`).join('\n');
+      message += `\n\n💡 Advice: Prioritize ordering low-stock items first.`;
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 3) Batches for product (purchase & expiry)
+  m = text.match(/^(?:batches?|expiry)\s+(.+)$/i);
+  if (m) {
+    const productQuery = m[1].trim();
+    const batches = await getBatchRecords(shopId, productQuery);
+    const active = batches.filter(b => (b.fields.Quantity ?? 0) > 0);
+    let message;
+    if (active.length === 0) {
+      message = `📦 No active batches found for ${productQuery}.`;
+    } else {
+      message = `📦 Batches — ${productQuery}:\n` +
+        active.map(b => {
+          const q = b.fields.Quantity ?? 0;
+          const u = b.fields.Units ?? 'pieces';
+          const pd = b.fields.PurchaseDate ? formatDateForDisplay(b.fields.PurchaseDate) : '—';
+          const ed = b.fields.ExpiryDate ? formatDateForDisplay(b.fields.ExpiryDate) : '—';
+          return `• ${q} ${u} | Bought: ${pd} | Expiry: ${ed}`;
+        }).join('\n');
+      const soon = active.filter(b => b.fields.ExpiryDate && daysBetween(new Date(b.fields.ExpiryDate), new Date()) <= 7);
+      if (soon.length) message += `\n\n💡 ${soon.length} batch(es) expiring ≤7 days — clear with FIFO/discounts.`;
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 4) Expiring soon
+  m = text.match(/^expiring(?:\s+(\d+))?$/i);
+  if (m) {
+    const days = m[1] ? Math.max(1, parseInt(m[1],10)) : 30;
+    const exp = await getExpiringProducts(shopId, days);
+    let message = `⏰ Expiring in next ${days} day(s):\n`;
+    if (!exp.length) message += `No items found.`;
+    else {
+      message += exp.map(p=>`• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n');
+      message += `\n\n💡 Move to eye‑level, bundle, or mark‑down 5–15%.`;
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 5) Sales (today|week|month)
+  m = text.match(/^sales\s+(today|this\s*week|week|this\s*month|month)$/i);
+  if (m) {
+    const { start, end, label } = _periodWindow(m[1]);
+    const data = await getSalesDataForPeriod(shopId, start, end);
+    let message = `💰 Sales (${label}): ${data.totalItems ?? 0} items`;
+    if ((data.totalValue ?? 0) > 0) message += ` (₹${(data.totalValue).toFixed(2)})`;
+    if ((data.topProducts ?? []).length > 0) {
+      message += `\n\n🏷️ Top Sellers:\n` + data.topProducts.slice(0,5).map(p=>`• ${p.name}: ${p.quantity} ${p.unit}`).join('\n');
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 6) Top N products
+  m = text.match(/^top\s*(\d+)?\s*products?(?:\s*(today|week|month|this\s*week|this\s*month))?$/i);
+  if (m) {
+    const n = m[1] ? Math.max(1, parseInt(m[1],10)) : 5;
+    const { start, end, label } = _periodWindow(m[2] || 'month');
+    const data = await getSalesDataForPeriod(shopId, start, end);
+    const top = (data.topProducts || []).slice(0, n);
+    let message = `🏆 Top ${n} (${label}):\n`;
+    message += top.length ? top.map((p,i)=>`${i+1}. ${p.name}: ${p.quantity} ${p.unit}`).join('\n') : 'No sales data.';
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 7) Reorder suggestions (simple velocity heuristic)
+  if (/^reorder(\s+suggestions?)?$|^what\s+should\s+i\s+reorder$/i.test(text)) {
+    // last 30 days sales velocity
+    const now = new Date(); const start = new Date(now); start.setDate(now.getDate()-30);
+    const sales = await getSalesDataForPeriod(shopId, start, now);
+    const inv = await getCurrentInventory(shopId);
+    const soldMap = new Map();
+    for (const r of (sales.records || [])) {
+      const p = r.fields.Product; const q = Math.abs(r.fields.Quantity ?? 0);
+      if (!p) continue; soldMap.set(p, (soldMap.get(p)||0)+q);
+    }
+    const days = 30, lead=3, safety=2;
+    const suggestions = [];
+    for (const r of inv) {
+      const name = r.fields.Product; const unit = r.fields.Units || 'pieces';
+      const current = r.fields.Quantity ?? 0; const sold = soldMap.get(name) || 0;
+      const daily = sold/days;
+      const coverNeeded = (lead+safety)*daily;
+      const reorderQty = Math.max(0, Math.ceil(coverNeeded - current));
+      if (reorderQty > 0) suggestions.push({name, unit, current, daily: Number(daily.toFixed(2)), reorderQty});
+    }
+    suggestions.sort((a,b)=> (b.reorderQty-a.reorderQty) || (b.daily-a.daily));
+    let message = `📋 Reorder Suggestions (30d, lead ${lead}d + safety ${safety}d):\n`;
+    message += suggestions.length
+      ? suggestions.slice(0,10).map(s=>`• ${s.name}: stock ${s.current} ${s.unit}, ~${s.daily}/day → reorder ~${s.reorderQty} ${singularize(s.unit)}`).join('\n')
+      : 'No urgent reorders detected.';
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 8) Inventory value
+  if (/^(?:inventory\s*value|stock\s*value|value\s*summary)$/i.test(text)) {
+    const inv = await getInventorySummary(shopId);
+    let message = `📦 Inventory Summary:\n• Unique products: ${inv.totalProducts}\n• Total value: ₹${(inv.totalValue ?? 0).toFixed(2)}`;
+    if ((inv.totalPurchaseValue ?? 0) > 0) message += `\n• Total cost: ₹${inv.totalPurchaseValue.toFixed(2)}`;
+    if ((inv.topCategories ?? []).length > 0) {
+      message += `\n\n📁 By Category:\n` + inv.topCategories.map((c,i)=>`${i+1}. ${c.name}: ₹${c.value.toFixed(2)} (${c.productCount} items)`).join('\n');
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  return false; // not a quick query
+}
 
 // -------- NEW: Quick-query command handlers (8 core queries) --------
 
@@ -4004,11 +4190,18 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       }
     }
        
-// ---- NEW: Check for quick-query commands before treating as inventory updates ----
+    
+    // Detect language and save preference
     let detectedLanguage = conversationState ? conversationState.language : 'en';
     detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
-    const handled = await handleQueryCommand(Body, From, detectedLanguage, requestId);
-    if (handled) return;
+
+    // 🔒 HOTFIX: English quick-queries BEFORE any inventory parsing
+    try {
+      const handledQuick = await handleQuickQueryEN(Body, From, detectedLanguage, requestId);
+      if (handledQuick) return;
+    } catch (e) {
+      console.warn(`[${requestId}] Quick-query (EN) handling failed, continuing to parser.`, e?.message);
+    }
 
     console.log(`[${requestId}] Attempting to parse as inventory update (no quick-query match)`);
 
