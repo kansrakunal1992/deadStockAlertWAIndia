@@ -500,6 +500,190 @@ function daysBetween(date1, date2) {
   return diffDays;
 }
 
+
+// -------- NEW: Quick-query command handlers (8 core queries) --------
+
+function parsePeriodKeyword(txt) {
+  const t = (txt || '').toLowerCase().trim();
+  if (t.includes('today') || t === 'day') return 'day';
+  if (t.includes('week')) return 'week';
+  return 'month'; // default
+}
+
+async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
+  const text = Body.trim();
+  const shopId = From.replace('whatsapp:', '');
+
+  // 1) Inventory remaining for a specific product (+ advice)
+  const stockMatch = text.match(/^(?:stock|inventory|qty)\s+(.+)$/i);
+  if (stockMatch) {
+    const raw = stockMatch[1].trim();
+    const product = await translateProductName(raw, requestId + ':stock');
+    const inv = await getProductInventory(shopId, product);
+    if (!inv.success) {
+      const msg = await generateMultiLanguageResponse(`Error fetching stock for ${product}: ${inv.error}`, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, msg);
+      return true;
+    }
+    // Compute simple advice from last 14 days velocity
+    const now = new Date();
+    const start = new Date(now); start.setDate(now.getDate() - 14);
+    const sales = await getSalesDataForPeriod(shopId, start, now);
+    const sold = (sales.records || []).filter(r => r.fields.Product === product)
+      .reduce((s, r) => s + Math.abs(r.fields.Quantity ?? 0), 0);
+    const dailyRate = sold / 14;
+    const lead = 3, safety = 2;
+    const coverNeeded = (lead + safety) * dailyRate;
+    const advise = (dailyRate > 0 && inv.quantity <= coverNeeded)
+      ? `Reorder ~${Math.max(0, Math.ceil(coverNeeded - inv.quantity))} ${singularize(inv.unit)} in next ${lead} days.`
+      : (dailyRate === 0 ? `No recent sales for ${product}. Hold purchase.` : `Sufficient stock for ~${Math.floor(inv.quantity / (dailyRate || 1))} days.`);
+    let message = `📦 Stock — ${product}: ${inv.quantity} ${inv.unit}\n`;
+    if (dailyRate > 0) message += `Avg sale: ${dailyRate.toFixed(2)} /day\n`;
+    message += `💡 ${advise}`;
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 2) Low stock or stock-out items (+ advice)
+  if (/^(?:low\s*stock|stockout|out\s*of\s*stock)\b/i.test(text)) {
+    const low = await getLowStockProducts(shopId, 5);
+    const out = await getStockoutItems(shopId);
+    let message = `⚠️ Low & Stockout:\n`;
+    if (low.length === 0 && out.length === 0) {
+      message += `Everything looks good.`;
+    } else {
+      if (low.length > 0) {
+        message += `\nLow stock (≤5):\n` + low.map(p => `• ${p.name}: ${p.quantity} ${p.unit}`).join('\n');
+      }
+      if (out.length > 0) {
+        message += `\n\nOut of stock:\n` + out.map(p => `• ${p.name}`).join('\n');
+      }
+      message += `\n\n💡 Advice: Prioritize ordering low-stock items first; consider substitutable SKUs to avoid lost sales.`;
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 3) Batches remaining with purchase & expiry dates (+ advice)
+  const batchMatch = text.match(/^(?:batches?|expiry)\s+(.+)$/i);
+  if (batchMatch) {
+    const raw = batchMatch[1].trim();
+    const product = await translateProductName(raw, requestId + ':batches');
+    const batches = await getBatchesForProductWithRemaining(shopId, product);
+    if (batches.length === 0) {
+      const msg = await generateMultiLanguageResponse(`No active batches found for ${product}.`, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, msg);
+      return true;
+    }
+    let message = `📦 Batches — ${product}:\n`;
+    for (const b of batches) {
+      const pd = formatDateForDisplay(b.purchaseDate);
+      const ed = b.expiryDate ? formatDateForDisplay(b.expiryDate) : '—';
+      message += `• ${b.quantity} ${b.unit} | Bought: ${pd} | Expiry: ${ed}\n`;
+    }
+    const soon = batches.filter(b => b.expiryDate && daysBetween(new Date(b.expiryDate), new Date()) <= 7);
+   if (soon.length > 0) {
+      message += `\n💡 Advice: ${soon.length} batch(es) expiring within 7 days — use FIFO & run a small discount to clear.`;
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 4) Expiring soon items (default 30 days, or "expiring 15")
+  const expMatch = text.match(/^expiring(?:\s+(\d+))?$/i);
+  if (expMatch) {
+    const days = expMatch[1] ? Math.max(1, parseInt(expMatch[1], 10)) : 30;
+    const expiring = await getExpiringProducts(shopId, days);
+    let message = `⏰ Expiring in next ${days} day(s):\n`;
+    if (expiring.length === 0) {
+      message += `No items found.`;
+    } else {
+      message += expiring.map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n');
+      message += `\n\n💡 Advice: Mark-down nearing expiry items (5–15%), move to eye-level shelves, and bundle if possible.`;
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 5) Sales summary for a day/week/month ("sales today|week|month")
+  const salesMatch = text.match(/^sales\s+(today|this\s*week|week|this\s*month|month)$/i);
+  if (salesMatch) {
+    const period = parsePeriodKeyword(salesMatch[1]);
+    const data = await getSalesSummaryPeriod(shopId, period);
+    let message = `💰 Sales (${period}): ${data.totalItems ?? 0} items`;
+    if ((data.totalValue ?? 0) > 0) message += ` (₹${(data.totalValue).toFixed(2)})`;
+    if ((data.topProducts ?? []).length > 0) {
+      message += `\n\n🏷️ Top Sellers:\n` + data.topProducts.slice(0, 5)
+        .map(p => `• ${p.name}: ${p.quantity} ${p.unit}`).join('\n');
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 6) Top N products (defaults: top 5 this month)
+  const topMatch = text.match(/^top\s*(\d+)?\s*products?(?:\s*(today|week|month|this\s*week|this\s*month))?$/i);
+  if (topMatch) {
+    const limit = topMatch[1] ? Math.max(1, parseInt(topMatch[1], 10)) : 5;
+    const period = parsePeriodKeyword(topMatch[2] || 'month');
+    const data = await getTopSellingProductsForPeriod(shopId, period, limit);
+    let message = `🏆 Top ${limit} (${period}):\n`;
+    if ((data.top ?? []).length === 0) message += `No sales data.`;
+    else {
+      message += data.top.map((p, i) => `${i + 1}. ${p.name}: ${p.quantity} ${p.unit}`).join('\n');
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 7) Reorder suggestions (velocity + lead/safety)
+  if (/^what\s+should\s+i\s+reorder$|^reorder(\s+suggestions?)?$/i.test(text)) {
+    const { success, suggestions, days, leadTimeDays, safetyDays, error } =
+      await getReorderSuggestions(shopId, { days: 30, leadTimeDays: 3, safetyDays: 2 });
+    if (!success) {
+      const msg = await generateMultiLanguageResponse(`Error creating suggestions: ${error}`, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, msg);
+      return true;
+    }
+    let message = `📋 Reorder Suggestions (based on ${days}d sales, lead ${leadTimeDays}d, safety ${safetyDays}d):\n`;
+    if (suggestions.length === 0) {
+      message += `No urgent reorders detected.`;
+    } else {
+      message += suggestions.slice(0, 10).map(s =>
+        `• ${s.name}: stock ${s.currentQty} ${s.unit}, ~${s.dailyRate}/day → reorder ~${s.reorderQty} ${singularize(s.unit)}`
+      ).join('\n');
+      message += `\n\n💡 Advice: Confirm supplier lead-times. Increase safety days for volatile items.`;
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // 8) Inventory value summary
+  if (/^(?:inventory\s*value|stock\s*value|value\s*summary)$/i.test(text)) {
+    const inv = await getInventorySummary(shopId);
+    let message = `📦 Inventory Summary:\n• Unique products: ${inv.totalProducts}\n• Total value: ₹${(inv.totalValue ?? 0).toFixed(2)}`;
+    if ((inv.totalPurchaseValue ?? 0) > 0) {
+      message += `\n• Total cost: ₹${inv.totalPurchaseValue.toFixed(2)}`;
+    }
+    if ((inv.topCategories ?? []).length > 0) {
+      message += `\n\n📁 By Category:\n` + inv.topCategories.map((c, i) =>
+        `${i + 1}. ${c.name}: ₹${c.value.toFixed(2)} (${c.productCount} items)`).join('\n');
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  return false; // not a command
+}
+
+
 // Performance tracking function
 function trackResponseTime(startTime, requestId) {
   const duration = Date.now() - startTime;
@@ -3818,11 +4002,15 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         return;
       }
     }
-    
-    console.log(`[${requestId}] Attempting to parse as inventory update first`);
-    // Detect language and update preference
+       
+// ---- NEW: Check for quick-query commands before treating as inventory updates ----
     let detectedLanguage = conversationState ? conversationState.language : 'en';
     detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
+    const handled = await handleQueryCommand(Body, From, detectedLanguage, requestId);
+    if (handled) return;
+
+    console.log(`[${requestId}] Attempting to parse as inventory update (no quick-query match)`);
+
     console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
     
     // Try to parse as inventory update
