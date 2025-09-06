@@ -525,9 +525,26 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const text = String(rawBody || '').trim();
   const shopId = From.replace('whatsapp:', '');
 
+
+// 0) Inventory value (place this BEFORE any "stock <product>" matching)
+  if (/^\s*(?:inventory\s*value|stock\s*value|value\s*summary)\s*$/i.test(text)) {
+    const inv = await getInventorySummary(shopId);
+    let message = `📦 Inventory Summary:\n• Unique products: ${inv.totalProducts}\n• Total value: ₹${(inv.totalValue ?? 0).toFixed(2)}`;
+    if ((inv.totalPurchaseValue ?? 0) > 0) message += `\n• Total cost: ₹${inv.totalPurchaseValue.toFixed(2)}`;
+    if ((inv.topCategories ?? []).length > 0) {
+      message += `\n\n📁 By Category:\n` +
+        inv.topCategories.map((c,i)=>`${i+1}. ${c.name}: ₹${c.value.toFixed(2)} (${c.productCount} items)`).join('\n');
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
   
 // 1) Stock for product
-  let m = text.match(/^(?:stock|inventory|qty)\s+(.+)$/i);
+  // Add a guard: don't let "inventory value"/"stock value" slip into the stock branch
+  let m = text.match(/^(?:stock|inventory|qty)\s+(?!value\b)(.+)$/i);
+
   if (m) {
     // Clean tail punctuation like "?", "!" etc.
     const rawQuery = m[1].trim().replace(/[?।。.!,;:\u0964\u0965]+$/u, '');
@@ -767,19 +784,6 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     message += suggestions.length
       ? suggestions.slice(0,10).map(s=>`• ${s.name}: stock ${s.current} ${s.unit}, ~${s.daily}/day → reorder ~${s.reorderQty} ${singularize(s.unit)}`).join('\n')
       : 'No urgent reorders detected.';
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
-    return true;
-  }
-
-  // 8) Inventory value
-  if (/^(?:inventory\s*value|stock\s*value|value\s*summary)$/i.test(text)) {
-    const inv = await getInventorySummary(shopId);
-    let message = `📦 Inventory Summary:\n• Unique products: ${inv.totalProducts}\n• Total value: ₹${(inv.totalValue ?? 0).toFixed(2)}`;
-    if ((inv.totalPurchaseValue ?? 0) > 0) message += `\n• Total cost: ₹${inv.totalPurchaseValue.toFixed(2)}`;
-    if ((inv.topCategories ?? []).length > 0) {
-      message += `\n\n📁 By Category:\n` + inv.topCategories.map((c,i)=>`${i+1}. ${c.name}: ₹${c.value.toFixed(2)} (${c.productCount} items)`).join('\n');
-    }
     const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
