@@ -613,30 +613,87 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     return true;
   }
 
-  // 3) Batches for product (purchase & expiry)
+  
+// 3) Batches for product (purchase & expiry)
   m = text.match(/^(?:batches?|expiry)\s+(.+)$/i);
   if (m) {
-    const productQuery = m[1].trim();
-    const batches = await getBatchRecords(shopId, productQuery);
-    const active = batches.filter(b => (b.fields.Quantity ?? 0) > 0);
-    let message;
-    if (active.length === 0) {
-      message = `📦 No active batches found for ${productQuery}.`;
-    } else {
-      message = `📦 Batches — ${productQuery}:\n` +
-        active.map(b => {
-          const q = b.fields.Quantity ?? 0;
-          const u = b.fields.Units ?? 'pieces';
+   const rawQuery = m[1].trim().replace(/[?।。.!,;:\u0964\u0965]+$/u, '');
+    const product = await translateProductName(rawQuery, requestId + ':qq-batches');
+
+    // --- Exact helper first ---
+    try {
+      // Prefer the helper that returns only remaining batches for a product
+      const exact = await getBatchesForProductWithRemaining(shopId, product);
+      if (Array.isArray(exact) && exact.length > 0) {
+        const lines = exact.map(b => {
+          const q  = b.quantity ?? b.fields?.Quantity ?? 0;
+          const u  = b.unit || b.fields?.Units || 'pieces';
+          const pd = b.purchaseDate || b.fields?.PurchaseDate || null;
+          const ed = b.expiryDate   || b.fields?.ExpiryDate   || null;
+          return `• ${q} ${u} | Bought: ${formatDateForDisplay(pd || '—')} | Expiry: ${formatDateForDisplay(ed || '—')}`;
+        }).join('\n');
+        let message = `📦 Batches — ${product}:\n${lines}`;
+        const soon = exact.filter(b => (b.expiryDate || b.fields?.ExpiryDate) &&
+                        daysBetween(new Date(b.expiryDate || b.fields?.ExpiryDate), new Date()) <= 7);
+        if (soon.length) message += `\n\n💡 ${soon.length} batch(es) expiring ≤7 days — clear with FIFO/discounts.`;
+        const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+        await sendMessageViaAPI(From, msg);
+        return true;
+      }
+    } catch (e) {
+      console.warn(`[${requestId}] getBatchesForProductWithRemaining failed:`, e?.message);
+    }
+
+    // --- Safe fuzzy fallback ---
+    try {
+      const all = await getBatchRecords(shopId, product);
+      // Filter valid product-named records; group by product to pick a best match
+      const valid = all.filter(b => !!b?.fields?.Product && (b.fields.Quantity ?? 0) > 0);
+      const qN = _norm(product);
+      const scored = valid.map(b => {
+        const n = _norm(b.fields.Product);
+        let score = 0;
+        if (n === qN) score = 3;
+        else if (n.includes(qN) || qN.includes(n)) score = 2;
+        else {
+          const qw = qN.split(/\s+/).filter(w => w.length > 2);
+          const nw = n.split(/\s+/).filter(w => w.length > 2);
+          const overlap = qw.filter(w => nw.includes(w)).length;
+          if (overlap > 0) score = 1;
+        }
+        return { score, rec: b };
+      }).sort((a,b) => b.score - a.score);
+
+      const topName = scored.length ? scored[0].rec.fields.Product : null;
+      const active = valid.filter(b => b.fields.Product === topName);
+      let message;
+      if (!active.length) {
+        message = `📦 No active batches found for ${rawQuery}.`;
+      } else {
+        const lines = active.map(b => {
+          const q  = b.fields.Quantity ?? 0;
+          const u  = b.fields.Units || 'pieces';
           const pd = b.fields.PurchaseDate ? formatDateForDisplay(b.fields.PurchaseDate) : '—';
-          const ed = b.fields.ExpiryDate ? formatDateForDisplay(b.fields.ExpiryDate) : '—';
+          const ed = b.fields.ExpiryDate   ? formatDateForDisplay(b.fields.ExpiryDate)   : '—';
           return `• ${q} ${u} | Bought: ${pd} | Expiry: ${ed}`;
         }).join('\n');
-      const soon = active.filter(b => b.fields.ExpiryDate && daysBetween(new Date(b.fields.ExpiryDate), new Date()) <= 7);
-      if (soon.length) message += `\n\n💡 ${soon.length} batch(es) expiring ≤7 days — clear with FIFO/discounts.`;
+        message = `📦 Batches — ${topName || product}:\n${lines}`;
+        const soon = active.filter(b => b.fields.ExpiryDate && daysBetween(new Date(b.fields.ExpiryDate), new Date()) <= 7);
+        if (soon.length) message += `\n\n💡 ${soon.length} batch(es) expiring ≤7 days — clear with FIFO/discounts.`;
+      }
+      const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, msg);
+      return true;
+    } catch (e) {
+      console.warn(`[${requestId}] Fallback batches scan failed:`, e?.message);
+      const msg = await generateMultiLanguageResponse(
+        `📦 No active batches found for ${rawQuery}.`,
+        detectedLanguage,
+        requestId
+      );
+      await sendMessageViaAPI(From, msg);
+      return true;
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
-    return true;
   }
 
   // 4) Expiring soon
