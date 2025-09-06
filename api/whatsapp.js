@@ -267,6 +267,9 @@ const LANGUAGE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const INVENTORY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const PRODUCT_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+// Cache key prefix for command normalization (any-language -> English)
+const COMMAND_NORM_PREFIX = 'cmdnorm:';
+
 
 // Precompiled regex patterns for better performance
 const regexPatterns = {
@@ -499,6 +502,89 @@ function daysBetween(date1, date2) {
   const oneDay = 24 * 60 * 60 * 1000; // hours*minutes*seconds*milliseconds
   const diffDays = Math.round(Math.abs((date1 - date2) / oneDay));
   return diffDays;
+}
+
+
+// -------- Any-language -> English command normalizer --------
+/**
+ * normalizeCommandText
+ *  - Input: user message in ANY language that likely represents one of the 8 quick commands
+ *  - Output: an ENGLISH command phrase that matches your router regexes
+ *    Examples:
+ *      "आज की बिक्री"         -> "sales today"
+ *      "Maggi का stock?"      -> "stock Maggi"
+ *      "இந்த வார விற்பனை"     -> "sales week"
+ *      "expiring कितने दिन?"  -> "expiring 30" (defaults to 30 if none given)
+ *  - Guarantees: keeps BRAND/PRODUCT names and NUMBERS as-is, no quotes, one line.
+ */
+async function normalizeCommandText(text, detectedLanguage = 'en', requestId = 'cmd-norm') {
+  try {
+    if (!text || !text.trim()) return text;
+    const lang = (detectedLanguage || 'en').toLowerCase();
+    // If English already, no need to normalize
+    if (lang === 'en') return text.trim();
+
+    const raw = text.trim();
+    // Cache check
+    const keyHash = crypto.createHash('sha1').update(`${lang}::${raw}`).digest('hex');
+    const cacheKey = `${COMMAND_NORM_PREFIX}${lang}:${keyHash}`;
+    const cached = languageCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < LANGUAGE_CACHE_TTL)) {
+      console.log(`[${requestId}] Using cached command normalization (${lang})`);
+      return cached.value;
+    }
+
+    const systemPrompt = [
+      'You rewrite user commands about inventory into ENGLISH one-line commands for a WhatsApp bot.',
+      'STRICT RULES:',
+      '- KEEP brand/product names EXACTLY as user wrote them (do NOT translate brand names).',
+      '- KEEP numbers as digits.',
+      '- Map intents to these exact keywords:',
+      '  • "stock <product>" (aka "inventory <product>" or "qty <product>")',
+      '  • "low stock" or "stockout"',
+      '  • "batches <product>" or "expiry <product>"',
+      '  • "expiring <days>" (default to 30 if days not specified)',
+      '  • "sales today|week|month"',
+      '  • "top <N> products [today|week|month]" (default N=5, period=month if missing)',
+      '  • "reorder" (or "reorder suggestions")',
+      '  • "inventory value" (aka "stock value" or "value summary")',
+      'Output ONLY the rewritten English command, no quotes, no extra words.'
+    ].join(' ');
+
+    const response = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: raw }
+        ],
+        temperature: 0.1,
+        max_tokens: 120
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      }
+    );
+    let normalized = (response.data?.choices?.[0]?.message?.content || '').trim();
+    // Safety: strip code fences/quotes if model adds them
+    if (normalized.startsWith('```')) normalized = normalized.replace(/^```(?:\w+)?\s*/i, '').replace(/```$/i, '').trim();
+    normalized = normalized.replace(/^"(.*)"$/, '$1').trim();
+    if (!normalized) return text;
+
+    // Cache & return
+    languageCache.set(cacheKey, { value: normalized, timestamp: Date.now() });
+    console.log(`[${requestId}] Normalized: "${raw}" (${lang}) -> "${normalized}"`);
+    return normalized;
+  } catch (err) {
+    console.warn(`[${requestId}] Command normalization failed:`, err?.message);
+    // Gracefully fallback to original text if the API is unavailable
+    return text;
+  }
 }
 
 
@@ -3968,6 +4054,15 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     const shopId = From.replace('whatsapp:', '');
     await saveUserPreference(shopId, detectedLanguage);
     
+// 🌐 Try multilingual quick-queries (normalize to English) BEFORE parsing updates
+    try {
+      const normalized = await normalizeCommandText(cleanTranscript, detectedLanguage, requestId + ':normalize');
+      const handled = await handleQuickQueryEN(normalized, From, detectedLanguage, requestId);
+      if (handled) return; // reply already sent
+    } catch (e) {
+      console.warn(`[${requestId}] Quick-query (voice) normalization failed, falling back.`, e?.message);
+    }
+    
     // Check if we're awaiting batch selection
     if (conversationState && conversationState.state === 'awaiting_batch_selection') {
       console.log(`[${requestId}] Awaiting batch selection response from voice`);
@@ -4299,9 +4394,10 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     let detectedLanguage = conversationState ? conversationState.language : 'en';
     detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
 
-    // 🔒 HOTFIX: English quick-queries BEFORE any inventory parsing
-    try {
-      const handledQuick = await handleQuickQueryEN(Body, From, detectedLanguage, requestId);
+    // 🌐 Any-language quick-queries: normalize to English BEFORE any inventory parsing
+    try {   
+      const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
+      const handledQuick = await handleQuickQueryEN(normalized, From, detectedLanguage, requestId);
       if (handledQuick) return;
     } catch (e) {
       console.warn(`[${requestId}] Quick-query (EN) handling failed, continuing to parser.`, e?.message);
@@ -5243,16 +5339,17 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       // Handle text messages
       if (Body) {
         
-  // 🔒 Quick-queries (English-only) — run BEFORE any inventory parsing
-      try {
-        const handledQuick = await handleQuickQueryEN(Body, From, detectedLanguage, requestId);
-        if (handledQuick) {
-          // Return an empty TwiML to end webhook; reply has been sent via API
-          return res.send('<Response></Response>');
-        }
-      } catch (e) {
-        console.warn(`[${requestId}] Quick-query (EN) routing failed; continuing.`, e?.message);
+      
+// 🌐 Any-language quick-queries (normalize to English) BEFORE parsing as inventory update
+    try {
+      const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
+      const handledQuick = await handleQuickQueryEN(normalized, From, detectedLanguage, requestId);
+      if (handledQuick) {
+        return res.send('<Response></Response>'); // reply already sent via API
       }
+    } catch (e) {
+      console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
+    }
   
         // Check for price management commands
         const lowerBody = Body.toLowerCase();
