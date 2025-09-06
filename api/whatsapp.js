@@ -525,32 +525,74 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const text = String(rawBody || '').trim();
   const shopId = From.replace('whatsapp:', '');
 
-  // 1) Stock for product
+  
+// 1) Stock for product
   let m = text.match(/^(?:stock|inventory|qty)\s+(.+)$/i);
   if (m) {
-    const productQuery = m[1].trim();
-    const inv = await getCurrentInventory(shopId);
-    const queryN = _norm(productQuery);
-    let best = null;
-    for (const r of inv) {
-      const name = r.fields.Product || '';
-      const n = _norm(name);
-      if (n === queryN || n.includes(queryN) || queryN.includes(n)) {
-        best = r; break;
+    // Clean tail punctuation like "?", "!" etc.
+    const rawQuery = m[1].trim().replace(/[?।。.!,;:\u0964\u0965]+$/u, '');
+    const product = await translateProductName(rawQuery, requestId + ':qq-stock');
+
+    // --- Precise DB lookup first (preferred) ---
+    try {
+      const exact = await getProductInventory(shopId, product);
+      if (exact?.success) {
+        const qty  = exact.quantity ?? 0;
+        const unit = exact.unit || 'pieces';
+        const message = `📦 Stock — ${product}: ${qty} ${unit}`;
+        const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+        await sendMessageViaAPI(From, msg);
+        return true;
       }
+    } catch (e) {
+      console.warn(`[${requestId}] getProductInventory failed:`, e?.message);
     }
-    let message;
-    if (!best) {
-      message = `📦 ${productQuery}: not found in inventory.`;
-    } else {
-      const qty = best.fields.Quantity ?? 0;
-      const unit = best.fields.Units ?? 'pieces';
-      message = `📦 Stock — ${best.fields.Product}: ${qty} ${unit}`;
+
+    // --- Fallback: fuzzy scan of full inventory (only if available) ---
+    try {
+      const list = await getCurrentInventory(shopId);
+      const qN = _norm(product);
+      let best = null, bestScore = 0;
+      for (const r of list) {
+        const name = r?.fields?.Product;
+        if (!name) continue; // ignore blank names to avoid "undefined"
+        const n = _norm(name);
+        if (!n || !qN) continue;
+        let score = 0;
+        if (n === qN) score = 3;                                   // exact
+        else if (n.includes(qN) || qN.includes(n)) score = 2;      // substring
+        else {
+          const qw = qN.split(/\s+/).filter(w => w.length > 2);
+          const nw = n.split(/\s+/).filter(w => w.length > 2);
+          const overlap = qw.filter(w => nw.includes(w)).length;
+          if (overlap > 0) score = 1;                              // token overlap
+        }
+        if (score > bestScore) { bestScore = score; best = r; }
+      }
+      let message;
+      if (!best) {
+        message = `📦 ${rawQuery}: not found in inventory.`;
+      } else {
+        const qty  = best?.fields?.Quantity ?? 0;
+        const unit = best?.fields?.Units || 'pieces';
+        const name = best?.fields?.Product || product;
+        message = `📦 Stock — ${name}: ${qty} ${unit}`;
+      }
+      const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, msg);
+      return true;
+    } catch (e) {
+      console.warn(`[${requestId}] Fallback list scan failed:`, e?.message);
+      const msg = await generateMultiLanguageResponse(
+        `📦 ${rawQuery}: not found in inventory.`,
+        detectedLanguage,
+        requestId
+      );
+      await sendMessageViaAPI(From, msg);
+      return true;
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
-    return true;
   }
+
 
   // 2) Low stock / Stockout
   if (/^(?:low\s*stock|stockout|out\s*of\s*stock)$/i.test(text)) {
