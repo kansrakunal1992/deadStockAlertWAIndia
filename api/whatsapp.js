@@ -613,10 +613,11 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const text = String(rawBody || '').trim();
   const shopId = From.replace('whatsapp:', '');
 
+
 // 0) Inventory value (BEFORE any "stock <product>" matching)
-   // Accept: "inventory value", "stock value", "value summary",
-   //         "total inventory value", "total stock value", "overall ...", "grand total ...", "gross ..."
-   if (/^\s*(?: (?:total|overall|grand(?:\s*total)?|gross)\s+)?(?:inventory|stock)\s*(?:value|valuation)\s*$|^\s*value\s*summary\s*$/i.test(text)) {
+    // Accepts: "inventory value", "stock value", "value summary",
+    //          "total/overall/grand/gross inventory|stock value|valuation"
+    if (/^\s*(?:(?:(?:total|overall|grand(?:\s*total)?|gross)\s+)?(?:inventory|stock)\s*(?:value|valuation)|value\s*summary)\s*$/i.test(text)) {
     const inv = await getInventorySummary(shopId);
     let message = `📦 Inventory Summary:\n• Unique products: ${inv.totalProducts}\n• Total value: ₹${(inv.totalValue ?? 0).toFixed(2)}`;
     if ((inv.totalPurchaseValue ?? 0) > 0) message += `\n• Total cost: ₹${inv.totalPurchaseValue.toFixed(2)}`;
