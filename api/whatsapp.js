@@ -1825,10 +1825,14 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       continue;
     }
       
-      // Use provided price or fall back to database price
-      const finalPrice = update.price || productPrice;
-      const finalTotalPrice = update.totalPrice || (finalPrice * update.quantity);
-      const priceSource = update.price ? 'message' : (productPrice ? 'db' : null);
+      // Use provided price or fall back to database price      
+      // NEW: reliable price/value
+        const finalPrice = (update.price ?? productPrice) || 0;
+        const finalTotalPrice = Number.isFinite(update.totalPrice)
+          ? update.totalPrice
+          : (finalPrice * Math.abs(update.quantity));
+        const priceSource = update.price ? 'message' : (productPrice ? 'db' : null); // NEW
+
       // Rest of the function remains the same...
       console.log(`[Update ${shopId} - ${product}] Processing update: ${update.quantity} ${update.unit}`);
       // Check if this is a sale (negative quantity)
@@ -2033,8 +2037,11 @@ if (validBatches.length > 0) {
          totalValue:    Number.isFinite(finalTotalPrice) ? finalTotalPrice : 0,
          priceSource,
          priceUpdated:  update.action === 'purchased' && (finalPrice || 0) > 0
-       };
-       results.push(enriched);
+       };      
+        // Debug line to verify at runtime (you can remove later)
+        console.log(`[Update ${shopId} - ${product}] priceSource=${priceSource}, purchasePrice=${enriched.purchasePrice ?? '-'}, salePrice=${enriched.salePrice ?? '-'}, totalValue=${enriched.totalValue}`);
+
+      results.push(enriched);
     } catch (error) {
       console.error(`[Update ${shopId} - ${update.product}] Error:`, error.message);
       results.push({
@@ -3328,7 +3335,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         } catch (_) {}
         // Price prompt already sent; do not send "Updates processed".
         return res.send(response.toString());
-    
+      }
 // Get user's preferred language for the response
      let userLanguage = detectedLanguage;
      try {
@@ -3420,8 +3427,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
      const translatedMessage = await generateMultiLanguageResponse(baseMessage, userLanguage, requestId);
      // Send the message
     response.message(translatedMessage);
-     return res.send(response.toString());
-  } 
+     return res.send(response.toString()); 
   }
 catch (error) {
     console.error(`[${requestId}] Error processing confirmed transcription:`, error.message);
