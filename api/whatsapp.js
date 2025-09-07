@@ -1829,10 +1829,11 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
     }
       
       // Use provided price or fall back to database price            
-      const finalPrice = hasMessagePrice ? msgPriceNum : (productPrice > 0 ? productPrice : 0);
-      const finalTotalPrice = Number.isFinite(update.totalPrice)
-        ? Number(update.totalPrice)
-        : (finalPrice * Math.abs(update.quantity));
+      const finalPrice = hasMessagePrice ? msgPriceNum : (productPrice > 0 ? productPrice : 0);    
+      const totalPriceParsed = Number(update.totalPrice);
+      const finalTotalPrice = Number.isFinite(totalPriceParsed)
+        ? totalPriceParsed
+        : (finalPrice > 0 ? finalPrice * Math.abs(update.quantity) : 0);
       const priceSource = hasMessagePrice ? 'message' : (productPrice > 0 ? 'db' : null);
 
       // Rest of the function remains the same...
