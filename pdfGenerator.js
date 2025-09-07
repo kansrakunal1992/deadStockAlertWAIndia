@@ -423,15 +423,18 @@ async function addInvoiceHeader(doc, shopDetails) {
   
   // Invoice title - centered
   doc.fontSize(20);
-  doc.text('TAX INVOICE', 0, 25, { align: 'center' });
+  const isGSTInvoice = shopDetails?.gstin && shopDetails.gstin !== 'N/A';
+  doc.text(isGSTInvoice ? 'TAX INVOICE' : 'INVOICE', 0, 25, { align: 'center' });
+
   
   // Shop details - centered (with safety checks)
   doc.fontSize(12);
   doc.text(shopDetails?.name || 'Shop Name', 0, 45, { align: 'center' });
-  
-  if (shopDetails?.gstin && shopDetails.gstin !== 'N/A') {
+    
+  if (isGSTInvoice) {
     doc.text(`GSTIN: ${shopDetails.gstin}`, 0, 65, { align: 'center' });
   }
+
   
   // Invoice details - adjusted positioning to prevent overlap
   const invoiceNumber = `INV-${shopDetails?.shopId?.replace(/\D/g, '') || '000000'}-${moment().format('YYYYMMDDHHmmss')}`;
@@ -548,9 +551,20 @@ function addSaleDetails(doc, shopDetails, saleRecord, productInfo) {
  */
 function addInvoiceTotals(doc, saleDetails) {
   const { taxableValue, gstAmount, totalWithTax, gstRate } = saleDetails;
+  const isGSTInvoice = gstRate !== 0;
   
-  const cgst = gstAmount / 2;
-  const sgst = gstAmount / 2;
+  if (!isGSTInvoice) {
+   doc.fontSize(12).fillColor(colors.dark);
+   doc.text('Total Amount:', 300, doc.y, { width: 100, align: 'right' });
+   doc.text(`₹${taxableValue.toFixed(2)}`, 410, doc.y);
+   doc.moveDown(2);
+   doc.text('Note: This is a non-GST invoice.', 300, doc.y, { width: 200 });
+   return;
+ }
+
+ const cgst = gstAmount / 2;
+ const sgst = gstAmount / 2;
+
   
   // Payment details box - compact
   const boxX = 300;
