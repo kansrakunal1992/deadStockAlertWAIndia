@@ -5159,6 +5159,77 @@ async function handleInventoryState(Body, From, state, requestId, res) {
   // Process the updates
   try {
     const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+
+    // If every result is waiting for price, let the existing correction flow handle it
+    if (allPendingPrice(results)) {
+      // Do not send the final summary here; existing flow will prompt for price
+      return;
+    }
+
+    // --- BEGIN: totals & message block (mirrors processConfirmedTranscription) ---
+    let baseMessage = '✅ Updates processed:\n\n';
+    let successCount = 0;
+    let totalSalesValue = 0;
+    let totalPurchaseValue = 0;
+
+    for (const r of results.filter(x => !x.needsPrice)) {
+      if (r.success) {
+        successCount++;
+        const unitText = r.unit ? ` ${r.unit}` : '';
+
+        // Reliable per-line value (prefer enriched totalValue; else derive)
+        let value = Number.isFinite(r.totalValue) ? r.totalValue : 0;
+        if (!(value > 0)) {
+          if (r.salePrice) value = Math.abs(r.quantity) * r.salePrice;
+          else if (r.purchasePrice) value = Math.abs(r.quantity) * r.purchasePrice;
+          else value = 0;
+        }
+
+        // Show a "Price updated" hint for purchases with a positive rate
+        if (r.action === 'purchased' && (r.purchasePrice ?? 0) > 0) {
+          baseMessage += `Price updated: ${r.product} at ₹${(r.purchasePrice).toFixed(2)}/${singularize(r.unit)}\n`;
+        }
+
+        if (r.action === 'purchased') {
+          baseMessage += `• ${r.product}: ${r.quantity}${unitText} purchased (Stock: ${r.newQuantity}${unitText})`;
+          if (value > 0) {
+            baseMessage += ` (Value: ₹${value.toFixed(2)})`;
+            totalPurchaseValue += value;
+          }
+          baseMessage += `\n`;
+          if (r.batchDate) {
+            baseMessage += ` Batch added: ${formatDateForDisplay(r.batchDate)}\n`;
+          }
+        } else if (r.action === 'sold') {
+          baseMessage += `• ${r.product}: ${Math.abs(r.quantity)}${unitText} sold (Stock: ${r.newQuantity}${unitText})`;
+          if (value > 0) {
+            baseMessage += ` (Value: ₹${value.toFixed(2)})`;
+            totalSalesValue += value;
+          }
+          baseMessage += `\n`;
+        } else if (r.action === 'remaining') {
+          baseMessage += `• ${r.product}: ${r.quantity}${unitText} remaining (Stock: ${r.newQuantity}${unitText})\n`;
+        }
+      } else {
+        baseMessage += `• ${r.product}: Error - ${r.error}\n`;
+      }
+    }
+
+    baseMessage += `\n✅ Successfully updated ${successCount} of ${results.length} items`;
+    if (totalSalesValue > 0) {
+      baseMessage += `\n💰 Total sales value: ₹${totalSalesValue.toFixed(2)}`;
+    }
+    if (totalPurchaseValue > 0) {
+      baseMessage += `\n📦 Total purchase value: ₹${totalPurchaseValue.toFixed(2)}`;
+    }
+
+    // Translate + send via API (keep Twilio webhook quick)
+    const translated = await generateMultiLanguageResponse(baseMessage, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, translated);
+    res.send('<Response></Response>');
+    return;
+    // --- END: totals & message block ---
+
     
     if (allPendingPrice(results)) {
         try {
