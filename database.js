@@ -1948,32 +1948,40 @@ async function upsertProduct(productData) {
 // Get product price
 async function getProductPrice(productName) {
   const context = `Get Product Price ${productName}`;
-  try {    
+  try {
     const nameLower = productName.toLowerCase();
-    const filterFormula = `LOWER({Name}) = '${nameLower.replace(/'/g, "''")}'`;
-
+    const filterFormula = `LOWER(TRIM({Name})) = '${nameLower.replace(/'/g, "''").trim()}'`;
     const result = await airtableProductsRequest({
       method: 'get',
-      params: { filterByFormula: filterFormula }
+      params: {
+        filterByFormula: filterFormula,
+        maxRecords: 1,
+        sort: [{ field: 'LastUpdated', direction: 'desc' }] // prefer latest
+      }
     }, context);
-    
     if (result.records.length > 0) {
-      const record = result.records[0];
+      const rec = result.records[0];
+      const raw = rec.fields.Price;
+      // Coerce "₹ 20", "Rs 20/-" → 20
+      const priceNum = (typeof raw === 'number')
+        ? raw
+        : parseFloat(String(raw).replace(/[^\d.]/g, '')) || 0;
+
       return {
         success: true,
-        price: record.fields.Price || 0,
-        unit: record.fields.Unit || 'pieces',
-        category: record.fields.Category || 'General',
-        hsnCode: record.fields.HSNCode || ''
+        price: priceNum,
+        unit: rec.fields.Unit ?? 'pieces',
+        category: rec.fields.Category ?? 'General',
+        hsnCode: rec.fields.HSNCode ?? ''
       };
     }
-    
     return { success: false, error: 'Product not found' };
   } catch (error) {
     logError(context, error);
     return { success: false, error: error.message };
   }
 }
+
 
 // Get all products
 async function getAllProducts() {
