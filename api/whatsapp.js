@@ -547,7 +547,9 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
       '  • "sales today|week|month"',
       '  • "top <N> products [today|week|month]" (default N=5, period=month if missing)',
       '  • "reorder" (or "reorder suggestions")',
-      '  • "inventory value" (aka "stock value" or "value summary")',
+      '  • "inventory value" (aka "stock value" or "value summary")',    
+      '  • "products [<page>]" or "list products [<page>]"',
+      '  • "products search <term>" or "search products <term>"',
       'Output ONLY the rewritten English command, no quotes, no extra words.'
     ].join(' ');
 
@@ -611,9 +613,10 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const text = String(rawBody || '').trim();
   const shopId = From.replace('whatsapp:', '');
 
-
-// 0) Inventory value (place this BEFORE any "stock <product>" matching)
-  if (/^\s*(?:inventory\s*value|stock\s*value|value\s*summary)\s*$/i.test(text)) {
+// 0) Inventory value (BEFORE any "stock <product>" matching)
+   // Accept: "inventory value", "stock value", "value summary",
+   //         "total inventory value", "total stock value", "overall ...", "grand total ...", "gross ..."
+   if (/^\s*(?: (?:total|overall|grand(?:\s*total)?|gross)\s+)?(?:inventory|stock)\s*(?:value|valuation)\s*$|^\s*value\s*summary\s*$/i.test(text)) {
     const inv = await getInventorySummary(shopId);
     let message = `📦 Inventory Summary:\n• Unique products: ${inv.totalProducts}\n• Total value: ₹${(inv.totalValue ?? 0).toFixed(2)}`;
     if ((inv.totalPurchaseValue ?? 0) > 0) message += `\n• Total cost: ₹${inv.totalPurchaseValue.toFixed(2)}`;
@@ -626,10 +629,70 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     return true;
   }
 
+
+// 0.5) List products (with optional page or search)
+  //   - "products" | "list products"           => page 1
+  //   - "products 2" | "list products 2"       => page 2
+  //   - "products page 3"                      => page 3
+  //   - "products search maggi"                => search
+  //   - "search products maggi"                => search
+  let pm = text.match(/^\s*(?:products|list\s+products)(?:\s+(?:page\s+)?(\d+))?\s*$/i);
+  let sm = text.match(/^\s*(?:products\s+search|search\s+products)\s+(.+)\s*$/i);
+  if (pm || sm) {
+    const PAGE_SIZE = 25;
+    const page = pm ? Math.max(1, parseInt(pm[1] || '1', 10)) : 1;
+    const query = sm ? sm[1].trim() : '';
+    // Fetch inventory for this shop
+    const list = await getCurrentInventory(shopId);
+    // Build unique items map (use last non-empty qty/unit)
+    const map = new Map();
+    for (const r of list) {
+      const name = r?.fields?.Product?.trim();
+      if (!name) continue;
+      const qty  = r?.fields?.Quantity ?? 0;
+      const unit = r?.fields?.Units || 'pieces';
+      map.set(name.toLowerCase(), { name, qty, unit });
+    }
+    let items = Array.from(map.values());
+    // Optional search
+    if (query) {
+      const q = query.toLowerCase();
+      items = items.filter(x => x.name.toLowerCase().includes(q));
+    }
+    // Sort: by name (case-insensitive)
+    items.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
+    // Paging
+    const total = items.length;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const pageSafe = Math.min(page, totalPages);
+    const start = (pageSafe - 1) * PAGE_SIZE;
+    const pageItems = items.slice(start, start + PAGE_SIZE);
+    // Build message
+    let header = query
+      ? `🧾 Products matching “${query}” — ${pageItems.length} of ${total}`
+      : `🧾 Products — Page ${pageSafe}/${totalPages} — ${pageItems.length} of ${total}`;
+    if (total === 0) {
+      const msg0 = await generateMultiLanguageResponse(`${header}\nNo products found.`, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, msg0);
+      return true;
+    }
+    const lines = pageItems.map(p => `• ${p.name} — ${p.qty} ${p.unit}`);
+    let message = `${header}\n\n${lines.join('\n')}`;
+    if (!query && pageSafe < totalPages) {
+      message += `\n\n➡️ Next page: "products ${pageSafe+1}"`;
+    } else if (query && pageSafe < totalPages) {
+      message += `\n\n➡️ Next page: "products ${pageSafe+1}" (repeat the search term)`;
+    }
+    message += `\n🔎 Search: "products search <term>"`;
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
   
 // 1) Stock for product
-  // Add a guard: don't let "inventory value"/"stock value" slip into the stock branch
-  let m = text.match(/^(?:stock|inventory|qty)\s+(?!value\b)(.+)$/i);
+  // Guard: don't let "inventory value/valuation/value summary" slip into stock branch
+  let m = text.match(/^(?:stock|inventory|qty)\s+(?!value\b|valuation\b|summary\b)(.+)$/i);
 
   if (m) {
     // Clean tail punctuation like "?", "!" etc.
