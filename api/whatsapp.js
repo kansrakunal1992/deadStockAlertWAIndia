@@ -1425,7 +1425,6 @@ async function translateProductName(productName, requestId) {
 }
 
 // Function to parse inventory updates using AI
-// Function to parse inventory updates using AI
 async function parseInventoryUpdateWithAI(transcript, requestId) {
   try {
     const response = await axios.post(
@@ -1435,108 +1434,111 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
         messages: [
           {
             role: "system",
-            content: `You are an inventory parsing assistant. Extract inventory information from the user's message and return it in JSON format. 
-Extract the following fields:
-1. product: The name of the product (e.g., "Parle-G", "sugar", "milk") - ONLY the product name, no quantities or units
-2. quantity: The numerical quantity (as a number)
-3. unit: The unit of measurement (e.g., "packets", "kg", "liters", "pieces")
-4. action: The action being performed ("purchased", "sold", "remaining")
-5. price: The price per unit (if mentioned, otherwise null)
-6. totalPrice: The total price (if mentioned, otherwise null)
-For the action field:
-- Use "purchased" for words like "bought", "purchased", "buy", "खरीदा", "खरीदे", "लिया", "खरीदी", "khareeda"
-- Use "sold" for words like "sold", "बेचा", "बेचे", "becha", "बिक्री", "becha"
-- Use "remaining" for words like "remaining", "left", "बचा", "बचे", "बाकी", "bacha"
-If no action is specified, default to "purchased" for positive quantities and "sold" for negative quantities.
-If no unit is specified, infer the most appropriate unit based on the product type:
-- For biscuits, chips, etc.: "packets"
-- For milk, water, oil: "liters"
-- For flour, sugar, salt: "kg"
-- For individual items: "pieces"
-Return only valid JSON with no additional text, markdown formatting, or code blocks.`
-          },
-          { role: "user", content: transcript }
-        ],
-        max_tokens: 150,
-        temperature: 0.1
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 10000
-      }
-    );
-
-    let content = response.data.choices[0].message.content.trim();
-    console.log(`[${requestId}] AI parsing result: ${content}`);
-
-    // Clean code fences if present
-    if (content.startsWith('```json')) {
-      content = content.replace(/```json\n?/, '').replace(/\n?```$/, '');
-    } else if (content.startsWith('```')) {
-      content = content.replace(/```\n?/, '').replace(/\n?```$/, '');
-    }
-
-    // Parse the JSON
-    try {
-      const parsed = safeJsonParse(content);
-      if (!parsed) {
-        console.error(`[${requestId}] Failed to parse AI response as JSON after cleanup`);
-        return null;
-      }
-      const updatesArray = Array.isArray(parsed) ? parsed : [parsed];
-
-      return updatesArray.map(update => {
-        // quantity
-        let quantity =
-          typeof update.quantity === 'string'
-            ? parseInt(update.quantity.replace(/[^\d.\-]/g, ''), 10) || 0
-            : Number(update.quantity) || 0;
-
-        // action
-        let action = (update.action || '').toString().toLowerCase().trim();
-        if (!action) action = quantity >= 0 ? 'purchased' : 'sold';
-
-        // numeric price & totalPrice (optional)
-        let priceNum = Number(update.price);
-        let totalPriceNum = Number(update.totalPrice);
-        if (!Number.isFinite(priceNum) || priceNum <= 0) priceNum = undefined;
-        if (!Number.isFinite(totalPriceNum) || totalPriceNum <= 0) totalPriceNum = undefined;
-
-        // infer missing one if possible
-        if (priceNum && !totalPriceNum) {
-          totalPriceNum = priceNum * Math.abs(quantity);
-        } else if (totalPriceNum && !priceNum && Math.abs(quantity) > 0) {
-          priceNum = totalPriceNum / Math.abs(quantity);
-        }
-
-        // unit and product
-        const unit = update.unit || 'pieces';
-        const product = String(update.product || '').trim();
-
-        return {
-          product,
-          quantity: Math.abs(quantity), // always positive; sign handled via action
-          unit,
-          action,
-          price: priceNum ?? undefined,
-          totalPrice: totalPriceNum ?? undefined,
-          isKnown: products.some(p => isProductMatch(product, p))
-        };
-      });
-    } catch (parseError) {
-      console.error(`[${requestId}] Failed to parse AI response as JSON:`, parseError.message);
-      console.error(`[${requestId}] Raw AI response:`, content);
-      return null;
-    }
-  } catch (error) {
-    console.error(`[${requestId}] AI parsing error:`, error.message);
-    return null;
-  }
-}
-
+            content: `You are an inventory parsing assistant. Extract inventory information from the user's message and return it in JSON format.
+          Extract the following fields:
+          1. product: The name of the product (e.g., "Parle-G", "sugar", "milk") - ONLY the product name, no quantities or units
+          2. quantity: The numerical quantity (as a number)
+          3. unit: The unit of measurement (e.g., "packets", "kg", "liters", "pieces")
+          4. action: The action being performed ("purchased", "sold", "remaining")
+          5. price: The price per unit (if mentioned, otherwise null)
+          6. totalPrice: The total price (if mentioned, otherwise null)
+          For the action field:
+          - Use "purchased" for words like "bought", "purchased", "buy", "खरीदा", "खरीदे", "लिया", "खरीदी", "khareeda"
+          - Use "sold" for words like "sold", "बेचा", "बेचे", "becha", "बिक्री", "becha"
+          - Use "remaining" for words like "remaining", "left", "बचा", "बचे", "बाकी", "bacha"
+          If no action is specified, default to "purchased" for positive quantities and "sold" for negative quantities.
+          If no unit is specified, infer the most appropriate unit based on the product type:
+          - For biscuits, chips, etc.: "packets"
+          - For milk, water, oil: "liters"
+          - For flour, sugar, salt: "kg"
+          - For individual items: "pieces"
+          Return only valid JSON with no additional text, markdown formatting, or code blocks.`
+                    },
+                    {
+                      role: "user",
+                      content: transcript
+                    }
+                  ],
+                  max_tokens: 150,
+                  temperature: 0.1
+                },
+                {
+                  headers: {
+                    'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+                    'Content-Type': 'application/json'
+                  },
+                  timeout: 10000
+                }
+              );
+              
+              let content = response.data.choices[0].message.content.trim();
+              console.log(`[${requestId}] AI parsing result: ${content}`);
+              
+              // Clean up the response to remove markdown code blocks if present
+              if (content.startsWith('```json')) {
+                content = content.replace(/```json\n?/, '').replace(/\n?```$/, '');
+              } else if (content.startsWith('```')) {
+                content = content.replace(/```\n?/, '').replace(/\n?```$/, '');
+              }
+              
+              // Parse the JSON response
+              try {
+                const parsed = safeJsonParse(content);
+                if (!parsed) {
+                  console.error(`[${requestId}] Failed to parse AI response as JSON after cleanup`);
+                  return null;
+                }
+                const updatesArray = Array.isArray(parsed) ? parsed : [parsed];
+                
+                return updatesArray.map(update => {
+                // Convert quantity to number and ensure proper sign
+                let quantity = typeof update.quantity === 'string' ? 
+                              parseInt(update.quantity.replace(/[^\d.-]/g, '')) || 0 : 
+                              Number(update.quantity) || 0;
+                
+                // Ensure action is properly set based on quantity
+                let action = update.action || '';
+                if (!action) {
+                  action = quantity >= 0 ? 'purchased' : 'sold';
+                }
+                
+                // Extract price information
+                let price = update.price || 0;
+                let totalPrice = update.totalPrice || 0;
+                
+                // Calculate missing values
+                if (price > 0 && totalPrice === 0) {
+                  totalPrice = price * Math.abs(quantity);
+                } else if (totalPrice > 0 && price === 0 && quantity > 0) {
+                  price = totalPrice / quantity;
+                }
+                
+                // Ensure unit has a proper default
+                const unit = update.unit || 'pieces';
+                
+                // Use AI-parsed product directly - NO re-processing!
+                const product = String(update.product || '').trim();
+                
+                return {
+                  product: product,
+                  quantity: Math.abs(quantity), // Always store positive quantity
+                  unit: unit,
+                  action: action,
+                  price: price,
+                  totalPrice: totalPrice,
+                  isKnown: products.some(p => isProductMatch(product, p))
+                };
+              });
+              } catch (parseError) {
+                console.error(`[${requestId}] Failed to parse AI response as JSON:`, parseError.message);
+                console.error(`[${requestId}] Raw AI response:`, content);
+                return null;
+              }
+            } catch (error) {
+              console.error(`[${requestId}] AI parsing error:`, error.message);
+              return null;
+            }
+          }
 
 // Parse multiple inventory updates from transcript
 async function parseMultipleUpdates(transcript) {
@@ -1779,12 +1781,8 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
       }
       
-  // Determine if message actually provided a positive price
-      const msgPriceNum = Number(update.price);
-      const hasMessagePrice = Number.isFinite(msgPriceNum) && msgPriceNum > 0;
-      
       // For purchases, ask for price if not available
-      if (update.action === 'purchased' && productPrice === 0 && !hasMessagePrice) {
+      if (update.action === 'purchased' && productPrice === 0 && !update.price) {
       // Save pending update to database and keep the id
       const saveRes = await saveCorrectionState(shopId, 'price', update, languageCode);
 
@@ -1828,13 +1826,15 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       continue;
     }
       
-      // Use provided price or fall back to database price            
-      const finalPrice = hasMessagePrice ? msgPriceNum : (productPrice > 0 ? productPrice : 0);    
-      const totalPriceParsed = Number(update.totalPrice);
-      const finalTotalPrice = Number.isFinite(totalPriceParsed)
-        ? totalPriceParsed
-        : (finalPrice > 0 ? finalPrice * Math.abs(update.quantity) : 0);
-      const priceSource = hasMessagePrice ? 'message' : (productPrice > 0 ? 'db' : null);
+      // Use provided price or fall back to database price      
+      // NEW: reliable price/value
+        const finalPrice = (update.price ?? productPrice) || 0;
+        const finalTotalPrice = Number.isFinite(update.totalPrice)
+          ? update.totalPrice
+          : (finalPrice * Math.abs(update.quantity));
+          const priceSource = (update.price && Number(update.price) > 0)
+            ? 'message'
+            : (productPrice > 0 ? 'db' : null); // only mark db if it’s actually > 0
 
       // Rest of the function remains the same...
       console.log(`[Update ${shopId} - ${product}] Processing update: ${update.quantity} ${update.unit}`);
@@ -4617,38 +4617,6 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   }
 }
 
-// New: unify new-interaction routing through async processors (text/voice)
-async function routeNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {
-  try {
-    const hasMedia = Number(NumMedia) > 0 && !!MediaUrl0;
-    const conversationState =
-      (globalState.conversationState && globalState.conversationState[From]) || null;
-
-    if (hasMedia) {
-      console.log(`[${requestId}] New interaction: voice (media=${NumMedia})`);
-      await processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState);
-    } else if (Body && Body.trim()) {
-      console.log(`[${requestId}] New interaction: text`);
-      await processTextMessageAsync(Body, From, requestId, conversationState);
-    } else {
-      console.log(`[${requestId}] New interaction: empty message`);
-      const fallback = await generateMultiLanguageResponse(
-        'Please send a voice or text message with your inventory update.',
-        'en',
-        requestId
-      );
-      await sendMessageViaAPI(From, fallback);
-    }
-    // Always acknowledge the webhook so Twilio doesn't retry
-    res.send('<Response></Response>');
-  } catch (err) {
-    console.error(`[${requestId}] routeNewInteraction error:`, err.message);
-    res.send('<Response></Response>');
-  }
-}
-
-
-
 // Main module exports
 module.exports = async (req, res) => {
   const requestStart = Date.now();
@@ -4823,7 +4791,7 @@ module.exports = async (req, res) => {
   }
     
     // 4. No active state - process as new interaction
-    await routeNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res);
+    await handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res);
     
   } catch (error) {
     console.error(`[${requestId}] Processing Error:`, error.message);
@@ -5183,183 +5151,120 @@ Reply with:
 }
 
 async function handleInventoryState(Body, From, state, requestId, res) {
-  console.log(`[${requestId}] [INV-STATE] Handling inventory state with input: "${Body}"`);
-
-  // State payload that was saved earlier when the user entered inventory mode
-  const data = state?.data || {};
-  const updates = data.updates || [];
-  let userLanguage = data.detectedLanguage || 'en';
+  console.log(`[${requestId}] Handling inventory state with input: "${Body}"`);
+  
+  const { updates, detectedLanguage } = state.data;
   const shopId = From.replace('whatsapp:', '');
-
+  
+  // Process the updates
   try {
-    // 1) Apply updates (DB inventory, batches, price prompts, etc.)
-    const results = await updateMultipleInventory(shopId, updates, userLanguage);
-
-    // 2) If every item needs a price, do NOT send a summary here.
-    //    Your updateMultipleInventory already triggered the correction flow.
+    const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+    
     if (allPendingPrice(results)) {
-      console.log(`[${requestId}] [INV-STATE] All items pending price — skipping summary (price prompt is active).`);
+        try {
+          await setUserState(From, 'correction', {
+            correctionState: {
+              correctionType: 'price',
+              pendingUpdate: results[0],
+              detectedLanguage,
+              id: results[0]?.correctionId
+            }
+          });
+        } catch (_) {}
+        res.send('<Response></Response>');
+        return;
+      }
 
-      // (Optional) keep your legacy behavior of setting correction state here too
-      try {
-        await setUserState(From, 'correction', {
-          correctionState: {
-            correctionType: 'price',
-            pendingUpdate: results[0],
-            detectedLanguage: userLanguage,
-            id: results[0]?.correctionId
-          }
-        });
-      } catch (_) { /* no-op */ }
-
-      return res.send('<Response></Response>');
-    }
-
-    // 3) Try to honor the saved user language preference
-    try {
-      const pref = await getUserPreference(shopId);
-      if (pref?.success && pref.language) userLanguage = pref.language;
-    } catch (e) {
-      console.warn(`[${requestId}] [INV-STATE] getUserPreference failed: ${e.message}`);
-    }
-
-    // 4) Build message (same style as processConfirmedTranscription)
-    let baseMessage = '✅ Updates processed:\n\n';
+    let message = '✅ Updates processed:\n\n';
     let successCount = 0;
-    let totalSalesValue = 0;
-    let totalPurchaseValue = 0;
-    let hasSales = false;
-
-    for (const r of results.filter(x => !x.needsPrice)) {
-      if (r.success) {
+    
+    for (const result of results.filter(r => !r.needsPrice)) {
+      if (result.success) {
         successCount++;
-        const unitText = r.unit ? ` ${r.unit}` : '';
-
-        // Prefer enriched totalValue; otherwise derive
-        let value = Number.isFinite(r.totalValue) ? r.totalValue : 0;
-        if (!(value > 0)) {
-          if (r.salePrice) value = Math.abs(r.quantity) * r.salePrice;
-          else if (r.purchasePrice) value = Math.abs(r.quantity) * r.purchasePrice;
-          else value = 0;
-        }
-
-        // Show rate hint for purchases that had a positive rate
-        if (r.action === 'purchased' && (r.purchasePrice ?? 0) > 0) {
-          baseMessage += `Price updated: ${r.product} at ₹${(r.purchasePrice).toFixed(2)}/${singularize(r.unit)}\n`;
-        }
-
-        if (r.action === 'purchased') {
-          baseMessage += `• ${r.product}: ${r.quantity}${unitText} purchased (Stock: ${r.newQuantity}${unitText})`;
-          if (value > 0) {
-            baseMessage += ` (Value: ₹${value.toFixed(2)})`;
-            totalPurchaseValue += value;
-          }
-          baseMessage += `\n`;
-          if (r.batchDate) {
-            baseMessage += ` Batch added: ${formatDateForDisplay(r.batchDate)}\n`;
-          }
-        } else if (r.action === 'sold') {
-          baseMessage += `• ${r.product}: ${Math.abs(r.quantity)}${unitText} sold (Stock: ${r.newQuantity}${unitText})`;
-          if (value > 0) {
-            baseMessage += ` (Value: ₹${value.toFixed(2)})`;
-            totalSalesValue += value;
-          }
-          baseMessage += `\n`;
-          hasSales = true;
-        } else if (r.action === 'remaining') {
-          baseMessage += `• ${r.product}: ${r.quantity}${unitText} remaining (Stock: ${r.newQuantity}${unitText})\n`;
-        }
+        const unitText = result.unit ? ` ${result.unit}` : '';
+        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
       } else {
-        baseMessage += `• ${r.product}: Error - ${r.error}\n`;
+        message += `• ${result.product}: Error - ${result.error}\n`;
       }
     }
-
-    baseMessage += `\n✅ Successfully updated ${successCount} of ${results.length} items`;
-    if (totalSalesValue > 0) {
-      baseMessage += `\n💰 Total sales value: ₹${totalSalesValue.toFixed(2)}`;
-    }
-    if (totalPurchaseValue > 0) {
-      baseMessage += `\n📦 Total purchase value: ₹${totalPurchaseValue.toFixed(2)}`;
-    }
-
-    console.log(
-      `[${requestId}] [INV-STATE] Totals → sales=₹${totalSalesValue.toFixed(2)}, purchase=₹${totalPurchaseValue.toFixed(2)}`
-    );
-
-    // 5) If this run included any sales, set conversation state for batch selection
-    if (hasSales) {
-      if (!globalState.conversationState) globalState.conversationState = {};
-      globalState.conversationState[From] = {
-        state: 'awaiting_batch_selection',
-        language: userLanguage,
-        timestamp: Date.now()
-      };
-    }
-
-    // 6) Translate and send via API (auto-splits long messages)
-    const translated = await generateMultiLanguageResponse(baseMessage, userLanguage, requestId);
-    await sendMessageViaAPI(From, translated);
-
-    // 7) Clear the user's DB-backed state (we’re done with inventory mode)
-    try { await clearUserState(From); } catch { /* no-op */ }
-
-    // 8) Finish Twilio webhook quickly
-    return res.send('<Response></Response>');
-
+    
+    const totalProcessed = results.filter(r => !r.needsPrice).length;
+    message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
+  
+    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, formattedResponse);
+    
+    // Clear state after processing
+    await clearUserState(From);
   } catch (error) {
-    console.error(`[${requestId}] [INV-STATE] Error:`, error.message);
-
-    // Fallback: enter correction flow with a helpful prompt (keeps your prior behavior)
+    console.error(`[${requestId}] Error processing inventory updates:`, error.message);
+    
+    // If processing fails, try to parse the input again and enter correction flow
     try {
       const parsedUpdates = await parseMultipleUpdates(Body);
-      const update = parsedUpdates.length > 0
-        ? parsedUpdates[0]
-        : { product: Body, quantity: 0, unit: '', action: 'purchased', isKnown: false };
-
-      const saveResult = await saveCorrectionState(shopId, 'selection', update, userLanguage);
+      let update;
+      
+      if (parsedUpdates.length > 0) {
+        update = parsedUpdates[0];
+      } else {
+        // Create a default update object
+        update = {
+          product: Body,
+          quantity: 0,
+          unit: '',
+          action: 'purchased',
+          isKnown: false
+        };
+      }
+      
+      // Save correction state
+      const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
+      
       if (saveResult.success) {
         await setUserState(From, 'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
-            detectedLanguage: userLanguage,
+            detectedLanguage,
             id: saveResult.id
           }
         });
-
+        
         const correctionMessage = `I had trouble processing your update. What needs to be corrected?
 Reply with:
 1 – Product is wrong
 2 – Quantity is wrong
 3 – Action is wrong
 4 – All wrong, I'll type it instead`;
-
-        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, userLanguage, requestId);
+        
+        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
         await sendMessageViaAPI(From, translatedMessage);
       } else {
+        // If saving correction state fails, ask to retry
         const errorMessage = await generateMultiLanguageResponse(
           'Please try again with a clear inventory update.',
-          userLanguage,
+          detectedLanguage,
           requestId
         );
         await sendMessageViaAPI(From, errorMessage);
-        try { await clearUserState(From); } catch { /* no-op */ }
+        await clearUserState(From);
       }
     } catch (parseError) {
-      console.error(`[${requestId}] [INV-STATE] Error in fallback parsing:`, parseError.message);
+      console.error(`[${requestId}] Error in fallback parsing:`, parseError.message);
+      
+      // If even fallback fails, ask to retry
       const errorMessage = await generateMultiLanguageResponse(
         'Please try again with a clear inventory update.',
-        userLanguage,
+        detectedLanguage,
         requestId
       );
       await sendMessageViaAPI(From, errorMessage);
-      try { await clearUserState(From); } catch { /* no-op */ }
+      await clearUserState(From);
     }
-
-    return res.send('<Response></Response>');
   }
+  
+  res.send('<Response></Response>');
 }
-
 
 async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {
   console.log(`[${requestId}] Handling new interaction`);
@@ -5606,6 +5511,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   }
 
   // In handleNewInteraction function, add this before the default response:
+
 // Handle summary commands
 if (Body) {
   const lowerBody = Body.toLowerCase();
