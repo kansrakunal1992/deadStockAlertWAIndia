@@ -1828,6 +1828,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       // Use provided price or fall back to database price
       const finalPrice = update.price || productPrice;
       const finalTotalPrice = update.totalPrice || (finalPrice * update.quantity);
+      const priceSource = update.price ? 'message' : (productPrice ? 'db' : null);
       // Rest of the function remains the same...
       console.log(`[Update ${shopId} - ${product}] Processing update: ${update.quantity} ${update.unit}`);
       // Check if this is a sale (negative quantity)
@@ -1958,7 +1959,7 @@ if (validBatches.length > 0) {
                   product: product,
                   quantity: Math.abs(update.quantity), // Convert to positive for display
                   unit: update.unit,
-                  rate: finalPrice,
+                  rate: salePrice,
                   saleDate: new Date().toISOString()
                 };
                 
@@ -2019,13 +2020,21 @@ if (validBatches.length > 0) {
           result.salesError = salesError.message;
         }
       }
-      results.push({
-        product: product, // Use translated product
-        quantity: update.quantity,
-        unit: update.unit,
-        action: update.action,
-        ...result
-      });
+            
+       // NEW: Enrich outgoing item with price/value so renderer can show them
+       const enriched = {
+         product,
+         quantity: update.quantity,
+         unit: update.unit,
+         action: update.action,
+         ...result,
+         purchasePrice: update.action === 'purchased' ? (finalPrice || 0) : undefined,
+         salePrice:     update.action === 'sold'      ? (finalPrice || 0) : undefined,
+         totalValue:    Number.isFinite(finalTotalPrice) ? finalTotalPrice : 0,
+         priceSource,
+         priceUpdated:  update.action === 'purchased' && (finalPrice || 0) > 0
+       };
+       results.push(enriched);
     } catch (error) {
       console.error(`[Update ${shopId} - ${update.product}] Error:`, error.message);
       results.push({
@@ -3319,97 +3328,99 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         } catch (_) {}
         // Price prompt already sent; do not send "Updates processed".
         return res.send(response.toString());
-
-    // Get user's preferred language for the response
-    let userLanguage = detectedLanguage;
-    try {
-      const userPref = await getUserPreference(shopId);
-      if (userPref.success) {
-        userLanguage = userPref.language;
-      }
-    } catch (error) {
-      console.warn(`[${requestId}] Failed to get user preference:`, error.message);
-    }
-        // Create base message in English first
-        let baseMessage = '✅ Updates processed:\n\n';
-        let successCount = 0;
-        let hasSales = false;
-        let totalSalesValue = 0;
-        let totalPurchaseValue = 0;
-        
-        for (const result of results.filter(r => !r.needsPrice)) {
-          if (result.success) {
-            successCount++;
-            const unitText = result.unit ? ` ${result.unit}` : '';
-            
-            // Calculate value
-            let value = 0;
-            if (result.salePrice) {
-              value = Math.abs(result.quantity) * result.salePrice;
-            } else if (result.purchasePrice) {
-              value = Math.abs(result.quantity) * result.purchasePrice;
-            }
-            
-            // Format based on action type
-            if (result.action === 'purchased') {
-              baseMessage += `• ${result.product}: ${result.quantity} ${unitText} purchased (Stock: ${result.newQuantity}${unitText})`;
-              if (value > 0) {
-                baseMessage += ` (Value: ₹${value.toFixed(2)})`;
-                totalPurchaseValue += value;
-              }
-              baseMessage += `\n`;
-              
-              if (result.batchDate) {
-                baseMessage += ` Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
-              }
-            } else if (result.action === 'sold') {
-              baseMessage += `• ${result.product}: ${Math.abs(result.quantity)} ${unitText} sold (Stock: ${result.newQuantity}${unitText})`;
-              if (value > 0) {
-                baseMessage += ` (Value: ₹${value.toFixed(2)})`;
-                totalSalesValue += value;
-              }
-              baseMessage += `\n`;
-              hasSales = true;
-            } else if (result.action === 'remaining') {
-              baseMessage += `• ${result.product}: ${result.quantity} ${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
-            }
-          } else {
-            baseMessage += `• ${result.product}: Error - ${result.error}\n`;
-          }
-        }
-        
-        baseMessage += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
-        
-        // Add summary values
-        if (totalSalesValue > 0) {
-          baseMessage += `\n💰 Total sales value: ₹${totalSalesValue.toFixed(2)}`;
-        }
-        
-        if (totalPurchaseValue > 0) {
-          baseMessage += `\n📦 Total purchase value: ₹${totalPurchaseValue.toFixed(2)}`;
-        }
     
+// Get user's preferred language for the response
+     let userLanguage = detectedLanguage;
+     try {
+       const userPref = await getUserPreference(shopId);
+       if (userPref.success) {
+         userLanguage = userPref.language;
+       }
+     } catch (error) {
+       console.warn(`[${requestId}] Failed to get user preference:`, error.message);
+     }
+ 
+     // Create base message in English first
+     let baseMessage = '✅ Updates processed:\n\n';
+     let successCount = 0;
+     let hasSales = false;
+     let totalSalesValue = 0;
+     let totalPurchaseValue = 0;
+ 
+     for (const result of results.filter(r => !r.needsPrice)) {
+       if (result.success) {
+         successCount++;
+         const unitText = result.unit ? ` ${result.unit}` : '';
+ 
+         // NEW: reliable value calculation with fallback to enriched totalValue
+         let value = Number.isFinite(result.totalValue) ? result.totalValue : 0;
+         if (!(value > 0)) {
+           if (result.salePrice)      value = Math.abs(result.quantity) * result.salePrice;
+           else if (result.purchasePrice) value = Math.abs(result.quantity) * result.purchasePrice;
+           else value = 0;
+         }
+ 
+         // NEW: show "Price updated" line for purchases that carried a rate
+         if (result.action === 'purchased' && (result.purchasePrice || 0) > 0) {
+          baseMessage += `Price updated: ${result.product} at ₹${(result.purchasePrice).toFixed(2)}/${singularize(result.unit)}\n`;
+         }
+ 
+         // Format based on action type
+         if (result.action === 'purchased') {
+           baseMessage += `• ${result.product}: ${result.quantity}${unitText} purchased (Stock: ${result.newQuantity}${unitText})`;
+           if (value > 0) {
+             baseMessage += ` (Value: ₹${value.toFixed(2)})`;
+             totalPurchaseValue += value;
+           }
+           baseMessage += `\n`;
+           if (result.batchDate) {
+             baseMessage += `  Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
+           }
+         } else if (result.action === 'sold') {
+           baseMessage += `• ${result.product}: ${Math.abs(result.quantity)}${unitText} sold (Stock: ${result.newQuantity}${unitText})`;
+           if (value > 0) {
+             baseMessage += ` (Value: ₹${value.toFixed(2)})`;
+             totalSalesValue += value;
+           }
+           baseMessage += `\n`;
+           hasSales = true;
+         } else if (result.action === 'remaining') {
+           baseMessage += `• ${result.product}: ${result.quantity}${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
+         }
+       } else {
+         baseMessage += `• ${result.product}: Error - ${result.error}\n`;
+       }
+     }
+ 
+    baseMessage += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+     // Add summary values
+     if (totalSalesValue > 0) {
+       baseMessage += `\n💰 Total sales value: ₹${(totalSalesValue).toFixed(2)}`;
+     }
+     if (totalPurchaseValue > 0) {
+       baseMessage += `\n📦 Total purchase value: ₹${(totalPurchaseValue).toFixed(2)}`;
+     }
     if (hasSales) {
-      baseMessage += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
-      // Set conversation state to await batch selection
-      if (!globalState.conversationState) {
-        globalState.conversationState = {};
-      }
-      globalState.conversationState[from] = {
-        state: 'awaiting_batch_selection',
-        language: userLanguage,
-        timestamp: Date.now()
-      };
-    }
-    // Add switch option in completion messages
-    baseMessage += `\n\nYou can reply with a voice or text message. Examples:\n• Milk purchased - 5 litres\n• Oreo Biscuits sold - 9 packets\nWe'll automatically detect your input type.`;
-    // Add reset option
-    baseMessage += `\nTo reset the flow, reply "reset".`;
-    // Translate the entire message to user's preferred language
-    const translatedMessage = await generateMultiLanguageResponse(baseMessage, userLanguage, requestId);
-    // Send the message
+       baseMessage += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
+       // Set conversation state to await batch selection
+       if (!globalState.conversationState) {
+         globalState.conversationState = {};
+       }
+       globalState.conversationState[from] = {
+         state: 'awaiting_batch_selection',
+         language: userLanguage,
+         timestamp: Date.now()
+       };
+     }
+     // Add switch option in completion messages
+     baseMessage += `\n\nYou can reply with a voice or text message. Examples:\n• Milk purchased - 5 litres\n• Oreo Biscuits sold - 9 packets\nWe'll automatically detect your input type.`;
+     // Add reset option
+     baseMessage += `\nTo reset the flow, reply "reset".`;
+     // Translate the entire message to user's preferred language
+     const translatedMessage = await generateMultiLanguageResponse(baseMessage, userLanguage, requestId);
+     // Send the message
     response.message(translatedMessage);
-    return res.send(response.toString());
+     return res.send(response.toString());
   } 
   }
 catch (error) {
