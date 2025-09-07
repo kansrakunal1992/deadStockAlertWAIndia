@@ -1948,8 +1948,10 @@ async function upsertProduct(productData) {
 // Get product price
 async function getProductPrice(productName) {
   const context = `Get Product Price ${productName}`;
-  try {
-    const filterFormula = `{Name} = '${productName.replace(/'/g, "''")}'`;
+  try {    
+    const nameLower = productName.toLowerCase();
+    const filterFormula = `LOWER({Name}) = '${nameLower.replace(/'/g, "''")}'`;
+
     const result = await airtableProductsRequest({
       method: 'get',
       params: { filterByFormula: filterFormula }
