@@ -604,7 +604,7 @@ function addInvoiceTotals(doc, saleDetails, shopDetails) {
   doc.fillColor(colors.dark);
   doc.text('Amount in Words:', 40, yPos);
   yPos += 15;
-  doc.text(`${numberToWords(totalWithTax)} Rupees Only`, 40, yPos);
+  doc.text(`${numberToWords(totalWithTax)} Only`, 40, yPos);
 
   return yPos + 40;
 }
