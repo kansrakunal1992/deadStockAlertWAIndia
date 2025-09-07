@@ -1909,7 +1909,8 @@ async function upsertProduct(productData) {
     const findResult = await airtableProductsRequest(
       {
         method: 'get',
-        params: { filterByFormula }
+        // FIX: pass the string you built, not a missing variable
+        params: { filterByFormula: filterFormula }
       },
       `${context} - Find`
     );
@@ -1924,16 +1925,12 @@ async function upsertProduct(productData) {
       const existing = findResult.records[0];
       const recordId = existing.id;
 
-      // Only include fields that were actually provided (prevents wiping values)
-      const fieldsToUpdate = {
-        LastUpdated: nowISO
-      };
-      // Always keep Name normalized as provided
+      const fieldsToUpdate = { LastUpdated: nowISO };
       if (name) fieldsToUpdate.Name = name;
       if (unit) fieldsToUpdate.Unit = unit;
       if (category) fieldsToUpdate.Category = category;
       if (hsnCode !== undefined) fieldsToUpdate.HSNCode = hsnCode;
-      if (shouldWritePrice) fieldsToUpdate.Price = priceNum; // <-- do not write 0
+      if (shouldWritePrice) fieldsToUpdate.Price = priceNum; // don't write 0
 
       await airtableProductsRequest(
         {
@@ -1954,7 +1951,7 @@ async function upsertProduct(productData) {
         HSNCode: hsnCode || '',
         LastUpdated: nowISO
       };
-      if (shouldWritePrice) fieldsToCreate.Price = priceNum; // <-- only if > 0
+      if (shouldWritePrice) fieldsToCreate.Price = priceNum; // only if > 0
 
       const result = await airtableProductsRequest(
         {
@@ -1973,29 +1970,31 @@ async function upsertProduct(productData) {
 }
 
 
+
+// Get product price
 // Get product price
 async function getProductPrice(productName) {
   const context = `Get Product Price ${productName}`;
   try {
     const name = String(productName || '').trim();
-    const safeLower = name.replace(/'/g, "''").toLowerCase(); // escape single quotes for Airtable
+    const safeLower = name.replace(/'/g, "''").toLowerCase();
     const filterFormula = `LOWER({Name}) = '${safeLower}'`;
 
     const result = await airtableProductsRequest(
       {
         method: 'get',
-        params: { filterByFormula }
+        // FIX: pass the constructed string
+        params: { filterByFormula: filterFormula }
       },
       context
     );
 
     if (result.records && result.records.length > 0) {
       const record = result.records[0];
-      const rawPrice = record.fields?.Price;
-      const priceNum = Number(rawPrice);
+      const priceNum = Number(record.fields?.Price);
       return {
-        success: true, // product was found
-        price: Number.isFinite(priceNum) ? priceNum : 0,            // always a number
+        success: true,
+        price: Number.isFinite(priceNum) ? priceNum : 0, // always numeric
         unit: record.fields?.Unit || 'pieces',
         category: record.fields?.Category || 'General',
         hsnCode: record.fields?.HSNCode || ''
@@ -2008,6 +2007,7 @@ async function getProductPrice(productName) {
     return { success: false, error: error.message };
   }
 }
+
 
 
 // Get all products
