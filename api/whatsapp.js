@@ -1502,9 +1502,14 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                   action = quantity >= 0 ? 'purchased' : 'sold';
                 }
                 
-                // Extract price information
-                let price = update.price || 0;
-                let totalPrice = update.totalPrice || 0;
+                // Extract price information                 
+                let priceNum = Number(update.price);
+                let totalPriceNum = Number(update.totalPrice);
+                if (!Number.isFinite(priceNum) || priceNum <= 0) priceNum = undefined;
+                if (!Number.isFinite(totalPriceNum) || totalPriceNum <= 0) totalPriceNum = undefined;
+                // Calculate missing value if possible
+                if (priceNum && !totalPriceNum) totalPriceNum = priceNum * Math.abs(quantity);
+                else if (totalPriceNum && !priceNum && Math.abs(quantity) > 0) priceNum = totalPriceNum / Math.abs(quantity)
                 
                 // Calculate missing values
                 if (price > 0 && totalPrice === 0) {
@@ -1781,8 +1786,12 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
       }
       
+  // Determine if message actually provided a positive price
+      const msgPriceNum = Number(update.price);
+      const hasMessagePrice = Number.isFinite(msgPriceNum) && msgPriceNum > 0;
+      
       // For purchases, ask for price if not available
-      if (update.action === 'purchased' && productPrice === 0 && !update.price) {
+      if (update.action === 'purchased' && productPrice === 0 && !hasMessagePrice) {
       // Save pending update to database and keep the id
       const saveRes = await saveCorrectionState(shopId, 'price', update, languageCode);
 
@@ -1826,15 +1835,12 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       continue;
     }
       
-      // Use provided price or fall back to database price      
-      // NEW: reliable price/value
-        const finalPrice = (update.price ?? productPrice) || 0;
-        const finalTotalPrice = Number.isFinite(update.totalPrice)
-          ? update.totalPrice
-          : (finalPrice * Math.abs(update.quantity));
-          const priceSource = (update.price && Number(update.price) > 0)
-            ? 'message'
-            : (productPrice > 0 ? 'db' : null); // only mark db if it’s actually > 0
+      // Use provided price or fall back to database price            
+      const finalPrice = hasMessagePrice ? msgPriceNum : (productPrice > 0 ? productPrice : 0);
+      const finalTotalPrice = Number.isFinite(update.totalPrice)
+        ? Number(update.totalPrice)
+        : (finalPrice * Math.abs(update.quantity));
+      const priceSource = hasMessagePrice ? 'message' : (productPrice > 0 ? 'db' : null);
 
       // Rest of the function remains the same...
       console.log(`[Update ${shopId} - ${product}] Processing update: ${update.quantity} ${update.unit}`);
