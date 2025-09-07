@@ -5151,33 +5151,59 @@ Reply with:
 }
 
 async function handleInventoryState(Body, From, state, requestId, res) {
-  console.log(`[${requestId}] Handling inventory state with input: "${Body}"`);
-  
-  const { updates, detectedLanguage } = state.data;
-  const shopId = From.replace('whatsapp:', '');
-  
-  // Process the updates
-  try {
-    const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+  console.log(`[${requestId}] [INV-STATE] Handling inventory state with input: "${Body}"`);
 
-    // If every result is waiting for price, let the existing correction flow handle it
+  // State payload that was saved earlier when the user entered inventory mode
+  const data = state?.data || {};
+  const updates = data.updates || [];
+  let userLanguage = data.detectedLanguage || 'en';
+  const shopId = From.replace('whatsapp:', '');
+
+  try {
+    // 1) Apply updates (DB inventory, batches, price prompts, etc.)
+    const results = await updateMultipleInventory(shopId, updates, userLanguage);
+
+    // 2) If every item needs a price, do NOT send a summary here.
+    //    Your updateMultipleInventory already triggered the correction flow.
     if (allPendingPrice(results)) {
-      // Do not send the final summary here; existing flow will prompt for price
-      return;
+      console.log(`[${requestId}] [INV-STATE] All items pending price — skipping summary (price prompt is active).`);
+
+      // (Optional) keep your legacy behavior of setting correction state here too
+      try {
+        await setUserState(From, 'correction', {
+          correctionState: {
+            correctionType: 'price',
+            pendingUpdate: results[0],
+            detectedLanguage: userLanguage,
+            id: results[0]?.correctionId
+          }
+        });
+      } catch (_) { /* no-op */ }
+
+      return res.send('<Response></Response>');
     }
 
-    // --- BEGIN: totals & message block (mirrors processConfirmedTranscription) ---
+    // 3) Try to honor the saved user language preference
+    try {
+      const pref = await getUserPreference(shopId);
+      if (pref?.success && pref.language) userLanguage = pref.language;
+    } catch (e) {
+      console.warn(`[${requestId}] [INV-STATE] getUserPreference failed: ${e.message}`);
+    }
+
+    // 4) Build message (same style as processConfirmedTranscription)
     let baseMessage = '✅ Updates processed:\n\n';
     let successCount = 0;
     let totalSalesValue = 0;
     let totalPurchaseValue = 0;
+    let hasSales = false;
 
     for (const r of results.filter(x => !x.needsPrice)) {
       if (r.success) {
         successCount++;
         const unitText = r.unit ? ` ${r.unit}` : '';
 
-        // Reliable per-line value (prefer enriched totalValue; else derive)
+        // Prefer enriched totalValue; otherwise derive
         let value = Number.isFinite(r.totalValue) ? r.totalValue : 0;
         if (!(value > 0)) {
           if (r.salePrice) value = Math.abs(r.quantity) * r.salePrice;
@@ -5185,7 +5211,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
           else value = 0;
         }
 
-        // Show a "Price updated" hint for purchases with a positive rate
+        // Show rate hint for purchases that had a positive rate
         if (r.action === 'purchased' && (r.purchasePrice ?? 0) > 0) {
           baseMessage += `Price updated: ${r.product} at ₹${(r.purchasePrice).toFixed(2)}/${singularize(r.unit)}\n`;
         }
@@ -5207,6 +5233,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
             totalSalesValue += value;
           }
           baseMessage += `\n`;
+          hasSales = true;
         } else if (r.action === 'remaining') {
           baseMessage += `• ${r.product}: ${r.quantity}${unitText} remaining (Stock: ${r.newQuantity}${unitText})\n`;
         }
@@ -5223,118 +5250,84 @@ async function handleInventoryState(Body, From, state, requestId, res) {
       baseMessage += `\n📦 Total purchase value: ₹${totalPurchaseValue.toFixed(2)}`;
     }
 
-    // Translate + send via API (keep Twilio webhook quick)
-    const translated = await generateMultiLanguageResponse(baseMessage, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, translated);
-    res.send('<Response></Response>');
-    return;
-    // --- END: totals & message block ---
+    console.log(
+      `[${requestId}] [INV-STATE] Totals → sales=₹${totalSalesValue.toFixed(2)}, purchase=₹${totalPurchaseValue.toFixed(2)}`
+    );
 
-    
-    if (allPendingPrice(results)) {
-        try {
-          await setUserState(From, 'correction', {
-            correctionState: {
-              correctionType: 'price',
-              pendingUpdate: results[0],
-              detectedLanguage,
-              id: results[0]?.correctionId
-            }
-          });
-        } catch (_) {}
-        res.send('<Response></Response>');
-        return;
-      }
-
-    let message = '✅ Updates processed:\n\n';
-    
-    for (const result of results.filter(r => !r.needsPrice)) {
-      if (result.success) {
-        successCount++;
-        const unitText = result.unit ? ` ${result.unit}` : '';
-        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-      } else {
-        message += `• ${result.product}: Error - ${result.error}\n`;
-      }
+    // 5) If this run included any sales, set conversation state for batch selection
+    if (hasSales) {
+      if (!globalState.conversationState) globalState.conversationState = {};
+      globalState.conversationState[From] = {
+        state: 'awaiting_batch_selection',
+        language: userLanguage,
+        timestamp: Date.now()
+      };
     }
-    
-    const totalProcessed = results.filter(r => !r.needsPrice).length;
-    message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
-  
-    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, formattedResponse);
-    
-    // Clear state after processing
-    await clearUserState(From);
+
+    // 6) Translate and send via API (auto-splits long messages)
+    const translated = await generateMultiLanguageResponse(baseMessage, userLanguage, requestId);
+    await sendMessageViaAPI(From, translated);
+
+    // 7) Clear the user's DB-backed state (we’re done with inventory mode)
+    try { await clearUserState(From); } catch { /* no-op */ }
+
+    // 8) Finish Twilio webhook quickly
+    return res.send('<Response></Response>');
+
   } catch (error) {
-    console.error(`[${requestId}] Error processing inventory updates:`, error.message);
-    
-    // If processing fails, try to parse the input again and enter correction flow
+    console.error(`[${requestId}] [INV-STATE] Error:`, error.message);
+
+    // Fallback: enter correction flow with a helpful prompt (keeps your prior behavior)
     try {
       const parsedUpdates = await parseMultipleUpdates(Body);
-      let update;
-      
-      if (parsedUpdates.length > 0) {
-        update = parsedUpdates[0];
-      } else {
-        // Create a default update object
-        update = {
-          product: Body,
-          quantity: 0,
-          unit: '',
-          action: 'purchased',
-          isKnown: false
-        };
-      }
-      
-      // Save correction state
-      const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
-      
+      const update = parsedUpdates.length > 0
+        ? parsedUpdates[0]
+        : { product: Body, quantity: 0, unit: '', action: 'purchased', isKnown: false };
+
+      const saveResult = await saveCorrectionState(shopId, 'selection', update, userLanguage);
       if (saveResult.success) {
         await setUserState(From, 'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
-            detectedLanguage,
+            detectedLanguage: userLanguage,
             id: saveResult.id
           }
         });
-        
+
         const correctionMessage = `I had trouble processing your update. What needs to be corrected?
 Reply with:
 1 – Product is wrong
 2 – Quantity is wrong
 3 – Action is wrong
 4 – All wrong, I'll type it instead`;
-        
-        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+
+        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, userLanguage, requestId);
         await sendMessageViaAPI(From, translatedMessage);
       } else {
-        // If saving correction state fails, ask to retry
         const errorMessage = await generateMultiLanguageResponse(
           'Please try again with a clear inventory update.',
-          detectedLanguage,
+          userLanguage,
           requestId
         );
         await sendMessageViaAPI(From, errorMessage);
-        await clearUserState(From);
+        try { await clearUserState(From); } catch { /* no-op */ }
       }
     } catch (parseError) {
-      console.error(`[${requestId}] Error in fallback parsing:`, parseError.message);
-      
-      // If even fallback fails, ask to retry
+      console.error(`[${requestId}] [INV-STATE] Error in fallback parsing:`, parseError.message);
       const errorMessage = await generateMultiLanguageResponse(
         'Please try again with a clear inventory update.',
-        detectedLanguage,
+        userLanguage,
         requestId
       );
       await sendMessageViaAPI(From, errorMessage);
-      await clearUserState(From);
+      try { await clearUserState(From); } catch { /* no-op */ }
     }
+
+    return res.send('<Response></Response>');
   }
-  
-  res.send('<Response></Response>');
 }
+
 
 async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {
   console.log(`[${requestId}] Handling new interaction`);
