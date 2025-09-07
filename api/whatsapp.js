@@ -5247,7 +5247,6 @@ async function handleInventoryState(Body, From, state, requestId, res) {
       }
 
     let message = '✅ Updates processed:\n\n';
-    let successCount = 0;
     
     for (const result of results.filter(r => !r.needsPrice)) {
       if (result.success) {
