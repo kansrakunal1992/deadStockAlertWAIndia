@@ -1901,42 +1901,40 @@ async function upsertProduct(productData) {
   const context = `Upsert Product ${productData.name}`;
   try {
     const { name, price, unit, category, hsnCode } = productData;
-    
-    // Check if product already exists
-    const filterFormula = `{Name} = '${name.replace(/'/g, "''")}'`;
+    const filterFormula = `LOWER(TRIM({Name})) = '${name.toLowerCase().replace(/'/g, "''").trim()}'`;
     const findResult = await airtableProductsRequest({
       method: 'get',
-      params: { filterByFormula: filterFormula }
+      params: { filterByFormula: filterFormula, maxRecords: 1 }
     }, `${context} - Find`);
-    
+
+    const sanitizedPrice = (typeof price === 'number')
+      ? price
+      : parseFloat(String(price).replace(/[^\d.]/g, '')) || 0;
+
     const productRecord = {
       fields: {
-        Name: name,
-        Price: price || 0,
-        Unit: unit || 'pieces',
-        Category: category || 'General',
-        HSNCode: hsnCode || '',
+        Name: name.trim(),
+        Price: sanitizedPrice,
+        Unit: unit ?? 'pieces',
+        Category: category ?? 'General',
+        HSNCode: hsnCode ?? '',
         LastUpdated: new Date().toISOString()
       }
     };
-    
+
     if (findResult.records.length > 0) {
-      // Update existing product
       const recordId = findResult.records[0].id;
       await airtableProductsRequest({
         method: 'patch',
         url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PRODUCTS_TABLE_NAME}/${recordId}`,
         data: productRecord
       }, `${context} - Update`);
-      
       return { success: true, id: recordId, action: 'updated' };
     } else {
-      // Create new product
       const result = await airtableProductsRequest({
         method: 'post',
         data: productRecord
       }, `${context} - Create`);
-      
       return { success: true, id: result.id, action: 'created' };
     }
   } catch (error) {
@@ -1944,6 +1942,7 @@ async function upsertProduct(productData) {
     return { success: false, error: error.message };
   }
 }
+
 
 // Get product price
 async function getProductPrice(productName) {
