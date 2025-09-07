@@ -1773,8 +1773,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       let productPrice = 0;
       try {
         const priceResult = await getProductPrice(product);
-        if (priceResult.success) {
-          productPrice = priceResult.price;
+        if (priceResult.success) {    
+        // Coerce to number so "0" doesn't look truthy
+        productPrice = Number(priceResult.price) || 0;
         }
       } catch (error) {
         console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
@@ -1831,7 +1832,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         const finalTotalPrice = Number.isFinite(update.totalPrice)
           ? update.totalPrice
           : (finalPrice * Math.abs(update.quantity));
-        const priceSource = update.price ? 'message' : (productPrice ? 'db' : null); // NEW
+          const priceSource = (update.price && Number(update.price) > 0)
+            ? 'message'
+            : (productPrice > 0 ? 'db' : null); // only mark db if it’s actually > 0
 
       // Rest of the function remains the same...
       console.log(`[Update ${shopId} - ${product}] Processing update: ${update.quantity} ${update.unit}`);
@@ -1914,17 +1917,22 @@ if (validBatches.length > 0) {
         else {
           console.error(`[update] Failed to create batch record: ${batchResult.error}`);
         }
-            // ✅ Update product price in DB after purchase
-            try {
-              await upsertProduct({
-                name: product,
-                price: purchasePrice,
-                unit: update.unit
-              });
-              console.log(`[Update ${shopId} - ${product}] Product price updated in DB: ₹${purchasePrice}/${update.unit}`);
-            } catch (err) {
-              console.warn(`[Update ${shopId} - ${product}] Failed to update product price in DB:`, err.message);
-            }
+
+      // ✅ Update product price in DB after purchase — only if we have a positive rate
+        if (purchasePrice > 0) {
+          try {
+            await upsertProduct({
+              name: product,
+              price: purchasePrice,
+              unit: update.unit
+            });
+            console.log(`[Update ${shopId} - ${product}] Product price updated in DB: ₹${purchasePrice}/${update.unit}`);
+          } catch (err) {
+            console.warn(`[Update ${shopId} - ${product}] Failed to update product price in DB:`, err.message);
+          }
+        } else {
+          console.log(`[Update ${shopId} - ${product}] Skipped DB price update (no price provided).`);
+        }
       }
                  // Create sales record for sales only
             if (isSale && result.success) {
