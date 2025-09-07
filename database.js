@@ -56,20 +56,20 @@ function normalizeUnit(unit) {
 
 // Convert quantity to base unit
 function convertToBaseUnit(quantity, unit) {
-  const normalizedUnit = normalizeUnit(unit);
-  
-  const conversionMap = {
-    'kg': 1,
-    'g': 0.001,
-    'liters': 1,
-    'ml': 0.001,
-    'packets': 1,
-    'boxes': 1,
-    'pieces': 1
-  };
-  
-  return quantity * (conversionMap[normalizedUnit] || 1);
+  const u = String(unit || '').toLowerCase().trim();
+  // weight
+  if (u === 'g' || u === 'gram' || u === 'grams' || u === 'ग्राम') return quantity * 0.001; // -> kg
+  if (u === 'kg' || u === 'kilogram' || u === 'kilograms') return quantity;
+  // volume
+  if (u === 'ml' || u === 'milliliter' || u === 'milliliters') return quantity * 0.001; // -> liters
+  if (u === 'liter' || u === 'liters' || u === 'litre' || u === 'litres') return quantity;
+  // countables
+  if (u === 'packet' || u === 'packets' || u === 'पैकेट') return quantity;
+  if (u === 'box' || u === 'boxes' || u === 'बॉक्स') return quantity;
+  if (u === 'piece' || u === 'pieces' || u === '') return quantity;
+  return quantity; // default passthrough
 }
+
 
 // Airtable request helper with timeout and retry logic
 async function airtableRequest(config, context = 'Airtable Request', maxRetries = 2) {
