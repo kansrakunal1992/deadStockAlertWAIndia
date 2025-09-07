@@ -4617,6 +4617,38 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   }
 }
 
+// New: unify new-interaction routing through async processors (text/voice)
+async function routeNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {
+  try {
+    const hasMedia = Number(NumMedia) > 0 && !!MediaUrl0;
+    const conversationState =
+      (globalState.conversationState && globalState.conversationState[From]) || null;
+
+    if (hasMedia) {
+      console.log(`[${requestId}] New interaction: voice (media=${NumMedia})`);
+      await processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState);
+    } else if (Body && Body.trim()) {
+      console.log(`[${requestId}] New interaction: text`);
+      await processTextMessageAsync(Body, From, requestId, conversationState);
+    } else {
+      console.log(`[${requestId}] New interaction: empty message`);
+      const fallback = await generateMultiLanguageResponse(
+        'Please send a voice or text message with your inventory update.',
+        'en',
+        requestId
+      );
+      await sendMessageViaAPI(From, fallback);
+    }
+    // Always acknowledge the webhook so Twilio doesn't retry
+    res.send('<Response></Response>');
+  } catch (err) {
+    console.error(`[${requestId}] routeNewInteraction error:`, err.message);
+    res.send('<Response></Response>');
+  }
+}
+
+
+
 // Main module exports
 module.exports = async (req, res) => {
   const requestStart = Date.now();
@@ -4791,7 +4823,7 @@ module.exports = async (req, res) => {
   }
     
     // 4. No active state - process as new interaction
-    await handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res);
+    await routeNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res);
     
   } catch (error) {
     console.error(`[${requestId}] Processing Error:`, error.message);
@@ -5574,7 +5606,6 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   }
 
   // In handleNewInteraction function, add this before the default response:
-
 // Handle summary commands
 if (Body) {
   const lowerBody = Body.toLowerCase();
