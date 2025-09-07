@@ -1425,6 +1425,7 @@ async function translateProductName(productName, requestId) {
 }
 
 // Function to parse inventory updates using AI
+// Function to parse inventory updates using AI
 async function parseInventoryUpdateWithAI(transcript, requestId) {
   try {
     const response = await axios.post(
@@ -1434,116 +1435,108 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
         messages: [
           {
             role: "system",
-            content: `You are an inventory parsing assistant. Extract inventory information from the user's message and return it in JSON format.
-          Extract the following fields:
-          1. product: The name of the product (e.g., "Parle-G", "sugar", "milk") - ONLY the product name, no quantities or units
-          2. quantity: The numerical quantity (as a number)
-          3. unit: The unit of measurement (e.g., "packets", "kg", "liters", "pieces")
-          4. action: The action being performed ("purchased", "sold", "remaining")
-          5. price: The price per unit (if mentioned, otherwise null)
-          6. totalPrice: The total price (if mentioned, otherwise null)
-          For the action field:
-          - Use "purchased" for words like "bought", "purchased", "buy", "खरीदा", "खरीदे", "लिया", "खरीदी", "khareeda"
-          - Use "sold" for words like "sold", "बेचा", "बेचे", "becha", "बिक्री", "becha"
-          - Use "remaining" for words like "remaining", "left", "बचा", "बचे", "बाकी", "bacha"
-          If no action is specified, default to "purchased" for positive quantities and "sold" for negative quantities.
-          If no unit is specified, infer the most appropriate unit based on the product type:
-          - For biscuits, chips, etc.: "packets"
-          - For milk, water, oil: "liters"
-          - For flour, sugar, salt: "kg"
-          - For individual items: "pieces"
-          Return only valid JSON with no additional text, markdown formatting, or code blocks.`
-                    },
-                    {
-                      role: "user",
-                      content: transcript
-                    }
-                  ],
-                  max_tokens: 150,
-                  temperature: 0.1
-                },
-                {
-                  headers: {
-                    'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-                    'Content-Type': 'application/json'
-                  },
-                  timeout: 10000
-                }
-              );
-              
-              let content = response.data.choices[0].message.content.trim();
-              console.log(`[${requestId}] AI parsing result: ${content}`);
-              
-              // Clean up the response to remove markdown code blocks if present
-              if (content.startsWith('```json')) {
-                content = content.replace(/```json\n?/, '').replace(/\n?```$/, '');
-              } else if (content.startsWith('```')) {
-                content = content.replace(/```\n?/, '').replace(/\n?```$/, '');
-              }
-              
-              // Parse the JSON response
-              try {
-                const parsed = safeJsonParse(content);
-                if (!parsed) {
-                  console.error(`[${requestId}] Failed to parse AI response as JSON after cleanup`);
-                  return null;
-                }
-                const updatesArray = Array.isArray(parsed) ? parsed : [parsed];
-                
-                return updatesArray.map(update => {
-                // Convert quantity to number and ensure proper sign
-                let quantity = typeof update.quantity === 'string' ? 
-                              parseInt(update.quantity.replace(/[^\d.-]/g, '')) || 0 : 
-                              Number(update.quantity) || 0;
-                
-                // Ensure action is properly set based on quantity
-                let action = update.action || '';
-                if (!action) {
-                  action = quantity >= 0 ? 'purchased' : 'sold';
-                }
-                
-                // Extract price information                 
-                let priceNum = Number(update.price);
-                let totalPriceNum = Number(update.totalPrice);
-                if (!Number.isFinite(priceNum) || priceNum <= 0) priceNum = undefined;
-                if (!Number.isFinite(totalPriceNum) || totalPriceNum <= 0) totalPriceNum = undefined;
-                // Calculate missing value if possible
-                if (priceNum && !totalPriceNum) totalPriceNum = priceNum * Math.abs(quantity);
-                else if (totalPriceNum && !priceNum && Math.abs(quantity) > 0) priceNum = totalPriceNum / Math.abs(quantity)
-                
-                // Calculate missing values
-                if (price > 0 && totalPrice === 0) {
-                  totalPrice = price * Math.abs(quantity);
-                } else if (totalPrice > 0 && price === 0 && quantity > 0) {
-                  price = totalPrice / quantity;
-                }
-                
-                // Ensure unit has a proper default
-                const unit = update.unit || 'pieces';
-                
-                // Use AI-parsed product directly - NO re-processing!
-                const product = String(update.product || '').trim();
-                
-                return {
-                  product: product,
-                  quantity: Math.abs(quantity), // Always store positive quantity
-                  unit: unit,
-                  action: action,
-                  price: price,
-                  totalPrice: totalPrice,
-                  isKnown: products.some(p => isProductMatch(product, p))
-                };
-              });
-              } catch (parseError) {
-                console.error(`[${requestId}] Failed to parse AI response as JSON:`, parseError.message);
-                console.error(`[${requestId}] Raw AI response:`, content);
-                return null;
-              }
-            } catch (error) {
-              console.error(`[${requestId}] AI parsing error:`, error.message);
-              return null;
-            }
-          }
+            content: `You are an inventory parsing assistant. Extract inventory information from the user's message and return it in JSON format. 
+Extract the following fields:
+1. product: The name of the product (e.g., "Parle-G", "sugar", "milk") - ONLY the product name, no quantities or units
+2. quantity: The numerical quantity (as a number)
+3. unit: The unit of measurement (e.g., "packets", "kg", "liters", "pieces")
+4. action: The action being performed ("purchased", "sold", "remaining")
+5. price: The price per unit (if mentioned, otherwise null)
+6. totalPrice: The total price (if mentioned, otherwise null)
+For the action field:
+- Use "purchased" for words like "bought", "purchased", "buy", "खरीदा", "खरीदे", "लिया", "खरीदी", "khareeda"
+- Use "sold" for words like "sold", "बेचा", "बेचे", "becha", "बिक्री", "becha"
+- Use "remaining" for words like "remaining", "left", "बचा", "बचे", "बाकी", "bacha"
+If no action is specified, default to "purchased" for positive quantities and "sold" for negative quantities.
+If no unit is specified, infer the most appropriate unit based on the product type:
+- For biscuits, chips, etc.: "packets"
+- For milk, water, oil: "liters"
+- For flour, sugar, salt: "kg"
+- For individual items: "pieces"
+Return only valid JSON with no additional text, markdown formatting, or code blocks.`
+          },
+          { role: "user", content: transcript }
+        ],
+        max_tokens: 150,
+        temperature: 0.1
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      }
+    );
+
+    let content = response.data.choices[0].message.content.trim();
+    console.log(`[${requestId}] AI parsing result: ${content}`);
+
+    // Clean code fences if present
+    if (content.startsWith('```json')) {
+      content = content.replace(/```json\n?/, '').replace(/\n?```$/, '');
+    } else if (content.startsWith('```')) {
+      content = content.replace(/```\n?/, '').replace(/\n?```$/, '');
+    }
+
+    // Parse the JSON
+    try {
+      const parsed = safeJsonParse(content);
+      if (!parsed) {
+        console.error(`[${requestId}] Failed to parse AI response as JSON after cleanup`);
+        return null;
+      }
+      const updatesArray = Array.isArray(parsed) ? parsed : [parsed];
+
+      return updatesArray.map(update => {
+        // quantity
+        let quantity =
+          typeof update.quantity === 'string'
+            ? parseInt(update.quantity.replace(/[^\d.\-]/g, ''), 10) || 0
+            : Number(update.quantity) || 0;
+
+        // action
+        let action = (update.action || '').toString().toLowerCase().trim();
+        if (!action) action = quantity >= 0 ? 'purchased' : 'sold';
+
+        // numeric price & totalPrice (optional)
+        let priceNum = Number(update.price);
+        let totalPriceNum = Number(update.totalPrice);
+        if (!Number.isFinite(priceNum) || priceNum <= 0) priceNum = undefined;
+        if (!Number.isFinite(totalPriceNum) || totalPriceNum <= 0) totalPriceNum = undefined;
+
+        // infer missing one if possible
+        if (priceNum && !totalPriceNum) {
+          totalPriceNum = priceNum * Math.abs(quantity);
+        } else if (totalPriceNum && !priceNum && Math.abs(quantity) > 0) {
+          priceNum = totalPriceNum / Math.abs(quantity);
+        }
+
+        // unit and product
+        const unit = update.unit || 'pieces';
+        const product = String(update.product || '').trim();
+
+        return {
+          product,
+          quantity: Math.abs(quantity), // always positive; sign handled via action
+          unit,
+          action,
+          price: priceNum ?? undefined,
+          totalPrice: totalPriceNum ?? undefined,
+          isKnown: products.some(p => isProductMatch(product, p))
+        };
+      });
+    } catch (parseError) {
+      console.error(`[${requestId}] Failed to parse AI response as JSON:`, parseError.message);
+      console.error(`[${requestId}] Raw AI response:`, content);
+      return null;
+    }
+  } catch (error) {
+    console.error(`[${requestId}] AI parsing error:`, error.message);
+    return null;
+  }
+}
+
 
 // Parse multiple inventory updates from transcript
 async function parseMultipleUpdates(transcript) {
