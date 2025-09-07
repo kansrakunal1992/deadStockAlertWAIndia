@@ -26,6 +26,10 @@ if (!fs.existsSync(invoicesDir)) {
 const logoPath = path.join(__dirname, 'assets', 'saamagrii_logo.png');
 let logoImageBuffer = null;
 
+function isGSTApplicable(shopDetails) {
+  return shopDetails?.gstin && shopDetails.gstin.trim() !== '' && shopDetails.gstin !== 'N/A';
+}
+
 /**
  * Load logo image from local file with caching
  */
@@ -423,17 +427,18 @@ async function addInvoiceHeader(doc, shopDetails) {
   
   // Invoice title - centered
   doc.fontSize(20);
-  const isGSTInvoice = shopDetails?.gstin && shopDetails.gstin !== 'N/A';
-  doc.text(isGSTInvoice ? 'TAX INVOICE' : 'INVOICE', 0, 25, { align: 'center' });
+  const gstApplicable = isGSTApplicable(shopDetails);
+  doc.text(gstApplicable ? 'TAX INVOICE' : 'Sales Invoice', 0, 25, { align: 'center' });
 
   
   // Shop details - centered (with safety checks)
   doc.fontSize(12);
   doc.text(shopDetails?.name || 'Shop Name', 0, 45, { align: 'center' });
     
-  if (isGSTInvoice) {
+  if (gstApplicable) {
     doc.text(`GSTIN: ${shopDetails.gstin}`, 0, 65, { align: 'center' });
   }
+
 
   
   // Invoice details - adjusted positioning to prevent overlap
@@ -476,11 +481,13 @@ async function addInvoiceHeader(doc, shopDetails) {
  * Add sale details in a compact table format - SINGLE PAGE VERSION
  */
 function addSaleDetails(doc, shopDetails, saleRecord, productInfo) {
+  const gstApplicable = shopDetails?.gstin && shopDetails.gstin.trim() !== '' && shopDetails.gstin !== 'N/A';
+
   // Section title
   doc.fontSize(14);
   doc.fillColor(colors.primary);
   doc.text('Invoice Details', 40, 180);
-  
+
   // Table header
   let yPos = 205;
   doc.rect(40, yPos, doc.page.width - 80, 25).fill(colors.tableHeader);
@@ -491,52 +498,52 @@ function addSaleDetails(doc, shopDetails, saleRecord, productInfo) {
   doc.text('Qty', 255, yPos + 15, { width: 30 });
   doc.text('Rate (₹)', 285, yPos + 15, { width: 60 });
   doc.text('Taxable Val', 320, yPos + 15, { width: 60 });
-  doc.text('GST Rate', 380, yPos + 15, { width: 50 });
-  doc.text('GST Amt', 430, yPos + 15, { width: 50 });
+
+  if (gstApplicable) {
+    doc.text('GST Rate', 380, yPos + 15, { width: 50 });
+    doc.text('GST Amt', 430, yPos + 15, { width: 50 });
+  }
+
   doc.text('Total (₹)', 480, yPos + 15, { width: 60 });
-  
+
   // Product row
   yPos += 25;
   doc.rect(40, yPos, doc.page.width - 80, 25).fill(colors.oddRow);
   doc.fillColor(colors.dark);
   doc.fontSize(10);
-  
-  // Use dynamic rate and product info
+
   const rate = isNaN(saleRecord.rate) ? 0 : Number(saleRecord.rate);
   const quantity = isNaN(saleRecord.quantity) ? 0 : Number(saleRecord.quantity);
-  
-  // GST calculation based on product category
-  let gstRate = 0.18; // Default 18%
-  if (productInfo.category === 'Dairy') {
-    gstRate = 0.05; // 5% for dairy
-  } else if (productInfo.category === 'Essential') {
-    gstRate = 0; // 0% for essential items
-  } else if (productInfo.category === 'Packaged') {
-    gstRate = 0.12; // 12% for packaged goods
+
+  let gstRate = gstApplicable ? 0.18 : 0;
+  if (gstRate !== 0) {
+    if (productInfo.category === 'Dairy') gstRate = 0.05;
+    else if (productInfo.category === 'Essential') gstRate = 0;
+    else if (productInfo.category === 'Packaged') gstRate = 0.12;
   }
-  
+
   const taxableValue = rate * quantity;
   const gstAmount = taxableValue * gstRate;
   const totalWithTax = taxableValue + gstAmount;
-  
-  doc.text(saleRecord.product || 'Product', 45, yPos + 15, { width: 150 });
-  doc.text(productInfo.hsnCode || 'N/A', 195, yPos + 15, { width: 60 });
+
+  doc.text(saleRecord.product ?? 'Product', 45, yPos + 15, { width: 150 });
+  doc.text(productInfo.hsnCode ?? 'N/A', 195, yPos + 15, { width: 60 });
   doc.text(quantity.toString(), 255, yPos + 15, { width: 30 });
   doc.text(rate.toFixed(2), 285, yPos + 15, { width: 60 });
   doc.text(taxableValue.toFixed(2), 320, yPos + 15, { width: 60 });
-  
-  // GST rate with color coding
-  const gstColor = gstRate === 0 ? colors.gst0 :
-    gstRate === 0.05 ? colors.gst5 :
-    gstRate === 0.12 ? colors.gst12 :
-    gstRate === 0.18 ? colors.gst18 : colors.gst28;
-  
-  doc.fillColor(gstColor);
-  doc.text(`${(gstRate * 100).toFixed(0)}%`, 380, yPos + 15, { width: 50 });
+
+  if (gstApplicable && gstRate !== 0) {
+    const gstColor = gstRate === 0.05 ? colors.gst5 :
+                     gstRate === 0.12 ? colors.gst12 :
+                     gstRate === 0.18 ? colors.gst18 : colors.gst28;
+    doc.fillColor(gstColor);
+    doc.text(`${(gstRate * 100).toFixed(0)}%`, 380, yPos + 15, { width: 50 });
+    doc.text(gstAmount.toFixed(2), 430, yPos + 15, { width: 50 });
+  }
+
   doc.fillColor(colors.dark);
-  doc.text(gstAmount.toFixed(2), 430, yPos + 15, { width: 50 });
   doc.text(totalWithTax.toFixed(2), 480, yPos + 15, { width: 60 });
-  
+
   return {
     yPos: yPos + 35,
     taxableValue,
@@ -546,80 +553,62 @@ function addSaleDetails(doc, shopDetails, saleRecord, productInfo) {
   };
 }
 
+
 /**
  * Add invoice totals with GST breakdown - SINGLE PAGE VERSION
  */
-function addInvoiceTotals(doc, saleDetails) {
+function addInvoiceTotals(doc, saleDetails, shopDetails) {
   const { taxableValue, gstAmount, totalWithTax, gstRate } = saleDetails;
-  const isGSTInvoice = gstRate !== 0;
-  
-  if (!isGSTInvoice) {
-   doc.fontSize(12).fillColor(colors.dark);
-   doc.text('Total Amount:', 300, doc.y, { width: 100, align: 'right' });
-   doc.text(`₹${taxableValue.toFixed(2)}`, 410, doc.y);
-   doc.moveDown(2);
-   doc.text('Note: This is a non-GST invoice.', 300, doc.y, { width: 200 });
-   return;
- }
+  const gstApplicable = shopDetails?.gstin && shopDetails.gstin.trim() !== '' && shopDetails.gstin !== 'N/A';
 
- const cgst = gstAmount / 2;
- const sgst = gstAmount / 2;
-
-  
-  // Payment details box - compact
   const boxX = 300;
   const boxWidth = 200;
   let yPos = 270;
-  
-  // Box background
+
   doc.rect(boxX - 10, yPos - 5, boxWidth + 20, 130).fill(colors.light);
   doc.rect(boxX - 10, yPos - 5, boxWidth + 20, 130).lineWidth(1).stroke(colors.dark);
-  
-  // Totals
+
   doc.fillColor(colors.dark);
   doc.fontSize(10);
   doc.text('Taxable Value:', boxX, yPos, { width: 100, align: 'right' });
   doc.text(`₹${taxableValue.toFixed(2)}`, boxX + 110, yPos);
-  
   yPos += 15;
-  doc.text(`CGST (${(gstRate/2)*100}%):`, boxX, yPos, { width: 100, align: 'right' });
-  doc.text(`₹${cgst.toFixed(2)}`, boxX + 110, yPos);
-  
-  yPos += 15;
-  doc.text(`SGST (${(gstRate/2)*100}%):`, boxX, yPos, { width: 100, align: 'right' });
-  doc.text(`₹${sgst.toFixed(2)}`, boxX + 110, yPos);
-  
-  yPos += 15;
-  doc.text('GST Amount:', boxX, yPos, { width: 100, align: 'right' });
-  doc.text(`₹${gstAmount.toFixed(2)}`, boxX + 110, yPos);
-  
-  yPos += 15;
+
+  if (gstApplicable && gstRate !== 0) {
+    const cgst = gstAmount / 2;
+    const sgst = gstAmount / 2;
+
+    doc.text(`CGST (${(gstRate / 2) * 100}%):`, boxX, yPos, { width: 100, align: 'right' });
+    doc.text(`₹${cgst.toFixed(2)}`, boxX + 110, yPos);
+    yPos += 15;
+
+    doc.text(`SGST (${(gstRate / 2) * 100}%):`, boxX, yPos, { width: 100, align: 'right' });
+    doc.text(`₹${sgst.toFixed(2)}`, boxX + 110, yPos);
+    yPos += 15;
+
+    doc.text('GST Amount:', boxX, yPos, { width: 100, align: 'right' });
+    doc.text(`₹${gstAmount.toFixed(2)}`, boxX + 110, yPos);
+    yPos += 15;
+  }
+
   doc.rect(boxX - 10, yPos, boxWidth + 20, 1).fill(colors.accent);
-  
   yPos += 10;
+
   doc.fontSize(12);
   doc.fillColor(colors.accent);
   doc.text('Total:', boxX, yPos, { width: 100, align: 'right' });
   doc.text(`₹${totalWithTax.toFixed(2)}`, boxX + 110, yPos);
-  
-  // Amount in words
+
   yPos += 30;
   doc.fontSize(10);
   doc.fillColor(colors.dark);
   doc.text('Amount in Words:', 40, yPos);
-  
   yPos += 15;
   doc.text(`${numberToWords(totalWithTax)} Rupees Only`, 40, yPos);
-  
-  // Add GSTIN and tax information
-  yPos += 25;
-  doc.fontSize(9);
-  doc.text('GSTIN: 29ABCDE1234F1Z5', 40, yPos);
-  yPos += 12;
-  doc.text('Tax Rate: Applicable as per GST laws', 40, yPos);
-  
+
   return yPos + 40;
 }
+
 
 /**
  * Add professional invoice footer - SINGLE PAGE VERSION
