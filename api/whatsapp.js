@@ -1934,12 +1934,14 @@ if (validBatches.length > 0) {
         console.log(`[Update ${shopId} - ${product}] Skipped DB price update (no price provided).`);
       }
       }
-                 // Create sales record for sales only
+            // Create sales record for sales only
             if (isSale && result.success) {
               console.log(`[Update ${shopId} - ${product}] Creating sales record`);
               try {
-                // Use provided price or database price
-                const salePrice = finalPrice || 0;
+                // Use database price (productPrice) if available, then fallback to finalPrice
+                const salePrice = productPrice || finalPrice || 0;
+                const saleValue = salePrice * Math.abs(update.quantity);
+                console.log(`[Update ${shopId} - ${product}] Sales record - salePrice: ${salePrice}, saleValue: ${saleValue}`);
                 
                 const salesResult = await createSalesRecord({
                   shopId,
@@ -1948,7 +1950,8 @@ if (validBatches.length > 0) {
                   unit: update.unit,
                   saleDate: new Date().toISOString(),
                   batchCompositeKey: selectedBatchCompositeKey, // Uses composite key
-                  salePrice: salePrice
+                  salePrice: salePrice,
+                  saleValue: saleValue
                 });
           
           if (salesResult.success) {
