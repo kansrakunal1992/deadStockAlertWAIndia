@@ -3358,71 +3358,98 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
        console.warn(`[${requestId}] Failed to get user preference:`, error.message);
      }
  
-    // Create base message in English first
-    let baseMessage = '✅ Updates processed:\n\n';
-    let successCount = 0;
-    let hasSales = false;
-    let totalSalesValue = 0;
-    let totalPurchaseValue = 0;
-
-    for (const result of results.filter(r => !r.needsPrice)) {
-      if (result.success) {
-        successCount++;
-        const unitText = result.unit ? ` ${result.unit}` : '';
-
-        // Calculate value for this result using enriched object
-        let value = 0;
-        if (result.action === 'purchased' && result.purchasePrice) {
-          value = Math.abs(result.quantity) * result.purchasePrice;
-        } else if (result.action === 'sold' && result.salePrice) {
-          value = Math.abs(result.quantity) * result.salePrice;
-        }
-
-        // Accumulate totals
-        if (result.action === 'purchased') {
-          totalPurchaseValue += value;
-        } else if (result.action === 'sold') {
-          totalSalesValue += value;
-        }
-
-        // Show "Price updated" line for purchases that carried a rate
-        if (result.action === 'purchased' && (result.purchasePrice || 0) > 0) {
-         baseMessage += `Price updated: ${result.product} at ₹${(result.purchasePrice).toFixed(2)}/${singularize(result.unit)}\n`;
-        }
-
-        // Format based on action type
-        if (result.action === 'purchased') {
-          baseMessage += `• ${result.product}: ${result.quantity}${unitText} purchased (Stock: ${result.newQuantity}${unitText})`;
-          if (value > 0) {
-            baseMessage += ` (Value: ₹${value.toFixed(2)})`;
+        // Create base message in English first
+        let baseMessage = '✅ Updates processed:\n\n';
+        let successCount = 0;
+        let hasSales = false;
+        let totalSalesValue = 0;
+        let totalPurchaseValue = 0;
+    
+        // Debug: Log all results before processing
+        console.log(`[Update ${shopId}] All results:`, results.map(r => ({
+          product: r.product,
+          action: r.action,
+          success: r.success,
+          needsPrice: r.needsPrice,
+          purchasePrice: r.purchasePrice,
+          salePrice: r.salePrice,
+          totalValue: r.totalValue
+        })));
+    
+        for (const result of results) {
+          // Skip only if needsPrice is explicitly true
+          if (result.needsPrice === true) {
+            console.log(`[Update ${shopId}] Skipping result that needs price:`, result.product);
+            continue;
           }
-          baseMessage += `\n`;
-          if (result.batchDate) {
-            baseMessage += `  Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
+          
+          if (result.success) {
+            successCount++;
+            const unitText = result.unit ? ` ${result.unit}` : '';
+    
+            // Calculate value for this result
+            let value = 0;
+            if (result.action === 'purchased' && result.purchasePrice && result.purchasePrice > 0) {
+              value = Math.abs(result.quantity) * result.purchasePrice;
+              console.log(`[Update ${shopId}] Purchase value calculation: ${Math.abs(result.quantity)} * ${result.purchasePrice} = ${value}`);
+            } else if (result.action === 'sold' && result.salePrice && result.salePrice > 0) {
+              value = Math.abs(result.quantity) * result.salePrice;
+              console.log(`[Update ${shopId}] Sale value calculation: ${Math.abs(result.quantity)} * ${result.salePrice} = ${value}`);
+            }
+    
+            // Accumulate totals
+            if (result.action === 'purchased') {
+              totalPurchaseValue += value;
+              console.log(`[Update ${shopId}] Added to totalPurchaseValue: ${totalPurchaseValue}`);
+            } else if (result.action === 'sold') {
+              totalSalesValue += value;
+              console.log(`[Update ${shopId}] Added to totalSalesValue: ${totalSalesValue}`);
+            }
+    
+            // NEW: show "Price updated" line for purchases that carried a rate
+            if (result.action === 'purchased' && (result.purchasePrice || 0) > 0) {
+             baseMessage += `Price updated: ${result.product} at ₹${(result.purchasePrice).toFixed(2)}/${singularize(result.unit)}\n`;
+            }
+    
+            // Format based on action type
+            if (result.action === 'purchased') {
+              baseMessage += `• ${result.product}: ${result.quantity}${unitText} purchased (Stock: ${result.newQuantity}${unitText})`;
+              if (value > 0) {
+                baseMessage += ` (Value: ₹${value.toFixed(2)})`;
+              }
+              baseMessage += `\n`;
+              if (result.batchDate) {
+                baseMessage += `  Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
+              }
+            } else if (result.action === 'sold') {
+              baseMessage += `• ${result.product}: ${Math.abs(result.quantity)}${unitText} sold (Stock: ${result.newQuantity}${unitText})`;
+              if (value > 0) {
+                baseMessage += ` (Value: ₹${value.toFixed(2)})`;
+              }
+              baseMessage += `\n`;
+              hasSales = true;
+            } else if (result.action === 'remaining') {
+              baseMessage += `• ${result.product}: ${result.quantity}${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
+            }
+          } else {
+            baseMessage += `• ${result.product}: Error - ${result.error}\n`;
           }
-        } else if (result.action === 'sold') {
-          baseMessage += `• ${result.product}: ${Math.abs(result.quantity)}${unitText} sold (Stock: ${result.newQuantity}${unitText})`;
-          if (value > 0) {
-            baseMessage += ` (Value: ₹${value.toFixed(2)})`;
-          }
-          baseMessage += `\n`;
-          hasSales = true;
-        } else if (result.action === 'remaining') {
-          baseMessage += `• ${result.product}: ${result.quantity}${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
         }
-      } else {
-        baseMessage += `• ${result.product}: Error - ${result.error}\n`;
-      }
-    }
-
-    baseMessage += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
-    // Add summary values
-    if (totalSalesValue > 0) {
-      baseMessage += `\n💰 Total sales value: ₹${(totalSalesValue).toFixed(2)}`;
-    }
-    if (totalPurchaseValue > 0) {
-      baseMessage += `\n📦 Total purchase value: ₹${(totalPurchaseValue).toFixed(2)}`;
-    }
+    
+        baseMessage += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+        
+        // Debug: Log final totals
+        console.log(`[Update ${shopId}] Final totals - totalSalesValue: ${totalSalesValue}, totalPurchaseValue: ${totalPurchaseValue}`);
+        
+        // Add summary values
+        if (totalSalesValue > 0) {
+          baseMessage += `\n💰 Total sales value: ₹${(totalSalesValue).toFixed(2)}`;
+        }
+        if (totalPurchaseValue > 0) {
+          baseMessage += `\n📦 Total purchase value: ₹${(totalPurchaseValue).toFixed(2)}`;
+        } else {
+          console.log(`[Update ${shopId}] Not showing purchase value because totalPurchaseValue is 0`);
+        }
     if (hasSales) {
        baseMessage += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
        // Set conversation state to await batch selection
