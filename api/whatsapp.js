@@ -1916,8 +1916,9 @@ if (validBatches.length > 0) {
             const formattedPurchaseDate = formatDateForAirtable(new Date());
             console.log(`[Update ${shopId} - ${product}] Using timestamp: ${formattedPurchaseDate}`);
             
-            // Use provided price or database price
-            const purchasePrice = finalPrice || 0;
+            // Use database price (productPrice) or provided price
+            const purchasePrice = productPrice > 0 ? productPrice : (finalPrice || 0);
+            console.log(`[Update ${shopId} - ${product}] Using purchasePrice: ${purchasePrice} (productPrice: ${productPrice}, finalPrice: ${finalPrice})`);
             
             const batchResult = await createBatchRecord({
               shopId,
@@ -1938,20 +1939,20 @@ if (validBatches.length > 0) {
         }
 
       // ✅ Update product price in DB after purchase — only if we have a positive rate
-        if (purchasePrice > 0) {
-          try {
-            await upsertProduct({
-              name: product,
-              price: purchasePrice,
-              unit: update.unit
-            });
-            console.log(`[Update ${shopId} - ${product}] Product price updated in DB: ₹${purchasePrice}/${update.unit}`);
-          } catch (err) {
-            console.warn(`[Update ${shopId} - ${product}] Failed to update product price in DB:`, err.message);
-          }
-        } else {
-          console.log(`[Update ${shopId} - ${product}] Skipped DB price update (no price provided).`);
+      if (productPrice > 0) {
+        try {
+          await upsertProduct({
+            name: product,
+            price: productPrice,
+            unit: update.unit
+          });
+          console.log(`[Update ${shopId} - ${product}] Product price updated in DB: ₹${productPrice}/${update.unit}`);
+        } catch (err) {
+          console.warn(`[Update ${shopId} - ${product}] Failed to update product price in DB:`, err.message);
         }
+      } else {
+        console.log(`[Update ${shopId} - ${product}] Skipped DB price update (no price provided).`);
+      }
       }
                  // Create sales record for sales only
             if (isSale && result.success) {
