@@ -2297,10 +2297,39 @@ async function getReorderSuggestions(shopId, { days = 30, leadTimeDays = 3, safe
   }
 }
 
+// Test function to check Products table access
+async function testProductTableAccess() {
+  try {
+    console.log(`[Test] Checking Products table access...`);
+    console.log(`[Test] Using table: ${PRODUCTS_TABLE_NAME}`);
+    console.log(`[Test] URL: ${airtableProductsURL}`);
+    
+    const result = await airtableProductsRequest({
+      method: 'get',
+      params: { maxRecords: 5 }
+    }, 'Test Product Access');
+    
+    console.log(`[Test] Found ${result.records.length} products:`);
+    result.records.forEach((rec, i) => {
+      console.log(`[Test] Product ${i+1}:`, {
+        id: rec.id,
+        name: rec.fields.Name,
+        price: rec.fields.Price,
+        unit: rec.fields.Unit
+      });
+    });
+  } catch (error) {
+    console.error(`[Test] Error accessing Products table:`, error.message);
+    if (error.response) {
+      console.error(`[Test] API Response:`, error.response.data);
+    }
+  }
+}
 
 module.exports = {
   updateInventory,
   testConnection,
+  testProductTableAccess,
   createBatchRecord,
   getBatchRecords,
   updateBatchExpiry,
