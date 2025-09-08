@@ -80,6 +80,12 @@ const {
 // Add this at the top of the file after the imports
 const path = require('path');
 const SUMMARY_TRACK_FILE = path.join(__dirname, 'summary_tracker.json');
+// Test Products table access on startup
+const { testProductTableAccess } = require('../database');
+setTimeout(() => {
+  console.log('[Startup] Testing Products table access...');
+  testProductTableAccess();
+}, 5000); // Wait 5 seconds after startup
 
 // Add this function to track daily summaries
 function updateSummaryTracker(shopId, date) {
@@ -1769,13 +1775,26 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       // Use translated product for all operations
       const product = translatedProduct;
       
+      // Clear any potential cache for this product
+const cacheKey = product.toLowerCase();
+if (productMatchCache.has(cacheKey)) {
+  console.log(`[Update ${shopId} - ${product}] Clearing product match cache for: ${product}`);
+  productMatchCache.delete(cacheKey);
+}
+
       // Get product price from database
       let productPrice = 0;
       try {
+        console.log(`[Update ${shopId} - ${product}] About to get product price from database`);
         const priceResult = await getProductPrice(product);
+        console.log(`[Update ${shopId} - ${product}] Product price result:`, priceResult);
+        
         if (priceResult.success) {    
-        // Coerce to number so "0" doesn't look truthy
-        productPrice = Number(priceResult.price) || 0;
+          // Coerce to number so "0" doesn't look truthy
+          productPrice = Number(priceResult.price) || 0;
+          console.log(`[Update ${shopId} - ${product}] Successfully got price: ${productPrice}`);
+        } else {
+          console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, priceResult.error);
         }
       } catch (error) {
         console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
