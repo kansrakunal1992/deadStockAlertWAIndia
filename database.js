@@ -1948,8 +1948,15 @@ async function upsertProduct(productData) {
 async function getProductPrice(productName) {
   const context = `Get Product Price ${productName}`;
   try {
-    const nameLower = productName.toLowerCase();
-    const filterFormula = `LOWER(TRIM({Name})) = '${nameLower.replace(/'/g, "''").trim()}'`;
+    console.log(`[${context}] Starting product price lookup for: "${productName}"`);
+    
+    const nameLower = productName.toLowerCase().replace(/'/g, "''").trim();
+    console.log(`[${context}] Normalized product name: "${nameLower}"`);
+    
+    // Use flexible matching: exact match OR substring match
+    const filterFormula = `OR(LOWER(TRIM({Name})) = '${nameLower}', FIND('${nameLower}', LOWER(TRIM({Name}))) > 0)`;
+    console.log(`[${context}] Using filter formula: ${filterFormula}`);
+    
     const result = await airtableProductsRequest({
       method: 'get',
       params: {
@@ -1958,14 +1965,29 @@ async function getProductPrice(productName) {
         sort: [{ field: 'LastUpdated', direction: 'desc' }] // prefer latest
       }
     }, context);
-    if (result.records.length > 0) {
+    
+    console.log(`[${context}] Airtable API response status: ${result ? 'success' : 'failed'}`);
+    console.log(`[${context}] Found ${result.records ? result.records.length : 0} records`);
+    
+    if (result.records && result.records.length > 0) {
       const rec = result.records[0];
+      console.log(`[${context}] Found product record:`, {
+        id: rec.id,
+        name: rec.fields.Name,
+        price: rec.fields.Price,
+        unit: rec.fields.Unit
+      });
+      
       const raw = rec.fields.Price;
+      console.log(`[${context}] Raw price value:`, raw, `(type: ${typeof raw})`);
+      
       // Coerce "₹ 20", "Rs 20/-" → 20
       const priceNum = (typeof raw === 'number')
         ? raw
         : parseFloat(String(raw).replace(/[^\d.]/g, '')) || 0;
-
+      
+      console.log(`[${context}] Parsed price number: ${priceNum}`);
+      
       return {
         success: true,
         price: priceNum,
@@ -1974,9 +1996,14 @@ async function getProductPrice(productName) {
         hsnCode: rec.fields.HSNCode ?? ''
       };
     }
+    
+    console.log(`[${context}] No product records found`);
     return { success: false, error: 'Product not found' };
   } catch (error) {
-    logError(context, error);
+    console.error(`[${context}] Error:`, error.message);
+    if (error.response) {
+      console.error(`[${context}] API Response:`, error.response.data);
+    }
     return { success: false, error: error.message };
   }
 }
