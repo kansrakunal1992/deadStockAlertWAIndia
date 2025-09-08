@@ -2034,18 +2034,18 @@ if (validBatches.length > 0) {
       }
             
        // NEW: Enrich outgoing item with price/value so renderer can show them
-       const enriched = {
-         product,
-         quantity: update.quantity,
-         unit: update.unit,
-         action: update.action,
-         ...result,
-         purchasePrice: update.action === 'purchased' ? (finalPrice || 0) : undefined,
-         salePrice:     update.action === 'sold'      ? (finalPrice || 0) : undefined,
-         totalValue:    Number.isFinite(finalTotalPrice) ? finalTotalPrice : 0,
-         priceSource,
-         priceUpdated:  update.action === 'purchased' && (finalPrice || 0) > 0
-       };      
+        const enriched = {
+          product,
+          quantity: update.quantity,
+          unit: update.unit,
+          action: update.action,
+          ...result,
+          purchasePrice: update.action === 'purchased' ? (productPrice || finalPrice || 0) : undefined,
+          salePrice:     update.action === 'sold'      ? (productPrice || finalPrice || 0) : undefined,
+          totalValue:    (update.action === 'purchased' || update.action === 'sold') ? (productPrice * Math.abs(update.quantity)) : 0,
+          priceSource,
+          priceUpdated:  update.action === 'purchased' && (productPrice > 0)
+        };      
         // Debug line to verify at runtime (you can remove later)
         console.log(`[Update ${shopId} - ${product}] priceSource=${priceSource}, purchasePrice=${enriched.purchasePrice ?? '-'}, salePrice=${enriched.salePrice ?? '-'}, totalValue=${enriched.totalValue}`);
 
@@ -3367,7 +3367,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         successCount++;
         const unitText = result.unit ? ` ${result.unit}` : '';
 
-        // Calculate value for this result
+        // Calculate value for this result using enriched object
         let value = 0;
         if (result.action === 'purchased' && result.purchasePrice) {
           value = Math.abs(result.quantity) * result.purchasePrice;
