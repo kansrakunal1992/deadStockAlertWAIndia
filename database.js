@@ -2041,9 +2041,15 @@ async function getProductsNeedingPriceUpdate() {
   try {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const dateStr = sevenDaysAgo.toISOString();
+    const dateISO = sevenDaysAgo.toISOString();
     
-    const filterFormula = `OR({LastUpdated} < '${dateStr}', {LastUpdated} = BLANK(), {Price} = 0, {Price} = BLANK())`;
+    // Use Airtable's date-aware helpers for reliability
+    const filterFormula = `OR(
+      IS_BEFORE({LastUpdated}, '${dateISO}'),
+      IS_BLANK({LastUpdated}),
+      {Price} = 0,
+      IS_BLANK({Price})
+    )`;
     
     const result = await airtableProductsRequest({
       method: 'get',
@@ -2052,6 +2058,7 @@ async function getProductsNeedingPriceUpdate() {
         sort: [{ field: 'LastUpdated', direction: 'asc' }]
       }
     }, context);
+
     
     return result.records.map(record => ({
       id: record.id,
