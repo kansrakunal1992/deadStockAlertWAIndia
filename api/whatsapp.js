@@ -3244,7 +3244,7 @@ function schedulePriceUpdateReminder() {
   const targetTime = new Date();
   
   // Set to 8 AM IST (2:30 UTC)
-  targetTime.setUTCHours(21, 25, 0, 0);
+  targetTime.setUTCHours(21, 37, 0, 0);
   
   // If we've passed 2:30 UTC today, schedule for tomorrow
   if (now > targetTime) {
