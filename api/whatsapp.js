@@ -4742,7 +4742,7 @@ module.exports = async (req, res) => {
     
     // ADD BUTTON HANDLING HERE - RIGHT AFTER AUTHENTICATION
     // Handle button responses
-    if (ButtonText) {
+   if (ButtonText) {
       console.log(`[${requestId}] Button response received: "${ButtonText}"`);
       
       // Get user's preferred language
@@ -4756,33 +4756,54 @@ module.exports = async (req, res) => {
         console.warn(`[${requestId}] Failed to get user preference:`, error.message);
       }
       
-      // Handle summary buttons
-      if (ButtonText === 'Instant Summary' || ButtonText === 'तत्काल सारांश' || ButtonText === 'তাত্ক্ষণিক সারসংক্ষেপ' || 
-          ButtonText === 'உடனடிச் சுருக்கம்' || ButtonText === 'తక్షణ సారాంశం' || ButtonText === 'ತಕ್ಷಣ ಸಾರಾಂಶ' || 
-          ButtonText === 'તાત્કાલિક સારાંશ' || ButtonText === 'त्वरित सारांश') {
-        // Instant summary
-        const summary = await generateInstantSummary(shopId, userLanguage, requestId);
-        await sendMessageViaAPI(From, summary);
-        res.send('<Response></Response>');
-        return;
-      } else if (ButtonText === 'Detailed Summary' || ButtonText === 'विस्तृत सारांश' || ButtonText === 'বিস্তারিত সারসংক্ষেপ' || 
-                 ButtonText === 'விரிவான சுருக்கம்' || ButtonText === 'వివరణాత్మక సారాంశం' || ButtonText === 'ವಿಸ್ತೃತ ಸಾರಾಂಶ' || 
-                 ButtonText === 'વિગતવાર સારાંશ' || ButtonText === 'तपशीलवार सारांश') {
-        // Full summary
-        const generatingMessage = await generateMultiLanguageResponse(
-          'Generating your detailed summary with insights... This may take a moment.',
-          userLanguage,
-          requestId
-        );
-        
-        // Send initial message
-        await sendMessageViaAPI(From, generatingMessage);
-        
-        // Generate and send full summary
-        const fullSummary = await generateFullScaleSummary(shopId, userLanguage, requestId);
-        await sendMessageViaAPI(From, fullSummary);
-        res.send('<Response></Response>');
-        return;
+      // Handle all button types
+      switch(ButtonText) {
+        case 'Instant Summary':
+        case 'तत्काल सारांश':
+        case 'তাত্ক্ষণিক সারসংক্ষেপ':
+        case 'உடனடிச் சுருக்கம்':
+        case 'తక్షణ సారాంశం':
+        case 'ತಕ್ಷಣ ಸಾರಾಂಶ':
+        case 'તાત્કાલિક સારાંશ':
+        case 'त्वरित सारांश':
+          // Instant summary handling
+          const summary = await generateInstantSummary(shopId, userLanguage, requestId);
+          await sendMessageViaAPI(From, summary);
+          res.send('<Response></Response>');
+          return;
+          
+        case 'Detailed Summary':
+        case 'विस्तृत सारांश':
+        case 'বিস্তারিত সারসংক্ষেপ':
+        case 'விரிவான சுருக்கம்':
+        case 'వివరణాత్మక సారాంశం':
+        case 'ವಿಸ್ತೃತ ಸಾರಾಂಶ':
+        case 'વિગતવાર સારાંશ':
+        case 'तपशीलवार सारांश':
+          // Full summary handling
+          const generatingMessage = await generateMultiLanguageResponse(
+            'Generating your detailed summary with insights... This may take a moment.',
+            userLanguage,
+            requestId
+          );
+          await sendMessageViaAPI(From, generatingMessage);
+          const fullSummary = await generateFullScaleSummary(shopId, userLanguage, requestId);
+          await sendMessageViaAPI(From, fullSummary);
+          res.send('<Response></Response>');
+          return;
+          
+        // Add more button cases as needed
+        default:
+          console.warn(`[${requestId}] Unhandled button text: "${ButtonText}"`);
+          // Send a response for unhandled buttons
+          const unhandledMessage = await generateMultiLanguageResponse(
+            'I didn\'t understand that button selection. Please try again.',
+            userLanguage,
+            requestId
+          );
+          await sendMessageViaAPI(From, unhandledMessage);
+          res.send('<Response></Response>');
+          return;
       }
     }
     
@@ -5556,9 +5577,9 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         }
         
         // Try to parse as inventory update
-        updates = await parseMultipleUpdates(Body);
-        if (updates.length > 0) {
-          console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
+        const inventoryUpdates = await parseMultipleUpdates(Body);
+        if (inventoryUpdates.length > 0) {
+          console.log(`[${requestId}] Parsed ${inventoryUpdates.length} updates from text message`);
           
           // Set user state to inventory mode
           const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
