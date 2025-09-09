@@ -4742,7 +4742,7 @@ module.exports = async (req, res) => {
   await handleRequest(req, res, response, requestId, requestStart);
 };
 
-  async function handleRequest(req, res, response, requestId, requestStart) {  
+async function handleRequest(req, res, response, requestId, requestStart) {  
   try {
     // Add request ID to the request object for logging
     req.requestId = requestId;
@@ -4757,7 +4757,6 @@ module.exports = async (req, res) => {
     
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
     const shopId = From.replace('whatsapp:', '');
-
     // AUTHENTICATION CHECK FIRST
     // =========================
     console.log(`[${requestId}] Checking authentication for ${shopId}`);
@@ -4779,7 +4778,6 @@ module.exports = async (req, res) => {
     }
     
     console.log(`[${requestId}] User ${shopId} is authorized, proceeding with request`);
-
     if (authCache.has(shopId) && Date.now() - authCache.get(shopId) < 5000) {
       console.log(`[${requestId}] Skipping duplicate processing for ${shopId}`);
       res.send('<Response></Response>');
@@ -4788,7 +4786,7 @@ module.exports = async (req, res) => {
     
     // ADD BUTTON HANDLING HERE - RIGHT AFTER AUTHENTICATION
     // Handle button responses
-   if (ButtonText) {
+    if (ButtonText) {
       console.log(`[${requestId}] Button response received: "${ButtonText}"`);
       
       // Get user's preferred language
@@ -4900,32 +4898,32 @@ module.exports = async (req, res) => {
     
     // 3. Handle based on current state
     if (currentState) {
-    switch (currentState.mode) {
-      case 'greeting':
-        await handleGreetingResponse(Body, From, currentState, requestId, res);
-        return;
-        
-      case 'correction':
-        await handleCorrectionState(Body, From, currentState, requestId, res);
-        return;
-        
-      case 'confirmation':
-        if (currentState.data.type === 'voice_confirmation') {
-          await handleVoiceConfirmationState(Body, From, currentState, requestId, res);
-        } else if (currentState.data.type === 'text_confirmation') {
-          await handleTextConfirmationState(Body, From, currentState, requestId, res);
-        } else if (currentState.data.type === 'product_confirmation') {
-          await handleProductConfirmationState(Body, From, currentState, requestId, res);
-        } else {
-          await handleConfirmationState(Body, From, currentState, requestId, res);
-        }
-        return;
-        
-      case 'inventory':
-        await handleInventoryState(Body, From, currentState, requestId, res);
-        return;
+      switch (currentState.mode) {
+        case 'greeting':
+          await handleGreetingResponse(Body, From, currentState, requestId, res);
+          return;
+          
+        case 'correction':
+          await handleCorrectionState(Body, From, currentState, requestId, res);
+          return;
+          
+        case 'confirmation':
+          if (currentState.data.type === 'voice_confirmation') {
+            await handleVoiceConfirmationState(Body, From, currentState, requestId, res);
+          } else if (currentState.data.type === 'text_confirmation') {
+            await handleTextConfirmationState(Body, From, currentState, requestId, res);
+          } else if (currentState.data.type === 'product_confirmation') {
+            await handleProductConfirmationState(Body, From, currentState, requestId, res);
+          } else {
+            await handleConfirmationState(Body, From, currentState, requestId, res);
+          }
+          return;
+          
+        case 'inventory':
+          await handleInventoryState(Body, From, currentState, requestId, res);
+          return;
+      }
     }
-  }
     
     // 4. No active state - process as new interaction
     await handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res);
@@ -4940,7 +4938,7 @@ module.exports = async (req, res) => {
     response.message(errorMessage);
     res.send(response.toString());
   }
-};
+}
 
 // Simple confirmation function for corrected updates
 async function confirmCorrectedUpdate(update, from, detectedLanguage, requestId) {
