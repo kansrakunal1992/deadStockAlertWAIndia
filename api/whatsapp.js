@@ -4193,6 +4193,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     const cleanTranscript = await validateTranscript(rawTranscript, requestId);
     console.log(`[${requestId}] [5] Detecting language...`);
     const detectedLanguage = await checkAndUpdateLanguage(cleanTranscript, From, conversationState?.language, requestId);
+    
     // Save user preference
     const shopId = From.replace('whatsapp:', '');
     await saveUserPreference(shopId, detectedLanguage);
@@ -4205,7 +4206,6 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from voice message`);
         
         // Process the updates
-        const shopId = From.replace('whatsapp:', '');
         const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
         
         // Send results
@@ -4300,97 +4300,116 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       return;
     } else {
       console.log(`[${requestId}] [5.5] High confidence (${confidence}), proceeding without confirmation...`);
-      // Parse the transcript
-      const updates = await parseMultipleUpdates(cleanTranscript);
-    // Check if any updates are for unknown products
-    const unknownProducts = updates.filter(u => !u.isKnown);
-    if (unknownProducts.length > 0) {
-      console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
       
-      // FIX: Set confirmation state before sending the request
-      await setUserState(From, 'confirmation', {
-        pendingTranscript: cleanTranscript,
-        detectedLanguage,
-        confidence: 1.0, // High confidence since we're confirming product
-        type: 'product_confirmation',
-        unknownProducts
-      });
-      
-      // Confirm the first unknown product via Twilio API
-      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-      const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
-      
-      // Extract just the message body from the TwiML
-      let messageBody;
       try {
-        const bodyMatch = confirmationResponse.match(/<Body>([^<]+)<\/Body>/);
-        if (bodyMatch && bodyMatch[1]) {
-          messageBody = bodyMatch[1];
-        } else {
-          // Fallback: If regex fails, try to get the message directly
-          messageBody = confirmationResponse.toString();
-          // Remove TwiML tags if present
-          messageBody = messageBody.replace(/<[^>]*>/g, '').trim();
-        }
-      } catch (error) {
-        console.error(`[${requestId}] Error extracting message body:`, error);
-        messageBody = "Please confirm the product update.";
-      }
-      
-      await client.messages.create({
-        body: messageBody,
-        from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: From
-      });
-      return;
-    }
-      // Process the transcription and send result via Twilio API
-      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-      // Create a mock response object for processConfirmedTranscription
-      const mockResponse = {
-        message: (msg) => {
+        // Parse the transcript
+        const updates = await parseMultipleUpdates(cleanTranscript);
+        
+        // Check if any updates are for unknown products
+        const unknownProducts = updates.filter(u => !u.isKnown);
+        if (unknownProducts.length > 0) {
+          console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
+          
+          // FIX: Set confirmation state before sending the request
+          await setUserState(From, 'confirmation', {
+            pendingTranscript: cleanTranscript,
+            detectedLanguage,
+            confidence: 1.0, // High confidence since we're confirming product
+            type: 'product_confirmation',
+            unknownProducts
+          });
+          
+          // Confirm the first unknown product via Twilio API
+          const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+          const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
+          
           // Extract just the message body from the TwiML
           let messageBody;
           try {
-            const bodyMatch = msg.toString().match(/<Body>([^<]+)<\/Body>/);
+            const bodyMatch = confirmationResponse.match(/<Body>([^<]+)<\/Body>/);
             if (bodyMatch && bodyMatch[1]) {
               messageBody = bodyMatch[1];
             } else {
               // Fallback: If regex fails, try to get the message directly
-              messageBody = msg.toString();
+              messageBody = confirmationResponse.toString();
               // Remove TwiML tags if present
               messageBody = messageBody.replace(/<[^>]*>/g, '').trim();
             }
           } catch (error) {
             console.error(`[${requestId}] Error extracting message body:`, error);
-            messageBody = "Processing complete.";
+            messageBody = "Please confirm the product update.";
           }
-          return client.messages.create({
+          
+          await client.messages.create({
             body: messageBody,
             from: process.env.TWILIO_WHATSAPP_NUMBER,
             to: From
           });
-        },
-        toString: () => '<Response><Message>Processing complete</Message></Response>'
-      };
-      // Create a mock res object
-      const mockRes = {
-        send: () => {
-          // This is a no-op since we're sending via API
-          return Promise.resolve();
+          return;
         }
-      };
-      await processConfirmedTranscription(
-        cleanTranscript,
-        From,
-        detectedLanguage,
-        requestId,
-        mockResponse,
-        mockRes
-      );
+        
+        // Process the transcription and send result via Twilio API
+        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+        
+        // Create a mock response object for processConfirmedTranscription
+        const mockResponse = {
+          message: (msg) => {
+            // Extract just the message body from the TwiML
+            let messageBody;
+            try {
+              const bodyMatch = msg.toString().match(/<Body>([^<]+)<\/Body>/);
+              if (bodyMatch && bodyMatch[1]) {
+                messageBody = bodyMatch[1];
+              } else {
+                // Fallback: If regex fails, try to get the message directly
+                messageBody = msg.toString();
+                // Remove TwiML tags if present
+                messageBody = messageBody.replace(/<[^>]*>/g, '').trim();
+              }
+            } catch (error) {
+              console.error(`[${requestId}] Error extracting message body:`, error);
+              messageBody = "Processing complete.";
+            }
+            return client.messages.create({
+              body: messageBody,
+              from: process.env.TWILIO_WHATSAPP_NUMBER,
+              to: From
+            });
+          },
+          toString: () => '<Response><Message>Processing complete</Message></Response>'
+        };
+        
+        // Create a mock res object
+        const mockRes = {
+          send: () => {
+            // This is a no-op since we're sending via API
+            return Promise.resolve();
+          }
+        };
+        
+        await processConfirmedTranscription(
+          cleanTranscript,
+          From,
+          detectedLanguage,
+          requestId,
+          mockResponse,
+          mockRes
+        );
+      } catch (processingError) {
+        console.error(`[${requestId}] Error processing high confidence transcription:`, processingError);
+        
+        // Send error message via Twilio API
+        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+        await client.messages.create({
+          body: 'Sorry, I had trouble processing your voice message. Please try again.',
+          from: process.env.TWILIO_WHATSAPP_NUMBER,
+          to: From
+        });
+      }
     }
   } catch (error) {
     console.error(`[${requestId}] Error processing voice message:`, error);
+    
     // Send error message via Twilio API
     const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
     await client.messages.create({
@@ -4566,14 +4585,13 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         return;
       }
     }
-       
     
     // Detect language and save preference
     let detectedLanguage = conversationState ? conversationState.language : 'en';
     detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
     console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
-
     console.log(`[${requestId}] Attempting to parse as inventory update`);
+    
     // First, try to parse as inventory update (higher priority)
     const parsedUpdates = await parseMultipleUpdates(Body);
     if (parsedUpdates.length > 0) {
@@ -4601,7 +4619,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       
       const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
       await sendMessageViaAPI(From, formattedResponse);
-      return res.send('<Response></Response>');
+      return;
     } else {
       console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
       
@@ -4610,119 +4628,120 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
         const handledQuick = await handleQuickQueryEN(normalized, From, detectedLanguage, requestId);
         if (handledQuick) {
-          return res.send('<Response></Response>'); // reply already sent via API
+          return; // reply already sent via API
         }
       } catch (e) {
         console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
       }
     }
+    
+    // If we get here, it's not a valid inventory update and not a quick query
+    // Check if any updates are for unknown products
+    const unknownProducts = parsedUpdates.filter(u => !u.isKnown);
+    if (unknownProducts.length > 0) {
+      console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
       
-      // Check if any updates are for unknown products
-      const unknownProducts = updates.filter(u => !u.isKnown);
-      if (unknownProducts.length > 0) {
-        console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
-        
-        // FIX: Set confirmation state before sending the request
-        await setUserState(From, 'confirmation', {
-          pendingTranscript: Body,
-          detectedLanguage,
-          confidence: 1.0, // High confidence since we're confirming product
-          type: 'product_confirmation',
-          unknownProducts
-        });
-        
-        // Confirm the first unknown product
-        const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
-        
-        // Send via Twilio API
-        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-        
-        // Extract message body with error handling
+      // FIX: Set confirmation state before sending the request
+      await setUserState(From, 'confirmation', {
+        pendingTranscript: Body,
+        detectedLanguage,
+        confidence: 1.0, // High confidence since we're confirming product
+        type: 'product_confirmation',
+        unknownProducts
+      });
+      
+      // Confirm the first unknown product
+      const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
+      
+      // Send via Twilio API
+      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+      
+      // Extract message body with error handling
+      let messageBody;
+      try {
+        const bodyMatch = confirmationResponse.match(/<Body>([^<]+)<\/Body>/);
+        if (bodyMatch && bodyMatch[1]) {
+          messageBody = bodyMatch[1];
+        } else {
+          // Fallback: If regex fails, try to get the message directly
+          messageBody = confirmationResponse.toString();
+          // Remove TwiML tags if present
+          messageBody = messageBody.replace(/<[^>]*>/g, '').trim();
+        }
+      } catch (error) {
+        console.error(`[${requestId}] Error extracting message body:`, error);
+        messageBody = "Please confirm the product update.";
+      }
+      
+      await client.messages.create({
+        body: messageBody,
+        from: process.env.TWILIO_WHATSAPP_NUMBER,
+        to: From
+      });
+      return;
+    }
+    
+    // Create a mock response object for processConfirmedTranscription
+    const mockResponse = {
+      message: (msg) => {
+        // Extract just the message body from the TwiML
         let messageBody;
         try {
-          const bodyMatch = confirmationResponse.match(/<Body>([^<]+)<\/Body>/);
+          const bodyMatch = msg.toString().match(/<Body>([^<]+)<\/Body>/);
           if (bodyMatch && bodyMatch[1]) {
             messageBody = bodyMatch[1];
           } else {
             // Fallback: If regex fails, try to get the message directly
-            messageBody = confirmationResponse.toString();
+            messageBody = msg.toString();
             // Remove TwiML tags if present
             messageBody = messageBody.replace(/<[^>]*>/g, '').trim();
           }
         } catch (error) {
           console.error(`[${requestId}] Error extracting message body:`, error);
-          messageBody = "Please confirm the product update.";
+          messageBody = "Processing complete.";
         }
-        
-        await client.messages.create({
-          body: messageBody,
-          from: process.env.TWILIO_WHATSAPP_NUMBER,
-          to: From
-        });
-        return;
-      
-      // Create a mock response object for processConfirmedTranscription
-      const mockResponse = {
-        message: (msg) => {
-          // Extract just the message body from the TwiML
-          let messageBody;
-          try {
-            const bodyMatch = msg.toString().match(/<Body>([^<]+)<\/Body>/);
-            if (bodyMatch && bodyMatch[1]) {
-              messageBody = bodyMatch[1];
-            } else {
-              // Fallback: If regex fails, try to get the message directly
-              messageBody = msg.toString();
-              // Remove TwiML tags if present
-              messageBody = messageBody.replace(/<[^>]*>/g, '').trim();
-            }
-          } catch (error) {
-            console.error(`[${requestId}] Error extracting message body:`, error);
-            messageBody = "Processing complete.";
-          }
-          return sendMessageViaAPI(From, messageBody);
-        },
-        toString: () => '<Response><Message>Processing complete</Message></Response>'
-      };
-      
-      // Create a mock res object
-      const mockRes = {
-        send: () => {
-          // This is a no-op since we're sending via API
-          return Promise.resolve();
-        }
-      };
-      
-      await processConfirmedTranscription(
-        Body,
-        From,
-        detectedLanguage,
-        requestId,
-        mockResponse,
-        mockRes
-      ); 
-  }
-    else {
-      console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
-      
-      // Get user preference
-      let userPreference = 'voice'; // Default to voice
-      if (globalState.userPreferences[From]) {
-        userPreference = globalState.userPreferences[From];
-        console.log(`[${requestId}] User preference: ${userPreference}`);
+        return sendMessageViaAPI(From, messageBody);
+      },
+      toString: () => '<Response><Message>Processing complete</Message></Response>'
+    };
+    
+    // Create a mock res object
+    const mockRes = {
+      send: () => {
+        // This is a no-op since we're sending via API
+        return Promise.resolve();
       }
-      
-      const defaultMessage = userPreference === 'voice'
-        ? '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to text input, reply "switch to text".'
-        : '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to voice input, reply "switch to voice".';
-      
-      const translatedMessage = await generateMultiLanguageResponse(defaultMessage, detectedLanguage, requestId);
-      
-      // Send via Twilio API
-      await sendMessageViaAPI(From, translatedMessage);
+    };
+    
+    await processConfirmedTranscription(
+      Body,
+      From,
+      detectedLanguage,
+      requestId,
+      mockResponse,
+      mockRes
+    );
+    
+    // If we get here, it's not a valid inventory update
+    console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
+    
+    // Get user preference
+    let userPreference = 'voice'; // Default to voice
+    if (globalState.userPreferences[From]) {
+      userPreference = globalState.userPreferences[From];
+      console.log(`[${requestId}] User preference: ${userPreference}`);
     }
-  }
- catch (error) {
+    
+    const defaultMessage = userPreference === 'voice'
+      ? '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to text input, reply "switch to text".'
+      : '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to voice input, reply "switch to voice".';
+    
+    const translatedMessage = await generateMultiLanguageResponse(defaultMessage, detectedLanguage, requestId);
+    
+    // Send via Twilio API
+    await sendMessageViaAPI(From, translatedMessage);
+    
+  } catch (error) {
     console.error(`[${requestId}] Error processing text message:`, error);
     // Send error message via Twilio API
     const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
