@@ -2040,16 +2040,19 @@ async function getProductsNeedingPriceUpdate() {
   const context = 'Get Products Needing Price Update';
   try {
     const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 1);
     const dateISO = sevenDaysAgo.toISOString();
     
-    // Use Airtable's date-aware helpers for reliability
     const filterFormula = `OR(
-      IS_BEFORE({LastUpdated}, '${dateISO}'),
-      IS_BLANK({LastUpdated}),
+      IS_BEFORE(
+        {LastUpdated},
+        DATETIME_PARSE("${dateISO}", "YYYY-MM-DDTHH:mm:ss.SSSZ")
+      ),
+      {LastUpdated} = BLANK(),
       {Price} = 0,
-      IS_BLANK({Price})
+      {Price} = BLANK()
     )`;
+
     
     const result = await airtableProductsRequest({
       method: 'get',
