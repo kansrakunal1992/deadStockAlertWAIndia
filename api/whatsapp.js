@@ -4178,7 +4178,42 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     const shopId = From.replace('whatsapp:', '');
     await saveUserPreference(shopId, detectedLanguage);
     
-// 🌐 Try multilingual quick-queries (normalize to English) BEFORE parsing updates
+    // First, try to parse as inventory update (higher priority)
+    try {
+      console.log(`[${requestId}] Attempting to parse as inventory update`);
+      const updates = await parseMultipleUpdates(cleanTranscript);
+      if (updates.length > 0) {
+        console.log(`[${requestId}] Parsed ${updates.length} updates from voice message`);
+        
+        // Process the updates
+        const shopId = From.replace('whatsapp:', '');
+        const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+        
+        // Send results
+        let message = '✅ Updates processed:\n\n';
+        let successCount = 0;
+        
+        for (const result of results) {
+          if (result.success) {
+            successCount++;
+            const unitText = result.unit ? ` ${result.unit}` : '';
+            message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+          } else {
+            message += `• ${result.product}: Error - ${result.error}\n`;
+          }
+        }
+        
+        message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+        
+        const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+        await sendMessageViaAPI(From, formattedResponse);
+        return;
+      }
+    } catch (error) {
+      console.warn(`[${requestId}] Failed to parse as inventory update:`, error.message);
+    }
+    
+    // Only if not an inventory update, try quick queries
     try {
       const normalized = await normalizeCommandText(cleanTranscript, detectedLanguage, requestId + ':normalize');
       const handled = await handleQuickQueryEN(normalized, From, detectedLanguage, requestId);
@@ -5463,16 +5498,48 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       // Handle text messages
       if (Body) {
         
+    console.log(`[${requestId}] Attempting to parse as inventory update`);
+    // First, try to parse as inventory update (higher priority)
+    const updates = await parseMultipleUpdates(Body);
+    if (updates.length > 0) {
+      console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
       
-// 🌐 Any-language quick-queries (normalize to English) BEFORE parsing as inventory update
-    try {
-      const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
-      const handledQuick = await handleQuickQueryEN(normalized, From, detectedLanguage, requestId);
-      if (handledQuick) {
-        return res.send('<Response></Response>'); // reply already sent via API
+      // Process the updates
+      const shopId = From.replace('whatsapp:', '');
+      const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+      
+      // Send results
+      let message = '✅ Updates processed:\n\n';
+      let successCount = 0;
+      
+      for (const result of results) {
+        if (result.success) {
+          successCount++;
+          const unitText = result.unit ? ` ${result.unit}` : '';
+          message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+        } else {
+          message += `• ${result.product}: Error - ${result.error}\n`;
+        }
       }
-    } catch (e) {
-      console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
+      
+      message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+      
+      const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, formattedResponse);
+      return res.send('<Response></Response>');
+    } else {
+      console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
+      
+      // Only if not an inventory update, try quick queries
+      try {
+        const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
+        const handledQuick = await handleQuickQueryEN(normalized, From, detectedLanguage, requestId);
+        if (handledQuick) {
+          return res.send('<Response></Response>'); // reply already sent via API
+        }
+      } catch (e) {
+        console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
+      }
     }
   
         // Check for price management commands
