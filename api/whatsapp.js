@@ -4702,7 +4702,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         mockResponse,
         mockRes
       );
-    } else {
+     else {
       console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
       
       // Get user preference
@@ -4721,7 +4721,8 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       // Send via Twilio API
       await sendMessageViaAPI(From, translatedMessage);
     }
-  } catch (error) {
+  }
+} catch (error) {
     console.error(`[${requestId}] Error processing text message:`, error);
     // Send error message via Twilio API
     const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
