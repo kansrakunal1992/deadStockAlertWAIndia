@@ -547,7 +547,8 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
       '  • "sales today|week|month"',
       '  • "top <N> products [today|week|month]" (default N=5, period=month if missing)',
       '  • "reorder" (or "reorder suggestions")',
-      '  • "inventory value" (aka "stock value" or "value summary")',    
+      '  • "inventory value" (aka "stock value" or "value summary")',
+      '  • "prices [<page>]" (aka "price updates [<page>]" or "stale prices [<page>]")',
       '  • "products [<page>]" or "list products [<page>]"',
       '  • "products search <term>" or "search products <term>"',
       'Output ONLY the rewritten English command, no quotes, no extra words.'
@@ -689,6 +690,14 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     await sendMessageViaAPI(From, msg);
     return true;
   }
+
+  // Prices needing update (paged): "prices", "prices 2", "price updates", "stale prices"
+let pricePage = text.match(/^\s*(?:prices|price\s*updates|stale\s*prices)(?:\s+(?:page\s+)?(\d+))?\s*$/i);
+if (pricePage) {
+  const page = pricePage[1] ? parseInt(pricePage[1], 10) : 1;
+  await sendPriceUpdatesPaged(From, detectedLanguage, requestId, page);
+  return true;
+}
 
   
 // 1) Stock for product
@@ -986,6 +995,15 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
     return true;
   }
 
+  // Prices needing update (paged)
+  const pricesMatch = Body.trim().match(/^\s*(?:prices|price\s*updates|stale\s*prices)(?:\s+(?:page\s+)?(\d+))?\s*$/i);
+  if (pricesMatch) {
+    const page = pricesMatch[1] ? parseInt(pricesMatch[1], 10) : 1;
+    await sendPriceUpdatesPaged(From, detectedLanguage, requestId, page);
+    return true;
+  }
+
+  
   // 2) Low stock or stock-out items (+ advice)
   if (/^(?:low\s*stock|stockout|out\s*of\s*stock)\b/i.test(text)) {
     const low = await getLowStockProducts(shopId, 5);
@@ -2519,6 +2537,46 @@ function splitMessage(message, maxLength = 1600) {
   
   return chunks;
 }
+
+// --- Price updates list (paged) ---
+async function sendPriceUpdatesPaged(From, detectedLanguage, requestId, page = 1) {
+  const PAGE_SIZE = 25;
+  // Pull global backlog of products needing update
+  const list = await getProductsNeedingPriceUpdate(); // [{id, name, currentPrice, unit, lastUpdated}, ...]
+  const total = list.length;
+
+  let header = `🧾 Price updates needed — ${total} item(s)`;
+  if (total === 0) {
+    const msg0 = await generateMultiLanguageResponse(`${header}\nAll prices look fresh.`, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg0);
+    return true;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageSafe = Math.min(Math.max(1, Number(page) || 1), totalPages);
+  const start = (pageSafe - 1) * PAGE_SIZE;
+  const items = list.slice(start, start + PAGE_SIZE);
+
+  let message = `${header}\nPage ${pageSafe}/${totalPages} — Showing ${items.length} of ${total}\n\n`;
+  for (const p of items) {
+    const price = Number(p.currentPrice ?? 0);
+    const unit = p.unit ?? 'pieces';
+    const last = p.lastUpdated ? formatDateForDisplay(p.lastUpdated) : 'never';
+    message += `• ${p.name}: ₹${price}/${unit}  (last: ${last})\n`;
+  }
+
+  if (pageSafe < totalPages) {
+    message += `\n➡️ Next page: "prices ${pageSafe + 1}"`;
+  } else if (pageSafe > 1) {
+    message += `\n⬅️ Previous page: "prices ${pageSafe - 1}"`;
+  }
+
+  // Multilingual render and send
+  const localized = await generateMultiLanguageResponse(message.trim(), detectedLanguage, requestId);
+  await sendMessageViaAPI(From, localized);
+  return true;
+}
+
 
 // Add this helper function for robust JSON parsing
 function safeJsonParse(str) {
