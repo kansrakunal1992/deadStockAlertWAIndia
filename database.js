@@ -2040,7 +2040,7 @@ async function getProductsNeedingPriceUpdate() {
   const context = 'Get Products Needing Price Update';
   try {
     const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 1);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const dateISO = sevenDaysAgo.toISOString();
     
     const filterFormula = `OR(
