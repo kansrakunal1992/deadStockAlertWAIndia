@@ -2785,67 +2785,86 @@ async function generateSummaryInsights(data, languageCode, requestId) {
       
       console.log(`[${requestId}] Prompt length: ${prompt.length} characters`);
       console.log(`[${requestId}] Making API request to Deepseek...`);
-      
-      const response = await axios.post(
-        'https://api.deepseek.com/v1/chat/completions',
-        {
-          model: "deepseek-chat",
-          messages: [
-            {
-              role: "system",
-              content: `You are an expert inventory analyst providing concise, actionable insights for small business owners. Your response should be in Nativeglish (${nativeLanguage} mixed with English) for better readability and understanding but should be formal and respectful. Keep your response under 1500 characters.`
-            },
-            {
-              role: "user",
-              content: prompt
-            }
-          ],
-          max_tokens: 800,
-          temperature: 0.5
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 60000 // Increased timeout to 60 seconds
+        
+        // Add input validation
+        if (!data || typeof data !== 'object') {
+          throw new Error('Invalid data format provided to AI');
         }
-      );
-      
-      console.log(`[${requestId}] API response received, status: ${response.status}`);
-      
-      let insights = response.data.choices[0].message.content.trim();
-      
-      // Minimal post-processing - just clean up formatting
-      insights = insights.replace(/\n\s*\n\s*\n/g, '\n\n');
-      insights = insights.replace(/^\s+|\s+$/g, '');
-      
-      console.log(`[${requestId}] Successfully generated insights, length: ${insights.length}`);
-      return insights;
-      
-    } catch (error) {
-      lastError = error;
-      console.warn(`[${requestId}] AI API call attempt ${attempt} failed:`, error.message);
-      
-      if (error.response) {
-        console.error(`[${requestId}] API response status:`, error.response.status);
-        console.error(`[${requestId}] API response data:`, error.response.data);
+        
+        const response = await axios.post(
+          'https://api.deepseek.com/v1/chat/completions',
+          {
+            model: "deepseek-chat",
+            messages: [
+              {
+                role: "system",
+                content: `You are an expert inventory analyst providing concise, actionable insights for small business owners. Your response should be in Nativeglish (${nativeLanguage} mixed with English) for better readability but should be formal and respectful. Keep your response under 1500 characters.`
+              },
+              {
+                role: "user",
+                content: prompt
+              }
+            ],
+            max_tokens: 800,
+            temperature: 0.5
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 60000
+          }
+        );
+        
+        // Validate response
+        if (!response.data || !response.data.choices || !response.data.choices[0]) {
+          throw new Error('Invalid AI response structure');
+        }
+        
+        let insights = response.data.choices[0].message.content.trim();
+        
+        // Additional validation
+        if (!insights || insights.length < 10) {
+          throw new Error('AI response too short or empty');
+        }
+        
+        // Minimal post-processing - just clean up formatting
+        insights = insights.replace(/\n\s*\n\s*\n/g, '\n\n');
+        insights = insights.replace(/^\s+|\s+$/g, '');
+        
+        console.log(`[${requestId}] Successfully generated insights, length: ${insights.length}`);
+        return insights;
+        
+      } catch (error) {
+        lastError = error;
+        console.warn(`[${requestId}] AI API call attempt ${attempt} failed:`, error.message);
+        
+        // Enhanced error logging
+        if (error.response) {
+          console.error(`[${requestId}] API response status:`, error.response.status);
+          console.error(`[${requestId}] API response data:`, error.response.data);
+        }
+        
+        // More specific error handling
+        if (error.code === 'ECONNABORTED') {
+          console.error(`[${requestId}] Request timeout - AI service took too long to respond`);
+        } else if (error.response?.status === 429) {
+          console.error(`[${requestId}] Rate limit exceeded for AI service`);
+        } else if (error.response?.status >= 500) {
+          console.error(`[${requestId}] AI service server error`);
+        }
+        
+        // If this is the last attempt, throw the error
+        if (attempt === maxRetries) {
+          break;
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = Math.pow(2, attempt) * 1000;
+        console.log(`[${requestId}] Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
-      
-      if (error.code === 'ECONNABORTED') {
-        console.error(`[${requestId}] Request was aborted (likely timeout)`);
-      }
-      
-      // If this is the last attempt, throw the error
-      if (attempt === maxRetries) {
-        break;
-      }
-      
-      // Wait before retrying (exponential backoff)
-      const delay = Math.pow(2, attempt) * 1000;
-      console.log(`[${requestId}] Retrying in ${delay}ms...`);
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
   }
   
   // If all retries failed, use fallback
@@ -4552,24 +4571,51 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     // Detect language and save preference
     let detectedLanguage = conversationState ? conversationState.language : 'en';
     detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
-
-    // 🌐 Any-language quick-queries: normalize to English BEFORE any inventory parsing
-    try {   
-      const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
-      const handledQuick = await handleQuickQueryEN(normalized, From, detectedLanguage, requestId);
-      if (handledQuick) return;
-    } catch (e) {
-      console.warn(`[${requestId}] Quick-query (EN) handling failed, continuing to parser.`, e?.message);
-    }
-
-    console.log(`[${requestId}] Attempting to parse as inventory update (no quick-query match)`);
-
     console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
-    
-    // Try to parse as inventory update
-    const updates = await parseMultipleUpdates(Body);
-    if (updates.length > 0) {
-      console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
+
+    console.log(`[${requestId}] Attempting to parse as inventory update`);
+    // First, try to parse as inventory update (higher priority)
+    const parsedUpdates = await parseMultipleUpdates(Body);
+    if (parsedUpdates.length > 0) {
+      console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
+      
+      // Process inventory updates here
+      const shopId = From.replace('whatsapp:', '');
+      const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+      
+      // Send results
+      let message = '✅ Updates processed:\n\n';
+      let successCount = 0;
+      
+      for (const result of results) {
+        if (result.success) {
+          successCount++;
+          const unitText = result.unit ? ` ${result.unit}` : '';
+          message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
+        } else {
+          message += `• ${result.product}: Error - ${result.error}\n`;
+        }
+      }
+      
+      message += `\n✅ Successfully updated ${successCount} of ${parsedUpdates.length} items`;
+      
+      const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, formattedResponse);
+      return res.send('<Response></Response>');
+    } else {
+      console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
+      
+      // Only if not an inventory update, try quick queries
+      try {
+        const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
+        const handledQuick = await handleQuickQueryEN(normalized, From, detectedLanguage, requestId);
+        if (handledQuick) {
+          return res.send('<Response></Response>'); // reply already sent via API
+        }
+      } catch (e) {
+        console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
+      }
+    }
       
       // Check if any updates are for unknown products
       const unknownProducts = updates.filter(u => !u.isKnown);
@@ -5409,7 +5455,53 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     );
   }
   console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`);
-  
+
+  // Add state check for price updates before the numeric check
+    const currentState = await getUserState(From);
+    if (currentState && currentState.mode === 'correction' && 
+        currentState.data.correctionState.correctionType === 'price') {
+      try {
+        const csRes = await getCorrectionState(shopId);
+        if (csRes && csRes.success && csRes.correctionState
+            && csRes.correctionState.correctionType === 'price') {
+          const priceValue = parseFloat(Body.trim());
+          if (!Number.isNaN(priceValue) && priceValue > 0) {
+            // pendingUpdate can be an object or a JSON string - normalize it
+            let pendingUpdate = csRes.correctionState.pendingUpdate;
+            if (typeof pendingUpdate === 'string') {
+              try { pendingUpdate = JSON.parse(pendingUpdate); } catch (_) {}
+            }
+            // apply the price and process
+            const detectedLanguage = csRes.correctionState.detectedLanguage || userLanguage || 'en';
+            const updated = { ...pendingUpdate, price: priceValue };
+            const results = await updateMultipleInventory(shopId, [updated], detectedLanguage);
+    
+            // clean up the correction record and any stale user state
+            try { await deleteCorrectionState(csRes.correctionState.id); } catch (_) {}
+            try { await clearUserState(From); } catch (_) {}
+    
+            // Build a short success/failure response
+            let msg = '✅ Update processed:\n\n';
+            const ok = results[0] && results[0].success;
+            if (ok) {
+              const r = results[0];
+              const unitText = r.unit ? ` ${r.unit}` : '';
+              msg += `• ${r.product}: ${r.quantity}${unitText} ${r.action} (Stock: ${r.newQuantity}${unitText})`;
+            } else {
+              msg += `• ${updated.product}: Error - ${results[0]?.error || 'Unknown error'}`;
+            }
+            const formatted = await generateMultiLanguageResponse(msg, detectedLanguage, requestId);
+            await sendMessageViaAPI(From, formatted);
+            res.send('<Response></Response>');
+            return;
+          }
+        }
+      } catch (e) {
+        console.warn(`[${requestId}] Price state handling failed:`, e.message);
+        // continue with normal flow if handling failed
+      }
+    }
+
   // --- Fallback: numeric-only message treated as a price reply if a price correction exists ---
    if (Body && /^\s*\d+(?:\.\d+)?\s*$/.test(Body)) {
      try {
