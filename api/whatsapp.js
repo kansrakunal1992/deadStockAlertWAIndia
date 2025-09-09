@@ -5721,13 +5721,13 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
   }
   
   // If user sends something else, try to parse as inventory update
-  const updates = await parseMultipleUpdates(Body);
-  if (updates.length > 0) {
-    console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
+  const inventoryUpdates = await parseMultipleUpdates(Body);
+  if (inventoryUpdates.length > 0) {
+    console.log(`[${requestId}] Parsed ${inventoryUpdates.length} updates from text message`);
     
     const shopId = From.replace('whatsapp:', '');
     const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
-    const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+    const results = await updateMultipleInventory(shopId, inventoryUpdates, detectedLanguage);
     
     let message = '✅ Updates processed:\n\n';
     let successCount = 0;
