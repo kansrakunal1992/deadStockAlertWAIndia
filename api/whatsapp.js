@@ -215,6 +215,68 @@ async function sendDailySummaries() {
   }
 }
 
+  // Send AI Full Summaries to all shops (scheduled)
+  async function sendFullAISummaries() {
+    try {
+      console.log('Starting AI Full Summary job...');
+      const shopIds = await getAllShopIDs();
+      console.log(`Found ${shopIds.length} shops to process`);
+      if (shopIds.length === 0) return;
+  
+      const concurrencyLimit = 5;
+      const results = [];
+      for (let i = 0; i < shopIds.length; i += concurrencyLimit) {
+        const batch = shopIds.slice(i, i + concurrencyLimit);
+        const batchPromises = batch.map(async (shopId) => {
+          try {
+            // Pull preferred language; default en
+            let userLanguage = 'en';
+            try {
+              const pref = await getUserPreference(shopId);
+              if (pref?.success) userLanguage = pref.language;
+            } catch (_) {}
+  
+            const insights = await generateFullScaleSummary(shopId, userLanguage, 'sched-ai-full');
+            await sendMessageViaAPI(`whatsapp:${shopId}`, insights);
+            return { shopId, success: true };
+          } catch (err) {
+            console.error(`AI Full Summary error for ${shopId}:`, err.message);
+            return { shopId, success: false, error: err.message };
+          }
+        });
+        const batchResults = await Promise.allSettled(batchPromises);
+        batchResults.forEach(r => results.push(r.status === 'fulfilled' ? r.value : { success:false, error:String(r.reason)}));
+        if (i + concurrencyLimit < shopIds.length) await new Promise(r => setTimeout(r, 2000));
+      }
+      const ok = results.filter(r => r.success).length;
+      const bad = results.length - ok;
+      console.log(`AI Full Summary job completed: ${ok} sent, ${bad} failed`);
+      return results;
+    } catch (e) {
+      console.error('AI Full Summary job failed:', e.message);
+      throw e;
+    }
+  }
+  
+  // Schedule AI Full Summary at 10 PM IST (16:30 UTC)
+  function scheduleFullAISummary() {
+    const now = new Date();
+    const target = new Date();
+    // 10:00 PM IST = 16:30 UTC
+    target.setUTCHours(16, 30, 0, 0);
+    if (now > target) target.setUTCDate(target.getUTCDate() + 1);
+    const ms = target - now;
+    console.log(`Scheduling AI Full Summary for ${target.toISOString()} (in ${ms}ms)`);
+    setTimeout(() => {
+      sendFullAISummaries()
+        .then(() => scheduleFullAISummary())
+        .catch(err => {
+          console.error('AI Full Summary run errored:', err.message);
+          setTimeout(scheduleFullAISummary, 60 * 60 * 1000);
+        });
+    }, ms);
+  }
+
 // Schedule daily summary at 11 PM
 function scheduleDailySummary() {
     const now = new Date();
@@ -246,8 +308,9 @@ function scheduleDailySummary() {
     }, msUntilTarget);
 }
 
-// Start the scheduler when the module loads
-scheduleDailySummary();
+// Start the AI Full Summary scheduler (10 PM IST)
+scheduleFullAISummary();
+
 
 // Performance tracking
 const responseTimes = {
@@ -550,7 +613,9 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
       '  • "inventory value" (aka "stock value" or "value summary")',
       '  • "prices [<page>]" (aka "price updates [<page>]" or "stale prices [<page>]")',
       '  • "products [<page>]" or "list products [<page>]"',
-      '  • "products search <term>" or "search products <term>"',
+      '  • "products search <term>" or "search products <term>"',      
+      '  • "short summary" (aka "summary", "छोटा सारांश", "chhota saraansh")',
+      '  • "full summary" (aka "पूरा सारांश", "poora saraansh", "विस्तृत सारांश", "vistrit saaransh")',
       'Output ONLY the rewritten English command, no quotes, no extra words.'
     ].join(' ');
 
@@ -614,6 +679,22 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const text = String(rawBody || '').trim();
   const shopId = From.replace('whatsapp:', '');
 
+  
+  // Short Summary (on-demand) -- primary: "short summary", keep "summary" as alias
+    if (/^\s*(short\s*summary|summary)\s*$/i.test(text)) {
+      const shopId = From.replace('whatsapp:', '');
+      const msg = await generateInstantSummary(shopId, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, msg);
+      return true;
+    }
+  
+    // Full Summary (on-demand) -- swapped to non-AI Daily Summary
+    if (/^\s*full\s*summary\s*$/i.test(text)) {
+      const shopId = From.replace('whatsapp:', '');
+      // Uses dailySummary.js non-AI builder + sender; it sends WhatsApp itself
+      await processShopSummary(shopId); // sends localized message internally
+      return true;
+    }
 
 // 0) Inventory value (BEFORE any "stock <product>" matching)
     // Accepts: "inventory value", "stock value", "value summary",
@@ -3017,8 +3098,8 @@ async function createSummaryMenu(from, languageCode, requestId) {
         instructions: 'कृपया एक पर्याय निवडा:'
       },
       'en': {
-        instant: 'Instant Summary',
-        full: 'Detailed Summary',
+        instant: 'Short Summary',
+        full: 'Full Summary',
         instructions: 'Please select an option:'
       }
     };
@@ -3030,7 +3111,7 @@ async function createSummaryMenu(from, languageCode, requestId) {
     let menuMessage = `📊 ${options.instructions}\n\n`;
     menuMessage += `1️⃣ ${options.instant}\n`;
     menuMessage += `2️⃣ ${options.full}\n\n`;
-    menuMessage += `You can also type "summary" for instant or "full summary" for detailed.`;
+    menuMessage += `You can also type "short summary" or "full summary".`;
     
     // Generate multilingual response
     const formattedMessage = await generateMultiLanguageResponse(menuMessage, userLanguage, requestId);
