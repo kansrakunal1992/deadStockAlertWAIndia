@@ -3595,7 +3595,6 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       return res.send(response.toString());
     }
     console.log(`[${requestId}] [8] Updating inventory for ${updates.length} items...`);
-    const shopId = from.replace('whatsapp:', '');
     const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
     
       if (allPendingPrice(results)) {
