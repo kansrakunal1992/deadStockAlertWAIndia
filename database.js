@@ -1593,49 +1593,80 @@ async function getTodaySalesSummary(shopId) {
 async function getInventorySummary(shopId) {
   const context = `Get Inventory Summary ${shopId}`;
   try {
-    const filterFormula = `{ShopID} = '${shopId}'`;
-    
-    const result = await airtableRequest({
+    // 1) Pull inventory records for this shop
+    const filterFormula = `{ShopID} = '${shopId.replace(/'/g, "''")}'`;
+    const invResult = await airtableRequest({
       method: 'get',
-      params: {
-        filterByFormula: filterFormula
-      }
+      params: { filterByFormula: filterFormula }
     }, context);
-    
-    // Calculate summary
+
+    // 2) Pull all products (name, price, unit, category)
+    const products = await getAllProducts(); // [{name, price, unit, category, ...}]
+    const priceMap = new Map(products.map(p => [String(p.name).toLowerCase(), {
+      price: Number(p.price ?? 0),
+      unit: p.unit ?? 'pieces',
+      category: p.category ?? 'General'
+    }]));
+
     let totalProducts = 0;
     let totalValue = 0;
     const inventory = {};
-    
-    result.records.forEach(record => {
-      const product = record.fields.Product;
-      const quantity = record.fields.Quantity || 0;
-      const unit = record.fields.Units || '';
-      
+    const byCategory = new Map(); // category -> { value, productCount }
+
+    for (const record of (invResult.records || [])) {
+      const product = String(record.fields.Product || '').trim();
+      if (!product) continue;
+
+      const qty = Number(record.fields.Quantity ?? 0);
+      const unit = record.fields.Units ?? 'pieces';
       totalProducts++;
-      
-      // Estimate value (this could be enhanced with actual product prices)
-      const estimatedValue = quantity * 10; // Simple estimation
+
+      const key = product.toLowerCase();
+      const meta = priceMap.get(key) || { price: 0, unit: unit, category: 'General' };
+      const price = Number(meta.price || 0);
+      const category = meta.category || 'General';
+
+      // Value = qty * price (fallback to qty*10 if no price)
+      const estimatedValue = qty * (price > 0 ? price : 10);
       totalValue += estimatedValue;
-      
+
       inventory[product] = {
-        quantity,
+        quantity: qty,
         unit,
+        pricePerUnit: price,       // could be 0 if unknown
         estimatedValue
       };
-    });
-    
+
+      // Category aggregation
+      const catEntry = byCategory.get(category) || { value: 0, productCount: 0 };
+      catEntry.value += estimatedValue;
+      catEntry.productCount += 1;
+      byCategory.set(category, catEntry);
+    }
+
+    // Convert category map to sorted array (desc by value)
+    const topCategories = Array.from(byCategory.entries())
+      .map(([name, agg]) => ({ name, value: agg.value, productCount: agg.productCount }))
+      .sort((a, b) => b.value - a.value);
+
+    // (Optional) Keep totalPurchaseValue if you rely on it in summaries; we don't compute it here.
+    const totalPurchaseValue = 0;
+
     return {
       totalProducts,
       totalValue,
-      inventory
+      totalPurchaseValue, // remains 0 unless you add batch-cost aggregation
+      inventory,
+      topCategories
     };
   } catch (error) {
     logError(context, error);
     return {
       totalProducts: 0,
       totalValue: 0,
-      inventory: {}
+      totalPurchaseValue: 0,
+      inventory: {},
+      topCategories: []
     };
   }
 }
