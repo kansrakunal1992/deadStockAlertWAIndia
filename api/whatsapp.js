@@ -3328,9 +3328,9 @@ async function sendPriceUpdateReminders() {
           
           message += '\n\nTo update prices, reply with:\n';
           message += '"update price [product_name] [new_price]"\n\n';
-          message += 'Example: "update price milk 60\n\n"';
+          message += 'Example: "update price milk 60"\n\n';
           message += 'To check all products requiring price update, reply with:\n';
-          message += 'prices';
+          message += '"prices"';
           
           const formattedMessage = await generateMultiLanguageResponse(message, userLanguage, 'price-reminder');
           
