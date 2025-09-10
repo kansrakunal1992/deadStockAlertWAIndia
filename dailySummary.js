@@ -2,14 +2,12 @@ const twilio = require('twilio');
 const axios = require('axios');
 const {
     getAllShopIDs,
-    getDailyUpdates,
-    getCurrentInventory,
+    getCurrentInventory,    
     getUserPreference,
-    getShopBatchRecords,
-    getRecentSales,
-    getShopSalesRecords,
-    getProductPrice,
-    getAllProducts
+    getTodaySalesSummary,
+    getInventorySummary,
+    getLowStockProducts,
+    getExpiringProducts
 } = require('./database');
 
 // Helper function to format dates for display (DD/MM/YYYY)
@@ -210,235 +208,10 @@ async function sendWhatsAppMessage(to, body, maxRetries = 2) {
 }
 
 // Get today's sales summary
-async function getTodaySalesSummary(shopId) { 
-  const context = `Get Today Sales Summary ${shopId}`;
-  try {
-    // Get today's date in ISO format
-    const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-    
-    // Format dates for Airtable formula
-    const startStr = startOfDay.toISOString();
-    const endStr = endOfDay.toISOString();
-    
-    const filterFormula = `AND({ShopID} = '${shopId}', {Quantity} < 0, IS_AFTER({SaleDate}, "${startStr}"), IS_BEFORE({SaleDate}, "${endStr}"))`;
-    
-    const result = await airtableSalesRequest({
-      method: 'get',
-      params: {
-        filterByFormula: filterFormula
-      }
-    }, context);
-    
-    // Calculate summary
-    let totalItems = 0;
-    let totalValue = 0;
-    let totalGST = 0;
-    const productSales = {};
-    const categorySales = {};
-    
-    for (const record of result.records) {
-      const product = record.fields.Product;
-      const quantity = Math.abs(record.fields.Quantity || 0);
-      const salePrice = record.fields.SalePrice || 0;
-      const saleValue = record.fields.SaleValue || 0;
-      const unit = record.fields.Units || '';
-      
-      totalItems += quantity;
-      totalValue += saleValue;
-      
-      // Get product category for GST calculation
-      let category = 'General';
-      let gstRate = 0.18;
-      try {
-        let productInfo = {};
-          try {
-            productInfo = await getProductPrice(product);
-          } catch (error) {
-            console.warn(`Could not get product info for ${product}:`, error.message);
-          }
-        if (productInfo.success) {
-          category = productInfo.category;
-          // Set GST rate based on category
-          if (category === 'Dairy') gstRate = 0.05;
-          else if (category === 'Essential') gstRate = 0;
-          else if (category === 'Packaged') gstRate = 0.12;
-        }
-      } catch (error) {
-        console.warn(`Could not get product info for ${product}:`, error.message);
-      }
-      
-      const gstAmount = (saleValue / (1 + gstRate)) * gstRate;
-      totalGST += gstAmount;
-      
-      if (!productSales[product]) {
-        productSales[product] = { quantity: 0, unit, value: 0, gst: 0 };
-      }
-      
-      productSales[product].quantity += quantity;
-      productSales[product].value += saleValue;
-      productSales[product].gst += gstAmount;
-      
-      // Track by category
-      if (!categorySales[category]) {
-        categorySales[category] = { quantity: 0, value: 0, gst: 0 };
-      }
-      
-      categorySales[category].quantity += quantity;
-      categorySales[category].value += saleValue;
-      categorySales[category].gst += gstAmount;
-    };
-    
-    // Sort products by quantity sold
-    const topProducts = Object.entries(productSales)
-      .sort((a, b) => b[1].quantity - a[1].quantity)
-      .slice(0, 5)
-      .map(([name, data]) => ({
-        name,
-        quantity: data.quantity,
-        unit: data.unit,
-        value: data.value,
-        gst: data.gst
-      }));
-    
-    // Sort categories by value
-    const topCategories = Object.entries(categorySales)
-      .sort((a, b) => b[1].value - a[1].value)
-      .slice(0, 3)
-      .map(([name, data]) => ({
-        name,
-        quantity: data.quantity,
-        value: data.value,
-        gst: data.gst
-      }));
-    
-    return {
-      totalItems,
-      totalValue,
-      totalGST,
-      topProducts,
-      topCategories
-    };
-  } catch (error) {
-    logError(context, error);
-    return {
-      totalItems: 0,
-      totalValue: 0,
-      totalGST: 0,
-      topProducts: [],
-      topCategories: []
-    };
-  }
-}
+//Removed
 
 // Get inventory summary
-async function getInventorySummary(shopId) {
-  const context = `Get Inventory Summary ${shopId}`;
-  try {
-    const filterFormula = `{ShopID} = '${shopId}'`;
-    
-    const result = await airtableRequest({
-      method: 'get',
-      params: {
-        filterByFormula: filterFormula
-      }
-    }, context);
-    
-    // Calculate summary
-    let totalProducts = 0;
-    let totalValue = 0;
-    let totalPurchaseValue = 0;
-    const inventory = {};
-    const categoryInventory = {};
-    
-    for (const record of result.records) {
-      const product = record.fields.Product;
-      const quantity = record.fields.Quantity || 0;
-      const unit = record.fields.Units || '';
-      
-      totalProducts++;
-      
-      // Get actual product price for better valuation
-      let productPrice = 10; // Default fallback
-      let category = 'General';
-      
-      try {
-          let priceResult = {};
-          try {
-            priceResult = await getProductPrice(product);
-          } catch (error) {
-            console.warn(`Could not get price for ${product}:`, error.message);
-          }
-        if (priceResult.success) {
-          productPrice = priceResult.price;
-          category = priceResult.category;
-        }
-      } catch (error) {
-        console.warn(`Could not get price for ${product}:`, error.message);
-      }
-      
-      const estimatedValue = quantity * productPrice;
-      totalValue += estimatedValue;
-      
-      inventory[product] = {
-        quantity,
-        unit,
-        estimatedValue,
-        productPrice,
-        category
-      };
-      
-      // Track by category
-      if (!categoryInventory[category]) {
-        categoryInventory[category] = { quantity: 0, value: 0, products: [] };
-      }
-      
-      categoryInventory[category].quantity += quantity;
-      categoryInventory[category].value += estimatedValue;
-      categoryInventory[category].products.push(product);
-    };
-    
-    // Get total purchase value from batches
-    try {
-      const batches = await getShopBatchRecords(shopId);
-      batches.forEach(batch => {
-        const purchaseValue = batch.fields.PurchaseValue || 0;
-        totalPurchaseValue += purchaseValue;
-      });
-    } catch (error) {
-      console.warn(`Could not get batch records for ${shopId}:`, error.message);
-    }
-    
-    // Sort categories by value
-    const topCategories = Object.entries(categoryInventory)
-      .sort((a, b) => b[1].value - a[1].value)
-      .slice(0, 3)
-      .map(([name, data]) => ({
-        name,
-        quantity: data.quantity,
-        value: data.value,
-        productCount: data.products.length
-      }));
-    
-    return {
-      totalProducts,
-      totalValue,
-      totalPurchaseValue,
-      inventory,
-      topCategories
-    };
-  } catch (error) {
-    logError(context, error);
-    return {
-      totalProducts: 0,
-      totalValue: 0,
-      totalPurchaseValue: 0,
-      inventory: {},
-      topCategories: []
-    };
-  }
-}
+//Removed
 
 // Process a single shop's daily summary
 async function processShopSummary(shopId) {
@@ -478,8 +251,9 @@ async function processShopSummary(shopId) {
     
     // Sales information with enhanced details
     if (todaySales.totalItems > 0) {
-      message += `💰 Sales: ${todaySales.totalItems} items (₹${todaySales.totalValue.toFixed(2)})\n`;
-      message += `📈 GST Collected: ₹${todaySales.totalGST.toFixed(2)}\n`;
+      message += `💰 Sales: ${todaySales.totalItems} items (₹${todaySales.totalValue.toFixed(2)})\n`;    
+      const gstCollected = Number(todaySales.totalGST ?? 0);
+      if (gstCollected > 0) message += `📈 GST Collected: ₹${gstCollected.toFixed(2)}\n`;
       
       if (todaySales.topProducts.length > 0) {
         message += `\n🛒 Top Sellers:\n`;
@@ -488,7 +262,7 @@ async function processShopSummary(shopId) {
         });
       }
       
-      if (todaySales.topCategories.length > 0) {
+      if (todaySales.topCategories?.length > 0) {
         message += `\n🏷️ Top Categories:\n`;
         todaySales.topCategories.forEach((category, index) => {
           message += `${index + 1}. ${category.name}: ₹${category.value.toFixed(2)}\n`;
@@ -507,7 +281,7 @@ async function processShopSummary(shopId) {
       message += `📊 Profit Margin: ${profitMargin.toFixed(1)}%\n`;
     }
     
-    if (inventorySummary.topCategories.length > 0) {
+    if (inventorySummary.topCategories?.length > 0) {
       message += `\n📋 Inventory by Category:\n`;
       inventorySummary.topCategories.forEach((category, index) => {
         message += `${index + 1}. ${category.name}: ${category.productCount} products (₹${category.value.toFixed(2)})\n`;
@@ -670,4 +444,4 @@ async function runDailySummary() {
     }
 }
 
-module.exports = { processShopSummary };
+module.exports = { processShopSummary, runDailySummary };
