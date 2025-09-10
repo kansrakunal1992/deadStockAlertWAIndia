@@ -1,5 +1,6 @@
 const twilio = require('twilio');
 const axios = require('axios');
+const crypto = require('crypto');
 const {
     getAllShopIDs,
     getCurrentInventory,    
@@ -7,8 +8,13 @@ const {
     getTodaySalesSummary,
     getInventorySummary,
     getLowStockProducts,
-    getExpiringProducts
+    getExpiringProducts,
+    getTranslationEntry,
+    upsertTranslationEntry
 } = require('./database');
+
++// Allow overriding translate timeout via env; default 30s
++const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS ?? 30000);
 
 // Helper function to format dates for display (DD/MM/YYYY)
 function formatDateForDisplay(date) {
@@ -32,118 +38,106 @@ function daysBetween(date1, date2) {
     return diffDays;
 }
 
-// Generate response in multiple languages and scripts without labels
+// Generate response in Nativeglish (Local + English mix) as ONE block, with retries + persistent cache
 async function generateMultiLanguageResponse(message, languageCode) {
   try {
-    // If the language is English, return the message as is
-    if (languageCode === 'en') {
-      return message;
-    }
-    
-    // Common greetings with native and roman scripts
-    const commonGreetings = {
-      'hi': {
-        native: 'नमस्ते',
-        roman: 'Namaste'
-      },
-      'bn': {
-        native: 'হ্যালো',
-        roman: 'Hello'
-      },
-      'ta': {
-        native: 'வணக்கம்',
-        roman: 'Vanakkam'
-      },
-      'te': {
-        native: 'నమస్కారం',
-        roman: 'Namaskaram'
-      },
-      'kn': {
-        native: 'ನಮಸ್ಕಾರ',
-        roman: 'Namaskara'
-      },
-      'gu': {
-        native: 'નમસ્તે',
-        roman: 'Namaste'
-      },
-      'mr': {
-        native: 'नमस्कार',
-        roman: 'Namaskar'
+    const lang = (languageCode || 'en').toLowerCase();
+    if (lang === 'en') return message;
+
+    // 1) Persistent cache (Airtable) lookup FIRST
+    const hash = crypto.createHash('sha1').update(`nglish::${lang}::${message}`).digest('hex');
+    try {
+      const hit = await getTranslationEntry(hash, lang);
+      if (hit?.success && hit.translatedText) {
+        return hit.translatedText; // cache hit
       }
+    } catch (e) {
+      console.warn('[Nativeglish] Airtable cache lookup failed:', e.message);
+      // Non-fatal; continue
+    }
+
+    // 2) Nativeglish rewrite with retries
+    const nativeNames = {
+      hi: 'Hindi', bn: 'Bengali', ta: 'Tamil', te: 'Telugu',
+      kn: 'Kannada', gu: 'Gujarati', mr: 'Marathi', en: 'English'
     };
-    
-    // Check if this is a common greeting
-    const lowerMessage = message.toLowerCase();
-    const isShortGreeting = lowerMessage.split(/\s+/).length <= 3;
-    
-    if (isShortGreeting && (
-        lowerMessage.includes('hello') ||
-        lowerMessage.includes('hi') ||
-        lowerMessage.includes('नमस्ते')
-    )) {
-      const greeting = commonGreetings[languageCode] || commonGreetings['en'];
-      return `${greeting.native}\n\n${greeting.roman}`;
-    }
-    
-    // For other messages, try the API
-    const response = await axios.post(
-      'https://api.deepseek.com/v1/chat/completions',
-      {
-        model: "deepseek-chat",
-        messages: [
-          {
-            role: "system",
-            content: `You are a multilingual assistant. Translate the given message to the target language and provide it in two formats:
-Format your response exactly as:
-Line 1: Translation in native script (e.g., Devanagari for Hindi)
-Empty line
-Line 3: Translation in Roman script (transliteration using English alphabet)
-For example, for Hindi:
-नमस्ते, आप कैसे हैं?
-Namaste, aap kaise hain?
-Do NOT include any labels like [Roman Script], [Native Script], <translation>, or any other markers. Just provide the translations one after the other with a blank line in between.`
-          },
-          {
-            role: "user",
-            content: `Translate this message to ${languageCode}: "${message}"`
-          }
-        ],
-        max_tokens: 200,
-        temperature: 0.3
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-          'Content-Type': 'application/json'
+    const nativeName = nativeNames[lang] || lang;
+
+    const doCall = async (variant = 'main') => {
+      const systemMain =
+`Rewrite the message in Nativeglish: mix ${nativeName} + simple English.
+Rules:
+- Keep emojis and numbers unchanged.
+- Keep brand/product names in English if commonly written in English.
+- Use short, clear lines; 1–3 small paragraphs max.
+- Output ONE block only (no dual-script or transliteration).`;
+
+      const systemFallback =
+`Paraphrase the text in a mixed style using ${nativeName} + simple English (Nativeglish).
+Keep it short (<= 10 lines), one block, and preserve emojis/numbers.`;
+
+      const system = variant === 'main' ? systemMain : systemFallback;
+
+      const resp = await axios.post(
+        'https://api.deepseek.com/v1/chat/completions',
+        {
+          model: 'deepseek-chat',
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: `Message:\n${message}` }
+          ],
+          max_tokens: 700,
+          temperature: 0.4
         },
-        timeout: 5000
+        {
+          headers: {
+            'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: TRANSLATE_TIMEOUT_MS
+        }
+      );
+
+      return (resp.data?.choices?.[0]?.message?.content || '').trim();
+    };
+
+    const MAX_TRIES = 3;
+    let out = '';
+    for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
+      try {
+        const variant = attempt < MAX_TRIES ? 'main' : 'fallback';
+        out = await doCall(variant);
+        if (out) break;
+      } catch (err) {
+        const code = err?.code ?? err?.response?.status ?? 'unknown';
+        console.warn(`[Nativeglish] attempt ${attempt} failed:`, code, err?.message);
+        if (attempt < MAX_TRIES) {
+          await new Promise(r => setTimeout(r, attempt * 800)); // small backoff
+        }
       }
-    );
-    
-    let translated = response.data.choices[0].message.content.trim();
-    
-    // Post-process to remove any labels that might have been included
-    translated = translated.replace(/<translation in roman script>/gi, '');
-    translated = translated.replace(/<translation in native script>/gi, '');
-    translated = translated.replace(/\[roman script\]/gi, '');
-    translated = translated.replace(/\[native script\]/gi, '');
-    translated = translated.replace(/translation in roman script:/gi, '');
-    translated = translated.replace(/translation in native script:/gi, '');
-    
-    // Remove quotes that might have been added
-    translated = translated.replace(/^"(.*)"$/, '$1');
-    translated = translated.replace(/"/g, '');
-    
-    // Remove extra blank lines
-    translated = translated.replace(/\n\s*\n\s*\n/g, '\n\n');
-    translated = translated.replace(/^\s+|\s+$/g, '');
-    
-    return translated;
+    }
+
+    const finalText = out || message;
+
+    // 3) Save to persistent cache (best effort)
+    try {
+      await upsertTranslationEntry({
+        key: hash,
+        language: lang,
+        sourceText: message,
+        translatedText: finalText
+      });
+    } catch (e) {
+      console.warn('[Nativeglish] Failed to persist translation:', e.message);
+    }
+
+    return finalText;
   } catch (error) {
-    console.warn('Translation failed, using original:', error.message);
+    console.warn('Nativeglish rewrite failed, using original:', error.message);
     return message;
   }
 }
+
 
 // Send WhatsApp message with enhanced error handling and retry logic
 async function sendWhatsAppMessage(to, body, maxRetries = 2) {
