@@ -13,8 +13,8 @@ const {
     upsertTranslationEntry
 } = require('./database');
 
-+// Allow overriding translate timeout via env; default 30s
-+const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS ?? 30000);
+// Allow overriding translate timeout via env; default 30s
+const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS ?? 30000);
 
 // Helper function to format dates for display (DD/MM/YYYY)
 function formatDateForDisplay(date) {
