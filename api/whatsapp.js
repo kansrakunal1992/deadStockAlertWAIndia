@@ -21,6 +21,54 @@ const languageNames = {
   'en': 'English'
 };
 
+// ====== SUMMARY COMMAND ALIASES (multilingual, native + translit) ======
+const SUMMARY_ALIAS_MAP = {
+  hi: {
+    short: ['छोटा सारांश', 'संक्षिप्त सारांश', 'chhota saraansh', 'sankshept saraansh'],
+    full:  ['पूरा सारांश', 'विस्तृत सारांश', 'poora saraansh', 'vistrit saraansh']
+  },
+  bn: {
+    short: ['ছোট সারাংশ', 'সংক্ষিপ্ত সারাংশ'],
+    full:  ['সম্পূর্ণ সারাংশ', 'বিস্তারিত সারাংশ']
+  },
+  ta: {
+    short: ['சுருக்கம்', 'சுருக்கச் செய்தி'],
+    full:  ['முழு சுருக்கம்', 'விரிவான சுருக்கம்']
+  },
+  te: {
+    short: ['సంక्षిప్త సారాంశం'],
+    full:  ['పూర్తి సారాంశం', 'వివరణాత్మక సారాంశం']
+  },
+  kn: {
+    short: ['ಸಂಕ್ಷಿಪ್ತ ಸಾರಾಂಶ'],
+    full:  ['ಪೂರ್ಣ ಸಾರಾಂಶ', 'ವಿಸ್ತೃತ ಸಾರಾಂಶ']
+  },
+  mr: {
+    short: ['संक्षिप्त सारांश'],
+    full:  ['पूर्ण सारांश', 'सविस्तर सारांश']
+  },
+  gu: {
+    short: ['સંક્ષિપ્ત સારાંશ'],
+    full:  ['સંપૂર્ણ સારાંશ', 'વિસ્તૃત સારાંશ']
+  },
+  en: {
+    short: ['short summary', 'summary'], // keep "summary" for back-compat
+    full:  ['full summary']
+  }
+};
+
+// NOTE: function declaration (not const arrow) so it's hoisted and available everywhere.
+function resolveSummaryAlias(raw) {
+  const t = String(raw || '').trim().toLowerCase();
+  for (const lang of Object.keys(SUMMARY_ALIAS_MAP)) {
+    const { short = [], full = [] } = SUMMARY_ALIAS_MAP[lang] || {};
+    if (short.some(x => t === x.toLowerCase())) return 'short summary';
+    if (full.some(x => t === x.toLowerCase()))  return 'full summary';
+  }
+  return null;
+}
+
+
 // Add this near the top of whatsapp.js
 const isRailway = process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_NAME;
 const isServerless = isRailway || process.env.VERCEL || process.env.NETLIFY;
