@@ -277,37 +277,6 @@ async function sendDailySummaries() {
     }, ms);
   }
 
-// Schedule daily summary at 11 PM
-function scheduleDailySummary() {
-    const now = new Date();
-    const targetTime = new Date();
-    
-    // Set to 11 PM IST (17:30 UTC)
-    targetTime.setUTCHours(17, 30, 0, 0);
-    
-    // If we've passed 17:30 UTC today, schedule for tomorrow
-    if (now > targetTime) {
-        targetTime.setUTCDate(targetTime.getUTCDate() + 1);
-    }
-    
-    const msUntilTarget = targetTime - now;
-    
-    console.log(`Scheduling daily summary for ${targetTime.toISOString()} (in ${msUntilTarget}ms)`);
-    
-    setTimeout(() => {
-        sendDailySummaries()
-            .then(() => {
-                // Schedule for next day
-                scheduleDailySummary();
-            })
-            .catch(error => {
-                console.error('Daily summary job failed:', error.message);
-                // Retry in 1 hour
-                setTimeout(scheduleDailySummary, 60 * 60 * 1000);
-            });
-    }, msUntilTarget);
-}
-
 // Start the AI Full Summary scheduler (10 PM IST)
 scheduleFullAISummary();
 
@@ -2758,69 +2727,177 @@ function normalize(str) {
   return str.toLowerCase().replace(/[^a-z0-9]/gi, '').trim();
 }
 
+// --- IST date helpers ---
+function getISTDate(d = new Date()) {
+  // Returns a Date shifted to IST by offset math (no tz lib)
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+  return new Date(d.getTime() + istOffsetMs);
+}
+
+function startEndOfISTDay(d = new Date()) {
+  const ist = getISTDate(d);
+  const y = ist.getUTCFullYear(), m = ist.getUTCMonth(), day = ist.getUTCDate();
+  // start in IST:
+  const startIST = new Date(Date.UTC(y, m, day, 0, 0, 0, 0));
+  const endIST = new Date(Date.UTC(y, m, day + 1, 0, 0, 0, 0));
+  // Convert back to UTC clock for Airtable comparisons
+  return { startUTC: new Date(startIST.getTime() - 5.5*60*60*1000),
+           endUTC:   new Date(endIST.getTime() - 5.5*60*60*1000) };
+}
+
+function startOfISTWeek(d = new Date()) {
+  // Monday start (common retail view)
+  const ist = getISTDate(d);
+  const day = ist.getUTCDay(); // 0 Sun .. 6 Sat
+  const diffToMonday = (day === 0 ? -6 : 1 - day);
+  const mondayIST = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + diffToMonday));
+  // Return in UTC clock
+  return new Date(mondayIST.getTime() - 5.5*60*60*1000);
+}
+
+function appendInlineGlossary(text, languageCode) {
+  const lang = (languageCode || 'en').toLowerCase();
+  const glos = {
+    en: [
+      ['Sales', 'Sales'],
+      ['Items', 'Units sold'],
+      ['WTD', 'Week-to-date'],
+      ['Value', 'Revenue (₹)']
+    ],
+    hi: [
+      ['Sales (बिक्री)', 'Sales'],
+      ['Items (यूनिट)', 'Units sold'],
+      ['WTD (साप्ताहिक)', 'Week-to-date'],
+      ['Value (मूल्य)', 'Revenue (₹)']
+    ],
+    bn: [
+      ['Sales (বিক্রি)', 'Sales'],
+      ['Items (ইউনিট)', 'Units sold'],
+      ['WTD (সাপ্তাহিক)', 'Week-to-date'],
+      ['Value (মূল্য)', 'Revenue (₹)']
+    ],
+    ta: [
+      ['Sales (விற்பனை)', 'Sales'],
+      ['Items (அலகுகள்)', 'Units sold'],
+      ['WTD (வாரம் வரை)', 'Week-to-date'],
+      ['Value (மதிப்பு)', 'Revenue (₹)']
+    ],
+    te: [
+      ['Sales (అమ్మకాలు)', 'Sales'],
+      ['Items (యూనిట్లు)', 'Units sold'],
+      ['WTD (వారం-వరకు)', 'Week-to-date'],
+      ['Value (విలువ)', 'Revenue (₹)']
+    ],
+    kn: [
+      ['Sales (ಮಾರಾಟ)', 'Sales'],
+      ['Items (ಘಟಕಗಳು)', 'Units sold'],
+      ['WTD (ವಾರದಿಂದ)', 'Week-to-date'],
+      ['Value (ಮೌಲ್ಯ)', 'Revenue (₹)']
+    ],
+    mr: [
+      ['Sales (विक्री)', 'Sales'],
+      ['Items (युनिट)', 'Units sold'],
+      ['WTD (आठवडा-ते-तारीख)', 'Week-to-date'],
+      ['Value (मूल्य)', 'Revenue (₹)']
+    ],
+    gu: [
+      ['Sales (વેચાણ)', 'Sales'],
+      ['Items (એકમ)', 'Units sold'],
+      ['WTD (અઠવાડિયા સુધી)', 'Week-to-date'],
+      ['Value (કિંમત)', 'Revenue (₹)']
+    ]
+  };
+  const list = glos[lang] || glos['en'];
+  const lines = list.map(([k, v]) => `• ${k} = ${v}`).join('\n');
+  return `${text}\n📘 Glossary:\n${lines}`;
+}
+
+
 // Add these functions after the existing helper functions
 
 // Generate instant summary (concise, <300 words)
-async function generateInstantSummary(shopId, languageCode, requestId) {
+async function generateInstantSummary(shopId, languageCode, requestId) {  
   try {
-    console.log(`[${requestId}] Generating instant summary for shop ${shopId}`);
-    
-    // Get today's sales data
-    const todaySales = await getTodaySalesSummary(shopId);
-    // Get inventory summary
-    const inventorySummary = await getInventorySummary(shopId);
-    // Get low stock products
-    const lowStockProducts = await getLowStockProducts(shopId, 5);
-    // Get expiring products
-    const expiringProducts = await getExpiringProducts(shopId, 7);
-    
-    // Format the summary
-    let summary = `📊 Today's Summary (${formatDateForDisplay(new Date())}):\n\n`;
-    
-    // Sales information
-    if (todaySales.totalItems > 0) {
-      summary += `💰 Sales: ${todaySales.totalItems} items`;
-      if (todaySales.totalValue > 0) {
-        summary += ` (₹${todaySales.totalValue.toFixed(2)})`;
+      console.log(`[${requestId}] Generating instant summary for shop ${shopId}`);
+  
+      // --- Today / Yesterday windows in IST (converted for Airtable queries)
+      const { startUTC: todayStart, endUTC: todayEnd } = startEndOfISTDay(new Date());
+      const { startUTC: yStart, endUTC: yEnd } = (() => {
+        const d = new Date(); d.setDate(d.getDate() - 1);
+        return startEndOfISTDay(d);
+      })();
+      const weekStartUTC = startOfISTWeek(new Date());
+  
+      // --- Data pulls
+      const todaySales = await getTodaySalesSummary(shopId); // today
+      const ySales = await getSalesDataForPeriod(shopId, yStart, yEnd); // yesterday
+      const wtdSales = await getSalesDataForPeriod(shopId, weekStartUTC, new Date()); // week-to-date
+      const inventorySummary = await getInventorySummary(shopId);
+      const lowStockProducts = await getLowStockProducts(shopId, 5);
+      const expiringProducts = await getExpiringProducts(shopId, 7);
+  
+      // --- Compute deltas
+      const tItems = todaySales?.totalItems ?? 0;
+      const tValue = todaySales?.totalValue ?? 0;
+      const yItems = ySales?.totalItems ?? 0;
+      const yValue = ySales?.totalValue ?? 0;
+      const wItems = wtdSales?.totalItems ?? 0;
+      const wValue = wtdSales?.totalValue ?? 0;
+  
+      const dItems = tItems - yItems;
+      const dValue = tValue - yValue;
+  
+      const sign = (n) => n > 0 ? `+${n}` : (n < 0 ? `${n}` : '—');
+      const money = (n) => (n ?? 0) > 0 ? `₹${(n).toFixed(2)}` : '—';
+  
+      // --- Top movers today (top 3)
+      const topToday = (todaySales?.topProducts ?? []).slice(0, 3);
+      const topLines = topToday.length
+        ? topToday.map(p => `• ${p.name}: ${p.quantity} ${p.unit}`).join('\n')
+        : '—';
+  
+      // --- Build summary (English base; will be Nativeglish later)
+      let summary = `📊 Short Summary (${formatDateForDisplay(new Date())})\n\n`;
+      summary += `💰 Sales Today: ${tItems} items (${money(tValue)})\n`;
+      summary += `↕︎ vs Yesterday: ${sign(dItems)} items (${sign(dValue === 0 ? 0 : dValue)} value)\n`;
+      summary += `🗓 WTD: ${wItems} items (${money(wValue)})\n`;
+  
+      summary += `\n🏆 Top Movers Today:\n${topLines}\n`;
+  
+      // Inventory quick stats (if meaningful)
+      if ((inventorySummary?.totalProducts ?? 0) > 0) {
+        const invVal = inventorySummary?.totalValue ?? 0;
+        summary += `\n📦 Inventory: ${inventorySummary.totalProducts} unique products (Value ~ ${money(invVal)})\n`;
       }
-      summary += `\n`;
-      
-      if (todaySales.topProducts.length > 0) {
-        summary += `\n🛒 Top Sellers:\n`;
-        todaySales.topProducts.forEach(product => {
-          summary += `• ${product.name}: ${product.quantity} ${product.unit}\n`;
-        });
+  
+      // Low stock
+      if (lowStockProducts.length > 0) {
+        summary += `\n⚠️ Low Stock (≤5):\n`;
+        summary += lowStockProducts.map(p => `• ${p.name}: ${p.quantity} ${p.unit}`).join('\n') + '\n';
       }
-    } else {
-      summary += `💰 No sales recorded today.\n`;
+      // Expiring
+      if (expiringProducts.length > 0) {
+        summary += `\n⏰ Expiring Soon (≤7d):\n`;
+        summary += expiringProducts.map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n') + '\n';
+      }
+  
+      // --- Action CTAs (commands your router already supports)
+      summary += `\n👉 Next actions:\n`;
+      summary += `• low stock   • reorder   • expiring 7\n`;
+      summary += `• prices      • inventory value\n`;
+  
+      // --- Inline Glossary (tiny, language-aware)
+      summary = appendInlineGlossary(summary, languageCode);
+  
+      // --- Nativeglish render (single block)
+      return await generateNativeglishResponse(summary, languageCode, requestId);
+    } catch (error) {
+      console.error(`[${requestId}] Error generating instant summary:`, error.message);
+      const errorMessage = `Sorry, I couldn't generate your summary right now. Please try again later.`;
+      return await generateNativeglishResponse(errorMessage, languageCode, requestId);
     }
-    
-    // Low stock alerts
-    if (lowStockProducts.length > 0) {
-      summary += `\n⚠️ Low Stock Alerts:\n`;
-      lowStockProducts.forEach(product => {
-        summary += `• ${product.name}: Only ${product.quantity} ${product.unit} left\n`;
-      });
-    }
-    
-    // Expiry alerts
-    if (expiringProducts.length > 0) {
-      summary += `\n⏰ Expiring Soon:\n`;
-      expiringProducts.forEach(product => {
-        summary += `• ${product.name}: Expires on ${formatDateForDisplay(product.expiryDate)}\n`;
-      });
-    }
-    
-    // Generate multilingual response
-    return await generateMultiLanguageResponse(summary, languageCode, requestId);
-  } catch (error) {
-    console.error(`[${requestId}] Error generating instant summary:`, error.message);
-    
-    // Fallback error message in user's language
-    const errorMessage = `Sorry, I couldn't generate your summary right now. Please try again later.`;
-    return await generateMultiLanguageResponse(errorMessage, languageCode, requestId);
   }
-}
+
 
 // Generate full-scale summary (detailed with AI insights)
 async function generateFullScaleSummary(shopId, languageCode, requestId) {
@@ -3158,7 +3235,7 @@ async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
   const shopId = From.replace('whatsapp:', '');
 
   // Drop the prefix for AI & fallback parsing
-  const userText = Body.replace(/^\s*update\s+price\s*/iu, '').trim();
+  const userText = Body.replace(/^\s*(update\s+price|price\s+update)\s*/iu, '').trim();
 
   // 0) Try AI first (handles words, multiple items, mixed separators & scripts)
   const ai = await aiExtractPriceUpdates(userText, requestId);
@@ -5706,7 +5783,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
    }
 
   // NEW ✅: Handle the "update price ..." command EARLY and safely pass detectedLanguage
-  if (Body && /^\s*update\s+price\b/i.test(Body)) {
+  if (Body && /^\s*(update\s+price|price\s+update)\b/i.test(Body)) {
     try {
       // Assumes you already computed `detectedLanguage` earlier in this function.
       // If not, see “Heads‑up” below.
