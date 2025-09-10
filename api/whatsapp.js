@@ -557,6 +557,9 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
     if (lang === 'en') return text.trim();
 
     const raw = text.trim();
+    const quickAlias = resolveSummaryAlias(raw);
+    if (quickAlias) return quickAlias;
+
     // Cache check
     const keyHash = crypto.createHash('sha1').update(`${lang}::${raw}`).digest('hex');
     const cacheKey = `${COMMAND_NORM_PREFIX}${lang}:${keyHash}`;
@@ -1611,17 +1614,26 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
 // Parse multiple inventory updates from transcript
 async function parseMultipleUpdates(transcript) {
   const updates = [];
-  
+// Never treat summary commands as inventory messages
+  if (resolveSummaryAlias(transcript)) {
+    return [];
+  }
+
   // Try AI-based parsing first
   try {
-    console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);
+    console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);  
     const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
-    
-    // ✅ RETURN AI RESULTS IMMEDIATELY if successful
-    if (aiUpdate && aiUpdate.length > 0 && aiUpdate[0].product) {
-      console.log(`[AI Parsing] Successfully parsed ${aiUpdate.length} updates using AI`);
-      return aiUpdate;
+    // Only accept AI results if they are valid inventory updates (qty > 0 + valid action)
+    if (aiUpdate && aiUpdate.length > 0) {
+      const cleaned = aiUpdate.filter(isValidInventoryUpdate);
+      if (cleaned.length > 0) {
+        console.log(`[AI Parsing] Successfully parsed ${cleaned.length} valid updates using AI`);
+        return cleaned;
+      } else {
+        console.log(`[AI Parsing] AI produced ${aiUpdate.length} updates but none were valid. Falling back to rule-based parsing.`);
+      }
     }
+
     
     console.log(`[AI Parsing] No valid AI results, falling back to rule-based parsing`);
   } catch (error) {
@@ -3539,7 +3551,23 @@ schedulePriceUpdateReminder();
 
 // Function to process confirmed transcription
 async function processConfirmedTranscription(transcript, from, detectedLanguage, requestId, response, res) {
-  try {
+  try {   
+    // --- HARD GUARD: treat summary phrases as commands, not inventory updates
+    const shopId = from.replace('whatsapp:', '');
+    const alias = resolveSummaryAlias(transcript);
+    if (alias === 'short summary') {
+      const msg = await generateInstantSummary(shopId, detectedLanguage, requestId);
+      // send via API to avoid Twilio body-length issues; then ack Twilio
+      await sendMessageViaAPI(from, msg);
+      response.message('✅ Short summary sent.');
+      return res.send(response.toString());
+    }
+    if (alias === 'full summary') {
+      await processShopSummary(shopId); // Sends Nativeglish itself
+      response.message('✅ Full summary sent.');
+      return res.send(response.toString());
+    }
+
     console.log(`[${requestId}] [6] Parsing updates using AI...`);
     const updates = await parseMultipleUpdates(transcript);
     if (updates.length === 0) {
