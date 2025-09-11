@@ -27,9 +27,9 @@ const SUMMARY_ALIAS_MAP = {
     short: ['छोटा सारांश', 'संक्षिप्त सारांश', 'chhota saraansh', 'sankshept saraansh'],
     full:  ['पूरा सारांश', 'विस्तृत सारांश', 'poora saraansh', 'vistrit saraansh']
   },
-  bn: {
-    short: ['ছোট সারাংশ', 'সংক্ষিপ্ত সারাংশ'],
-    full:  ['সম্পূর্ণ সারাংশ', 'বিস্তারিত সারাংশ']
+  bn: {   
+    short: ['ছোট সারাংশ', 'সংক্ষিপ্ত সারাংশ', 'সংক্ষিপ্ত সারসংক্ষেপ'],
+    full:  ['সম্পূর্ণ সারাংশ', 'বিস্তারিত সারাংশ', 'সম্পূর্ণ সারসংক্ষেপ']
   },
   ta: {
     short: ['சுருக்கம்', 'சுருக்கச் செய்தி'],
@@ -56,6 +56,287 @@ const SUMMARY_ALIAS_MAP = {
     full:  ['full summary']
   }
 };
+
+// ====== DETERMINISTIC NATIVEGLISH LABEL RENDERER (no external API) ======
+const NL_LABELS = {
+  // Use *plain* labels (no colon required); these will be replaced as "native (English)".
+  hi: {
+    'Short Summary': 'संक्षिप्त सारांश',
+    'Sales Today': 'आज की बिक्री',
+    'vs Yesterday': 'कल के मुकाबले',
+    'WTD': 'सप्ताह-पर्यंत',
+    'Top Movers Today': 'आज के टॉप मूवर्स',
+    'Inventory': 'भंडार',
+    'Low Stock': 'स्टॉक कम',
+    'Low Stock Alerts': 'स्टॉक कम अलर्ट',
+    'Expiring Soon': 'शीघ्र समाप्त',
+    'Next actions': 'अगले कदम',
+    'Glossary': 'शब्दावली',
+    'Daily Inventory Summary': 'दैनिक भंडार सारांश',
+    'Sales': 'बिक्री',
+    'GST Collected': 'एकत्रित GST',
+    'Top Sellers': 'सबसे अधिक बिकने वाले',
+    'Top Categories': 'शीर्ष श्रेणियाँ',
+    'Current Inventory': 'वर्तमान भंडार',
+    'Total Value': 'कुल मूल्य',
+    'Total Cost': 'कुल लागत',
+    'Profit Margin': 'लाभ मार्जिन',
+    'Inventory by Category': 'वर्ग अनुसार भंडार',
+    'Insights': 'अंतर्दृष्टि'
+  },
+  bn: {
+    'Short Summary': 'সংক্ষিপ্ত সারাংশ',
+    'Sales Today': 'আজকের বিক্রি',
+    'vs Yesterday': 'গতকালের তুলনায়',
+    'WTD': 'সপ্তাহ-পর্যন্ত',
+    'Top Movers Today': 'আজকের শীর্ষ বিক্রিত',
+    'Inventory': 'মজুত',
+    'Low Stock': 'স্টক কম',
+    'Low Stock Alerts': 'স্টক কম সতর্কতা',
+    'Expiring Soon': 'শীঘ্রই মেয়াদোত্তীর্ণ',
+    'Next actions': 'পরবর্তী পদক্ষেপ',
+    'Glossary': 'শব্দতালিকা',
+    'Daily Inventory Summary': 'দৈনিক মজুত সারাংশ',
+    'Sales': 'বিক্রি',
+    'GST Collected': 'সংগৃহীত GST',
+    'Top Sellers': 'শীর্ষ বিক্রিত',
+    'Top Categories': 'শীর্ষ শ্রেণী',
+    'Current Inventory': 'বর্তমান মজুত',
+    'Total Value': 'মোট মূল্য',
+    'Total Cost': 'মোট খরচ',
+    'Profit Margin': 'লাভের মার্জিন',
+    'Inventory by Category': 'বিভাগ অনুযায়ী মজুত',
+    'Insights': 'ইনসাইটস'
+  },
+  ta: {
+    'Short Summary':'சுருக்கம்',
+    'Sales Today':'இன்று விற்பனை',
+    'vs Yesterday':'நேற்றுடன் ஒப்பிடுக',
+    'WTD':'வாரம் வரை',
+    'Top Movers Today':'இன்றைய மேல் நகர்வுகள்',
+    'Inventory':'இருப்பு',
+    'Low Stock':'இருப்பு குறைவு',
+    'Low Stock Alerts':'இருப்பு குறைவு எச்சரிக்கை',
+    'Expiring Soon':'விரைவில் காலாவதி',
+    'Next actions':'அடுத்த செயல்கள்',
+    'Glossary':'சொற்களஞ்சியம்',
+    'Daily Inventory Summary':'தினசரி இருப்பு சுருக்கம்',
+    'Sales':'விற்பனை',
+    'GST Collected':'திரட்டிய GST',
+    'Top Sellers':'அதிகம் விற்கப்பட்டவை',
+    'Top Categories':'சிறந்த வகைகள்',
+    'Current Inventory':'தற்போதைய இருப்பு',
+    'Total Value':'மொத்த மதிப்பு',
+    'Total Cost':'மொத்த செலவு',
+    'Profit Margin':'லாப விகிதம்',
+    'Inventory by Category':'வகை வாரியான இருப்பு',
+    'Insights':'உள்ளடக்கங்கள்'
+  },
+  te: {
+    'Short Summary':'సంక్షిప్త సారాంశం',
+    'Sales Today':'ఈరోజు అమ్మకాలు',
+    'vs Yesterday':'నిన్నతో పోల్చితే',
+    'WTD':'వారం వరకు',
+    'Top Movers Today':'ఈరోజు టాప్ మూవర్స్',
+    'Inventory':'నిల్వ',
+    'Low Stock':'తక్కువ నిల్వ',
+    'Low Stock Alerts':'తక్కువ నిల్వ హెచ్చరికలు',
+    'Expiring Soon':'త్వరలో గడువు ముగియనున్నవి',
+    'Next actions':'తదుపరి చర్యలు',
+    'Glossary':'పదకోశం',
+    'Daily Inventory Summary':'రోజువారీ నిల్వ సారాంశం',
+    'Sales':'అమ్మకాలు',
+    'GST Collected':'సేకరించిన GST',
+    'Top Sellers':'అత్యధికంగా అమ్మినవి',
+    'Top Categories':'ఉత్తమ వర్గాలు',
+    'Current Inventory':'ప్రస్తుత నిల్వ',
+    'Total Value':'మొత్తం విలువ',
+    'Total Cost':'మొత్తం ఖర్చు',
+    'Profit Margin':'లాభ మార్జిన్',
+    'Inventory by Category':'వర్గాల వారీ నిల్వ',
+    'Insights':'అవగాహనలు'
+  },
+  kn: {
+    'Short Summary':'ಸಂಕ್ಷಿಪ್ತ ಸಾರಾಂಶ',
+    'Sales Today':'ಇಂದಿನ ಮಾರಾಟ',
+    'vs Yesterday':'ನಿನ್ನೆ ಜೊತೆ ಹೋಲಿಕೆ',
+    'WTD':'ವಾರದವರೆಗೆ',
+    'Top Movers Today':'ಇಂದಿನ ಟಾಪ್ ಮೂವರ್ಸ್',
+    'Inventory':'ಸಂಗ್ರಹ',
+    'Low Stock':'ಕಡಿಮೆ ಸಂಗ್ರಹ',
+    'Low Stock Alerts':'ಕಡಿಮೆ ಸಂಗ್ರಹ ಎಚ್ಚರಿಕೆ',
+    'Expiring Soon':'ಶೀಘ್ರದಲ್ಲೇ ಅವಧಿ ಮುಗಿಯುವವು',
+    'Next actions':'ಮುಂದಿನ ಕ್ರಮಗಳು',
+    'Glossary':'ಪದಕೋಶ',
+    'Daily Inventory Summary':'ದೈನಂದಿನ ಸಂಗ್ರಹ ಸಾರಾಂಶ',
+    'Sales':'ಮಾರಾಟ',
+    'GST Collected':'ಸಂಗ್ರಹಿಸಿದ GST',
+    'Top Sellers':'ಅತ್ಯಂತ ಮಾರಾಟವಾದವು',
+    'Top Categories':'ಅತ್ಯುತ್ತಮ ವರ್ಗಗಳು',
+    'Current Inventory':'ಪ್ರಸ್ತುತ ಸಂಗ್ರಹ',
+    'Total Value':'ಒಟ್ಟು ಮೌಲ್ಯ',
+    'Total Cost':'ಒಟ್ಟು ವೆಚ್ಚ',
+    'Profit Margin':'ಲಾಭ ಅಂಚು',
+    'Inventory by Category':'ವರ್ಗಗಳ ಪ್ರಕಾರ ಸಂಗ್ರಹ',
+    'Insights':'ಅಂತರ್ಗತಗಳು'
+  },
+  mr: {
+    'Short Summary':'संक्षिप्त सारांश',
+    'Sales Today':'आजची विक्री',
+    'vs Yesterday':'कालच्या तुलनेत',
+    'WTD':'आठवडा-पर्यंत',
+    'Top Movers Today':'आजचे टॉप मूव्हर्स',
+    'Inventory':'साठा',
+    'Low Stock':'कमी साठा',
+    'Low Stock Alerts':'कमी साठ्याची सूचना',
+    'Expiring Soon':'लवकरच कालबाह्य',
+    'Next actions':'पुढील कृती',
+    'Glossary':'शब्दकोश',
+    'Daily Inventory Summary':'दैनिक साठा सारांश',
+    'Sales':'विक्री',
+    'GST Collected':'आकारलेला GST',
+    'Top Sellers':'टॉप विक्री',
+    'Top Categories':'शीर्ष वर्ग',
+    'Current Inventory':'वर्तमान साठा',
+    'Total Value':'एकूण मूल्य',
+    'Total Cost':'एकूण खर्च',
+    'Profit Margin':'नफा मार्जिन',
+    'Inventory by Category':'वर्गनिहाय साठा',
+    'Insights':'इनसाइट्स'
+  },
+  gu: {
+    'Short Summary':'સંક્ષિપ્ત સારાંશ',
+    'Sales Today':'આજનું વેચાણ',
+    'vs Yesterday':'કાલની તુલનામાં',
+    'WTD':'અઠવાડિયા સુધી',
+    'Top Movers Today':'આજના ટોપ મૂવર્સ',
+    'Inventory':'જથ્થો',
+    'Low Stock':'ઓછો જથ્થો',
+    'Low Stock Alerts':'ઓછા જથ્થાની ચેતવણી',
+    'Expiring Soon':'ટૂંક સમયમાં ગાળા પૂરા',
+    'Next actions':'આગળની કાર્યવાહી',
+    'Glossary':'શબ્દકોશ',
+    'Daily Inventory Summary':'દૈનિક જથ્થો સારાંશ',
+    'Sales':'વેચાણ',
+    'GST Collected':'ઉઘરેલો GST',
+    'Top Sellers':'ટોપ વેચાણ',
+    'Top Categories':'શ્રેષ્ઠ શ્રેણીઓ',
+    'Current Inventory':'વર્તમાન જથ્થો',
+    'Total Value':'કુલ કિંમત',
+    'Total Cost':'કુલ ખર્ચ',
+    'Profit Margin':'નફાકીય માર्जિન',
+    'Inventory by Category':'વર્ગ પ્રમાણે જથ્થો',
+    'Insights':'ઇન્સાઇટ્સ'
+  },
+  en: {}
+};
+
+// Replace English labels with "native (English)" anywhere they appear
+function renderNativeglishLabels(text, languageCode) {
+  const lang = (languageCode || 'en').toLowerCase();
+  const dict = NL_LABELS[lang] || NL_LABELS.en;
+  let out = text;
+
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  for (const key of Object.keys(dict)) {
+    const native = dict[key];
+    if (!native) continue;
+    // Replace plain label occurrences (we allow emojis/prefixes to remain)
+    const re = new RegExp(esc(key), 'g');
+    out = out.replace(re, `${native} (${key})`);
+  }
+  return out;
+}
+
+// --- Lightweight text normalizer (lowercase, strip punctuation/extra spaces)
+function _normLite(s) {
+  return String(s || '')
+    .normalize('NFKD').replace(/[\u0300-\u036f]/g, '') // strip diacritics
+    .toLowerCase()
+    .replace(/[“”"‘’'`]/g, '')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// --- Tiny edit distance (Damerau-Levenshtein would be nicer; classic Levenshtein is fine here)
+function _editDistance(a, b) {
+  a = _normLite(a); b = _normLite(b);
+  const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 1; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return dp[m][n];
+}
+function _near(a, b, max=2) { return _editDistance(a, b) <= max; }
+
+// --- Fuzzy resolver: exact alias -> fuzzy regex/synonyms -> edit-distance over key tokens
+function resolveSummaryIntent(raw) {
+  // 1) Exact alias
+  const exact = resolveSummaryAlias(raw);
+  if (exact) return exact;
+
+  // 2) Language-agnostic normalized text
+  const t = _normLite(raw);
+
+  // 3) Generic English patterns and synonyms
+  if (/(^|\s)(short|quick|mini)\s*(summary|report|overview)($|\s)/i.test(t)) return 'short summary';
+  if (/(^|\s)(full|detailed|complete|entire)\s*(summary|report|overview)($|\s)/i.test(t)) return 'full summary';
+  // also “summary please short” kind of phrasing
+  if (/summary|report|overview/.test(t) && /(short|quick|mini)/.test(t)) return 'short summary';
+  if (/summary|report|overview/.test(t) && /(full|detailed|complete|entire)/.test(t)) return 'full summary';
+
+  // 4) Bengali (bn) common variants
+  if (/(ছোট|সংক্ষিপ্ত|ক্ষুদ্র).*(সারাংশ|সারসংক্ষেপ|সারমর্ম)/.test(t)) return 'short summary';
+  if (/(সম্পূর্ণ|পূর্ণ|বিস্তারিত).*(সারাংশ|সারসংক্ষেপ|রিপোর্ট|সারমর্ম)/.test(t)) return 'full summary';
+  if (/\b(সংক্ষিপ্ত সারসংক্ষেপ|ছোট সারাংশ)\b/.test(t)) return 'short summary';
+  if (/\b(সম্পূর্ণ সারসংক্ষেপ|বিস্তারিত সারসংক্ষেপ)\b/.test(t)) return 'full summary';
+
+  // 5) Hindi (hi)
+  if (/(छोटा|संक्षिप्त).*(सारांश|रिपोर्ट)/.test(t)) return 'short summary';
+  if (/(पूरा|पूर्ण|विस्तृत).*(सारांश|रिपोर्ट)/.test(t)) return 'full summary';
+
+  // 6) Tamil (ta)
+  if (/(சிறு|சுருக்க).*(சுருக்கம்|அறிக்கை)/.test(t)) return 'short summary';
+  if (/(முழு|விரிவான).*(சுருக்கம்|அறிக்கை)/.test(t)) return 'full summary';
+
+  // 7) Telugu (te)
+  if (/(చిన్న|సంక్షిప్త).*(సారాంశం|నివేదిక)/.test(t)) return 'short summary';
+  if (/(పూర్తి|వివరణాత్మక).*(సారాంశం|నివేదిక)/.test(t)) return 'full summary';
+
+  // 8) Kannada (kn)
+  if (/(ಚಿಕ್ಕ|ಸಂಕ್ಷಿಪ್ತ).*(ಸಾರಾಂಶ|ವರದಿ)/.test(t)) return 'short summary';
+  if (/(ಪೂರ್ಣ|ವಿಸ್ತೃತ).*(ಸಾರಾಂಶ|ವರದಿ)/.test(t)) return 'full summary';
+
+  // 9) Marathi (mr)
+  if (/(लहान|संक्षिप्त).*(सारांश|अहवाल)/.test(t)) return 'short summary';
+  if (/(पूर्ण|सविस्तर).*(सारांश|अहवाल)/.test(t)) return 'full summary';
+
+  // 10) Gujarati (gu)
+  if (/(નાનું|સંક્ષિપ્ત).*(સારાંશ|અહેવાલ)/.test(t)) return 'short summary';
+  if (/(સંપૂર્ણ|વિસ્તૃત).*(સારાંશ|અહેવાલ)/.test(t)) return 'full summary';
+
+  // 11) Edit-distance fallback around key tokens (summary/report/overview)
+  const tokens = t.split(/\s+/);
+  const hasSumm = tokens.some(w => _near(w, 'summary') || _near(w, 'report') || _near(w, 'overview'));
+  const hasShort = tokens.some(w => _near(w, 'short') || _near(w, 'quick') || _near(w, 'mini'));
+  const hasFull  = tokens.some(w => _near(w, 'full') || _near(w, 'detailed') || _near(w, 'complete'));
+  if (hasSumm && hasShort) return 'short summary';
+  if (hasSumm && hasFull)  return 'full summary';
+
+  return null;
+}
 
 // NOTE: function declaration (not const arrow) so it's hoisted and available everywhere.
 function resolveSummaryAlias(raw) {
@@ -605,8 +886,8 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
     if (lang === 'en') return text.trim();
 
     const raw = text.trim();
-    const quickAlias = resolveSummaryAlias(raw);
-    if (quickAlias) return quickAlias;
+    const intent = resolveSummaryIntent(raw);
+    if (intent) return intent;
 
     // Cache check
     const keyHash = crypto.createHash('sha1').update(`${lang}::${raw}`).digest('hex');
@@ -701,7 +982,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
 
   
   // Short Summary (on-demand) -- primary: "short summary", keep "summary" as alias
-    if (/^\s*(short\s*summary|summary)\s*$/i.test(text)) {
+    if (/^\s*((short|quick|mini)\s*(summary|report|overview)|summary)\s*$/i.test(text)) {
       const shopId = From.replace('whatsapp:', '');
       const msg = await generateInstantSummary(shopId, detectedLanguage, requestId);
       await sendMessageViaAPI(From, msg);
@@ -709,7 +990,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     }
   
     // Full Summary (on-demand) -- swapped to non-AI Daily Summary
-    if (/^\s*full\s*summary\s*$/i.test(text)) {
+    if (/^\s*((full|detailed|complete|entire)\s*(summary|report|overview))\s*$/i.test(text)) {
       const shopId = From.replace('whatsapp:', '');
       // Uses dailySummary.js non-AI builder + sender; it sends WhatsApp itself
       await processShopSummary(shopId); // sends localized message internally
@@ -1663,7 +1944,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
 async function parseMultipleUpdates(transcript) {
   const updates = [];
 // Never treat summary commands as inventory messages
-  if (resolveSummaryAlias(transcript)) {
+  if (resolveSummaryIntent(transcript)) {
     return [];
   }
 
@@ -2950,11 +3231,11 @@ async function generateInstantSummary(shopId, languageCode, requestId) {
       summary = appendInlineGlossary(summary, languageCode);
   
       // --- Nativeglish render (single block)
-      return await generateNativeglishResponse(summary, languageCode, requestId);
+      return renderNativeglishLabels(summary, languageCode);
     } catch (error) {
       console.error(`[${requestId}] Error generating instant summary:`, error.message);
       const errorMessage = `Sorry, I couldn't generate your summary right now. Please try again later.`;
-      return await generateNativeglishResponse(errorMessage, languageCode, requestId);
+      return renderNativeglishLabels(errorMessage, languageCode);
     }
   }
 
@@ -3602,15 +3883,15 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
   try {   
     // --- HARD GUARD: treat summary phrases as commands, not inventory updates
     const shopId = from.replace('whatsapp:', '');
-    const alias = resolveSummaryAlias(transcript);
-    if (alias === 'short summary') {
+    const intent = resolveSummaryIntent(transcript);
+    if (intent === 'short summary') {
       const msg = await generateInstantSummary(shopId, detectedLanguage, requestId);
       // send via API to avoid Twilio body-length issues; then ack Twilio
       await sendMessageViaAPI(from, msg);
       response.message('✅ Short summary sent.');
       return res.send(response.toString());
     }
-    if (alias === 'full summary') {
+    if (intent === 'full summary') {
       await processShopSummary(shopId); // Sends Nativeglish itself
       response.message('✅ Full summary sent.');
       return res.send(response.toString());
@@ -4717,6 +4998,20 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
 async function processTextMessageAsync(Body, From, requestId, conversationState) {
   try {
     console.log(`[${requestId}] [1] Parsing text message: "${Body}"`);
+    
+    // === FRONT-DOOR SUMMARY GUARD (text path) ===
+    const intentAtEntry = resolveSummaryIntent(Body);
+    if (intentAtEntry === 'short summary') {
+      const shopId = From.replace('whatsapp:', '');
+      const msg = await generateInstantSummary(shopId, conversationState?.language || 'en', requestId);
+      await sendMessageViaAPI(From, msg);
+      return;
+    }
+    if (intentAtEntry === 'full summary') {
+      const shopId = From.replace('whatsapp:', '');
+      await processShopSummary(shopId); // sends itself (now Nativeglish via dailySummary.js patch)
+      return;
+    }   
     
     // Check for common greetings with improved detection
     const lowerBody = Body.toLowerCase();
