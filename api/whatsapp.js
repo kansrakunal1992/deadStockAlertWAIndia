@@ -592,7 +592,7 @@ async function sendDailySummaries() {
     const now = new Date();
     const target = new Date();
     // 10:00 PM IST = 16:30 UTC
-    target.setUTCHours(10, 28, 0, 0);
+    target.setUTCHours(16, 30, 0, 0);
     if (now > target) target.setUTCDate(target.getUTCDate() + 1);
     const ms = target - now;
     console.log(`Scheduling AI Full Summary for ${target.toISOString()} (in ${ms}ms)`);
