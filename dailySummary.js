@@ -13,6 +13,26 @@ const {
     upsertTranslationEntry
 } = require('./database');
 
+// ====== DETERMINISTIC NATIVEGLISH LABEL RENDERER (no external API) ======
+const NL_LABELS = {
+  // same dictionaries as in whatsapp.js (copy them verbatim)
+  //  --- paste the entire NL_LABELS object from whatsapp.js here ---
+};
+
+function renderNativeglishLabels(text, languageCode) {
+  const lang = (languageCode || 'en').toLowerCase();
+  const dict = NL_LABELS[lang] || NL_LABELS.en;
+  let out = text;
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const key of Object.keys(dict)) {
+    const native = dict[key];
+    if (!native) continue;
+    const re = new RegExp(esc(key), 'g');
+    out = out.replace(re, `${native} (${key})`);
+  }
+  return out;
+}
+
 // Allow overriding translate timeout via env; default 30s
 const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS ?? 30000);
 
@@ -38,106 +58,10 @@ function daysBetween(date1, date2) {
     return diffDays;
 }
 
-// Generate response in Nativeglish (Local + English mix) as ONE block, with retries + persistent cache
+// Generate response in Nativeglish deterministically (no external API)
 async function generateMultiLanguageResponse(message, languageCode) {
-  try {
-    const lang = (languageCode || 'en').toLowerCase();
-    if (lang === 'en') return message;
-
-    // 1) Persistent cache (Airtable) lookup FIRST
-    const hash = crypto.createHash('sha1').update(`nglish::${lang}::${message}`).digest('hex');
-    try {
-      const hit = await getTranslationEntry(hash, lang);
-      if (hit?.success && hit.translatedText) {
-        return hit.translatedText; // cache hit
-      }
-    } catch (e) {
-      console.warn('[Nativeglish] Airtable cache lookup failed:', e.message);
-      // Non-fatal; continue
-    }
-
-    // 2) Nativeglish rewrite with retries
-    const nativeNames = {
-      hi: 'Hindi', bn: 'Bengali', ta: 'Tamil', te: 'Telugu',
-      kn: 'Kannada', gu: 'Gujarati', mr: 'Marathi', en: 'English'
-    };
-    const nativeName = nativeNames[lang] || lang;
-
-    const doCall = async (variant = 'main') => {
-      const systemMain =
-`Rewrite the message in Nativeglish: mix ${nativeName} + simple English.
-Rules:
-- Keep emojis and numbers unchanged.
-- Keep brand/product names in English if commonly written in English.
-- Use short, clear lines; 1–3 small paragraphs max.
-- Output ONE block only (no dual-script or transliteration).`;
-
-      const systemFallback =
-`Paraphrase the text in a mixed style using ${nativeName} + simple English (Nativeglish).
-Keep it short (<= 10 lines), one block, and preserve emojis/numbers.`;
-
-      const system = variant === 'main' ? systemMain : systemFallback;
-
-      const resp = await axios.post(
-        'https://api.deepseek.com/v1/chat/completions',
-        {
-          model: 'deepseek-chat',
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: `Message:\n${message}` }
-          ],
-          max_tokens: 700,
-          temperature: 0.4
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: TRANSLATE_TIMEOUT_MS
-        }
-      );
-
-      return (resp.data?.choices?.[0]?.message?.content || '').trim();
-    };
-
-    const MAX_TRIES = 3;
-    let out = '';
-    for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
-      try {
-        const variant = attempt < MAX_TRIES ? 'main' : 'fallback';
-        out = await doCall(variant);
-        if (out) break;
-      } catch (err) {
-        const code = err?.code ?? err?.response?.status ?? 'unknown';
-        console.warn(`[Nativeglish] attempt ${attempt} failed:`, code, err?.message);
-        if (attempt < MAX_TRIES) {
-          await new Promise(r => setTimeout(r, attempt * 800)); // small backoff
-        }
-      }
-    }
-
-    const finalText = out || message;
-
-    // 3) Save to persistent cache (best effort)
-    try {
-      await upsertTranslationEntry({
-        key: hash,
-        language: lang,
-        sourceText: message,
-        translatedText: finalText
-      });
-    } catch (e) {
-      console.warn('[Nativeglish] Failed to persist translation:', e.message);
-    }
-
-    return finalText;
-  } catch (error) {
-    console.warn('Nativeglish rewrite failed, using original:', error.message);
-    return message;
-  }
+  return renderNativeglishLabels(message, languageCode);
 }
-
 
 // Send WhatsApp message with enhanced error handling and retry logic
 async function sendWhatsAppMessage(to, body, maxRetries = 2) {
