@@ -338,6 +338,46 @@ function resolveSummaryIntent(raw) {
   return null;
 }
 
+// ---- READ-ONLY / TXN GUARDS -------------------------------------------------
+function isReadOnlyQuery(text) {
+  const t = String(text || '').trim().toLowerCase();
+  const readOnlyPatterns = [
+    /^(?:stock|inventory|qty)\s+\S+$/,                          // stock Maggi
+    /^(?:batches?|expiry)\s+\S+$/,                              // batches milk
+    /^expiring(?:\s+\d+)?$/,                                    // expiring 30
+    /^sales\s+(?:today|this\s*week|week|this\s*month|month)$/,   // sales today
+    /^top\s*\d*\s*products(?:\s+(?:today|week|month|this\s*week|this\s*month))?$/,
+    /^(?:low\s*stock|stockout|out\s*of\s*stock)$/,
+    /^(?:inventory\s*value|stock\s*value|value\s*summary)$/,
+    /^products(?:\s+(?:search|page|\d+).*)?$/,                  // products / products 2 / products search maggi
+    /^prices(?:\s+(?:page|\d+).*)?$/                            // prices / prices 2
+  ];
+  return readOnlyPatterns.some(rx => rx.test(t));
+}
+
+function looksLikeTransaction(text) {
+  const s = String(text || '').toLowerCase();
+  // reset lastIndex because patterns were defined with /g
+  try { regexPatterns.purchaseKeywords.lastIndex = 0; } catch (_) {}
+  try { regexPatterns.salesKeywords.lastIndex = 0; } catch (_) {}
+  try { regexPatterns.remainingKeywords.lastIndex = 0; } catch (_) {}
+  try { regexPatterns.digits.lastIndex = 0; } catch (_) {}
+
+  const hasDigits = regexPatterns.digits.test(s);
+  const mentionsMoney =
+    /(?:₹|rs\.?|rupees)/i.test(s) ||
+    /(?:@|per\s+(kg|liter|litre|packet|piece|box|ml|g|kg|ltr))/i.test(s);
+  const hasUnit =
+    /(kg|g|gram|grams|ml|ltr|liter|litre|packet|packets|box|boxes|piece|pieces)/i.test(s);
+  const hasTxnVerb =
+    regexPatterns.purchaseKeywords.test(s) ||
+    regexPatterns.salesKeywords.test(s) ||
+    /\b(opening|received|recd|restock|purchase|bought|sold)\b/i.test(s);
+
+  // parse updates only when it _looks_ like a transaction
+  return hasTxnVerb || (hasDigits && (mentionsMoney || hasUnit));
+}
+
 // NOTE: function declaration (not const arrow) so it's hoisted and available everywhere.
 function resolveSummaryAlias(raw) {
   const t = String(raw || '').trim().toLowerCase();
@@ -1942,14 +1982,22 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
           }
 
 // Parse multiple inventory updates from transcript
-async function parseMultipleUpdates(transcript) {
+async function parseMultipleUpdates(transcript) {  
   const updates = [];
-// Never treat summary commands as inventory messages
-  if (resolveSummaryIntent(transcript)) {
+  const t = String(transcript || '').trim();
+  // Never treat summary commands as inventory messages
+  if (resolveSummaryIntent(t)) return [];
+  // NEW: ignore read-only inventory queries outright
+  if (isReadOnlyQuery(t)) {
+    console.log('[Parser] Read-only query detected; skipping update parsing.');
     return [];
   }
-
-  // Try AI-based parsing first
+  // NEW: only attempt update parsing if message looks like a transaction
+  if (!looksLikeTransaction(t)) {
+    console.log('[Parser] Not transaction-like; skipping update parsing.');
+    return [];
+  }
+  // Try AI-based parsing first  
   try {
     console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);  
     const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
