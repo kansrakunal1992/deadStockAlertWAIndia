@@ -2314,6 +2314,69 @@ async function getReorderSuggestions(shopId, { days = 30, leadTimeDays = 3, safe
   }
 }
 
+// --- New: safe sale helper that never leaves inventory negative ---
+async function applySaleWithReconciliation(
+  shopId,
+  { product, quantity, unit = 'pieces', saleDate = new Date().toISOString(), language = 'en' },
+  overrides = {}
+){
+  const ctx = `ApplySale ${shopId} - ${product}`;
+  try {
+    // Preferences with fallbacks (these fields are optional in Airtable)
+    const pref = await getUserPreference(shopId).catch(() => ({ success: true, language: 'en' }));
+    const allowNegative = overrides.allowNegative ?? pref.AllowNegativeInventory ?? false;
+    const autoOpening   = overrides.autoOpeningBatch ?? pref.AutoCreateOpeningBatch ?? true;
+    const onboardingISO = overrides.onboardingDate ?? pref.OnboardingDate ?? saleDate;
+    const openingPrice  = Number(overrides.openingPrice ?? 0) || 0;
+
+    // Current stock
+    const inv = await getProductInventory(shopId, product);
+    const currentQty = Number(inv?.quantity ?? 0);
+    const need = Math.max(0, quantity - currentQty);
+
+    // Enough stock? Normal sale path
+    if (need === 0) {
+      await updateInventory(shopId, product, -quantity, unit);
+      return { status: 'ok', deficit: 0, selectedBatchCompositeKey: null };
+    }
+
+    // Hard-floor (no negative): auto-create Opening Balance batch then sell
+    if (!allowNegative) {
+      if (!autoOpening) {
+        return { status: 'blocked', deficit: need, message: 'Insufficient stock' };
+      }
+      // Opening Balance batch for the deficit
+      await createBatchRecord({
+        shopId, product,
+        quantity: need,
+        unit,
+        purchaseDate: onboardingISO,
+        expiryDate: null,
+        purchasePrice: openingPrice
+      });
+      // Boost then subtract
+      await updateInventory(shopId, product, +need, unit);
+      await updateInventory(shopId, product, -quantity, unit);
+      const compKey = `${shopId}\n${product}\n${onboardingISO}`;
+      return { status: 'auto-adjusted', deficit: need, selectedBatchCompositeKey: compKey };
+    }
+
+    // Soft-negative path: allow, but log correction task to reconcile later
+    await updateInventory(shopId, product, -quantity, unit); // may go negative
+    try {
+      await saveCorrectionState(
+        shopId,
+        'negativeStock',
+        { product, unit, currentQty, saleQty: quantity, deficit: need, saleDate },
+        language
+      );
+    } catch (_) {}
+    return { status: 'negative', deficit: need, selectedBatchCompositeKey: null };
+  } catch (e) {
+    console.error(`[${ctx}] Error:`, e.message);
+    return { status: 'error', error: e.message };
+  }
+}
 
 module.exports = {
   updateInventory,
@@ -2361,10 +2424,11 @@ module.exports = {
   getTranslationEntry,
   upsertTranslationEntry,
   getProductInventory,
-   getStockoutItems,
-   getBatchesForProductWithRemaining,
-   getPeriodWindow,
-   getSalesSummaryPeriod,
-   getTopSellingProductsForPeriod,
-   getReorderSuggestions
+  getStockoutItems,
+  getBatchesForProductWithRemaining,
+  getPeriodWindow,
+  getSalesSummaryPeriod,
+  getTopSellingProductsForPeriod,
+  getReorderSuggestions,
+  applySaleWithReconciliation
 };
