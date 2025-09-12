@@ -403,7 +403,8 @@ const {
   getSalesSummaryPeriod,
   getTopSellingProductsForPeriod,
   getReorderSuggestions,
-  getCurrentInventory
+  getCurrentInventory,
+  applySaleWithReconciliation
 } = require('../database');
 
 // Add this at the top of the file after the imports
@@ -2297,7 +2298,40 @@ if (validBatches.length > 0) {
   }
 }
       // Update the inventory using translated product name
-      const result = await updateInventory(shopId, product, update.action === 'sold' ? -update.quantity : update.quantity, update.unit);
+      let result;
+        if (isSale) {
+          const saleGuard = await applySaleWithReconciliation(
+            shopId,
+            { product, quantity: Math.abs(update.quantity), unit: update.unit, saleDate: new Date().toISOString(), language: languageCode },
+            {
+              // Optional overrides; otherwise read from UserPreferences:
+              // allowNegative: false,
+              // autoOpeningBatch: true,
+              // onboardingDate: '2025-08-01T00:00:00.000Z'
+            }
+          );
+          if (saleGuard.status === 'blocked' || saleGuard.status === 'error') {
+            const msg = await generateMultiLanguageResponse(
+              `❌ Not enough stock for ${product}. You tried to sell ${update.quantity} ${update.unit}. ` +
+              `Reply: "opening ${product} ${saleGuard.deficit} ${update.unit}" to set opening stock.`,
+              languageCode,
+              'neg-guard'
+            );
+            await sendMessageViaAPI(`whatsapp:${shopId}`, msg);
+            results.push({ product, success: false, error: saleGuard.message ?? 'Insufficient stock', blocked: true, deficit: saleGuard.deficit });
+            continue; // move to next update
+          }
+          // Keep a success flag similar to old `result` shape
+          result = { success: true };
+          // Prefer the helper's opening-batch key if it created one
+          if (!selectedBatchCompositeKey && saleGuard.selectedBatchCompositeKey) {
+            selectedBatchCompositeKey = saleGuard.selectedBatchCompositeKey;
+          }
+        } else {
+          // not a sale: keep original purchase/increase path
+          result = await updateInventory(shopId, product, update.quantity, update.unit);
+        }
+
           // Create batch record for purchases only
           if (update.action === 'purchased' && result.success) {
             console.log(`[Update ${shopId} - ${product}] Creating batch record for purchase`);
