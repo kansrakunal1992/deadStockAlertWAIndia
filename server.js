@@ -545,7 +545,7 @@ cron.schedule('0 23 * * *', () => {
       console.error('Scheduled daily summary failed:', error.message);
     });
 }, {
-  scheduled: true,
+  scheduled: false,
   timezone: "Asia/Kolkata"
 });
 
