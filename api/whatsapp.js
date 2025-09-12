@@ -2370,7 +2370,18 @@ if (validBatches.length > 0) {
             continue; // move to next update
           }
           // Keep a success flag similar to old `result` shape
-          result = { success: true };
+          result = { success: true };          
+          // NEW: fetch post-sale inventory so confirmation shows correct stock
+              try {
+                const invAfter = await getProductInventory(shopId, product);
+                if (invAfter && invAfter.quantity !== undefined) {
+                  result.newQuantity = invAfter.quantity;
+                  result.unit = invAfter.unit || update.unit;
+                }
+              } catch (e) {
+                console.warn(`[Update ${shopId} - ${product}] Post-sale inventory fetch failed:`, e.message);
+              }
+
           // Prefer the helper's opening-batch key if it created one
           if (!selectedBatchCompositeKey && saleGuard.selectedBatchCompositeKey) {
             selectedBatchCompositeKey = saleGuard.selectedBatchCompositeKey;
