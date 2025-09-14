@@ -2534,7 +2534,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       
       
 // Prefer an inline expiry from AI/user -> bump year if it falls in the past; else fall back to auto
-    let providedExpiryISO = update.expiryISO || null;
+    providedExpiryISO = update.expiryISO || null;
     if (providedExpiryISO) {
       const adjusted = bumpExpiryYearIfPast(providedExpiryISO, purchaseDateISO);
       if (adjusted) providedExpiryISO = adjusted;
