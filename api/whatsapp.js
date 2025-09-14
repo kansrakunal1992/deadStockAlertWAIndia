@@ -2563,7 +2563,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
       // Use provided price or fall back to database price      
       // NEW: reliable price/value
-        const finalPrice = (update.price ?? productPrice) || 0;
+        finalPrice = (update.price ?? productPrice) || 0;
         const finalTotalPrice = Number.isFinite(update.totalPrice)
           ? update.totalPrice
           : (finalPrice * Math.abs(update.quantity));
