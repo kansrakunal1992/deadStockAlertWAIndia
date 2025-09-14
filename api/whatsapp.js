@@ -2534,7 +2534,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       
       
 // Prefer an inline expiry from AI/user -> bump year if it falls in the past; else fall back to auto
-    providedExpiryISO = update.expiryISO || null;
+    let providedExpiryISO = update.expiryISO || null;
     if (providedExpiryISO) {
       const adjusted = bumpExpiryYearIfPast(providedExpiryISO, purchaseDateISO);
       if (adjusted) providedExpiryISO = adjusted;
@@ -6682,7 +6682,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         `Welcome! I'm ready for your inventory update. You can send:
           • Voice or Text message: "5kg sugar purchased at 20rs/kg exp 11/12", "10 Parle-G sold at 10rs/packet exp 12/11/2025"
           • Get an automated invoice pdf to send to customer upon a sale
-          • Get instant summary: "summary"
+          • Get instant summary: "short summary"
           • Get detailed summary: "full summary"
           
           
