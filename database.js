@@ -572,6 +572,28 @@ const currentUnit = getResult.fields.Units ?? '';
   }
 }
 
+// NEW: Update batch purchase price (and derived purchase value)
+async function updateBatchPurchasePrice(batchId, price, quantityForValue = null) {
+  const context = `Update Batch PurchasePrice ${batchId}`;
+  try {
+    const qty = Number(Math.abs(quantityForValue ?? 0));
+    const fields = { PurchasePrice: Number(price) };
+    if (qty > 0 && Number(price) > 0) {
+      fields.PurchaseValue = Number(price) * qty;
+    }
+    await airtableBatchRequest({
+      method: 'patch',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`,
+      data: { fields }
+    }, context);
+    return { success: true };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+
 // Create a sales record
 async function createSalesRecord(salesData) {
   const context = `Create Sales ${salesData.shopId} - ${salesData.product}`;
@@ -1999,13 +2021,17 @@ async function getProductPrice(productName) {
         ? raw
         : parseFloat(String(raw).replace(/[^\d.]/g, '')) || 0;
       
+      
       return {
-        success: true,
-        price: priceNum,
-        unit: rec.fields.Unit ?? 'pieces',
-        category: rec.fields.Category ?? 'General',
-        hsnCode: rec.fields.HSNCode ?? ''
-      };
+            success: true,
+            price: priceNum,
+            unit: rec.fields.Unit ?? 'pieces',
+            category: rec.fields.Category ?? 'General',
+            hsnCode: rec.fields.HSNCode ?? '',
+            // NEW: Layer A (auto-expiry hints)
+            requiresExpiry: !!rec.fields.RequiresExpiry,
+            shelfLifeDays: Number(rec.fields.DefaultShelfLifeDays ?? 0)
+          };
     }
     
     return { success: false, error: 'Product not found' };
@@ -2430,5 +2456,6 @@ module.exports = {
   getSalesSummaryPeriod,
   getTopSellingProductsForPeriod,
   getReorderSuggestions,
-  applySaleWithReconciliation
+  applySaleWithReconciliation,
+  updateBatchPurchasePrice
 };
