@@ -854,6 +854,15 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
   const { batchId, product, unit, quantity, purchaseDate, autoExpiry, needsPrice, isPerishable } = data;
   const parsed = parsePriceAndExpiryFromText(Body, purchaseDate);
 
+  
+  // If user gave an expiry in the past, bump year forward relative to the purchase date
+    if (parsed && parsed.expiryISO) {
+      try {
+        const bumped = bumpExpiryYearIfPast(parsed.expiryISO, purchaseDate || new Date().toISOString());
+        if (bumped) parsed.expiryISO = bumped;
+      } catch (_) {}
+    }
+    
   let updatedPrice = null;
   let updatedExpiryISO = null;
 
@@ -1005,6 +1014,23 @@ function parseExpiryTextToISO(text, baseISO = null) {
     return d.toISOString();
   }
   return null;
+}
+
+// If an expiry ends up before the purchase date (e.g., user typed 14/11/2024 while today is 2025),
+// bump the year until it is >= base date (max 2 bumps) and return ISO.
+function bumpExpiryYearIfPast(proposedISO, baseISO) {
+  if (!proposedISO) return null;
+  const base = new Date(baseISO || new Date().toISOString());
+  let d = new Date(proposedISO);
+  if (isNaN(d.getTime())) return null;
+  // Normalize both to midnight UTC to avoid off-by-hours
+  d.setUTCHours(0, 0, 0, 0);
+  const baseMid = new Date(base);
+  baseMid.setUTCHours(0, 0, 0, 0);
+  for (let i = 0; i < 2 && d < baseMid; i++) {
+    d.setFullYear(d.getFullYear() + 1);
+  }
+  return d.toISOString();
 }
 
 // Extract price (₹60 / 60 / 60.5) and expiry (same formats as above) in ONE shot
@@ -2449,6 +2475,7 @@ async function validateTranscript(transcript, requestId) {
 async function updateMultipleInventory(shopId, updates, languageCode) {
   const results = [];
   for (const update of updates) {
+    let createdBatchEarly = false;
     try {
       // Translate product name before processing
       const translatedProduct = await translateProductName(update.product, 'update');
@@ -2482,26 +2509,52 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         }
       } catch (_) {}
       
-      const purchaseDateISO = formatDateForAirtable(new Date());
-      
+      const purchaseDateISO = formatDateForAirtable(new Date());   
+      // Prefer inline expiry from the parsed update when it is valid & not in the past
+       let providedExpiryISO = update.expiryISO || null;
+       if (providedExpiryISO) {
+         try {
+           const ed = new Date(providedExpiryISO);
+           const pd = new Date(purchaseDateISO);
+           if (!isNaN(ed.getTime())) {
+             // If AI produced a past date (e.g., wrong year), ignore it
+             if (ed < pd) {
+               providedExpiryISO = null;
+             }
+           } else {
+             providedExpiryISO = null;
+           }
+         } catch (_) { providedExpiryISO = null; }
+       }
+       const expiryToUse = providedExpiryISO || autoExpiry || null;
+
       // Use provided or catalog price
       const finalPrice = (update.price ?? productPrice) || 0;
       const purchasePrice = finalPrice > 0 ? finalPrice : 0; // may still be 0
       
-      // Create batch now (with autoExpiry if available)
-      const batchResult = await createBatchRecord({
+      
+// Prefer an inline expiry from AI/user -> bump year if it falls in the past; else fall back to auto
+    let providedExpiryISO = update.expiryISO || null;
+    if (providedExpiryISO) {
+      const adjusted = bumpExpiryYearIfPast(providedExpiryISO, purchaseDateISO);
+      if (adjusted) providedExpiryISO = adjusted;
+    }
+    const expiryToUse = providedExpiryISO || autoExpiry || null;
+
+    // Create batch now (with preferred expiry if available)
+    const batchResult = await createBatchRecord({
         shopId,
         product,
         quantity: update.quantity,
         unit: update.unit,
         purchaseDate: purchaseDateISO,
-        expiryDate: autoExpiry,          // ← Layer A
+        expiryDate: expiryToUse, // prefer inline expiry; else auto; else omit
         purchasePrice: purchasePrice
       });
-      
-      if (!batchResult?.success) {
-        console.error(`[Update ${shopId} - ${product}] Failed to create batch: ${batchResult?.error}`);
-      }
+         
+      if (batchResult?.success) {
+            createdBatchEarly = true;
+          }
       
       // Persist product price if we have one
       if (purchasePrice > 0) {
@@ -2515,7 +2568,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       // Decide if we need any user input
       const needsPrice = purchasePrice <= 0; // no price given + not in catalog
       const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
-      const needsExpiryConfirmOrSet = isPerishable; // we always offer confirm/alter for perishables
+      const needsExpiryConfirmOrSet = isPerishable && !providedExpiryISO; // don't prompt if user gave an expir
       
       if (needsPrice || needsExpiryConfirmOrSet) {
         // Park state to collect both in ONE reply
@@ -2561,12 +2614,11 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       }
       // === END NEW block ===
 
-      // Use provided price or fall back to database price      
-      // NEW: reliable price/value
-        finalPrice = (update.price ?? productPrice) || 0;
-        const finalTotalPrice = Number.isFinite(update.totalPrice)
-          ? update.totalPrice
-          : (finalPrice * Math.abs(update.quantity));
+      // Use provided price or fall back to database price           
+      // NEW: reliable price/value (without reassigning const finalPrice)
+          const finalTotalPrice = Number.isFinite(update.totalPrice)
+            ? update.totalPrice
+            : (finalPrice * Math.abs(update.quantity));
           const priceSource = (update.price && Number(update.price) > 0)
             ? 'message'
             : (productPrice > 0 ? 'db' : null); // only mark db if it’s actually > 0
@@ -2669,8 +2721,9 @@ if (validBatches.length > 0) {
           result = await updateInventory(shopId, product, update.quantity, update.unit);
         }
 
-          // Create batch record for purchases only
-          if (update.action === 'purchased' && result.success) {
+          
+        // Create batch record for purchases only (skip if we already created above)
+            if (!createdBatchEarly && update.action === 'purchased' && result.success) {
             console.log(`[Update ${shopId} - ${product}] Creating batch record for purchase`);
             // Format current date with time for Airtable
             const formattedPurchaseDate = formatDateForAirtable(new Date());
@@ -5712,15 +5765,43 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   }
 }
 
+
 // Main module exports
 module.exports = async (req, res) => {
   const requestStart = Date.now();
   const response = new twilio.twiml.MessagingResponse();
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  
+  try { cleanupCaches(); } catch (_) {}
+
+  // --- Extract inbound fields early (so helpers can use them) ---
+  const Body = (req.body && (req.body.Body || req.body.body)) || '';
+  const From =
+    (req.body && (req.body.From || req.body.from)) ||
+    (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
+
+  // Language detection (also persists preference)
+  const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
+
+  // --- NEW: resolve pending price+expiry correction BEFORE deeper routing ---
+  try {
+    const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
+    if (handledCombined) {
+      // Minimal TwiML ack since we've already replied via the API
+      const twiml = new twilio.twiml.MessagingResponse();
+      twiml.message('');
+      res.type('text/xml').send(twiml.toString());
+      trackResponseTime(requestStart, requestId);
+      return;
+    }
+  } catch (e) {
+    console.warn(`[${requestId}] awaitingPriceExpiry handler error:`, e.message);
+    // continue normal routing
+  }
+
+  // --- Delegate to main request handler ---
   await handleRequest(req, res, response, requestId, requestStart);
-  
-// --- FINAL CATCH-ALL: If nothing above handled the message, send examples ---
+
+  // --- FINAL CATCH-ALL: If nothing above handled the message, send examples ---
   if (!res.headersSent) {
     await sendParseErrorWithExamples(From, detectedLanguage, requestId);
     try {
@@ -5730,10 +5811,11 @@ module.exports = async (req, res) => {
     } catch (_) {
       res.status(200).end();
     }
-    trackResponseTime(startTime, requestId);
+    trackResponseTime(requestStart, requestId);
     return;
   }
 };
+
 
 async function handleRequest(req, res, response, requestId, requestStart) {  
   try {
