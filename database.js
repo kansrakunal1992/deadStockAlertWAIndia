@@ -376,22 +376,22 @@ async function createBatchRecord(batchData) {
     const purchaseValue = purchasePrice * batchData.quantity;
     
     // Create new record
-    const createData = {
-      fields: {
+    const expiryISO = toAirtableDateTimeUTC(batchData.expiryDate);
+      const fields = {
         ShopID: batchData.shopId,
         Product: batchData.product,
         Quantity: batchData.quantity,
-        PurchaseDate: purchaseDate,
-        ExpiryDate: batchData.expiryDate,
+        PurchaseDate: toAirtableDateTimeUTC(purchaseDate) || purchaseDate, // safe either way
         OriginalRecordID: batchData.batchId || '',
         Units: normalizedUnit,
         CompositeKey: compositeKey,
         PurchasePrice: purchasePrice,
         PurchaseValue: purchaseValue
-      }
-    };
-    
-    console.log(`[${context}] Using purchase date: ${purchaseDate}`);
+      };
+      if (expiryISO) fields.ExpiryDate = expiryISO; // OMIT if invalid/missing
+      const createData = { fields };
+      console.log(`[${context}] Using purchase date: ${fields.PurchaseDate}, expiry: ${expiryISO ?? '—'}`);
+
     
     const result = await airtableBatchRequest({
       method: 'post',
@@ -486,12 +486,13 @@ async function getBatchRecords(shopId, product) {
 async function updateBatchExpiry(batchId, expiryDate) {
   const context = `Update Batch Expiry ${batchId}`;
   try {
-    console.log(`[${context}] Updating batch ${batchId} with expiry date ${expiryDate}`);
-    const updateData = {
-      fields: {
-        ExpiryDate: expiryDate
+    console.log(`[${context}] Updating batch ${batchId} with expiry date ${expiryDate}`);  
+    const expiryISO = toAirtableDateTimeUTC(expiryDate);
+      if (!expiryISO) {
+        throw new Error('Invalid expiry date for Airtable');
       }
-    };
+      const updateData = { fields: { ExpiryDate: expiryISO } };
+
     
     const result = await airtableBatchRequest({
       method: 'patch',
@@ -2403,6 +2404,17 @@ async function applySaleWithReconciliation(
     return { status: 'error', error: e.message };
   }
 }
+
+// --- Helper: normalize to Airtable-safe DateTime (UTC ISO) or return null
+function toAirtableDateTimeUTC(dateLike) {
+  if (!dateLike) return null;
+  const d = new Date(dateLike);
+  if (isNaN(d.getTime())) return null;
+  // Trim milliseconds (optional) to keep things tidy
+  d.setMilliseconds(0);
+  return d.toISOString(); // e.g. 2025-09-20T00:00:00.000Z
+}
+
 
 module.exports = {
   updateInventory,
