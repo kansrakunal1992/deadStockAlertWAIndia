@@ -2509,24 +2509,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         }
       } catch (_) {}
       
-      const purchaseDateISO = formatDateForAirtable(new Date());   
-      // Prefer inline expiry from the parsed update when it is valid & not in the past
-       let providedExpiryISO = update.expiryISO || null;
-       if (providedExpiryISO) {
-         try {
-           const ed = new Date(providedExpiryISO);
-           const pd = new Date(purchaseDateISO);
-           if (!isNaN(ed.getTime())) {
-             // If AI produced a past date (e.g., wrong year), ignore it
-             if (ed < pd) {
-               providedExpiryISO = null;
-             }
-           } else {
-             providedExpiryISO = null;
-           }
-         } catch (_) { providedExpiryISO = null; }
-       }
-       const expiryToUse = providedExpiryISO || autoExpiry || null;
+      const purchaseDateISO = formatDateForAirtable(new Date());
 
       // Use provided or catalog price
       const finalPrice = (update.price ?? productPrice) || 0;
@@ -2534,12 +2517,10 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       
       
 // Prefer an inline expiry from AI/user -> bump year if it falls in the past; else fall back to auto
-    let providedExpiryISO = update.expiryISO || null;
-    if (providedExpiryISO) {
-      const adjusted = bumpExpiryYearIfPast(providedExpiryISO, purchaseDateISO);
-      if (adjusted) providedExpiryISO = adjusted;
-    }
-    expiryToUse = providedExpiryISO || autoExpiry || null;
+    
+    // Prefer inline expiry (bumped to future if needed) > auto > omit
+        const providedExpiryISO = bumpExpiryYearIfPast(update.expiryISO || null, purchaseDateISO);
+        const expiryToUse = providedExpiryISO || autoExpiry || null;
 
     // Create batch now (with preferred expiry if available)
     const batchResult = await createBatchRecord({
