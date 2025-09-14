@@ -421,6 +421,7 @@ const {
   saveUserStateToDB,
   getUserStateFromDB,
   deleteUserStateFromDB,
+  updateBatchPurchasePrice,
   isUserAuthorized,
   deactivateUser,
   getTodaySalesSummary,
@@ -843,6 +844,79 @@ async function clearUserState(from) {
   }
 }
 
+// Handle awaitingPriceExpiry unified correction
+async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId) {
+  const shopId = From.replace('whatsapp:', '');
+  const state = await getUserStateFromDB(shopId);
+  if (!state || state.mode !== 'awaitingPriceExpiry') return false;
+
+  const data = state.data || {};
+  const { batchId, product, unit, quantity, purchaseDate, autoExpiry, needsPrice, isPerishable } = data;
+  const parsed = parsePriceAndExpiryFromText(Body, purchaseDate);
+
+  let updatedPrice = null;
+  let updatedExpiryISO = null;
+
+  // Decide expiry outcome
+  if (parsed.skipExpiry) {
+    updatedExpiryISO = null;
+  } else if (parsed.ok) {
+    updatedExpiryISO = autoExpiry || null;
+  } else if (parsed.expiryISO) {
+    updatedExpiryISO = parsed.expiryISO;
+  } else {
+    // no explicit instruction => keep auto if exists
+    updatedExpiryISO = autoExpiry || null;
+  }
+
+  // Decide price outcome
+  if (parsed.price && parsed.price > 0) {
+    updatedPrice = parsed.price;
+  }
+
+  // If user didn’t give a price but we still need one, prompt again (with examples)
+  if (needsPrice && !updatedPrice) {
+    const again = await generateMultiLanguageResponse(
+      `Please share price like: ₹60  (you can also add expiry: exp 20-09).`,
+      detectedLanguage, 'ask-price-again'
+    );
+    await sendMessageViaAPI(From, again);
+    return true; // stay in same state
+  }
+
+  // Apply updates
+  try {
+    if (updatedExpiryISO !== undefined && updatedExpiryISO !== autoExpiry && batchId) {
+      await updateBatchExpiry(batchId, updatedExpiryISO);
+    }
+  } catch (e) {
+    console.warn(`[${requestId}] updateBatchExpiry failed:`, e.message);
+  }
+  try {
+    if (updatedPrice && batchId) {
+      await updateBatchPurchasePrice(batchId, updatedPrice, quantity);
+      await upsertProduct({ name: product, price: updatedPrice, unit });
+    }
+  } catch (e) {
+    console.warn(`[${requestId}] price updates failed:`, e.message);
+  }
+
+  // Confirm and clear state
+  await deleteUserStateFromDB(state.id);
+  const lines = [];
+  if (updatedPrice) lines.push(`Price: ₹${updatedPrice}`);
+  if (isPerishable) {
+    const shown = updatedExpiryISO ? formatDateForDisplay(updatedExpiryISO) : '—';
+    lines.push(`Expiry: ${shown}`);
+  }
+  const done = await generateMultiLanguageResponse(
+    `✅ Saved for ${product} ${quantity} ${unit}\n` + (lines.length ? lines.join('\n') : 'No changes.'),
+    detectedLanguage, 'saved-price-expiry'
+  );
+  await sendMessageViaAPI(From, done);
+  return true;
+}
+
 // Helper function to format dates for Airtable (YYYY-MM-DDTHH:mm:ss.sssZ)
 function formatDateForAirtable(date) {
   if (date instanceof Date) {
@@ -898,6 +972,61 @@ function formatDateForDisplay(date) {
     }
     return date;
 }
+
+// Parse "20-09", "20/09/2025", "20-09-25", "+7d", "+3m", "+1y" -> ISO
+function parseExpiryTextToISO(text, baseISO = null) {
+  if (!text) return null;
+  const raw = String(text).trim().toLowerCase();
+  const base = baseISO ? new Date(baseISO) : new Date();
+
+  // Relative patterns like +7d, +3m, +1y
+  const rel = raw.match(/^\+(\d+)\s*([dmy])$/i);
+  if (rel) {
+    const n = parseInt(rel[1], 10);
+    const unit = rel[2].toLowerCase();
+    const d = new Date(base);
+    if (unit === 'd') d.setDate(d.getDate() + n);
+    if (unit === 'm') d.setMonth(d.getMonth() + n);
+    if (unit === 'y') d.setFullYear(d.getFullYear() + n);
+    return d.toISOString();
+  }
+
+  // dd-mm[-yy|yyyy] or dd/mm[/yy|yyyy]
+  const dm = raw.match(/^(\d{1,2})\/\-\.(?:\/\-\.)?$/);
+  if (dm) {
+    let [_, dd, mm, yy] = dm;
+    const day = Math.min(31, parseInt(dd, 10));
+    const mon = Math.max(1, Math.min(12, parseInt(mm, 10))) - 1;
+    let year = (yy ? parseInt(yy, 10) : base.getFullYear());
+    if (yy && yy.length === 2) {
+      year = 2000 + year; // simple pivot
+    }
+    const d = new Date(Date.UTC(year, mon, day, 0, 0, 0, 0));
+    return d.toISOString();
+  }
+  return null;
+}
+
+// Extract price (₹60 / 60 / 60.5) and expiry (same formats as above) in ONE shot
+function parsePriceAndExpiryFromText(text, baseISO = null) {
+  const out = { price: null, expiryISO: null, ok: false, skipExpiry: false };
+  if (!text) return out;
+  const t = text.trim().toLowerCase();
+  if (t === 'ok' || t === 'okay') { out.ok = true; return out; }
+  if (t === 'skip') { out.skipExpiry = true; return out; }
+  // Common tokens "exp", "expiry", "expires"
+  const expToken = t.replace(/\b(expiry|expires?|exp)\b/gi, '').trim();
+  const expiry = parseExpiryTextToISO(expToken, baseISO) || parseExpiryTextToISO(t, baseISO);
+  if (expiry) out.expiryISO = expiry;
+  // price: first decimal number in text
+  const priceMatch = text.replace(/[,]/g, '').match(/(?:₹|rs\.?\s*)?(-?\d+(?:\.\d+)?)/i);
+  if (priceMatch) {
+    const p = parseFloat(priceMatch[1]);
+    if (Number.isFinite(p) && p > 0) out.price = p;
+  }
+  return out;
+}
+
 
 // Helper function to calculate days between two dates
 function daysBetween(date1, date2) {
@@ -997,6 +1126,31 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
   }
 }
 
+const EXAMPLE_PURCHASE_EN = [
+  'Examples (purchase):',
+  '• bought milk 10 liters @60 exp 20-09',
+  '• purchase Parle-G 12 packets ₹10 exp +6m',
+  '• khareeda doodh 5 ltr ₹58 expiry 25/09/2025'
+].join('\n');
+
+async function renderPurchaseExamples(language, requestId = 'examples') {
+  return await generateMultiLanguageResponse(EXAMPLE_PURCHASE_EN, language ?? 'en', requestId);
+}
+
+async function sendParseErrorWithExamples(From, detectedLanguage, requestId, header = `Sorry, I couldn't understand that.`) {
+  try {
+    const examples = await renderPurchaseExamples(detectedLanguage, requestId + ':err-ex');
+    const msg = await generateMultiLanguageResponse(
+      `${header}\n\n${examples}`,
+      detectedLanguage, requestId + ':err'
+    );
+    await sendMessageViaAPI(From, msg);
+  } catch (e) {
+    // Fallback to basic English if translation fails
+    await sendMessageViaAPI(From, `${header}\n\n${EXAMPLE_PURCHASE_EN}`);
+  }
+}
+
 
 // ---------------- QUICK-QUERY ROUTER (English-only hotfix) ----------------
 function _periodWindow(period) {
@@ -1020,7 +1174,42 @@ function _norm(s) { return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,''
 async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const text = String(rawBody || '').trim();
   const shopId = From.replace('whatsapp:', '');
+  
+// NEW (2.g): Greeting -> show purchase examples incl. expiry
+  if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
+    const examples = await renderPurchaseExamples(detectedLanguage, requestId);
+    await sendMessageViaAPI(From, examples);
+    return true;
+  }
 
+  // NEW (2.f): expiry <product> <date>
+  // Accepted date formats: 20-09 | 20/09/2025 | +7d | +3m | +1y
+  let m = text.match(/^expiry\s+(.+?)\s+([0-9+\/\-]{3,})$/i);
+  if (m) {
+    const product = await translateProductName(m[1], requestId + ':expiry-cmd');
+    const iso = parseExpiryTextToISO(m[2]);
+    if (!iso) {
+      const msg = await generateMultiLanguageResponse(
+        `Invalid date. Try: 20-09 | 20/09/2025 | +7d | +3m | +1y`,
+        detectedLanguage, 'bad-expiry'
+      );
+      await sendMessageViaAPI(From, msg);
+      return true;
+    }
+    const batches = await getBatchRecords(shopId, product);
+    const latest = (batches || [])
+      .filter(b => !!b?.fields?.PurchaseDate)
+      .sort((a,b)=> new Date(b.fields.PurchaseDate) - new Date(a.fields.PurchaseDate))[0];
+    if (!latest) {
+      const msg = await generateMultiLanguageResponse(`No batch found for ${product}.`, detectedLanguage, 'no-batch');
+      await sendMessageViaAPI(From, msg);
+      return true;
+    }
+    await updateBatchExpiry(latest.id, iso);
+    const ok = await generateMultiLanguageResponse(`✅ ${product} expiry set to ${formatDateForDisplay(iso)}`, detectedLanguage, 'expiry-set');
+    await sendMessageViaAPI(From, ok);
+    return true;
+  }
   
   // Short Summary (on-demand) -- primary: "short summary", keep "summary" as alias
     if (/^\s*((short|quick|mini)\s*(summary|report|overview)|summary)\s*$/i.test(text)) {
@@ -1386,7 +1575,44 @@ function parsePeriodKeyword(txt) {
 async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   const text = Body.trim();
   const shopId = From.replace('whatsapp:', '');
+  
+// NEW (2.g): Greeting -> show purchase examples incl. expiry
+  if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
+    const examples = await renderPurchaseExamples(detectedLanguage, requestId);
+    await sendMessageViaAPI(From, examples);
+    return true;
+  }
 
+  // NEW (2.f): expiry <product> <date>
+  // Accepted date formats: 20-09 | 20/09/2025 | +7d | +3m | +1y
+  let m = text.match(/^expiry\s+(.+?)\s+([0-9+\/\-]{3,})$/i);
+  if (m) {
+    const product = await translateProductName(m[1], requestId + ':expiry-cmd');
+    const iso = parseExpiryTextToISO(m[2]);
+    if (!iso) {
+      const msg = await generateMultiLanguageResponse(
+        `Invalid date. Try: 20-09 | 20/09/2025 | +7d | +3m | +1y`,
+        detectedLanguage, 'bad-expiry'
+      );
+      await sendMessageViaAPI(From, msg);
+      return true;
+    }
+    const batches = await getBatchRecords(shopId, product);
+    const latest = (batches || [])
+      .filter(b => !!b?.fields?.PurchaseDate)
+      .sort((a,b)=> new Date(b.fields.PurchaseDate) - new Date(a.fields.PurchaseDate))[0];
+    if (!latest) {
+      const msg = await generateMultiLanguageResponse(`No batch found for ${product}.`, detectedLanguage, 'no-batch');
+      await sendMessageViaAPI(From, msg);
+      return true;
+    }
+    await updateBatchExpiry(latest.id, iso);
+    const ok = await generateMultiLanguageResponse(`✅ ${product} expiry set to ${formatDateForDisplay(iso)}`, detectedLanguage, 'expiry-set');
+    await sendMessageViaAPI(From, ok);
+    return true;
+  }
+
+  
   // 1) Inventory remaining for a specific product (+ advice)
   const stockMatch = text.match(/^(?:stock|inventory|qty)\s+(.+)$/i);
   if (stockMatch) {
@@ -1882,7 +2108,8 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
           3. unit: The unit of measurement (e.g., "packets", "kg", "liters", "pieces")
           4. action: The action being performed ("purchased", "sold", "remaining")
           5. price: The price per unit (if mentioned, otherwise null)
-          6. totalPrice: The total price (if mentioned, otherwise null)
+          6. totalPrice: The total price (if mentioned, otherwise null)        
+          7. expiryDate (if present), parse tokens like: "exp", "expiry", "expires on", formats dd-mm, dd/mm/yyyy, +7d, +3m, +1y
           For the action field:
           - Use "purchased" for words like "bought", "purchased", "buy", "खरीदा", "खरीदे", "लिया", "खरीदी", "khareeda"
           - Use "sold" for words like "sold", "बेचा", "बेचे", "becha", "बिक्री", "becha"
@@ -1959,6 +2186,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                 
                 // Use AI-parsed product directly - NO re-processing!
                 const product = String(update.product || '').trim();
+                const expiry = update.expiryDate ? parseExpiryTextToISO(update.expiryDate) : null;
                 
                 return {
                   product: product,
@@ -1967,6 +2195,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                   action: action,
                   price: price,
                   totalPrice: totalPrice,
+                  expiryISO: expiry,
                   isKnown: products.some(p => isProductMatch(product, p))
                 };
               });
@@ -2238,51 +2467,100 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
       }
       
-      // For purchases, ask for price if not available
-      if (update.action === 'purchased' && productPrice === 0 && !update.price) {
-      // Save pending update to database and keep the id
-      const saveRes = await saveCorrectionState(shopId, 'price', update, languageCode);
-
-    
-      // Prompt user for price
-      const promptMessage = await generateMultiLanguageResponse(
-        `What is the price per ${singularize(update.unit)} for ${product}?`,
-        languageCode,
-        'price-prompt'
-      );
-    
-      await sendMessageViaAPI(`whatsapp:${shopId}`, promptMessage);
-
-      
-  // Put the user into 'correction' mode for price so the next number is captured as price
-        try {
-          await setUserState(`whatsapp:${shopId}`, 'correction', {
-            correctionState: {
-              correctionType: 'price',
-              pendingUpdate: update,
-              detectedLanguage: languageCode,
-              id: saveRes && saveRes.id
-            }
-          });
-        } catch (e) {
-          console.warn(`[Update ${shopId} - ${product}] Failed to set user state for price correction:`, e.message);
+      // === NEW: Layer A (auto-expiry) + Combined price+expiry correction flow ===
+      let autoExpiry = null;
+      let productMeta = null;
+      try {
+        productMeta = await getProductPrice(product);
+        if (productMeta?.success && productMeta.requiresExpiry) {
+          const sd = Number(productMeta.shelfLifeDays || 0);
+          if (sd > 0) {
+            const ts = new Date();
+            ts.setDate(ts.getDate() + sd);
+            autoExpiry = ts.toISOString();
+          }
         }
-        
-      results.push({
-        product: product,
+      } catch (_) {}
+      
+      const purchaseDateISO = formatDateForAirtable(new Date());
+      
+      // Use provided or catalog price
+      const finalPrice = (update.price ?? productPrice) || 0;
+      const purchasePrice = finalPrice > 0 ? finalPrice : 0; // may still be 0
+      
+      // Create batch now (with autoExpiry if available)
+      const batchResult = await createBatchRecord({
+        shopId,
+        product,
         quantity: update.quantity,
         unit: update.unit,
-        action: update.action,
-        success: false,
-        needsPrice: true,
-        message: 'Prompted user for missing price',
-        error: 'Missing price',
-        correctionId: saveRes && saveRes.id
+        purchaseDate: purchaseDateISO,
+        expiryDate: autoExpiry,          // ← Layer A
+        purchasePrice: purchasePrice
       });
-    
-      continue;
-    }
       
+      if (!batchResult?.success) {
+        console.error(`[Update ${shopId} - ${product}] Failed to create batch: ${batchResult?.error}`);
+      }
+      
+      // Persist product price if we have one
+      if (purchasePrice > 0) {
+        try {
+          await upsertProduct({ name: product, price: purchasePrice, unit: update.unit });
+        } catch (e) {
+          console.warn(`[Update ${shopId} - ${product}] upsertProduct price failed:`, e.message);
+        }
+      }
+      
+      // Decide if we need any user input
+      const needsPrice = purchasePrice <= 0; // no price given + not in catalog
+      const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
+      const needsExpiryConfirmOrSet = isPerishable; // we always offer confirm/alter for perishables
+      
+      if (needsPrice || needsExpiryConfirmOrSet) {
+        // Park state to collect both in ONE reply
+        await setUserState(`whatsapp:${shopId}`, 'awaitingPriceExpiry', {
+          batchId: batchResult?.id || null,
+          product,
+          unit: update.unit,
+          quantity: update.quantity,
+          purchaseDate: purchaseDateISO,
+          autoExpiry: autoExpiry || null,
+          needsPrice,
+          isPerishable
+        });
+      
+        const autoExpiryLine =
+          autoExpiry
+            ? `I set expiry to ${formatDateForDisplay(autoExpiry)} from shelf-life.`
+            : (isPerishable ? `No expiry set yet.` : ``);
+      
+        const ask = [
+          `Got it ✅ ${product} ${update.quantity} ${update.unit}.`,
+          autoExpiryLine,
+          needsPrice ? `Price missing.` : `Price kept: ₹${purchasePrice}.`,
+          ``,
+          `Reply with **both** (any order):`,
+          `• ₹<price> and/or`,
+          `• exp <dd-mm> | <dd/mm/yyyy> | +7d | +3m | +1y`,
+          `Or reply:`,
+          `• 'ok' to keep current expiry${needsPrice ? ' (still need price)' : ''}`,
+          `• 'skip' to clear expiry`,
+          ``
+        ].join('\n');
+      
+        const localized = await generateMultiLanguageResponse(ask, languageCode, 'ask-price-expiry');
+        await sendMessageViaAPI(`whatsapp:${shopId}`, localized);
+      
+        // Defer result confirmation (we'll enrich after user confirms)
+        results.push({
+          product, quantity: update.quantity, unit: update.unit, action: update.action,
+          success: false, needsUserInput: true, awaiting: 'price+expiry'
+        });
+        continue; // wait for user reply
+      }
+      / === END NEW block ===
+
       // Use provided price or fall back to database price      
       // NEW: reliable price/value
         const finalPrice = (update.price ?? productPrice) || 0;
@@ -5441,6 +5719,20 @@ module.exports = async (req, res) => {
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   
   await handleRequest(req, res, response, requestId, requestStart);
+  
+// --- FINAL CATCH-ALL: If nothing above handled the message, send examples ---
+  if (!res.headersSent) {
+    await sendParseErrorWithExamples(From, detectedLanguage, requestId);
+    try {
+      const twiml = new twilio.twiml.MessagingResponse();
+      twiml.message(''); // minimal ack
+      res.type('text/xml').send(twiml.toString());
+    } catch (_) {
+      res.status(200).end();
+    }
+    trackResponseTime(startTime, requestId);
+    return;
+  }
 };
 
 async function handleRequest(req, res, response, requestId, requestStart) {  
@@ -6374,6 +6666,23 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           
           // Set user state to inventory mode
           const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
+        
+          // NEW: resolve pending combined corrections (price+expiry) BEFORE routing
+          const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
+          if (handledCombined) {
+            trackResponseTime(startTime, requestId);
+            // If your handler normally replies with TwiML, you can ACK with minimal TwiML here
+            // otherwise it's fine because we already sent via API.
+            try {
+              const twiml = new twilio.twiml.MessagingResponse();
+              twiml.message(''); // minimal ack
+              res.type('text/xml').send(twiml.toString());
+            } catch (_) {
+              res.status(200).end();
+            }
+            return;
+          }
+          
           await setUserState(From, 'inventory', { updates, detectedLanguage });
           
           // Process the updates
@@ -6539,6 +6848,21 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
     
     const shopId = From.replace('whatsapp:', '');
     const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
+    // NEW: resolve pending combined corrections (price+expiry) BEFORE routing
+          const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
+          if (handledCombined) {
+            trackResponseTime(startTime, requestId);
+            // If your handler normally replies with TwiML, you can ACK with minimal TwiML here
+            // otherwise it's fine because we already sent via API.
+            try {
+              const twiml = new twilio.twiml.MessagingResponse();
+              twiml.message(''); // minimal ack
+              res.type('text/xml').send(twiml.toString());
+            } catch (_) {
+              res.status(200).end();
+            }
+            return;
+          }
     const results = await updateMultipleInventory(shopId, inventoryUpdates, detectedLanguage);
     
     let message = '✅ Updates processed:\n\n';
