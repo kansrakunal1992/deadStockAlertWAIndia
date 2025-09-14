@@ -4326,7 +4326,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     if (updates.length === 0) {
       console.log(`[${requestId}] Rejected: No valid inventory updates`);
       await sendSystemMessage(
-        'Please send inventory updates only. Examples: "10 Parle-G sold", "5kg sugar purchased", "2 boxes Maggi bought". You can send multiple updates in one message!',
+        'Please send inventory updates only. Examples: "10 Parle-G sold at 10/packet exp 11/12/25", "5kg sugar purchased at 20/kg exp 14/11", "2 boxes Maggi bought at 22/packet exp 11/12/2025". You can send multiple updates in one message!',
         from,
         detectedLanguage,
         requestId,
@@ -6680,7 +6680,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       // Send welcome message with examples - no input method selection
       const welcomeMessage = await generateMultiLanguageResponse(
         `Welcome! I'm ready for your inventory update. You can send:
-          • Voice or Text message: "5kg sugar purchased at 20rs/kg", "10 Parle-G sold at 10rs/packet"
+          • Voice or Text message: "5kg sugar purchased at 20rs/kg exp 11/12", "10 Parle-G sold at 10rs/packet exp 12/11/2025"
           • Get an automated invoice pdf to send to customer upon a sale
           • Get instant summary: "summary"
           • Get detailed summary: "full summary"
@@ -7562,8 +7562,8 @@ async function sendAuthSuccessResponse(From, user, requestId) {
 Welcome${user.name ? ' ' + user.name : ''}! You are now authorized to use the inventory system.
 
 You can now send inventory updates like:
-• "10 Parle-G sold"
-• "5kg sugar purchased"
+• "10 Parle-G sold at 11/packet exp 22/11/2025"
+• "5kg sugar purchased at 40/kg exp 11/12"
 
 Your authentication code is: *${user.authCode}*
 Please save this code for future use.`;
