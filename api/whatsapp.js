@@ -988,7 +988,7 @@ function parseExpiryTextToISO(text, baseISO = null) {
   const raw = String(text).trim().toLowerCase();
   const base = baseISO ? new Date(baseISO) : new Date();
 
-  // Relative patterns like +7d, +3m, +1y
+  // Relative +7d / +3m / +1y
   const rel = raw.match(/^\+(\d+)\s*([dmy])$/i);
   if (rel) {
     const n = parseInt(rel[1], 10);
@@ -997,24 +997,24 @@ function parseExpiryTextToISO(text, baseISO = null) {
     if (unit === 'd') d.setDate(d.getDate() + n);
     if (unit === 'm') d.setMonth(d.getMonth() + n);
     if (unit === 'y') d.setFullYear(d.getFullYear() + n);
+    d.setUTCHours(0,0,0,0);
     return d.toISOString();
   }
 
-  // dd-mm[-yy|yyyy] or dd/mm[/yy|yyyy]
-  const dm = raw.match(/^(\d{1,2})\/\-\.(?:\/\-\.)?$/);
-  if (dm) {
-    let [_, dd, mm, yy] = dm;
-    const day = Math.min(31, parseInt(dd, 10));
-    const mon = Math.max(1, Math.min(12, parseInt(mm, 10))) - 1;
-    let year = (yy ? parseInt(yy, 10) : base.getFullYear());
-    if (yy && yy.length === 2) {
-      year = 2000 + year; // simple pivot
-    }
+  // Absolute dd-mm, dd/mm, optionally with yy or yyyy
+  const abs = raw.match(/^(\d{1,2})\/-(?:\/-)?$/);
+  if (abs) {
+    const day = Math.min(31, parseInt(abs[1], 10));
+    const mon = Math.max(1, Math.min(12, parseInt(abs[2], 10))) - 1;
+    let year = abs[3] ? parseInt(abs[3], 10) : base.getFullYear();
+    if (abs[3] && abs[3].length === 2) year = 2000 + year; // simple pivot
     const d = new Date(Date.UTC(year, mon, day, 0, 0, 0, 0));
     return d.toISOString();
   }
+
   return null;
 }
+
 
 // If an expiry ends up before the purchase date (e.g., user typed 14/11/2024 while today is 2025),
 // bump the year until it is >= base date (max 2 bumps) and return ISO.
@@ -1163,7 +1163,22 @@ async function renderPurchaseExamples(language, requestId = 'examples') {
   return await generateMultiLanguageResponse(EXAMPLE_PURCHASE_EN, language ?? 'en', requestId);
 }
 
+
 async function sendParseErrorWithExamples(From, detectedLanguage, requestId, header = `Sorry, I couldn't understand that.`) {
+  // --- PATCH C: Short-circuit generic parse-error if we're awaiting user input (price/expiry) ---
+  try {
+    const shopId = String(From).replace('whatsapp:', '');
+    // Uses DB-backed state; already imported at top: getUserStateFromDB
+    const state = await getUserStateFromDB(shopId);
+    if (state && state.mode === 'awaitingPriceExpiry') {
+      console.log(`[${requestId}] Suppressing parse-error message; user state=${state.mode}`);
+      return; // Don't send the generic "Sorry..." while we're waiting for price/expiry reply
+    }
+  } catch (guardErr) {
+    console.warn(`[${requestId}] Pending-state guard failed:`, guardErr.message);
+    // fall through to normal parse-error behavior
+  }
+  // --- END PATCH C ---
   try {
     const examples = await renderPurchaseExamples(detectedLanguage, requestId + ':err-ex');
     const msg = await generateMultiLanguageResponse(
@@ -2589,7 +2604,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         // Defer result confirmation (we'll enrich after user confirms)
         results.push({
           product, quantity: update.quantity, unit: update.unit, action: update.action,
-          success: false, needsUserInput: true, awaiting: 'price+expiry'
+          success: false, needsUserInput: true, awaiting: 'price+expiry', error: 'awaiting user input: price and/or expiry', status: 'pending'
         });
         continue; // wait for user reply
       }
