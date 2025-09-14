@@ -4364,6 +4364,17 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         // Price prompt already sent; do not send "Updates processed".
         return res.send(response.toString());
       }
+    
+    // NEW: short-circuit when unified price+expiry flow is pending for all items
+      const allPendingUnified =
+        Array.isArray(results) &&
+        results.length > 0 &&
+        results.every(r => r?.awaiting === 'price+expiry' || r?.needsUserInput === true);
+      if (allPendingUnified) {
+        // The unified prompt was already sent from updateMultipleInventory(); just ACK Twilio
+        return res.send(response.toString());
+      }
+
 // Get user's preferred language for the response
      let userLanguage = detectedLanguage;
      try {
@@ -4393,9 +4404,13 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
           totalValue: r.totalValue
         })));
     
-        for (const result of results) {
-          // Skip only if needsPrice is explicitly true
-          if (result.needsPrice === true) {
+        for (const result of results) {          
+        // Skip if awaiting any user input (legacy price or unified price+expiry)
+          if (
+            result.needsPrice === true ||
+            result.needsUserInput === true ||
+            result.awaiting === 'price+expiry'
+          ) {
             console.log(`[Update ${shopId}] Skipping result that needs price:`, result.product);
             continue;
           }
@@ -4448,8 +4463,10 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
             } else if (result.action === 'remaining') {
               baseMessage += `• ${result.product}: ${result.quantity}${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
             }
-          } else {
-            baseMessage += `• ${result.product}: Error - ${result.error}\n`;
+          } else {          
+          // Defensive: avoid "Error - undefined"
+              const errText = result?.error ? String(result.error) : 'pending user input';
+              baseMessage += `• ${result.product}: Error - ${errText}\n`;
           }
         }
     
@@ -6383,6 +6400,16 @@ async function handleInventoryState(Body, From, state, requestId, res) {
         } catch (_) {}
         res.send('<Response></Response>');
         return;
+      }   
+    
+    // NEW: short-circuit when unified price+expiry flow is pending for all items
+      const allPendingUnified =
+        Array.isArray(results) &&
+        results.length > 0 &&
+        results.every(r => r?.awaiting === 'price+expiry' || r?.needsUserInput === true);
+      if (allPendingUnified) {
+        // The unified prompt was already sent from updateMultipleInventory(); just ACK Twilio
+        return res.send(response.toString());
       }
 
     let message = '✅ Updates processed:\n\n';
@@ -6786,6 +6813,17 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
                 return;
               }
 
+      
+    // NEW: short-circuit when unified price+expiry flow is pending for all items
+      const allPendingUnified =
+        Array.isArray(results) &&
+        results.length > 0 &&
+        results.every(r => r?.awaiting === 'price+expiry' || r?.needsUserInput === true);
+      if (allPendingUnified) {
+        // The unified prompt was already sent from updateMultipleInventory(); just ACK Twilio
+        return res.send(response.toString());
+      }
+    
       
       let message = '✅ Updates processed:\n\n';
       let successCount = 0;
