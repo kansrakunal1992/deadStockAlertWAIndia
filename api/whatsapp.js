@@ -1184,10 +1184,10 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
 
   // NEW (2.f): expiry <product> <date>
   // Accepted date formats: 20-09 | 20/09/2025 | +7d | +3m | +1y
-  let m = text.match(/^expiry\s+(.+?)\s+([0-9+\/\-]{3,})$/i);
-  if (m) {
-    const product = await translateProductName(m[1], requestId + ':expiry-cmd');
-    const iso = parseExpiryTextToISO(m[2]);
+  let m1 = text.match(/^expiry\s+(.+?)\s+([0-9+\/\-]{3,})$/i);
+  if (m1) {
+    const product = await translateProductName(m1[1], requestId + ':expiry-cmd');
+    const iso = parseExpiryTextToISO(m1[2]);
     if (!iso) {
       const msg = await generateMultiLanguageResponse(
         `Invalid date. Try: 20-09 | 20/09/2025 | +7d | +3m | +1y`,
