@@ -2559,7 +2559,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         });
         continue; // wait for user reply
       }
-      / === END NEW block ===
+      // === END NEW block ===
 
       // Use provided price or fall back to database price      
       // NEW: reliable price/value
