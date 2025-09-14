@@ -2539,7 +2539,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       const adjusted = bumpExpiryYearIfPast(providedExpiryISO, purchaseDateISO);
       if (adjusted) providedExpiryISO = adjusted;
     }
-    const expiryToUse = providedExpiryISO || autoExpiry || null;
+    expiryToUse = providedExpiryISO || autoExpiry || null;
 
     // Create batch now (with preferred expiry if available)
     const batchResult = await createBatchRecord({
