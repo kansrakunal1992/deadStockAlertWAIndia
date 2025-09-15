@@ -988,7 +988,7 @@ function parseExpiryTextToISO(text, baseISO = null) {
   const raw = String(text).trim().toLowerCase();
   const base = baseISO ? new Date(baseISO) : new Date();
 
-  // Relative +7d / +3m / +1y
+  // Relative: +7d / +3m / +1y
   const rel = raw.match(/^\+(\d+)\s*([dmy])$/i);
   if (rel) {
     const n = parseInt(rel[1], 10);
@@ -997,23 +997,24 @@ function parseExpiryTextToISO(text, baseISO = null) {
     if (unit === 'd') d.setDate(d.getDate() + n);
     if (unit === 'm') d.setMonth(d.getMonth() + n);
     if (unit === 'y') d.setFullYear(d.getFullYear() + n);
-    d.setUTCHours(0,0,0,0);
+    d.setUTCHours(0, 0, 0, 0);
     return d.toISOString();
   }
 
-  // Absolute dd-mm, dd/mm, optionally with yy or yyyy
+  // Absolute: dd-mm, dd/mm, optionally with yy or yyyy
   const abs = raw.match(/^(\d{1,2})\/-(?:\/-)?$/);
   if (abs) {
     const day = Math.min(31, parseInt(abs[1], 10));
     const mon = Math.max(1, Math.min(12, parseInt(abs[2], 10))) - 1;
     let year = abs[3] ? parseInt(abs[3], 10) : base.getFullYear();
-    if (abs[3] && abs[3].length === 2) year = 2000 + year; // simple pivot
+    if (abs[3] && abs[3].length === 2) year = 2000 + year; // pivot simple yy
     const d = new Date(Date.UTC(year, mon, day, 0, 0, 0, 0));
     return d.toISOString();
   }
 
   return null;
 }
+
 
 
 // If an expiry ends up before the purchase date (e.g., user typed 14/11/2024 while today is 2025),
@@ -1040,12 +1041,18 @@ function parsePriceAndExpiryFromText(text, baseISO = null) {
   const t = text.trim().toLowerCase();
   if (t === 'ok' || t === 'okay') { out.ok = true; return out; }
   if (t === 'skip') { out.skipExpiry = true; return out; }
-  // Common tokens "exp", "expiry", "expires"
+  // Common tokens "exp", "expiry", "expires" 
   const expToken = t.replace(/\b(expiry|expires?|exp)\b/gi, '').trim();
   const expiry = parseExpiryTextToISO(expToken, baseISO) || parseExpiryTextToISO(t, baseISO);
-  if (expiry) out.expiryISO = expiry;
-  // price: first decimal number in text
-  const priceMatch = text.replace(/[,]/g, '').match(/(?:₹|rs\.?\s*)?(-?\d+(?:\.\d+)?)/i);
+
+  if (expiry) out.expiryISO = expiry; 
+  // price: first decimal number in text (ignore any trailing "exp ..." segment)
+    const withoutExpiry = text
+      .replace(/\b(?:expiry|expires?|exp)\b[^0-9+]*([0-9/+\-]{3,})/gi, ' ')
+      .replace(/[,]/g, ' ')
+      .trim();
+    const priceMatch = withoutExpiry.match(/(?:₹|rs\.?)?\s*(-?\d+(?:\.\d+)?)/i);
+
   if (priceMatch) {
     const p = parseFloat(priceMatch[1]);
     if (Number.isFinite(p) && p > 0) out.price = p;
@@ -2226,9 +2233,9 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                 const unit = update.unit || 'pieces';
                 
                 // Use AI-parsed product directly - NO re-processing!
-                const product = String(update.product || '').trim();
-                const expiry = update.expiryDate ? parseExpiryTextToISO(update.expiryDate) : null;
-                
+                const product = String(update.product || '').trim();       
+                const expiry = update.expiryDate? (parseExpiryTextToISO(update.expiryDate, baseISO) || toAirtableDateTimeUTC(update.expiryDate)): null;
+  
                 return {
                   product: product,
                   quantity: Math.abs(quantity), // Always store positive quantity
@@ -2584,21 +2591,24 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             ? `I set expiry to ${formatDateForDisplay(autoExpiry)} from shelf-life.`
             : (isPerishable ? `No expiry set yet.` : ``);
       
-        const ask = [
-          `Got it ✅ ${product} ${update.quantity} ${update.unit}.`,
-          autoExpiryLine,
-          needsPrice ? `Price missing.` : `Price kept: ₹${purchasePrice}.`,
-          ``,
-          `Reply with **both** (any order):`,
-          `• ₹<price> and/or`,
-          `• exp <dd-mm> | <dd/mm/yyyy> | +7d | +3m | +1y`,
-          `Or reply:`,
-          `• 'ok' to keep current expiry${needsPrice ? ' (still need price)' : ''}`,
-          `• 'skip' to clear expiry`,
-          ``
-        ].join('\n');
-      
-        const localized = await generateMultiLanguageResponse(ask, languageCode, 'ask-price-expiry');
+        
+        // Tiny copy tweaks: say "both" only when both are missing
+          const needBoth = needsPrice && needsExpiryConfirmOrSet;
+          const promptLines = [
+            `Got it ✅ ${product} ${update.quantity} ${update.unit}.`,
+            autoExpiryLine,
+            needsPrice ? `Price missing.` : `Price kept: ₹${purchasePrice}.`,
+            ``,
+            needBoth ? `Reply with **both** (any order):` : `Reply with:`,
+            needsPrice ? `• ₹<price>` : null,
+            isPerishable ? `• exp <dd-mm> | <dd/mm/yyyy> | +7d | +3m | +1y` : null,
+            `Or reply:`,
+            `• 'ok' to keep current expiry${needsPrice ? ' (still need price)' : ''}`,
+            `• 'skip' to clear expiry`,
+            ``
+          ].filter(Boolean).join('\n');
+          const localized = await generateMultiLanguageResponse(promptLines, languageCode, 'ask-price-expiry');
+
         await sendMessageViaAPI(`whatsapp:${shopId}`, localized);
       
         // Defer result confirmation (we'll enrich after user confirms)
