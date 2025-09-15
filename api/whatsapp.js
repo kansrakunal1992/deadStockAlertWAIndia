@@ -1015,7 +1015,14 @@ function parseExpiryTextToISO(text, baseISO = null) {
   return null;
 }
 
-
+// Local fallback: normalize a date-like into an ISO date at midnight UTC
+function toISODateUTC(dateLike) {
+  if (!dateLike) return null;
+  const d = new Date(dateLike);
+  if (isNaN(d.getTime())) return null;
+  d.setUTCHours(0, 0, 0, 0);
+  return d.toISOString();
+}
 
 // If an expiry ends up before the purchase date (e.g., user typed 14/11/2024 while today is 2025),
 // bump the year until it is >= base date (max 2 bumps) and return ISO.
@@ -2235,9 +2242,10 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                 // Use AI-parsed product directly - NO re-processing!
                 const product = String(update.product || '').trim();             
                 // Use "now" as the base date for dd/mm or dd-mm inputs (so 15/12 -> 15/12/currentYear)
-                 const baseISO = new Date().toISOString();
+                 const baseISO = new Date().toISOString();            
+                 const baseISO = new Date().toISOString(); // so dd/mm uses current year
                  const expiry = update.expiryDate
-                   ? (parseExpiryTextToISO(update.expiryDate, baseISO) || toAirtableDateTimeUTC(update.expiryDate))
+                   ? (parseExpiryTextToISO(update.expiryDate, baseISO) || toISODateUTC(update.expiryDate))
                    : null;
                   
                 return {
@@ -2252,7 +2260,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                 };
               });
               } catch (parseError) {
-                console.error(`[${requestId}] Failed to parse AI response as JSON:`, parseError.message);
+                console.error(`[${requestId}] AI mapping error:`, parseError.message);
                 console.error(`[${requestId}] Raw AI response:`, content);
                 return null;
               }
