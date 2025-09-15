@@ -2886,22 +2886,33 @@ if (validBatches.length > 0) {
         }
       }
             
-       // NEW: Enrich outgoing item with price/value so renderer can show them
-        const enriched = {
+       
+          // NEW: Enrich outgoing item with price/value so renderer can show them
+          // Use a single effective price everywhere: message > DB > 0
+          const effectivePrice = Number(update.price ?? productPrice ?? 0);
+          const enriched = {
           product,
           quantity: update.quantity,
           unit: update.unit,
           action: update.action,
-          ...result,
-          purchasePrice: update.action === 'purchased' ? (productPrice || finalPrice || 0) : undefined,
-          salePrice:     update.action === 'sold'      ? (productPrice || finalPrice || 0) : undefined,
-          totalValue:    (update.action === 'purchased' || update.action === 'sold') ? (productPrice * Math.abs(update.quantity)) : 0,
-          priceSource,
-          priceUpdated:  update.action === 'purchased' && (productPrice > 0)
-        };      
-        // Debug line to verify at runtime (you can remove later)
-        console.log(`[Update ${shopId} - ${product}] priceSource=${priceSource}, purchasePrice=${enriched.purchasePrice ?? '-'}, salePrice=${enriched.salePrice ?? '-'}, totalValue=${enriched.totalValue}`);
-
+          ...result,       
+          purchasePrice: update.action === 'purchased' ? effectivePrice : undefined,
+          salePrice: update.action === 'sold' ? effectivePrice : undefined,
+          totalValue: (update.action === 'purchased' || update.action === 'sold') ? (effectivePrice * Math.abs(update.quantity)): 0,
+          priceSource,        
+// mark updated only when we actually changed it from catalog
+          priceUpdated: update.action === 'purchased'
+            && (Number(update.price) > 0)
+            && (Number(update.price) !== Number(productPrice))
+        };          
+      // Debug line to verify at runtime (you can remove later)
+        console.log(
+          `[Update ${shopId} - ${product}] priceSource=${priceSource}, `
+          + `purchasePrice=${enriched.purchasePrice ?? '-'}, `
+          + `salePrice=${enriched.salePrice ?? '-'}, `
+          + `totalValue=${enriched.totalValue}`
+        );
+      
       results.push(enriched);
     } catch (error) {
       console.error(`[Update ${shopId} - ${update.product}] Error:`, error.message);
