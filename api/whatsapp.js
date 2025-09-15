@@ -4477,15 +4477,6 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
        console.warn(`[${requestId}] Failed to get user preference:`, error.message);
      }
  
-        // Check if all items are pending user input
-        const allPendingUnified = Array.isArray(results) && results.length > 0 && 
-          results.every(r => r?.awaiting === 'price+expiry' || r?.needsUserInput === true);
-        
-        if (allPendingUnified) {
-          // Don't send the "Updates processed" message yet
-          // The prompt for price/expiry has already been sent
-          return results;
-        }
         
         // Only send the summary message if there are non-pending results
         const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
