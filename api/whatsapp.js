@@ -2358,9 +2358,21 @@ function parseSingleUpdate(transcript) {
   let product = extractProduct(transcript);
   let quantity = 0;
   let unit = '';
-  let unitMultiplier = 1;
+  let unitMultiplier = 1; 
+// ① Prefer a number attached to a known unit (e.g., "5 packets" or "packets 5")
+  const qtyUnitRx = /\b(\d+)\s*(packets?|boxes?|kg|kgs?|kilo|kilograms?|g|grams?|ml|mls?|ltr|l|liters?|litres?|pieces?|piece)\b|\b(packets?|boxes?|kg|kgs?|kilo|kilograms?|g|grams?|ml|mls?|ltr|l|liters?|litres?|pieces?|piece)\s*(\d+)\b/i;
+  const qum = transcript.toLowerCase().match(qtyUnitRx);
+  if (qum) {
+    if (qum[1]) { // "<qty> <unit>"
+      quantity = parseInt(qum[1], 10);
+      unit = qum[2];
+    } else {      // "<unit> <qty>"
+      quantity = parseInt(qum[4], 10);
+      unit = qum[3];
+    }
+  }
   // Try to match digits first (including Devanagari digits)
-  const digitMatch = transcript.match(regexPatterns.digits);
+  const digitMatch = quantity ? null : transcript.match(regexPatterns.digits);
   if (digitMatch) {
     // Convert Devanagari digits to Arabic digits
     let digitStr = digitMatch[1];
@@ -2368,7 +2380,7 @@ function parseSingleUpdate(transcript) {
     quantity = parseInt(digitStr) || 0;
   } else {
     // Try to match number words
-    const words = transcript.toLowerCase().split(/\s+/);
+    const words = quantity ? [] : transcript.toLowerCase().split(/\s+/);
     for (const word of words) {
       if (numberWords[word]) {
         quantity = numberWords[word];
@@ -2376,14 +2388,16 @@ function parseSingleUpdate(transcript) {
       }
     }
   }
-  // Extract units - prioritize common units
-  for (const [unitName, multiplier] of Object.entries(units)) {
-    if (transcript.toLowerCase().includes(unitName)) {
-      unit = unitName;
-      unitMultiplier = multiplier;
-      break;
+  // Extract units - prioritize common units  
+  if (!unit) {
+      for (const [unitName, multiplier] of Object.entries(units)) {
+        if (transcript.toLowerCase().includes(unitName)) {
+          unit = unitName;
+          unitMultiplier = multiplier;
+          break;
+        }
+      }
     }
-  }
   // Apply unit multiplier
   quantity = quantity * unitMultiplier;
   // Improved action detection with priority for purchase/sold over remaining
