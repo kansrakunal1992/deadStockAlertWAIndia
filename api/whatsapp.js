@@ -1007,14 +1007,15 @@ function parseExpiryTextToISO(text, baseISO = null) {
     return d.toISOString();
   }
   
-  // Absolute: dd-mm, dd/mm, dd/mm/yyyy
-  const abs = raw.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/);
+  // Absolute: dd-mm, dd/mm, dd/mm/yyyy (more specific to avoid price confusion)
+  const abs = raw.match(/^(?:exp|expiry|expires?)?\s*(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/i);
   if (abs) {
     const day = Math.min(31, parseInt(abs[1], 10));
     const mon = Math.max(1, Math.min(12, parseInt(abs[2], 10))) - 1;
     let year = abs[3] ? parseInt(abs[3], 10) : base.getFullYear();
     if (abs[3] && abs[3].length === 2) year = 2000 + year; // pivot for 2-digit years
     const d = new Date(Date.UTC(year, mon, day, 0, 0, 0, 0));
+    console.log(`[parsePriceAndExpiryFromText] Parsed expiry date: ${d.toISOString()} from: "${raw}"`);
     return d.toISOString();
   }
   
@@ -1059,16 +1060,44 @@ function parsePriceAndExpiryFromText(text, baseISO = null) {
   const expiry = parseExpiryTextToISO(expToken, baseISO) || parseExpiryTextToISO(t, baseISO);
 
   if (expiry) out.expiryISO = expiry; 
-  // price: first decimal number in text (ignore any trailing "exp ..." segment)
-    const withoutExpiry = text
-      .replace(/\b(?:expiry|expires?|exp)\b[^0-9+]*([0-9/+\-]{3,})/gi, ' ')
-      .replace(/[,]/g, ' ')
-      .trim();
-    const priceMatch = withoutExpiry.match(/(?:₹|rs\.?)?\s*(-?\d+(?:\.\d+)?)/i);
-
+  // price: first decimal number in text (more careful parsing to avoid date confusion)
+  const withoutExpiry = text
+    // Remove expiry-related text more carefully
+    .replace(/\b(?:expiry|expires?|exp)\s+[0-9\/\-]+/gi, ' ')  // Remove "exp 11/12" patterns
+    .replace(/\b(?:expiry|expires?|exp)\b[^0-9]*/gi, ' ')     // Remove other expiry mentions
+    .replace(/[,]/g, ' ')
+    .trim();
+  
+  // Try to find price with currency symbol first (more specific pattern)
+  let priceMatch = withoutExpiry.match(/(?:₹|rs\.?)\s*(\d+(?:\.\d+)?)/i);
+  
+  // If no currency symbol found, look for standalone numbers (but avoid date-like patterns)
+  if (!priceMatch) {
+    // Split by spaces and check each token
+    const tokens = withoutExpiry.split(/\s+/);
+    for (const token of tokens) {
+      // Skip if token looks like a date (contains / or -)
+      if (token.includes('/') || token.includes('-')) continue;
+      
+      // Check if token is a valid number
+      const numMatch = token.match(/^(\d+(?:\.\d+)?)$/);
+      if (numMatch) {
+        const p = parseFloat(numMatch[1]);
+        // Only consider it a price if it's reasonable (not too large to be a date)
+        if (Number.isFinite(p) && p > 0 && p < 10000) {
+          priceMatch = [token, p.toString()];
+          break;
+        }
+      }
+    }
+  }
+  
   if (priceMatch) {
     const p = parseFloat(priceMatch[1]);
-    if (Number.isFinite(p) && p > 0) out.price = p;
+    if (Number.isFinite(p) && p > 0) {
+      out.price = p;
+      console.log(`[parsePriceAndExpiryFromText] Extracted price: ${p} from: "${priceMatch[0]}"`);
+    }
   }
   return out;
 }
@@ -4448,93 +4477,104 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
        console.warn(`[${requestId}] Failed to get user preference:`, error.message);
      }
  
-        // Create base message in English first
-        let baseMessage = '✅ Updates processed:\n\n';
-        let successCount = 0;
-        let hasSales = false;
-        let totalSalesValue = 0;
-        let totalPurchaseValue = 0;
-    
-        // Debug: Log all results before processing
-        console.log(`[Update ${shopId}] All results:`, results.map(r => ({
-          product: r.product,
-          action: r.action,
-          success: r.success,
-          needsPrice: r.needsPrice,
-          purchasePrice: r.purchasePrice,
-          salePrice: r.salePrice,
-          totalValue: r.totalValue
-        })));
-    
-        for (const result of results) {          
-        // Skip if awaiting any user input (legacy price or unified price+expiry)
-          if (
-            result.needsPrice === true ||
-            result.needsUserInput === true ||
-            result.awaiting === 'price+expiry'
-          ) {
-            console.log(`[Update ${shopId}] Skipping result that needs price:`, result.product);
-            continue;
-          }
-          
-          if (result.success) {
-            successCount++;
-            const unitText = result.unit ? ` ${result.unit}` : '';
-    
-            // Calculate value for this result
-            let value = 0;
-            if (result.action === 'purchased' && result.purchasePrice && result.purchasePrice > 0) {
-              value = Math.abs(result.quantity) * result.purchasePrice;
-              console.log(`[Update ${shopId}] Purchase value calculation: ${Math.abs(result.quantity)} * ${result.purchasePrice} = ${value}`);
-            } else if (result.action === 'sold' && result.salePrice && result.salePrice > 0) {
-              value = Math.abs(result.quantity) * result.salePrice;
-              console.log(`[Update ${shopId}] Sale value calculation: ${Math.abs(result.quantity)} * ${result.salePrice} = ${value}`);
-            }
-    
-            // Accumulate totals
-            if (result.action === 'purchased') {
-              totalPurchaseValue += value;
-              console.log(`[Update ${shopId}] Added to totalPurchaseValue: ${totalPurchaseValue}`);
-            } else if (result.action === 'sold') {
-              totalSalesValue += value;
-              console.log(`[Update ${shopId}] Added to totalSalesValue: ${totalSalesValue}`);
-            }
-    
-            // NEW: show "Price updated" line for purchases that carried a rate
-            if (result.action === 'purchased' && (result.purchasePrice || 0) > 0) {
-             baseMessage += `Price updated: ${result.product} at ₹${(result.purchasePrice).toFixed(2)}/${singularize(result.unit)}\n`;
-            }
-    
-            // Format based on action type
-            if (result.action === 'purchased') {
-              baseMessage += `• ${result.product}: ${result.quantity}${unitText} purchased (Stock: ${result.newQuantity}${unitText})`;
-              if (value > 0) {
-                baseMessage += ` (Value: ₹${value.toFixed(2)})`;
-              }
-              baseMessage += `\n`;
-              if (result.batchDate) {
-                baseMessage += `  Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
-              }
-            } else if (result.action === 'sold') {
-              baseMessage += `• ${result.product}: ${Math.abs(result.quantity)}${unitText} sold (Stock: ${result.newQuantity}${unitText})`;
-              if (value > 0) {
-                baseMessage += ` (Value: ₹${value.toFixed(2)})`;
-              }
-              baseMessage += `\n`;
-              hasSales = true;
-            } else if (result.action === 'remaining') {
-              baseMessage += `• ${result.product}: ${result.quantity}${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
-            }
-          } else {          
-          // Defensive: avoid "Error - undefined"
-              const errText = result?.error ? String(result.error) : 'pending user input';
-              baseMessage += `• ${result.product}: Error - ${errText}\n`;
-          }
+        // Check if all items are pending user input
+        const allPendingUnified = Array.isArray(results) && results.length > 0 && 
+          results.every(r => r?.awaiting === 'price+expiry' || r?.needsUserInput === true);
+        
+        if (allPendingUnified) {
+          // Don't send the "Updates processed" message yet
+          // The prompt for price/expiry has already been sent
+          return results;
         }
-    
-        // Calculate the total number of processed updates (excluding pending ones)
+        
+        // Only send the summary message if there are non-pending results
         const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
-        baseMessage += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
+        if (totalProcessed > 0) {
+          // Create base message in English first
+          let baseMessage = '✅ Updates processed:\n\n';
+          let successCount = 0;
+          let hasSales = false;
+          let totalSalesValue = 0;
+          let totalPurchaseValue = 0;
+        
+          // Debug: Log all results before processing
+          console.log(`[Update ${shopId}] All results:`, results.map(r => ({
+            product: r.product,
+            action: r.action,
+            success: r.success,
+            needsPrice: r.needsPrice,
+            purchasePrice: r.purchasePrice,
+            salePrice: r.salePrice,
+            totalValue: r.totalValue
+          })));
+        
+          for (const result of results) {          
+            // Skip items that are still pending user input
+            if (result.needsPrice === true || result.needsUserInput === true || result.awaiting === 'price+expiry') {
+              console.log(`[Update ${shopId}] Skipping result that needs input:`, result.product);
+              continue;
+            }
+            
+            if (result.success) {
+              successCount++;
+              const unitText = result.unit ? ` ${result.unit}` : '';
+        
+              // Calculate value for this result
+              let value = 0;
+              if (result.action === 'purchased' && result.purchasePrice && result.purchasePrice > 0) {
+                value = Math.abs(result.quantity) * result.purchasePrice;
+                console.log(`[Update ${shopId}] Purchase value calculation: ${Math.abs(result.quantity)} * ${result.purchasePrice} = ${value}`);
+              } else if (result.action === 'sold' && result.salePrice && result.salePrice > 0) {
+                value = Math.abs(result.quantity) * result.salePrice;
+                console.log(`[Update ${shopId}] Sale value calculation: ${Math.abs(result.quantity)} * ${result.salePrice} = ${value}`);
+              }
+        
+              // Accumulate totals
+              if (result.action === 'purchased') {
+                totalPurchaseValue += value;
+                console.log(`[Update ${shopId}] Added to totalPurchaseValue: ${totalPurchaseValue}`);
+              } else if (result.action === 'sold') {
+                totalSalesValue += value;
+                console.log(`[Update ${shopId}] Added to totalSalesValue: ${totalSalesValue}`);
+              }
+        
+              // NEW: show "Price updated" line for purchases that carried a rate
+              if (result.action === 'purchased' && (result.purchasePrice || 0) > 0) {
+               baseMessage += `Price updated: ${result.product} at ₹${(result.purchasePrice).toFixed(2)}/${singularize(result.unit)}\n`;
+              }
+        
+              // Format based on action type
+              if (result.action === 'purchased') {
+                baseMessage += `• ${result.product}: ${result.quantity}${unitText} purchased (Stock: ${result.newQuantity}${unitText})`;
+                if (value > 0) {
+                  baseMessage += ` (Value: ₹${value.toFixed(2)})`;
+                }
+                baseMessage += `\n`;
+                if (result.batchDate) {
+                  baseMessage += `  Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
+                }
+              } else if (result.action === 'sold') {
+                baseMessage += `• ${result.product}: ${Math.abs(result.quantity)}${unitText} sold (Stock: ${result.newQuantity}${unitText})`;
+                if (value > 0) {
+                  baseMessage += ` (Value: ₹${value.toFixed(2)})`;
+                }
+                baseMessage += `\n`;
+                hasSales = true;
+              } else if (result.action === 'remaining') {
+                baseMessage += `• ${result.product}: ${result.quantity}${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
+              }
+            } else {          
+            // Defensive: avoid "Error - undefined"
+                const errText = result?.error ? String(result.error) : 'pending user input';
+                baseMessage += `• ${result.product}: Error - ${errText}\n`;
+            }
+          }
+        
+          baseMessage += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
+          
+          const formattedResponse = await generateMultiLanguageResponse(baseMessage, detectedLanguage, requestId);
+          await sendMessageViaAPI(From, formattedResponse);
+        }
         
         // Debug: Log final totals
         console.log(`[Update ${shopId}] Final totals - totalSalesValue: ${totalSalesValue}, totalPurchaseValue: ${totalPurchaseValue}`);
