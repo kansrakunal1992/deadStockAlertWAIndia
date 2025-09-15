@@ -2241,8 +2241,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                 
                 // Use AI-parsed product directly - NO re-processing!
                 const product = String(update.product || '').trim();             
-                // Use "now" as the base date for dd/mm or dd-mm inputs (so 15/12 -> 15/12/currentYear)
-                 const baseISO = new Date().toISOString();            
+                // Use "now" as the base date for dd/mm or dd-mm inputs (so 15/12 -> 15/12/currentYear)           
                  const baseISO = new Date().toISOString(); // so dd/mm uses current year
                  const expiry = update.expiryDate
                    ? (parseExpiryTextToISO(update.expiryDate, baseISO) || toISODateUTC(update.expiryDate))
