@@ -2233,9 +2233,13 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                 const unit = update.unit || 'pieces';
                 
                 // Use AI-parsed product directly - NO re-processing!
-                const product = String(update.product || '').trim();       
-                const expiry = update.expiryDate? (parseExpiryTextToISO(update.expiryDate, baseISO) || toAirtableDateTimeUTC(update.expiryDate)): null;
-  
+                const product = String(update.product || '').trim();             
+                // Use "now" as the base date for dd/mm or dd-mm inputs (so 15/12 -> 15/12/currentYear)
+                 const baseISO = new Date().toISOString();
+                 const expiry = update.expiryDate
+                   ? (parseExpiryTextToISO(update.expiryDate, baseISO) || toAirtableDateTimeUTC(update.expiryDate))
+                   : null;
+                  
                 return {
                   product: product,
                   quantity: Math.abs(quantity), // Always store positive quantity
