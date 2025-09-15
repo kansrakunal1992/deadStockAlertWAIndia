@@ -994,11 +994,29 @@ function parseExpiryTextToISO(text, baseISO = null) {
   const raw = String(text).trim().toLowerCase();
   const base = baseISO ? new Date(baseISO) : new Date();
   
-  // Use the robust parseExpiryTextToISO function for all expiry parsing
-  const expiry = parseExpiryTextToISO(raw, baseISO);
-  if (expiry) {
-    out.expiryISO = expiry;
-    console.log(`[parsePriceAndExpiryFromText] Parsed expiry using parseExpiryTextToISO: ${expiry}`);
+  // Relative: +7d / +3m / +1y
+  const rel = raw.match(/^\+(\d+)\s*([dmy])$/i);
+  if (rel) {
+    const n = parseInt(rel[1], 10);
+    const unit = rel[2].toLowerCase();
+    const d = new Date(base);
+    if (unit === 'd') d.setDate(d.getDate() + n);
+    if (unit === 'm') d.setMonth(d.getMonth() + n);
+    if (unit === 'y') d.setFullYear(d.getFullYear() + n);
+    d.setUTCHours(0, 0, 0, 0);
+    return d.toISOString();
+  }
+  
+  // Absolute: dd-mm, dd/mm, dd/mm/yyyy (more specific to avoid price confusion)
+  const abs = raw.match(/^(?:exp|expiry|expires?)?\s*(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/i);
+  if (abs) {
+    const day = Math.min(31, parseInt(abs[1], 10));
+    const mon = Math.max(1, Math.min(12, parseInt(abs[2], 10))) - 1;
+    let year = abs[3] ? parseInt(abs[3], 10) : base.getFullYear();
+    if (abs[3] && abs[3].length === 2) year = 2000 + year; // pivot for 2-digit years
+    const d = new Date(Date.UTC(year, mon, day, 0, 0, 0, 0));
+    console.log(`[parsePriceAndExpiryFromText] Parsed expiry date: ${d.toISOString()} from: "${raw}"`);
+    return d.toISOString();
   }
   
   return null;
@@ -1035,43 +1053,20 @@ function parsePriceAndExpiryFromText(text, baseISO = null) {
   const out = { price: null, expiryISO: null, ok: false, skipExpiry: false };
   if (!text) return out;
   const t = text.trim().toLowerCase();
-  if (t === 'ok' || t === 'okay') { 
-    out.ok = true; 
-    return out; 
-  }
-  if (t === 'skip' || t === 'no expiry' || t === 'without expiry') { 
-    out.skipExpiry = true; 
-    return out; 
-  }
-  
-  // Handle common expiry indicators without dates
-  if (/^(?:exp|expiry|expires?)\s*$/i.test(t)) {
-    out.ok = true; // User confirmed expiry but didn't provide date
-    return out;
-  }
+  if (t === 'ok' || t === 'okay') { out.ok = true; return out; }
+  if (t === 'skip') { out.skipExpiry = true; return out; }
   // Common tokens "exp", "expiry", "expires" 
   const expToken = t.replace(/\b(expiry|expires?|exp)\b/gi, '').trim();
   const expiry = parseExpiryTextToISO(expToken, baseISO) || parseExpiryTextToISO(t, baseISO);
 
   if (expiry) out.expiryISO = expiry; 
   // price: first decimal number in text (more careful parsing to avoid date confusion)
-  // Remove expiry-related text more comprehensively
-  let withoutExpiry = text
-    // Remove explicit expiry patterns with dates
-    .replace(/\b(?:expiry|expires?|exp)\s+[0-9\/\-]+(?:\s*(?:days?|months?|years?|d|m|y))?/gi, ' ')
-    // Remove relative expiry patterns
-    .replace(/\b(?:expiry|expires?|exp)\s*\+[0-9]+\s*(?:days?|months?|years?|d|m|y)/gi, ' ')
-    // Remove standalone expiry keywords
-    .replace(/\b(?:expiry|expires?|exp)\b/gi, ' ')
-    // Remove common date patterns that might be confused with prices
-    .replace(/\b\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\b/g, ' ')
-    // Clean up punctuation and extra spaces
+  const withoutExpiry = text
+    // Remove expiry-related text more carefully
+    .replace(/\b(?:expiry|expires?|exp)\s+[0-9\/\-]+/gi, ' ')  // Remove "exp 11/12" patterns
+    .replace(/\b(?:expiry|expires?|exp)\b[^0-9]*/gi, ' ')     // Remove other expiry mentions
     .replace(/[,]/g, ' ')
-    .replace(/\s+/g, ' ')
     .trim();
-  
-  console.log(`[parsePriceAndExpiryFromText] Original text: "${text}"`);
-  console.log(`[parsePriceAndExpiryFromText] Cleaned for price parsing: "${withoutExpiry}"`);
   
   // Try to find price with currency symbol first (more specific pattern)
   let priceMatch = withoutExpiry.match(/(?:₹|rs\.?)\s*(\d+(?:\.\d+)?)/i);
@@ -4460,6 +4455,17 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         return res.send(response.toString());
       }
     
+    // NEW: short-circuit when unified price+expiry flow is pending for all items
+      const allPendingUnified =
+        Array.isArray(results) &&
+        results.length > 0 &&
+        results.every(r => r?.awaiting === 'price+expiry' || r?.needsUserInput === true);
+      if (allPendingUnified) {
+        // The unified prompt was already sent from updateMultipleInventory(); just ACK Twilio
+        handledRequests.add(requestId);
+        return res.send(response.toString());
+      }
+
 // Get user's preferred language for the response
      let userLanguage = detectedLanguage;
      try {
@@ -4471,16 +4477,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
        console.warn(`[${requestId}] Failed to get user preference:`, error.message);
      }
  
-      // Check if all items are pending user input
-      const allPendingUnified = Array.isArray(results) && results.length > 0 && 
-        results.every(r => r?.awaiting === 'price+expiry' || r?.needsUserInput === true);
-      
-      if (allPendingUnified) {
-        // Don't send the "Updates processed" message yet
-        // The prompt for price/expiry has already been sent
-        return results;
-      }
-    
+        
         // Only send the summary message if there are non-pending results
         const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
         if (totalProcessed > 0) {
