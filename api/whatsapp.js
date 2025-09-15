@@ -659,6 +659,11 @@ const responseTimes = {
   max: 0
 };
 
+// --- Handled/apology guard: track per-request success to prevent late apologies ---
+// If a requestId is added here, any later call to sendParseErrorWithExamples() with the
+// same requestId will be suppressed (no apology will be sent).
+const handledRequests = new Set();
+
 // Cache implementations
 const languageCache = new Map();
 const productMatchCache = new Map();
@@ -1178,7 +1183,15 @@ async function renderPurchaseExamples(language, requestId = 'examples') {
 }
 
 
-async function sendParseErrorWithExamples(From, detectedLanguage, requestId, header = `Sorry, I couldn't understand that.`) {
+async function sendParseErrorWithExamples(From, detectedLanguage, requestId, header = `Sorry, I couldn't understand that.`) {  
+  // Handled guard: if this request already replied anywhere, don't send apology
+  try {
+    if (handledRequests.has(requestId)) {
+      console.log(`[${requestId}] Suppressing parse-error: request already handled`);
+      return;
+    }
+  } catch (_) {}
+
   // --- PATCH C: Short-circuit generic parse-error if we're awaiting user input (price/expiry) ---
   try {
     const shopId = String(From).replace('whatsapp:', '');
@@ -4355,11 +4368,13 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       // send via API to avoid Twilio body-length issues; then ack Twilio
       await sendMessageViaAPI(from, msg);
       response.message('✅ Short summary sent.');
+      handledRequests.add(requestId);
       return res.send(response.toString());
     }
     if (intent === 'full summary') {
       await processShopSummary(shopId); // Sends Nativeglish itself
       response.message('✅ Full summary sent.');
+      handledRequests.add(requestId);
       return res.send(response.toString());
     }
 
@@ -4374,6 +4389,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         requestId,
         response
       );
+      handledRequests.add(requestId);
       return res.send(response.toString());
     }
     console.log(`[${requestId}] [7] Testing Airtable connection...`);
@@ -4387,6 +4403,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         requestId,
         response
       );
+      handledRequests.add(requestId);
       return res.send(response.toString());
     }
     console.log(`[${requestId}] [8] Updating inventory for ${updates.length} items...`);
@@ -4404,6 +4421,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
           });
         } catch (_) {}
         // Price prompt already sent; do not send "Updates processed".
+        handledRequests.add(requestId);
         return res.send(response.toString());
       }
     
@@ -4414,6 +4432,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         results.every(r => r?.awaiting === 'price+expiry' || r?.needsUserInput === true);
       if (allPendingUnified) {
         // The unified prompt was already sent from updateMultipleInventory(); just ACK Twilio
+        handledRequests.add(requestId);
         return res.send(response.toString());
       }
 
@@ -4546,7 +4565,8 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
      const translatedMessage = await generateMultiLanguageResponse(baseMessage, userLanguage, requestId);
      // Send the message
     response.message(translatedMessage);
-     return res.send(response.toString()); 
+    handledRequests.add(requestId);
+    return res.send(response.toString()); 
   }
 catch (error) {
     console.error(`[${requestId}] Error processing confirmed transcription:`, error.message);
@@ -4567,6 +4587,7 @@ catch (error) {
       requestId
     );
     response.message(errorMessage);
+    handledRequests.add(requestId);
     return res.send(response.toString());
   }
 }
