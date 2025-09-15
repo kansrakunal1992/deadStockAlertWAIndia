@@ -857,7 +857,9 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
 
   const data = state.data || {};
   const { batchId, product, unit, quantity, purchaseDate, autoExpiry, needsPrice, isPerishable } = data;
-  const parsed = parsePriceAndExpiryFromText(Body, purchaseDate);
+  // Extract just the date part, removing any "exp" prefix
+  const dateText = Body.replace(/^(exp|expiry|expires?)\s*/i, '').trim();
+  const parsed = parsePriceAndExpiryFromText(dateText, purchaseDate);
 
   
   // If user gave an expiry in the past, bump year forward relative to the purchase date
@@ -987,12 +989,11 @@ function formatDateForDisplay(date) {
     return date;
 }
 
-// Parse "20-09", "20/09/2025", "20-09-25", "+7d", "+3m", "+1y" -> ISO
 function parseExpiryTextToISO(text, baseISO = null) {
   if (!text) return null;
   const raw = String(text).trim().toLowerCase();
   const base = baseISO ? new Date(baseISO) : new Date();
-
+  
   // Relative: +7d / +3m / +1y
   const rel = raw.match(/^\+(\d+)\s*([dmy])$/i);
   if (rel) {
@@ -1005,18 +1006,18 @@ function parseExpiryTextToISO(text, baseISO = null) {
     d.setUTCHours(0, 0, 0, 0);
     return d.toISOString();
   }
-
-  // Absolute: dd-mm, dd/mm, optionally with yy or yyyy
-  const abs = raw.match(/^(\d{1,2})\/-(?:\/-)?$/);
+  
+  // Absolute: dd-mm, dd/mm, dd/mm/yyyy
+  const abs = raw.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/);
   if (abs) {
     const day = Math.min(31, parseInt(abs[1], 10));
     const mon = Math.max(1, Math.min(12, parseInt(abs[2], 10))) - 1;
     let year = abs[3] ? parseInt(abs[3], 10) : base.getFullYear();
-    if (abs[3] && abs[3].length === 2) year = 2000 + year; // pivot simple yy
+    if (abs[3] && abs[3].length === 2) year = 2000 + year; // pivot for 2-digit years
     const d = new Date(Date.UTC(year, mon, day, 0, 0, 0, 0));
     return d.toISOString();
   }
-
+  
   return null;
 }
 
@@ -4531,7 +4532,9 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
           }
         }
     
-        baseMessage += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+        // Calculate the total number of processed updates (excluding pending ones)
+        const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
+        baseMessage += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
         
         // Debug: Log final totals
         console.log(`[Update ${shopId}] Final totals - totalSalesValue: ${totalSalesValue}, totalPurchaseValue: ${totalPurchaseValue}`);
@@ -5300,7 +5303,8 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           }
         }
         
-        message += `\n✅ Successfully updated ${successCount} of ${parsedUpdates.length} items`;
+        const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
+        message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
         
         const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
         await sendMessageViaAPI(From, formattedResponse);
@@ -5707,7 +5711,8 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         }
       }
       
-      message += `\n✅ Successfully updated ${successCount} of ${parsedUpdates.length} items`;
+      const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
+      message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
       
       const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
       await sendMessageViaAPI(From, formattedResponse);
@@ -6056,32 +6061,48 @@ async function handleRequest(req, res, response, requestId, requestStart) {
       switch (currentState.mode) {
         case 'greeting':
           await handleGreetingResponse(Body, From, currentState, requestId, res);
+          handledRequests.add(requestId);
+          res.headersSent = true;
           return;
           
         case 'correction':
           await handleCorrectionState(Body, From, currentState, requestId, res);
+          handledRequests.add(requestId);
+          res.headersSent = true;
           return;
           
         case 'confirmation':
           if (currentState.data.type === 'voice_confirmation') {
             await handleVoiceConfirmationState(Body, From, currentState, requestId, res);
+            handledRequests.add(requestId);
+            res.headersSent = true;
           } else if (currentState.data.type === 'text_confirmation') {
             await handleTextConfirmationState(Body, From, currentState, requestId, res);
+            handledRequests.add(requestId);
+            res.headersSent = true;
           } else if (currentState.data.type === 'product_confirmation') {
             await handleProductConfirmationState(Body, From, currentState, requestId, res);
+            handledRequests.add(requestId);
+            res.headersSent = true;
           } else {
             await handleConfirmationState(Body, From, currentState, requestId, res);
+            handledRequests.add(requestId);
+            res.headersSent = true;
           }
           return;
           
         case 'inventory':
           await handleInventoryState(Body, From, currentState, requestId, res);
+          handledRequests.add(requestId);
+          res.headersSent = true;
           return;
       }
     }
     
     // 4. No active state - process as new interaction
     await handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res);
+    handledRequests.add(requestId);
+    res.headersSent = true;
     
   } catch (error) {
     console.error(`[${requestId}] Processing Error:`, error.message);
@@ -6392,7 +6413,8 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
       }
     }
     
-    message += `\n✅ Successfully updated ${successCount} of 1 item`;
+    const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
+    message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
     
     const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, formattedResponse);
@@ -6798,7 +6820,8 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
             }
           }
           
-          message += `\n✅ Successfully updated ${successCount} of ${parsedUpdates.length} items`;
+          const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
+          message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
           
           const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
           await sendMessageViaAPI(From, formattedResponse);
@@ -6901,7 +6924,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         }
       }
             
-      const totalProcessed = results.filter(r => !r.needsPrice).length;
+      const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
       message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`
 
       
@@ -7061,7 +7084,8 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
       }
     }
     
-    message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+    const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
+    message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`
     
     const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, formattedResponse);
@@ -7148,7 +7172,8 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
           }
         }
         
-        message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+        const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
+        message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
         
         // FIX: Send via WhatsApp API instead of synchronous response
         const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
@@ -7331,7 +7356,8 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
             message += `• ${result.product}: Error - ${result.error}\n`;
           }
         }
-        message += `\n✅ Successfully updated ${successCount} of ${updates.length} items`;
+        const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
+        message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
         const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
         await sendMessageViaAPI(From, formattedResponse);
         
@@ -7511,7 +7537,8 @@ async function handleProductConfirmationState(Body, From, state, requestId, res)
       }
     }
     
-    message += `\n✅ Successfully updated ${successCount} of ${unknownProducts.length} items`;
+    const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
+    message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
     
     const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, formattedResponse);
