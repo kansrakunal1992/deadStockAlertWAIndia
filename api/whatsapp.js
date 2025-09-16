@@ -891,7 +891,7 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
   // If user didn’t give a price but we still need one, prompt again (with examples)
   if (needsPrice && !updatedPrice) {
     const again = await generateMultiLanguageResponse(
-      `Please share price like: ₹60  (you can also add expiry: exp 20-09).`,
+      `Please say or type the price per unit, like "₹60 per kg" or "₹10 per packet". You can also say expiry like "exp 20-09".`,
       detectedLanguage, 'ask-price-again'
     );
     await sendMessageViaAPI(From, again);
