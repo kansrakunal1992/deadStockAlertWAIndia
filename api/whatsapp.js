@@ -2910,9 +2910,9 @@ if (validBatches.length > 0) {
             (async () => {
                // Start tips for invoice step only: 10s, then every 10s (slower cadence)
                const stopInvoiceTips = startEngagementTips({
-                 From: `whatsapp:${shopId}`,
-                 language: detectedLanguage,               // if available in scope; else default to 'en'
-                 requestId: requestId + ':invoice',
+                 From: `whatsapp:${shopId}`,               
+                 language: languageCode || 'en',
+                 requestId: `invoice:${shopId}:${Date.now()}`,
                  firstDelayMs: 10000,                      // first tip at 10s
                  intervalMs:   10000,                      // then every 10s for invoice steps
                  maxCount:     3,
