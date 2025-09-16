@@ -994,6 +994,7 @@ function parseExpiryTextToISO(text, baseISO = null) {
   const raw = String(text).trim().toLowerCase();
   const base = baseISO ? new Date(baseISO) : new Date();
   
+  
   // Relative: +7d / +3m / +1y
   const rel = raw.match(/^\+(\d+)\s*([dmy])$/i);
   if (rel) {
@@ -1007,13 +1008,16 @@ function parseExpiryTextToISO(text, baseISO = null) {
     return d.toISOString();
   }
   
-  // Absolute: dd-mm, dd/mm, dd/mm/yyyy (more specific to avoid price confusion)
-  const abs = raw.match(/^(?:exp|expiry|expires?)?\s*(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/i);
-  if (abs) {
+  
+  // Absolute: dd-mm, dd/mm, optionally with yy or yyyy
+  // Matches: 15-12, 15/12, 15-12-25, 15/12/2025
+  const abs = raw.match(/^(\d{1,2})\/\-(?:\/\-)?$/);
+  if (abs) {  
     const day = Math.min(31, parseInt(abs[1], 10));
     const mon = Math.max(1, Math.min(12, parseInt(abs[2], 10))) - 1;
     let year = abs[3] ? parseInt(abs[3], 10) : base.getFullYear();
-    if (abs[3] && abs[3].length === 2) year = 2000 + year; // pivot for 2-digit years
+    // Two-digit year → 20xx
+    if (abs[3] && abs[3].length === 2) year = 2000 + year;
     const d = new Date(Date.UTC(year, mon, day, 0, 0, 0, 0));
     console.log(`[parsePriceAndExpiryFromText] Parsed expiry date: ${d.toISOString()} from: "${raw}"`);
     return d.toISOString();
@@ -1055,10 +1059,13 @@ function parsePriceAndExpiryFromText(text, baseISO = null) {
   const t = text.trim().toLowerCase();
   if (t === 'ok' || t === 'okay') { out.ok = true; return out; }
   if (t === 'skip') { out.skipExpiry = true; return out; }
-  // Common tokens "exp", "expiry", "expires" 
-  const expToken = t.replace(/\b(expiry|expires?|exp)\b/gi, '').trim();
-  const expiry = parseExpiryTextToISO(expToken, baseISO) || parseExpiryTextToISO(t, baseISO);
-
+  // Common tokens "exp", "expiry", "expires"   
+  // Extract only the date-like part that follows exp/expiry/expires
+    const expSegmentMatch = text.match(/\b(?:expiry|expires?|exp)\b[^\d+]*([0-9/+\-]{3,})/i);
+    const expSegment = expSegmentMatch ? expSegmentMatch[1] : null;
+    const expiry = expSegment
+      ? parseExpiryTextToISO(expSegment, baseISO)
+      : (parseExpiryTextToISO(t, baseISO));
   if (expiry) out.expiryISO = expiry; 
   // price: first decimal number in text (more careful parsing to avoid date confusion)
   const withoutExpiry = text
@@ -2584,108 +2591,94 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
       }
       
-      // === NEW: Layer A (auto-expiry) + Combined price+expiry correction flow ===
-      let autoExpiry = null;
-      let productMeta = null;
-      try {
-        productMeta = await getProductPrice(product);
-        if (productMeta?.success && productMeta.requiresExpiry) {
-          const sd = Number(productMeta.shelfLifeDays || 0);
-          if (sd > 0) {
-            const ts = new Date();
-            ts.setDate(ts.getDate() + sd);
-            autoExpiry = ts.toISOString();
-          }
-        }
-      } catch (_) {}
       
-      const purchaseDateISO = formatDateForAirtable(new Date());
-
-      // Use provided or catalog price
-      const finalPrice = (update.price ?? productPrice) || 0;
-      const purchasePrice = finalPrice > 0 ? finalPrice : 0; // may still be 0
+      // === NEW: Layer A (auto-expiry) + Combined price+expiry correction flow — PURCHASES ONLY ===
+        if (update.action === 'purchased') {
+          let autoExpiry = null;
+          let productMeta = null;
+          try {
+            productMeta = await getProductPrice(product);
+            if (productMeta?.success && productMeta.requiresExpiry) {
+              const sd = Number(productMeta.shelfLifeDays ?? 0);
+              if (sd > 0) {
+                const ts = new Date();
+                ts.setDate(ts.getDate() + sd);
+                autoExpiry = ts.toISOString();
+              }
+            }
+          } catch (_) {}
+          const purchaseDateISO = formatDateForAirtable(new Date());
+          // Use provided or catalog price
+          const finalPrice = (update.price ?? productPrice) ?? 0;
+          const purchasePrice = finalPrice > 0 ? finalPrice : 0; // may still be 0
       
-      
-// Prefer an inline expiry from AI/user -> bump year if it falls in the past; else fall back to auto
-    
-    // Prefer inline expiry (bumped to future if needed) > auto > omit
-        const providedExpiryISO = bumpExpiryYearIfPast(update.expiryISO || null, purchaseDateISO);
-        const expiryToUse = providedExpiryISO || autoExpiry || null;
-
-    // Create batch now (with preferred expiry if available)
-    const batchResult = await createBatchRecord({
-        shopId,
-        product,
-        quantity: update.quantity,
-        unit: update.unit,
-        purchaseDate: purchaseDateISO,
-        expiryDate: expiryToUse, // prefer inline expiry; else auto; else omit
-        purchasePrice: purchasePrice
-      });
-         
-      if (batchResult?.success) {
+          // Prefer an inline expiry from AI/user -> bump year if it falls in the past; else fall back to auto
+          const providedExpiryISO = bumpExpiryYearIfPast(update.expiryISO ?? null, purchaseDateISO);
+          const expiryToUse = providedExpiryISO ?? autoExpiry ?? null;
+          // Create batch now (with preferred expiry if available)
+          const batchResult = await createBatchRecord({
+            shopId,
+            product,
+            quantity: update.quantity,
+            unit: update.unit,
+            purchaseDate: purchaseDateISO,
+            expiryDate: expiryToUse,
+            purchasePrice: purchasePrice
+          });
+          if (batchResult?.success) {
             createdBatchEarly = true;
           }
+          // Persist product price if we have one
+          if (purchasePrice > 0) {
+            try {
+              await upsertProduct({ name: product, price: purchasePrice, unit: update.unit });
+            } catch (e) {
+              console.warn(`[Update ${shopId} - ${product}] upsertProduct price failed:`, e.message);
+            }
+          }
+          // Decide if we need any user input
+          const needsPrice = purchasePrice <= 0; // no price given + not in catalog
+          const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
+          const needsExpiryConfirmOrSet = isPerishable && !providedExpiryISO; // don't prompt if user gave an expiry
+          if (needsPrice || needsExpiryConfirmOrSet) {
+            await setUserState(`whatsapp:${shopId}`, 'awaitingPriceExpiry', {
+              batchId: batchResult?.id ?? null,
+              product,
+              unit: update.unit,
+              quantity: update.quantity,
+              purchaseDate: purchaseDateISO,
+              autoExpiry: autoExpiry ?? null,
+              needsPrice,
+              isPerishable
+            });
+            const autoExpiryLine =
+              autoExpiry
+                ? `I set expiry to ${formatDateForDisplay(autoExpiry)} from shelf-life.`
+                : (isPerishable ? `No expiry set yet.` : ``);
       
-      // Persist product price if we have one
-      if (purchasePrice > 0) {
-        try {
-          await upsertProduct({ name: product, price: purchasePrice, unit: update.unit });
-        } catch (e) {
-          console.warn(`[Update ${shopId} - ${product}] upsertProduct price failed:`, e.message);
+            const needBoth = needsPrice && needsExpiryConfirmOrSet;
+            const promptLines = [
+              `Got it ✅ ${product} ${update.quantity} ${update.unit}.`,
+              autoExpiryLine,
+              needsPrice ? `Price missing.` : `Price kept: ₹${purchasePrice}.`,
+              ``,
+              needBoth ? `Reply with **both** (any order):` : `Reply with:`,
+              needsPrice ? `• ₹<price>` : null,
+              isPerishable ? `• exp <dd-mm> | <dd/mm/yyyy> | +7d | +3m | +1y` : null,
+              `Or reply:`,
+              `• 'ok' to keep current expiry${needsPrice ? ' (still need price)' : ''}`,
+              `• 'skip' to clear expiry`,
+              ``
+            ].filter(Boolean).join('\n');
+            const localized = await generateMultiLanguageResponse(promptLines, languageCode, 'ask-price-expiry');
+            await sendMessageViaAPI(`whatsapp:${shopId}`, localized);
+            results.push({
+              product, quantity: update.quantity, unit: update.unit, action: update.action,
+              success: false, needsUserInput: true, awaiting: 'price+expiry', error: 'awaiting user input: price and/or expiry', status: 'pending'
+            });
+            continue; // wait for user reply
+          }
         }
-      }
-      
-      // Decide if we need any user input
-      const needsPrice = purchasePrice <= 0; // no price given + not in catalog
-      const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
-      const needsExpiryConfirmOrSet = isPerishable && !providedExpiryISO; // don't prompt if user gave an expir
-      
-      if (needsPrice || needsExpiryConfirmOrSet) {
-        // Park state to collect both in ONE reply
-        await setUserState(`whatsapp:${shopId}`, 'awaitingPriceExpiry', {
-          batchId: batchResult?.id || null,
-          product,
-          unit: update.unit,
-          quantity: update.quantity,
-          purchaseDate: purchaseDateISO,
-          autoExpiry: autoExpiry || null,
-          needsPrice,
-          isPerishable
-        });
-      
-        const autoExpiryLine =
-          autoExpiry
-            ? `I set expiry to ${formatDateForDisplay(autoExpiry)} from shelf-life.`
-            : (isPerishable ? `No expiry set yet.` : ``);
-      
-        
-        // Tiny copy tweaks: say "both" only when both are missing
-          const needBoth = needsPrice && needsExpiryConfirmOrSet;
-          const promptLines = [
-            `Got it ✅ ${product} ${update.quantity} ${update.unit}.`,
-            autoExpiryLine,
-            needsPrice ? `Price missing.` : `Price kept: ₹${purchasePrice}.`,
-            ``,
-            needBoth ? `Reply with **both** (any order):` : `Reply with:`,
-            needsPrice ? `• ₹<price>` : null,
-            isPerishable ? `• exp <dd-mm> | <dd/mm/yyyy> | +7d | +3m | +1y` : null,
-            `Or reply:`,
-            `• 'ok' to keep current expiry${needsPrice ? ' (still need price)' : ''}`,
-            `• 'skip' to clear expiry`,
-            ``
-          ].filter(Boolean).join('\n');
-          const localized = await generateMultiLanguageResponse(promptLines, languageCode, 'ask-price-expiry');
-
-        await sendMessageViaAPI(`whatsapp:${shopId}`, localized);
-      
-        // Defer result confirmation (we'll enrich after user confirms)
-        results.push({
-          product, quantity: update.quantity, unit: update.unit, action: update.action,
-          success: false, needsUserInput: true, awaiting: 'price+expiry', error: 'awaiting user input: price and/or expiry', status: 'pending'
-        });
-        continue; // wait for user reply
-      }
       // === END NEW block ===
 
       // Use provided price or fall back to database price           
