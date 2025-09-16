@@ -857,10 +857,8 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
 
   const data = state.data || {};
   const { batchId, product, unit, quantity, purchaseDate, autoExpiry, needsPrice, isPerishable } = data;
-  // Extract just the date part, removing any "exp" prefix
-  const dateText = Body.replace(/^(exp|expiry|expires?)\s*/i, '').trim();
-  const parsed = parsePriceAndExpiryFromText(dateText, purchaseDate);
-
+  // Let the parser extract both price & explicit "exp ..." segment in any order
+  const parsed = parsePriceAndExpiryFromText(Body, purchaseDate);
   
   // If user gave an expiry in the past, bump year forward relative to the purchase date
     if (parsed && parsed.expiryISO) {
@@ -1020,6 +1018,7 @@ function parseExpiryTextToISO(text, baseISO = null) {
     if (abs[3] && abs[3].length === 2) year = 2000 + year;
     const d = new Date(Date.UTC(year, mon, day, 0, 0, 0, 0));
     console.log(`[parsePriceAndExpiryFromText] Parsed expiry date: ${d.toISOString()} from: "${raw}"`);
+    console.log(`[parseExpiryTextToISO] Parsed expiry date: ${d.toISOString()} from: "${raw}"`);
     return d.toISOString();
   }
   
@@ -1106,6 +1105,8 @@ function parsePriceAndExpiryFromText(text, baseISO = null) {
       console.log(`[parsePriceAndExpiryFromText] Extracted price: ${p} from: "${priceMatch[0]}"`);
     }
   }
+// Debug: see what we extracted for expiry
+  console.log('[parsePriceAndExpiryFromText] expSegment:', expSegment, '=> expiryISO:', out.expiryISO)
   return out;
 }
 
@@ -2681,14 +2682,15 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         }
       // === END NEW block ===
 
-      // Use provided price or fall back to database price           
-      // NEW: reliable price/value (without reassigning const finalPrice)
-          const finalTotalPrice = Number.isFinite(update.totalPrice)
-            ? update.totalPrice
-            : (finalPrice * Math.abs(update.quantity));
-          const priceSource = (update.price && Number(update.price) > 0)
-            ? 'message'
-            : (productPrice > 0 ? 'db' : null); // only mark db if it’s actually > 0
+      // Use provided price or fall back to database price            
+      // NEW: reliable price/value without leaking block-scoped vars
+      const unitPriceForCalc = Number(update.price ?? productPrice ?? 0);
+      const finalTotalPrice = Number.isFinite(update.totalPrice)
+        ? Number(update.totalPrice)
+        : (unitPriceForCalc * Math.abs(update.quantity));
+      const priceSource = (Number(update.price) > 0)
+         ? 'message'
+         : (productPrice > 0 ? 'db' : null); // only mark db if it’s actually > 0
 
       // Rest of the function remains the same...
       console.log(`[Update ${shopId} - ${product}] Processing update: ${update.quantity} ${update.unit}`);
