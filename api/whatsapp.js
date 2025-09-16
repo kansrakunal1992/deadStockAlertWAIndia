@@ -1007,9 +1007,9 @@ function parseExpiryTextToISO(text, baseISO = null) {
   }
   
   
-  // Absolute: dd-mm, dd/mm, optionally with yy or yyyy
-  // 15-12, 15/12, 15-12-25, 15/12/2025
-  const abs = raw.match(/^(\d{1,2})\/\-(?:[\/\-](\d;
+  // Absolute: 15-12, 15/12, 15-12-25, 15/12/2025
+  // IMPORTANT: in a JS regex literal, / must be escaped as \/, hyphen is fine in a [] class.
+  const abs = raw.match(/^(\d{1,2})\/-(?:\/-)?$/);
 
   if (abs) {  
     const day = Math.min(31, parseInt(abs[1], 10));
