@@ -450,6 +450,13 @@ const {
 
 // Add this at the top of the file after the imports
 const path = require('path');
+const {
+  BUSINESS_TIPS_EN,
+  startEngagementTips,
+  stopEngagementTips,
+  withEngagementTips
+} = require('./engagementTips');
+
 const SUMMARY_TRACK_FILE = path.join(__dirname, 'summary_tracker.json');
 
 // Add this function to track daily summaries
@@ -1292,6 +1299,18 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const text = String(rawBody || '').trim();
   const shopId = From.replace('whatsapp:', '');
   
+// === ENGAGEMENT TIPS: 10s first tip, then every 10s, up to 3 tips ===
+  const stopTips = startEngagementTips({
+    From,
+    language: detectedLanguage,
+    requestId,
+    firstDelayMs: 10000,  // 10s
+    intervalMs:   10000,  // then every 10s (use 30000 for 30s cadence)
+    maxCount:     3,
+    sendMessage:  (to, body) => sendMessageViaAPI(to, body),
+    translate:    (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid)
+  });
+  
 // NEW (2.g): Greeting -> show purchase examples incl. expiry
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
     const examples = await renderPurchaseExamples(detectedLanguage, requestId);
@@ -1675,8 +1694,9 @@ if (pricePage) {
     const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
+  } finally {
+    stopTips();
   }
-
   return false; // not a quick query
 }
 
@@ -1692,6 +1712,18 @@ function parsePeriodKeyword(txt) {
 async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   const text = Body.trim();
   const shopId = From.replace('whatsapp:', '');
+
+// === ENGAGEMENT TIPS: 10s first tip, then every 10s ===
+  const stopTips = startEngagementTips({
+    From,
+    language: detectedLanguage,
+    requestId,
+    firstDelayMs: 10000,
+    intervalMs:   10000,
+    maxCount:     3,
+    sendMessage:  (to, body) => sendMessageViaAPI(to, body),
+    translate:    (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid)
+  });
   
 // NEW (2.g): Greeting -> show purchase examples incl. expiry
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
@@ -1903,8 +1935,9 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
     const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
+  } finally {
+    stopTips();
   }
-
   return false; // not a command
 }
 
@@ -2870,11 +2903,21 @@ if (validBatches.length > 0) {
           if (salesResult.success) {
             console.log(`[Update ${shopId} - ${product}] Sales record created with ID: ${salesResult.id}`);
 
-            // Generate and send invoice (non-blocking)
+            // Generate and send invoice (non-blocking)          
             (async () => {
-              try {
+               // Start tips for invoice step only: 10s, then every 10s (slower cadence)
+               const stopInvoiceTips = startEngagementTips({
+                 From: `whatsapp:${shopId}`,
+                 language: detectedLanguage,               // if available in scope; else default to 'en'
+                 requestId: requestId + ':invoice',
+                 firstDelayMs: 10000,                      // first tip at 10s
+                 intervalMs:   10000,                      // then every 10s for invoice steps
+                 maxCount:     3,
+                 sendMessage:  (to, body) => sendMessageViaAPI(to, body),
+                 translate:    (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid)
+               });
+               try {
                 console.log(`[Update ${shopId} - ${product}] Starting invoice generation process`);
-                
                 // Get shop details
                 const shopDetailsResult = await getShopDetails(shopId);
                 if (!shopDetailsResult.success) {
@@ -2908,8 +2951,10 @@ if (validBatches.length > 0) {
                 
               } catch (invoiceError) {
                 console.error(`[Update ${shopId} - ${product}] Error generating/sending invoice:`, invoiceError.message);
-                console.error(`[Update ${shopId} - ${product}] Stack trace:`, invoiceError.stack);
-              }
+                console.error(`[Update ${shopId} - ${product}] Stack trace:`, invoiceError.stack);  
+              } finally {
+                   stopInvoiceTips();
+                 }
             })();
 
             // Update batch quantity if a batch was selected
@@ -3249,6 +3294,9 @@ async function sendSystemMessage(message, from, detectedLanguage, requestId, res
     response.message(message);
     return message;
   }
+finally {
+  try { stopEngagementTips(requestId); } catch (_) {}
+}
 }
 
 async function sendPDFViaWhatsApp(to, pdfPath) {
