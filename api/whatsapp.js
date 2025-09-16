@@ -1310,7 +1310,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     sendMessage:  (to, body) => sendMessageViaAPI(to, body),
     translate:    (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid)
   });
-  
+  try {
 // NEW (2.g): Greeting -> show purchase examples incl. expiry
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
     const examples = await renderPurchaseExamples(detectedLanguage, requestId);
@@ -1694,7 +1694,8 @@ if (pricePage) {
     const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
-  } finally {
+  }
+  }finally {
     stopTips();
   }
   return false; // not a quick query
@@ -1724,7 +1725,7 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
     sendMessage:  (to, body) => sendMessageViaAPI(to, body),
     translate:    (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid)
   });
-  
+  try {
 // NEW (2.g): Greeting -> show purchase examples incl. expiry
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
     const examples = await renderPurchaseExamples(detectedLanguage, requestId);
@@ -1935,7 +1936,9 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
     const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
-  } finally {
+  }
+  }
+  finally {
     stopTips();
   }
   return false; // not a command
