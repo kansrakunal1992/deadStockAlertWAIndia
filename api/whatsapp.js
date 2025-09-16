@@ -854,7 +854,7 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
   const shopId = From.replace('whatsapp:', '');
   const state = await getUserStateFromDB(shopId);
   if (!state || state.mode !== 'awaitingPriceExpiry') return false;
-
+  console.log(`[awaitingPriceExpiry] Raw reply for ${shopId}:`, JSON.stringify(Body));
   const data = state.data || {};
   const { batchId, product, unit, quantity, purchaseDate, autoExpiry, needsPrice, isPerishable } = data;
   // Let the parser extract both price & explicit "exp ..." segment in any order
@@ -1008,8 +1008,9 @@ function parseExpiryTextToISO(text, baseISO = null) {
   
   
   // Absolute: dd-mm, dd/mm, optionally with yy or yyyy
-  // Matches: 15-12, 15/12, 15-12-25, 15/12/2025
-  const abs = raw.match(/^(\d{1,2})\/\-(?:\/\-)?$/);
+  // 15-12, 15/12, 15-12-25, 15/12/2025
+  const abs = raw.match(/^(\d{1,2})\/\-(?:[\/\-](\d;
+
   if (abs) {  
     const day = Math.min(31, parseInt(abs[1], 10));
     const mon = Math.max(1, Math.min(12, parseInt(abs[2], 10))) - 1;
@@ -1062,9 +1063,17 @@ function parsePriceAndExpiryFromText(text, baseISO = null) {
   // Extract only the date-like part that follows exp/expiry/expires
     const expSegmentMatch = text.match(/\b(?:expiry|expires?|exp)\b[^\d+]*([0-9/+\-]{3,})/i);
     const expSegment = expSegmentMatch ? expSegmentMatch[1] : null;
+
+    // NEW: if no exp-token present, try to spot ANY date token in the text
+      // Matches: +7d / +3m / +1y / 15-12 / 15/12 / 15-12-25 / 15/12/2025
+      const anyDateMatch = !expSegment
+        ? text.match(/(\+\d+\s*[dmy]|\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?)/i)
+        : null;
+  
     const expiry = expSegment
-      ? parseExpiryTextToISO(expSegment, baseISO)
-      : (parseExpiryTextToISO(t, baseISO));
+        ? parseExpiryTextToISO(expSegment, baseISO)
+        : (anyDateMatch ? parseExpiryTextToISO(anyDateMatch[1], baseISO) : null);
+
   if (expiry) out.expiryISO = expiry; 
   // price: first decimal number in text (more careful parsing to avoid date confusion)
   const withoutExpiry = text
@@ -1105,8 +1114,10 @@ function parsePriceAndExpiryFromText(text, baseISO = null) {
       console.log(`[parsePriceAndExpiryFromText] Extracted price: ${p} from: "${priceMatch[0]}"`);
     }
   }
-// Debug: see what we extracted for expiry
-  console.log('[parsePriceAndExpiryFromText] expSegment:', expSegment, '=> expiryISO:', out.expiryISO)
+// Debug: see what we extracted for expiry  
+console.log('[parsePriceAndExpiryFromText] expSegment:', expSegment,
+              'anyDate:', anyDateMatch ? anyDateMatch[1] : null,
+              '=> expiryISO:', out.expiryISO);
   return out;
 }
 
