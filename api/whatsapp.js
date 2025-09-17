@@ -1304,9 +1304,9 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     From,
     language: detectedLanguage,
     requestId,
-    firstDelayMs: 10000,  // 10s
-    intervalMs:   10000,  // then every 10s (use 30000 for 30s cadence)
-    maxCount:     3,
+    firstDelayMs: 2000,  // 10s
+    intervalMs:   3000,  // then every 10s (use 30000 for 30s cadence)
+    maxCount:     2,
     sendMessage:  (to, body) => sendMessageViaAPI(to, body),
     translate:    (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid)
   });
@@ -1719,9 +1719,9 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
     From,
     language: detectedLanguage,
     requestId,
-    firstDelayMs: 10000,
-    intervalMs:   10000,
-    maxCount:     3,
+    firstDelayMs: 2000,
+    intervalMs:   3000,
+    maxCount:     2,
     sendMessage:  (to, body) => sendMessageViaAPI(to, body),
     translate:    (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid)
   });
@@ -2913,9 +2913,9 @@ if (validBatches.length > 0) {
                  From: `whatsapp:${shopId}`,               
                  language: languageCode || 'en',
                  requestId: `invoice:${shopId}:${Date.now()}`,
-                 firstDelayMs: 10000,                      // first tip at 10s
-                 intervalMs:   10000,                      // then every 10s for invoice steps
-                 maxCount:     3,
+                 firstDelayMs: 2000,                      // first tip at 10s
+                 intervalMs:   3000,                      // then every 10s for invoice steps
+                 maxCount:     2,
                  sendMessage:  (to, body) => sendMessageViaAPI(to, body),
                  translate:    (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid)
                });
