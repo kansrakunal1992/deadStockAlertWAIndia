@@ -2991,7 +2991,7 @@ if (validBatches.length > 0) {
                   console.log(`[${requestId}] Tips allowed to run (response took ${duration}ms)`);
                 }
               }
-              )();
+            })();
 
             // Update batch quantity if a batch was selected
             if (selectedBatchCompositeKey) {
@@ -4479,6 +4479,7 @@ schedulePriceUpdateReminder();
 
 // Function to process confirmed transcription
 async function processConfirmedTranscription(transcript, from, detectedLanguage, requestId, response, res) {
+  const startTime = Date.now();
     // Start engagement tips early (covers AI parsing + DB work)
       const stopTxnTips = startEngagementTips({
         From: from,
@@ -4725,8 +4726,17 @@ catch (error) {
     handledRequests.add(requestId);
     return res.send(response.toString());
 } finally {
-    try { stopTxnTips(); } catch(_) {}
+  const duration = Date.now() - startTime;
+  const TIP_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS ?? 2000);
+
+  // Only stop tips if response was faster than first tip delay
+  if (duration < TIP_FIRST_DELAY_MS) {
+    try { stopTxnTips(); } catch (_) {}
+  } else {
+    // Let the tip loop run — it will self-stop after maxCount
+    console.log(`[${requestId}] Tips allowed to run (response took ${duration}ms)`);
   }
+}
 }
 
 // Function to confirm transcription with user
