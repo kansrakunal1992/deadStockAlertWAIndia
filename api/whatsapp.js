@@ -4446,7 +4446,18 @@ schedulePriceUpdateReminder();
 
 // Function to process confirmed transcription
 async function processConfirmedTranscription(transcript, from, detectedLanguage, requestId, response, res) {
-  try {   
+    // Start engagement tips early (covers AI parsing + DB work)
+      const stopTxnTips = startEngagementTips({
+        From: from,
+        language: detectedLanguage || 'en',
+        requestId, // reuse requestId so sendSystemMessage's finally can also stop
+        firstDelayMs: Number(process.env.TIP_FIRST_DELAY_MS || 2000),
+        intervalMs: Number(process.env.TIP_INTERVAL_MS || 3000),
+        maxCount: Number(process.env.TIP_MAX_COUNT || 2),
+        sendMessage: (to, body) => sendMessageViaAPI(to, body),
+        translate: (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid),
+      });
+      try { 
     // --- HARD GUARD: treat summary phrases as commands, not inventory updates
     const shopId = from.replace('whatsapp:', '');
     const intent = resolveSummaryIntent(transcript);
@@ -4680,6 +4691,8 @@ catch (error) {
     response.message(errorMessage);
     handledRequests.add(requestId);
     return res.send(response.toString());
+} finally {
+    try { stopTxnTips(); } catch(_) {}
   }
 }
 
