@@ -1296,6 +1296,7 @@ function _periodWindow(period) {
 function _norm(s) { return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,'').trim(); }
 
 async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
+  const startTime = Date.now();
   const text = String(rawBody || '').trim();
   const shopId = From.replace('whatsapp:', '');
   
@@ -1695,9 +1696,20 @@ if (pricePage) {
     await sendMessageViaAPI(From, msg);
     return true;
   }
-  }finally {
-    stopTips();
   }
+finally {
+  const duration = Date.now() - startTime;
+  const TIP_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS ?? 2000);
+
+  // Only stop tips if response was faster than first tip delay
+  if (duration < TIP_FIRST_DELAY_MS) {
+    try { stopTxnTips(); } catch (_) {}
+  } else {
+    // Let the tip loop run — it will self-stop after maxCount
+    console.log(`[${requestId}] Tips allowed to run (response took ${duration}ms)`);
+  }
+}
+
   return false; // not a quick query
 }
 
@@ -1711,6 +1723,7 @@ function parsePeriodKeyword(txt) {
 }
 
 async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
+  const startTime = Date.now();
   const text = Body.trim();
   const shopId = From.replace('whatsapp:', '');
 
@@ -1939,8 +1952,17 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   }
   }
   finally {
-    stopTips();
+  const duration = Date.now() - startTime;
+  const TIP_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS ?? 2000);
+
+  // Only stop tips if response was faster than first tip delay
+  if (duration < TIP_FIRST_DELAY_MS) {
+    try { stopTxnTips(); } catch (_) {}
+  } else {
+    // Let the tip loop run — it will self-stop after maxCount
+    console.log(`[${requestId}] Tips allowed to run (response took ${duration}ms)`);
   }
+}
   return false; // not a command
 }
 
@@ -2906,6 +2928,8 @@ if (validBatches.length > 0) {
           if (salesResult.success) {
             console.log(`[Update ${shopId} - ${product}] Sales record created with ID: ${salesResult.id}`);
 
+            const startTime = Date.now();
+            
             // Generate and send invoice (non-blocking)          
             (async () => {
                // Start tips for invoice step only: 10s, then every 10s (slower cadence)
@@ -2956,9 +2980,18 @@ if (validBatches.length > 0) {
                 console.error(`[Update ${shopId} - ${product}] Error generating/sending invoice:`, invoiceError.message);
                 console.error(`[Update ${shopId} - ${product}] Stack trace:`, invoiceError.stack);  
               } finally {
-                   stopInvoiceTips();
-                 }
-            })();
+                const duration = Date.now() - startTime;
+                const TIP_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS ?? 2000);
+              
+                // Only stop tips if response was faster than first tip delay
+                if (duration < TIP_FIRST_DELAY_MS) {
+                  try { stopTxnTips(); } catch (_) {}
+                } else {
+                  // Let the tip loop run — it will self-stop after maxCount
+                  console.log(`[${requestId}] Tips allowed to run (response took ${duration}ms)`);
+                }
+              }
+              )();
 
             // Update batch quantity if a batch was selected
             if (selectedBatchCompositeKey) {
