@@ -464,9 +464,9 @@ async function runWithTips({ From, language, requestId }, fn) {
       From,
       language,
       requestId,
-      firstDelayMs: Number(process.env.TIP_FIRST_DELAY_MS ?? 2000),
-      intervalMs: Number(process.env.TIP_INTERVAL_MS ?? 3000),
-      maxCount: Number(process.env.TIP_MAX_COUNT ?? 2),
+      firstDelayMs: Number(process.env.TIP_FIRST_DELAY_MS ?? 6000),
+      intervalMs: Number(process.env.TIP_INTERVAL_MS ?? 10000),
+      maxCount: Number(process.env.TIP_MAX_COUNT ?? 3),
       sendMessage: (to, body) => sendMessageViaAPI(to, body),
       translate: (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid),
     },
@@ -4432,17 +4432,7 @@ schedulePriceUpdateReminder();
 // Function to process confirmed transcription
 async function processConfirmedTranscription(transcript, from, detectedLanguage, requestId, response, res) {
   const startTime = Date.now();
-    // Start engagement tips early (covers AI parsing + DB work)
-      const stopTxnTips = startEngagementTips({
-        From: from,
-        language: detectedLanguage || 'en',
-        requestId, // reuse requestId so sendSystemMessage's finally can also stop
-        firstDelayMs: Number(process.env.TIP_FIRST_DELAY_MS || 2000),
-        intervalMs: Number(process.env.TIP_INTERVAL_MS || 3000),
-        maxCount: Number(process.env.TIP_MAX_COUNT || 2),
-        sendMessage: (to, body) => sendMessageViaAPI(to, body),
-        translate: (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid),
-      });
+    
       try { 
     // --- HARD GUARD: treat summary phrases as commands, not inventory updates
     const shopId = from.replace('whatsapp:', '');
@@ -4678,16 +4668,6 @@ catch (error) {
     handledRequests.add(requestId);
     return res.send(response.toString());
 } finally {
-  const duration = Date.now() - startTime;
-  const TIP_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS ?? 2000);
-
-  // Only stop tips if response was faster than first tip delay
-  if (duration < TIP_FIRST_DELAY_MS) {
-    try { stopTxnTips(); } catch (_) {}
-  } else {
-    // Let the tip loop run — it will self-stop after maxCount
-    console.log(`[${requestId}] Tips allowed to run (response took ${duration}ms)`);
-  }
 }
 }
 
