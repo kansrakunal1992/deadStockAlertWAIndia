@@ -457,6 +457,23 @@ const {
   withEngagementTips
 } = require('./engagementTips');
 
+// Central wrapper: run any request logic with engagement tips
+async function runWithTips({ From, language, requestId }, fn) {
+  return await withEngagementTips(
+    {
+      From,
+      language,
+      requestId,
+      firstDelayMs: Number(process.env.TIP_FIRST_DELAY_MS ?? 2000),
+      intervalMs: Number(process.env.TIP_INTERVAL_MS ?? 3000),
+      maxCount: Number(process.env.TIP_MAX_COUNT ?? 2),
+      sendMessage: (to, body) => sendMessageViaAPI(to, body),
+      translate: (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid),
+    },
+    fn
+  );
+}
+
 const SUMMARY_TRACK_FILE = path.join(__dirname, 'summary_tracker.json');
 
 // Add this function to track daily summaries
@@ -1299,19 +1316,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();
   const shopId = From.replace('whatsapp:', '');
-  
-// === ENGAGEMENT TIPS: 10s first tip, then every 10s, up to 3 tips ===
-  const stopTips = startEngagementTips({
-    From,
-    language: detectedLanguage,
-    requestId,
-    firstDelayMs: 2000,  // 10s
-    intervalMs:   3000,  // then every 10s (use 30000 for 30s cadence)
-    maxCount:     2,
-    sendMessage:  (to, body) => sendMessageViaAPI(to, body),
-    translate:    (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid)
-  });
-  try {
+  try{
 // NEW (2.g): Greeting -> show purchase examples incl. expiry
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
     const examples = await renderPurchaseExamples(detectedLanguage, requestId);
@@ -1695,21 +1700,10 @@ if (pricePage) {
     const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
-  }
-  }
-finally {
-  const duration = Date.now() - startTime;
-  const TIP_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS ?? 2000);
-
-  // Only stop tips if response was faster than first tip delay
-  if (duration < TIP_FIRST_DELAY_MS) {
-    try { stopTxnTips(); } catch (_) {}
-  } else {
-    // Let the tip loop run — it will self-stop after maxCount
-    console.log(`[${requestId}] Tips allowed to run (response took ${duration}ms)`);
-  }
+  }  
+} finally {
+  // No local stop; centralized wrapper handles stopping.
 }
-
   return false; // not a quick query
 }
 
@@ -1726,19 +1720,7 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = Body.trim();
   const shopId = From.replace('whatsapp:', '');
-
-// === ENGAGEMENT TIPS: 10s first tip, then every 10s ===
-  const stopTips = startEngagementTips({
-    From,
-    language: detectedLanguage,
-    requestId,
-    firstDelayMs: 2000,
-    intervalMs:   3000,
-    maxCount:     2,
-    sendMessage:  (to, body) => sendMessageViaAPI(to, body),
-    translate:    (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid)
-  });
-  try {
+try{
 // NEW (2.g): Greeting -> show purchase examples incl. expiry
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
     const examples = await renderPurchaseExamples(detectedLanguage, requestId);
@@ -1950,18 +1932,8 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
     await sendMessageViaAPI(From, msg);
     return true;
   }
-  }
-  finally {
-  const duration = Date.now() - startTime;
-  const TIP_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS ?? 2000);
-
-  // Only stop tips if response was faster than first tip delay
-  if (duration < TIP_FIRST_DELAY_MS) {
-    try { stopTxnTips(); } catch (_) {}
-  } else {
-    // Let the tip loop run — it will self-stop after maxCount
-    console.log(`[${requestId}] Tips allowed to run (response took ${duration}ms)`);
-  }
+} finally {
+  // No local stop; centralized wrapper handles stopping.
 }
   return false; // not a command
 }
@@ -2932,17 +2904,6 @@ if (validBatches.length > 0) {
             
             // Generate and send invoice (non-blocking)          
             (async () => {
-               // Start tips for invoice step only: 10s, then every 10s (slower cadence)
-               const stopInvoiceTips = startEngagementTips({
-                 From: `whatsapp:${shopId}`,               
-                 language: languageCode || 'en',
-                 requestId: `invoice:${shopId}:${Date.now()}`,
-                 firstDelayMs: 2000,                      // first tip at 10s
-                 intervalMs:   3000,                      // then every 10s for invoice steps
-                 maxCount:     2,
-                 sendMessage:  (to, body) => sendMessageViaAPI(to, body),
-                 translate:    (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid)
-               });
                try {
                 console.log(`[Update ${shopId} - ${product}] Starting invoice generation process`);
                 // Get shop details
@@ -2978,19 +2939,10 @@ if (validBatches.length > 0) {
                 
               } catch (invoiceError) {
                 console.error(`[Update ${shopId} - ${product}] Error generating/sending invoice:`, invoiceError.message);
-                console.error(`[Update ${shopId} - ${product}] Stack trace:`, invoiceError.stack);  
-              } finally {
-                const duration = Date.now() - startTime;
-                const TIP_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS ?? 2000);
-              
-                // Only stop tips if response was faster than first tip delay
-                if (duration < TIP_FIRST_DELAY_MS) {
-                  try { stopTxnTips(); } catch (_) {}
-                } else {
-                  // Let the tip loop run — it will self-stop after maxCount
-                  console.log(`[${requestId}] Tips allowed to run (response took ${duration}ms)`);
+                console.error(`[Update ${shopId} - ${product}] Stack trace:`, invoiceError.stack);   
+            } finally {
+                  // No local stop; centralized wrapper handles stopping for the whole request.
                 }
-              }
             })();
 
             // Update batch quantity if a batch was selected
