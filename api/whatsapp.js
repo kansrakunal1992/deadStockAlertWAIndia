@@ -457,7 +457,7 @@ const {
   withEngagementTips
 } = require('./engagementTips');
 
-// Central wrapper: run any request logic with engagement tips
+// Central wrapper: run any per-request logic with engagement tips
 async function runWithTips({ From, language, requestId }, fn) {
   return await withEngagementTips(
     {
@@ -5955,7 +5955,8 @@ module.exports = async (req, res) => {
   try { cleanupCaches(); } catch (_) {}
 
   // --- Extract inbound fields early (so helpers can use them) ---
-  const Body = (req.body && (req.body.Body || req.body.body)) || '';
+  const Body =
+    (req.body && (req.body.Body || req.body.body)) || '';
   const From =
     (req.body && (req.body.From || req.body.from)) ||
     (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
@@ -5963,39 +5964,43 @@ module.exports = async (req, res) => {
   // Language detection (also persists preference)
   const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
 
-  // --- NEW: resolve pending price+expiry correction BEFORE deeper routing ---
-  try {
-    const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
-    if (handledCombined) {
-      // Minimal TwiML ack since we've already replied via the API
-      const twiml = new twilio.twiml.MessagingResponse();
-      twiml.message('');
-      res.type('text/xml').send(twiml.toString());
+  // === Centralized engagement tips: wrap the entire request handling ===
+  await runWithTips({ From, language: detectedLanguage, requestId }, async () => {
+    // --- NEW: resolve pending price+expiry correction BEFORE deeper routing ---
+    try {
+      const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
+      if (handledCombined) {
+        // Minimal TwiML ack since we've already replied via the API
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message('');
+        res.type('text/xml').send(twiml.toString());
+        trackResponseTime(requestStart, requestId);
+        return; // exit early; wrapper 'finally' will stop tips
+      }
+    } catch (e) {
+      console.warn(`[${requestId}] awaitingPriceExpiry handler error:`, e.message);
+      // continue normal routing
+    }
+
+    // --- Delegate to main request handler ---
+    await handleRequest(req, res, response, requestId, requestStart);
+
+    // --- FINAL CATCH-ALL: If nothing above handled the message, send examples ---
+    if (!res.headersSent) {
+      await sendParseErrorWithExamples(From, detectedLanguage, requestId);
+      try {
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message(''); // minimal ack
+        res.type('text/xml').send(twiml.toString());
+      } catch (_) {
+        res.status(200).end();
+      }
       trackResponseTime(requestStart, requestId);
       return;
     }
-  } catch (e) {
-    console.warn(`[${requestId}] awaitingPriceExpiry handler error:`, e.message);
-    // continue normal routing
-  }
-
-  // --- Delegate to main request handler ---
-  await handleRequest(req, res, response, requestId, requestStart);
-
-  // --- FINAL CATCH-ALL: If nothing above handled the message, send examples ---
-  if (!res.headersSent) {
-    await sendParseErrorWithExamples(From, detectedLanguage, requestId);
-    try {
-      const twiml = new twilio.twiml.MessagingResponse();
-      twiml.message(''); // minimal ack
-      res.type('text/xml').send(twiml.toString());
-    } catch (_) {
-      res.status(200).end();
-    }
-    trackResponseTime(requestStart, requestId);
-    return;
-  }
+  }); // <- tips auto-stop here even on early returns
 };
+
 
 
 async function handleRequest(req, res, response, requestId, requestStart) {  
