@@ -1,24 +1,24 @@
 // api/engagementTips.js
 // Multilingual Engagement Tips (send while long replies are processing)
 
-const DEFAULT_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS || 10000);  // 10s
-const DEFAULT_INTERVAL_MS    = Number(process.env.TIP_INTERVAL_MS    || 20000);  // 20s
+const DEFAULT_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS || 6000);  // 6s
+const DEFAULT_INTERVAL_MS    = Number(process.env.TIP_INTERVAL_MS    || 10000);  // 10s
 const DEFAULT_MAX_COUNT      = Number(process.env.TIP_MAX_COUNT      || 3);      // avoid spam
 
 // Short, useful business/inventory tips (localized at send-time)
 const BUSINESS_TIPS_EN = [
-  "💡 Focus on your top sellers: ABC analysis helps the top 20% SKUs drive 80% revenue.",
-  "🔔 Prevent stockouts: set automated reorder alerts for fast-movers.",
-  "📋 Do small cycle counts weekly—fewer surprises, better accuracy.",
-  "🧩 Bundle slow movers with best-sellers to clear stock without deep discounts.",
-  "🧭 Unify online+offline inventory data to avoid overselling.",
-  "🎯 Break big goals into weekly targets—it’s easier to track and win.",
-  "🧰 Systemize repeat tasks so new staff can follow the same playbook.",
-  "🤝 Keep communication clear—customers return when updates are transparent.",
-  "🚚 Review supplier lead times—adjust safety stock for volatility.",
-  "🧾 Track margins by category; invest where ROI is consistent.",
-  "🪙 Cash is oxygen: trim dead stock to free up working capital.",
-  "🧠 Forecast from recent velocity (e.g., 30/60/90d) + seasonality for smarter reorders."
+  "💡 Helpful tip: Focus on your top sellers: ABC analysis helps the top 20% SKUs drive 80% revenue. Generating response...",
+  "🔔 Helpful tip: Prevent stockouts: set automated reorder alerts for fast-movers. Generating response...",
+  "📋 Helpful tip: Do small cycle counts weekly—fewer surprises, better accuracy. Generating response...",
+  "🧩 Helpful tip: Bundle slow movers with best-sellers to clear stock without deep discounts. Generating response...",
+  "🧭 Helpful tip: Unify online+offline inventory data to avoid overselling. Generating response...",
+  "🎯 Helpful tip: Break big goals into weekly targets—it’s easier to track and win. Generating response...",
+  "🧰 Helpful tip: Systemize repeat tasks so new staff can follow the same playbook. Generating response...",
+  "🤝 Helpful tip: Keep communication clear—customers return when updates are transparent. Generating response...",
+  "🚚 Helpful tip: Review supplier lead times—adjust safety stock for volatility. Generating response...",
+  "🧾 Helpful tip: Track margins by category; invest where ROI is consistent. Generating response...",
+  "🪙 Helpful tip: Cash is oxygen: trim dead stock to free up working capital. Generating response...",
+  "🧠 Helpful tip: Forecast from recent velocity (e.g., 30/60/90d) + seasonality for smarter reorders. Generating response..."
 ];
 
 // Per-request tip loop state
