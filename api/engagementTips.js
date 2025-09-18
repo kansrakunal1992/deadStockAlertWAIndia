@@ -75,7 +75,9 @@ function startEngagementTips({
     if (state.canceled) return;
     await sendNext();
     if (!state.canceled) state.interval = setInterval(sendNext, state.cfg.intervalMs);
-  }, state.cfg.firstDelayMs);
+  }, state.cfg.firstDelayMs);  
+  try { state.timer.unref?.(); } catch {}
+  try { state.interval?.unref?.(); } catch {}
 
   return () => stopEngagementTips(requestId);
 }
