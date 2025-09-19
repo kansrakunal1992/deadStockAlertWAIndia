@@ -1039,7 +1039,7 @@ async function selectBatchForSale(shopId, product, { byPurchaseISO=null, byExpir
   return null;
 }
 
-// Replace your existing parseBatchOverrideCommand with this:
+// PASTE-REPLACE this whole function
 function parseBatchOverrideCommand(text, baseISO = null) {
   const t = String(text || '').trim().toLowerCase();
   if (!t) return null;
@@ -1048,7 +1048,8 @@ function parseBatchOverrideCommand(text, baseISO = null) {
   if (/^batch\s+oldest$/.test(t)) return { pick: 'oldest' };
   if (/^batch\s+latest$/.test(t)) return { pick: 'latest' };
 
-  // "batch dd-mm" or "purchased dd-mm" -> byPurchaseISO
+  // "batch dd-mm" | "batch dd/mm" | "purchased dd-mm" | "purchased dd/mm" [optional -yy or -yyyy]
+  // captures: 1=dd  2=mm  3=yy|yyyy (optional)
   let m = t.match(/\b(?:batch|purchased)\s+([0-9]{1,2})-\/(?:-\/)?\b/i);
   if (m) {
     const dd = m[1].padStart(2, '0');
@@ -1059,7 +1060,7 @@ function parseBatchOverrideCommand(text, baseISO = null) {
     return { byPurchaseISO: new Date(Date.UTC(yyyy, parseInt(mm, 10) - 1, parseInt(dd, 10))).toISOString() };
   }
 
-  // "exp dd-mm" or "expiry dd-mm" -> byExpiryISO
+  // "exp dd-mm" | "exp dd/mm" | "expiry dd-mm" | "expiry dd/mm" [optional -yy or -yyyy]
   m = t.match(/\bexp(?:iry)?\s+([0-9]{1,2})-\/(?:-\/)?\b/i);
   if (m) {
     const dd = m[1].padStart(2, '0');
@@ -1072,6 +1073,7 @@ function parseBatchOverrideCommand(text, baseISO = null) {
 
   return null;
 }
+
 
 // ===== NEW: Handle the 2-min post-sale override window =====
 async function handleAwaitingBatchOverride(From, Body, detectedLanguage, requestId) {
