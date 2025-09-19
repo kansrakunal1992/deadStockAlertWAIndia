@@ -1092,7 +1092,12 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
     return true;
   }
 
-  const wanted = parseBatchOverrideCommand(Body);
+  const wanted = parseBatchOverrideCommand(Body);  
+// DEBUG: see user input and parse result in logs
+  try {
+    console.log(`[${requestId}] [awaitingBatchOverride] text="${String(Body).trim()}" -> wanted=`, wanted);
+  } catch (_) {}
+ 
   if (!wanted) {
     const help = await generateMultiLanguageResponse(
       `Reply:\n• batch DD-MM   (e.g., batch 12-09)\n• exp DD-MM     (e.g., exp 20-09)\n• batch oldest  |  batch latest\nWithin 2 min.`,
@@ -1102,6 +1107,10 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   }
 
   const newKey = await selectBatchForSale(shopId, product, wanted);
+  // DEBUG: show which composite key we are switching to (if any)
+  try {
+    console.log(`[${requestId}] [awaitingBatchOverride] product="${product}" newCompositeKey=`, newKey);
+  } catch (_) {}
   if (!newKey) {
     const sorry = await generateMultiLanguageResponse(
       `❌ Couldn’t find a matching batch with stock for ${product}. Try another date or "batches ${product}".`,
