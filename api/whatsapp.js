@@ -1039,26 +1039,37 @@ async function selectBatchForSale(shopId, product, { byPurchaseISO=null, byExpir
   return null;
 }
 
-// ===== NEW: Parse post-sale override commands =====
-function parseBatchOverrideCommand(text, baseISO=null) {
-  const t = String(text||'').trim().toLowerCase();
+// Replace your existing parseBatchOverrideCommand with this:
+function parseBatchOverrideCommand(text, baseISO = null) {
+  const t = String(text || '').trim().toLowerCase();
   if (!t) return null;
+
+  // Keywords
   if (/^batch\s+oldest$/.test(t)) return { pick: 'oldest' };
   if (/^batch\s+latest$/.test(t)) return { pick: 'latest' };
-  // "batch dd-mm" / "purchased dd-mm" => byPurchaseISO
-  let m = t.match(/\b(?:batch|purchased)\s+([0-9]{1,2})[-\/]([0/)?\b/i);
+
+  // "batch dd-mm" or "purchased dd-mm" -> byPurchaseISO
+  let m = t.match(/\b(?:batch|purchased)\s+([0-9]{1,2})-\/(?:-\/)?\b/i);
   if (m) {
-    const dd = m[1].padStart(2,'0'), mm = m[2].padStart(2,'0');
-    let yyyy = m[3] ? (m[3].length===2 ? 2000+parseInt(m[3],10) : parseInt(m[3],10)) : new Date().getFullYear();
-    return { byPurchaseISO: new Date(Date.UTC(yyyy, parseInt(mm,10)-1, parseInt(dd,10))).toISOString() };
+    const dd = m[1].padStart(2, '0');
+    const mm = m[2].padStart(2, '0');
+    const yyyy = m[3]
+      ? (m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10))
+      : new Date().getFullYear();
+    return { byPurchaseISO: new Date(Date.UTC(yyyy, parseInt(mm, 10) - 1, parseInt(dd, 10))).toISOString() };
   }
-  // "exp dd-mm" => byExpiryISO
-  m = t.match(/\bexp(?:iry)?\s+([0-9]{1,2})[-\/]([0\/]([/i);
+
+  // "exp dd-mm" or "expiry dd-mm" -> byExpiryISO
+  m = t.match(/\bexp(?:iry)?\s+([0-9]{1,2})-\/(?:-\/)?\b/i);
   if (m) {
-    const dd = m[1].padStart(2,'0'), mm = m[2].padStart(2,'0');
-    let yyyy = m[3] ? (m[3].length===2 ? 2000+parseInt(m[3],10) : parseInt(m[3],10)) : new Date().getFullYear();
-    return { byExpiryISO: new Date(Date.UTC(yyyy, parseInt(mm,10)-1, parseInt(dd,10))).toISOString() };
+    const dd = m[1].padStart(2, '0');
+    const mm = m[2].padStart(2, '0');
+    const yyyy = m[3]
+      ? (m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10))
+      : new Date().getFullYear();
+    return { byExpiryISO: new Date(Date.UTC(yyyy, parseInt(mm, 10) - 1, parseInt(dd, 10))).toISOString() };
   }
+
   return null;
 }
 
