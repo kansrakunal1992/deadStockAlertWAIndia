@@ -594,6 +594,34 @@ async function updateBatchPurchasePrice(batchId, price, quantityForValue = null)
   }
 }
 
+// ===== NEW: Safe re-attribution of a sale to a different batch (two-phase with rollback) =====
+async function reattributeSaleToBatch({ saleRecordId, shopId, product, qty, unit, oldCompositeKey, newCompositeKey }) {
+  const context = `Reattribute ${shopId} - ${product}`;
+  try {
+    // 1) Put back into old batch
+    const back = await updateBatchQuantityByCompositeKey(oldCompositeKey, +Math.abs(qty), unit);
+    if (!back.success) return { success: false, error: `revert failed: ${back.error}` };
+
+    // 2) Deduct from new batch; if it fails, revert step 1
+    const take = await updateBatchQuantityByCompositeKey(newCompositeKey, -Math.abs(qty), unit);
+    if (!take.success) {
+      try { await updateBatchQuantityByCompositeKey(oldCompositeKey, -Math.abs(qty), unit); } catch (_) {}
+      return { success: false, error: `new batch update failed: ${take.error}` };
+    }
+
+    // 3) Patch the sale record’s BatchCompositeKey
+    await airtableSalesRequest({
+      method: 'patch',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${SALES_TABLE_NAME}/${saleRecordId}`,
+      data: { fields: { BatchCompositeKey: newCompositeKey } }
+    }, `${context} - PatchSale`);
+
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
 
 // Create a sales record
 async function createSalesRecord(salesData) {
@@ -2469,5 +2497,6 @@ module.exports = {
   getTopSellingProductsForPeriod,
   getReorderSuggestions,
   applySaleWithReconciliation,
-  updateBatchPurchasePrice
+  updateBatchPurchasePrice,
+  reattributeSaleToBatch
 };
