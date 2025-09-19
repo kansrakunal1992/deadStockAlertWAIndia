@@ -445,7 +445,8 @@ const {
   getTopSellingProductsForPeriod,
   getReorderSuggestions,
   getCurrentInventory,
-  applySaleWithReconciliation
+  applySaleWithReconciliation,
+  reattributeSaleToBatch
 } = require('../database');
 
 // Add this at the top of the file after the imports
@@ -456,6 +457,9 @@ const {
   stopEngagementTips,
   withEngagementTips
 } = require('./engagementTips');
+
+// ===== NEW ENV: how many alternative batches to show in the confirmation (default 2) =====
+const SHOW_BATCH_SUGGESTIONS_COUNT = Number(process.env.SHOW_BATCH_SUGGESTIONS_COUNT ?? 2);
 
 // Central wrapper: run any per-request logic with engagement tips
 async function runWithTips({ From, language, requestId }, fn) {
@@ -1011,6 +1015,112 @@ function formatDateForDisplay(date) {
     return date;
 }
 
+// ===== NEW: Batch selection helper for sales (hints or default FIFO oldest) =====
+async function selectBatchForSale(shopId, product, { byPurchaseISO=null, byExpiryISO=null, pick='fifo-oldest' } = {}) {
+  const all = await getBatchRecords(shopId, product); // desc by PurchaseDate
+  const withQty = (all || []).filter(b => (b.fields?.Quantity ?? 0) > 0);
+  // match by purchase date
+  if (byPurchaseISO) {
+    const d = new Date(byPurchaseISO).toISOString().slice(0,10);
+    const hit = withQty.find(b => String(b.fields.PurchaseDate).slice(0,10) === d);
+    if (hit) return hit.fields.CompositeKey;
+  }
+  // match by expiry date
+  if (byExpiryISO) {
+    const d = new Date(byExpiryISO).toISOString().slice(0,10);
+    const hit = withQty.find(b => String(b.fields.ExpiryDate || '').slice(0,10) === d);
+    if (hit) return hit.fields.CompositeKey;
+  }
+  // keywords: latest/newest vs oldest/FIFO
+  if (pick === 'latest' && withQty.length) return withQty[0].fields.CompositeKey;
+  if (pick === 'oldest' && withQty.length) return withQty[withQty.length-1].fields.CompositeKey;
+  // default FIFO (oldest)
+  if (withQty.length) return withQty[withQty.length-1].fields.CompositeKey;
+  return null;
+}
+
+// ===== NEW: Parse post-sale override commands =====
+function parseBatchOverrideCommand(text, baseISO=null) {
+  const t = String(text||'').trim().toLowerCase();
+  if (!t) return null;
+  if (/^batch\s+oldest$/.test(t)) return { pick: 'oldest' };
+  if (/^batch\s+latest$/.test(t)) return { pick: 'latest' };
+  // "batch dd-mm" / "purchased dd-mm" => byPurchaseISO
+  let m = t.match(/\b(?:batch|purchased)\s+([0-9]{1,2})[-\/]([0/)?\b/i);
+  if (m) {
+    const dd = m[1].padStart(2,'0'), mm = m[2].padStart(2,'0');
+    let yyyy = m[3] ? (m[3].length===2 ? 2000+parseInt(m[3],10) : parseInt(m[3],10)) : new Date().getFullYear();
+    return { byPurchaseISO: new Date(Date.UTC(yyyy, parseInt(mm,10)-1, parseInt(dd,10))).toISOString() };
+  }
+  // "exp dd-mm" => byExpiryISO
+  m = t.match(/\bexp(?:iry)?\s+([0-9]{1,2})[-\/]([0\/]([/i);
+  if (m) {
+    const dd = m[1].padStart(2,'0'), mm = m[2].padStart(2,'0');
+    let yyyy = m[3] ? (m[3].length===2 ? 2000+parseInt(m[3],10) : parseInt(m[3],10)) : new Date().getFullYear();
+    return { byExpiryISO: new Date(Date.UTC(yyyy, parseInt(mm,10)-1, parseInt(dd,10))).toISOString() };
+  }
+  return null;
+}
+
+// ===== NEW: Handle the 2-min post-sale override window =====
+async function handleAwaitingBatchOverride(From, Body, detectedLanguage, requestId) {
+  const shopId = From.replace('whatsapp:', '');
+  const state = await getUserStateFromDB(shopId);
+  if (!state || state.mode !== 'awaitingBatchOverride') return false;
+
+  const data = state.data || {};
+  const { saleRecordId, product, unit, quantity, oldCompositeKey, createdAtISO, timeoutSec=120 } = data;
+  const createdAt = new Date(createdAtISO || Date.now());
+  if ((Date.now() - createdAt.getTime()) > (timeoutSec*1000)) {
+    await deleteUserStateFromDB(state.id);
+    const msg = await generateMultiLanguageResponse(
+      `⏳ Sorry, the 2‑min window to change batch has expired.`, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  const wanted = parseBatchOverrideCommand(Body);
+  if (!wanted) {
+    const help = await generateMultiLanguageResponse(
+      `Reply:\n• batch DD-MM   (e.g., batch 12-09)\n• exp DD-MM     (e.g., exp 20-09)\n• batch oldest  |  batch latest\nWithin 2 min.`,
+      detectedLanguage, requestId);
+    await sendMessageViaAPI(From, help);
+    return true;
+  }
+
+  const newKey = await selectBatchForSale(shopId, product, wanted);
+  if (!newKey) {
+    const sorry = await generateMultiLanguageResponse(
+      `❌ Couldn’t find a matching batch with stock for ${product}. Try another date or "batches ${product}".`,
+      detectedLanguage, requestId);
+    await sendMessageViaAPI(From, sorry);
+    return true;
+  }
+
+  const res = await reattributeSaleToBatch({
+    saleRecordId, shopId, product,
+    qty: Math.abs(quantity), unit,
+    oldCompositeKey, newCompositeKey: newKey
+  });
+  if (!res.success) {
+    const fail = await generateMultiLanguageResponse(
+      `⚠️ Could not switch batch: ${res.error}`, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, fail);
+    return true;
+  }
+
+  await deleteUserStateFromDB(state.id);
+  const used = await getBatchByCompositeKey(newKey);
+  const pd = used?.fields?.PurchaseDate ? formatDateForDisplay(used.fields.PurchaseDate) : '—';
+  const ed = used?.fields?.ExpiryDate ? formatDateForDisplay(used.fields.ExpiryDate) : '—';
+  const ok = await generateMultiLanguageResponse(
+    `✅ Updated. ${product} sale now attributed to: Purchased ${pd} (Expiry ${ed}).`,
+    detectedLanguage, requestId);
+  await sendMessageViaAPI(From, ok);
+  return true;
+}
+
+
 function parseExpiryTextToISO(text, baseISO = null) {
   if (!text) return null;
   const raw = String(text).trim().toLowerCase();
@@ -1316,7 +1426,10 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();
   const shopId = From.replace('whatsapp:', '');
-  try{
+  try{    
+// NEW: Intercept post‑sale override replies upfront
+    if (await handleAwaitingBatchOverride(From, text, detectedLanguage, requestId)) return true;
+    
 // NEW (2.g): Greeting -> show purchase examples incl. expiry
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
     const examples = await renderPurchaseExamples(detectedLanguage, requestId);
@@ -1720,7 +1833,10 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = Body.trim();
   const shopId = From.replace('whatsapp:', '');
-try{
+try{  
+// NEW: Intercept post‑sale override replies upfront
+    if (await handleAwaitingBatchOverride(From, text, detectedLanguage, requestId)) return true;
+
 // NEW (2.g): Greeting -> show purchase examples incl. expiry
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
     const examples = await renderPurchaseExamples(detectedLanguage, requestId);
@@ -2737,54 +2853,23 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       console.log(`[Update ${shopId} - ${product}] Processing update: ${update.quantity} ${update.unit}`);
       // Check if this is a sale (negative quantity)
       const isSale = update.action === 'sold';
-      // For sales, try to determine which batch to use
-let selectedBatchCompositeKey = null;
-if (isSale) {
-  // Get available batches for this product using translated name
-  const batches = await getBatchRecords(shopId, product);
-  if (batches.length > 0) {
-    // Use the oldest batch (FIFO - First In, First Out)
-
-    // Filter out batches with zero or undefined quantity
-const validBatches = batches.filter(batch => {
-  const qty = batch.fields.Quantity ?? 0;
-  return qty > 0;
-});
-
-if (validBatches.length > 0) {
-  const oldestValidBatch = validBatches[validBatches.length - 1];
-  selectedBatchCompositeKey = oldestValidBatch.fields.CompositeKey;
-  console.log(`[Update ${shopId} - ${product}] Selected valid batch with composite key: ${selectedBatchCompositeKey}`);
-  console.log(`[Update ${shopId} - ${product}] Batch details:`, JSON.stringify(oldestValidBatch.fields));
-} else {
-  console.warn(`[Update ${shopId} - ${product}] No valid batch with quantity > 0 found`);
-  selectedBatchCompositeKey = null;
-}
-
-    
-    console.log(`[Update ${shopId} - ${product}] Selected batch with composite key: ${selectedBatchCompositeKey}`);
-    
-    
-    // Verify the batch exists before proceeding
-    const selectedBatch = await getBatchByCompositeKey(selectedBatchCompositeKey);
-    
-    if (!selectedBatch) {
-      console.warn(`[Update ${shopId} - ${product}] Selected batch no longer exists, trying to find alternative`);
       
-      // Try to find an alternative batch
-      const existingBatches = batches.filter(batch => batch.fields.CompositeKey);
-      
-      if (existingBatches.length > 0) {
-        // Use the newest batch as alternative
-        selectedBatchCompositeKey = existingBatches[0].fields.CompositeKey;
-        console.log(`[Update ${shopId} - ${product}] Using alternative batch: ${selectedBatchCompositeKey}`);
-      } else {
-        console.error(`[Update ${shopId} - ${product}] No alternative batch found`);
-        selectedBatchCompositeKey = null;
-      }
-    }
-  }
-}
+      // For sales, determine which batch to use (with hints later; default FIFO oldest)
+            let selectedBatchCompositeKey = null;
+            if (isSale) {
+              selectedBatchCompositeKey = await selectBatchForSale(
+                shopId,
+                product,
+                // For now, we default to FIFO oldest; inline hints can be added to `update` later if desired
+                { byPurchaseISO: null, byExpiryISO: null, pick: 'fifo-oldest' }
+              );
+              if (selectedBatchCompositeKey) {
+                console.log(`[Update ${shopId} - ${product}] Selected batch (sale): ${selectedBatchCompositeKey}`);
+              } else {
+                console.warn(`[Update ${shopId} - ${product}] No batch with positive quantity found for sale allocation`);
+              }
+            }
+
       // Update the inventory using translated product name
       let result;
         if (isSale) {
@@ -2944,20 +3029,17 @@ if (validBatches.length > 0) {
                   // No local stop; centralized wrapper handles stopping for the whole request.
                 }
             })();
-
+            
             // Update batch quantity if a batch was selected
             if (selectedBatchCompositeKey) {
               console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${update.quantity}`);
               try {
                 const batchUpdateResult = await updateBatchQuantityByCompositeKey(
-                  selectedBatchCompositeKey, 
+                  selectedBatchCompositeKey,
                   -Math.abs(update.quantity)
                 );
-                
                 if (batchUpdateResult.success) {
                   console.log(`[Update ${shopId} - ${product}] Updated batch quantity successfully`);
-                  
-                  // If the batch was recreated, add a note to the result
                   if (batchUpdateResult.recreated) {
                     console.log(`[Update ${shopId} - ${product}] Batch was recreated during update`);
                     result.batchRecreated = true;
@@ -2973,6 +3055,54 @@ if (validBatches.length > 0) {
                 result.batchError = batchError.message;
               }
             }
+
+            // --- NEW: start a short override window (2 min) and send confirmation with alternatives ---
+            try {
+              // Save user-state for post-sale override
+              await saveUserStateToDB(shopId, 'awaitingBatchOverride', {
+                saleRecordId: salesResult.id,
+                product,
+                unit: update.unit,
+                quantity: Math.abs(update.quantity),
+                oldCompositeKey: selectedBatchCompositeKey,
+                createdAtISO: new Date().toISOString(),
+                timeoutSec: 120
+              });
+            } catch (_) {}
+
+            // Compose confirmation message with used batch and up to N alternatives
+            let altLines = '';
+            try {
+              const list = await getBatchesForProductWithRemaining(shopId, product); // asc by PurchaseDate
+              const used = selectedBatchCompositeKey;
+              const alts = (list || []).filter(b => b.compositeKey !== used).slice(0, SHOW_BATCH_SUGGESTIONS_COUNT);
+              if (alts.length) {
+                const render = b => {
+                  const pd = formatDateForDisplay(b.purchaseDate);
+                  const ed = b.expiryDate ? formatDateForDisplay(b.expiryDate) : '—';
+                  return `• ${pd} (qty ${b.quantity} ${b.unit}, exp ${ed})`;
+                };
+                altLines = '\n\nOther batches:\n' + alts.map(render).join('\n');
+              }
+            } catch (_) {}
+
+            const usedBatch = selectedBatchCompositeKey ? await getBatchByCompositeKey(selectedBatchCompositeKey) : null;
+            const pd = usedBatch?.fields?.PurchaseDate ? formatDateForDisplay(usedBatch.fields.PurchaseDate) : '—';
+            const ed = usedBatch?.fields?.ExpiryDate ? formatDateForDisplay(usedBatch.fields.ExpiryDate) : '—';
+            const confirm = [
+              `✅ ${product} — sold ${Math.abs(update.quantity)} ${update.unit}${effectivePrice>0 ? ` @ ₹${effectivePrice}` : ''}`,
+              `Used batch: Purchased ${pd} (Expiry ${ed})`,
+              `To change batch (within 2 min):`,
+              `• batch DD-MM   e.g., batch 12-09`,
+              `• exp DD-MM     e.g., exp 20-09`,
+              `• batch oldest  |  batch latest`,
+              altLines,
+              `Full list → reply: batches ${product}`
+            ].filter(Boolean).join('\n');
+            await sendMessageViaAPI(`whatsapp:${shopId}`,
+            await generateMultiLanguageResponse(confirm, languageCode, 'sale-ok'));
+             // --- END NEW ---
+
           } else {
             console.error(`[Update ${shopId} - ${product}] Failed to create sales record: ${salesResult.error}`);
           }
