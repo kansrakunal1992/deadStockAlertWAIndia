@@ -3099,9 +3099,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
             const usedBatch = selectedBatchCompositeKey ? await getBatchByCompositeKey(selectedBatchCompositeKey) : null;
             const pd = usedBatch?.fields?.PurchaseDate ? formatDateForDisplay(usedBatch.fields.PurchaseDate) : '—';
-            const ed = usedBatch?.fields?.ExpiryDate ? formatDateForDisplay(usedBatch.fields.ExpiryDate) : '—';
+            const ed = usedBatch?.fields?.ExpiryDate ? formatDateForDisplay(usedBatch.fields.ExpiryDate) : '—';      
             const confirm = [
-              `✅ ${product} — sold ${Math.abs(update.quantity)} ${update.unit}${effectivePrice>0 ? ` @ ₹${effectivePrice}` : ''}`,
+                `✅ ${product} — sold ${Math.abs(update.quantity)} ${update.unit}${salePrice>0 ? ` @ ₹${salePrice}` : ''}`,
               `Used batch: Purchased ${pd} (Expiry ${ed})`,
               `To change batch (within 2 min):`,
               `• batch DD-MM   e.g., batch 12-09`,
