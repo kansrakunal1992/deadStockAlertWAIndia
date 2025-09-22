@@ -366,9 +366,10 @@ function looksLikeTransaction(text) {
   const hasDigits = regexPatterns.digits.test(s);
   const mentionsMoney =
     /(?:₹|rs\.?|rupees)/i.test(s) ||
-    /(?:@|per\s+(kg|liter|litre|packet|piece|box|ml|g|kg|ltr))/i.test(s);
-  const hasUnit =
-    /(kg|g|gram|grams|ml|ltr|liter|litre|packet|packets|box|boxes|piece|pieces)/i.test(s);
+    /(?:@|per\s+(kg|liter|litre|packet|piece|box|ml|g|kg|ltr))/i.test(s);  
+// Extend unit detection with Gujarati: કિલો/કિગ્રા/ગ્રામ/લિટર/પૅકેટ/પેકેટ/બોક્સ/ટુકડો/ટુકડાઓ/નંગ
+   const hasUnit =
+     /(kg|g|gram|grams|ml|ltr|l|liter|litre|liters|litres|packet|packets|box|boxes|piece|pieces|કિલો|કિગ્રા|ગ્રામ|લિટર|પૅકેટ|પેકેટ|બોક્સ|ટુકડાઓ?|ટુકડો|નંગ)/i.test(s);
   const hasTxnVerb =
     regexPatterns.purchaseKeywords.test(s) ||
     regexPatterns.salesKeywords.test(s) ||
@@ -709,14 +710,17 @@ const COMMAND_NORM_PREFIX = 'cmdnorm:';
 
 // Precompiled regex patterns for better performance
 const regexPatterns = {
-  purchaseKeywords: /(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy|khareeda)/gi,
-  salesKeywords: /(बेचा|बेचे|becha|sold|बिक्री|becha)/gi,
-  remainingKeywords: /(बचा|बचे|बाकी|remaining|left|bacha)/gi,
-  dateFormats: /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})|(\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4})/gi,
-  digits: /(\d+|[०-९]+)/i,
-  resetCommands: /(reset|start over|restart|cancel|exit|stop)/gi,
-  conjunctions: /(and|&|aur|also|और|एवं)/gi
-};
+   // Added Gujarati buy verbs: ખરીદ્યું / ખરીદી / ખરીદ્યા / kharidi
+   purchaseKeywords: /(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy|khareeda|ખરીદ્યું|ખરીદી|ખરીદ્યા|kharidi)/gi,
+   // Added Gujarati sell verbs: વેચ્યું / વેચી / વેચ્યા (NOTE: we intentionally do NOT add ‘વેચાણ’ which is the noun “sales”)
+   salesKeywords: /(बेचा|बेचे|becha|sold|बिक्री|વેચ્યું|વેચી|વેચ્યા)/gi,
+   remainingKeywords: /(बचा|बचे|बाकी|remaining|left|bacha)/gi,
+   dateFormats: /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})|(\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4})/gi,
+   // Added Gujarati numerals [૦-૯]
+   digits: /(\d+|[०-९]+|[૦-૯]+)/i,
+   resetCommands: /(reset|start over|restart|cancel|exit|stop)/gi,
+   conjunctions: /(and|&amp;|aur|also|और|एवं)/gi
+ };
 
 // Global storage with cleanup mechanism
 const globalState = {
@@ -827,6 +831,16 @@ const units = {
   'l': 1, 'ltr': 1, 'ltrs': 1, // Added common abbreviations
   'mls': 0.001 // Added common abbreviations
 };
+
+// Gujarati unit synonyms
+ Object.assign(units, {
+   'કિલો': 1, 'કિગ્રા': 1,
+   'ગ્રામ': 0.001,
+   'લિટર': 1,
+   'પૅકેટ': 1, 'પેકેટ': 1,
+   'બોક્સ': 1,
+   'ટુકડો': 1, 'ટુકડાઓ': 1, 'નંગ': 1
+ });
 
 // Greetings mapping by language
 const greetings = {
@@ -1039,7 +1053,6 @@ async function selectBatchForSale(shopId, product, { byPurchaseISO=null, byExpir
   return null;
 }
 
-// PASTE-REPLACE this whole function
 function parseBatchOverrideCommand(text, baseISO = null) {
   const t = String(text || '').trim().toLowerCase();
   if (!t) return null;
@@ -1048,31 +1061,27 @@ function parseBatchOverrideCommand(text, baseISO = null) {
   if (/^batch\s+oldest$/.test(t)) return { pick: 'oldest' };
   if (/^batch\s+latest$/.test(t)) return { pick: 'latest' };
 
-  // "batch dd-mm" | "batch dd/mm" | "purchased dd-mm" | "purchased dd/mm" [optional -yy or -yyyy]
-  // captures: 1=dd  2=mm  3=yy|yyyy (optional)
-  let m = t.match(/\b(?:batch|purchased)\s+([0-9]{1,2})-\/(?:-\/)?\b/i);
+  // "batch dd-mm[/yyyy]" or "batch dd/mm[/yyyy]"
+  let m = t.match(/^batch\s+(\d{1,2})\/-(?:\/-)?$/i);
   if (m) {
     const dd = m[1].padStart(2, '0');
     const mm = m[2].padStart(2, '0');
-    const yyyy = m[3]
-      ? (m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10))
-      : new Date().getFullYear();
+    let yyyy = m[3] ? (m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10)) : new Date().getFullYear();
     return { byPurchaseISO: new Date(Date.UTC(yyyy, parseInt(mm, 10) - 1, parseInt(dd, 10))).toISOString() };
   }
 
-  // "exp dd-mm" | "exp dd/mm" | "expiry dd-mm" | "expiry dd/mm" [optional -yy or -yyyy]
-  m = t.match(/\bexp(?:iry)?\s+([0-9]{1,2})-\/(?:-\/)?\b/i);
+  // "exp dd-mm[/yyyy]" or "expiry dd/mm[/yyyy]"
+  m = t.match(/^exp(?:iry)?\s+(\d{1,2})\/-(?:\/-)?$/i);
   if (m) {
     const dd = m[1].padStart(2, '0');
     const mm = m[2].padStart(2, '0');
-    const yyyy = m[3]
-      ? (m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10))
-      : new Date().getFullYear();
+    let yyyy = m[3] ? (m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10)) : new Date().getFullYear();
     return { byExpiryISO: new Date(Date.UTC(yyyy, parseInt(mm, 10) - 1, parseInt(dd, 10))).toISOString() };
   }
 
   return null;
 }
+
 
 
 // ===== NEW: Handle the 2-min post-sale override window =====
@@ -1142,13 +1151,12 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   return true;
 }
 
-
 function parseExpiryTextToISO(text, baseISO = null) {
   if (!text) return null;
-  const raw = String(text).trim().toLowerCase();
+  const raw = String(text).trim();
   const base = baseISO ? new Date(baseISO) : new Date();
-  
-  
+  if (isNaN(base)) return null;
+
   // Relative: +7d / +3m / +1y
   const rel = raw.match(/^\+(\d+)\s*([dmy])$/i);
   if (rel) {
@@ -1161,26 +1169,20 @@ function parseExpiryTextToISO(text, baseISO = null) {
     d.setUTCHours(0, 0, 0, 0);
     return d.toISOString();
   }
-  
-  
-  // Absolute: 15-12, 15/12, 15-12-25, 15/12/2025
-  // IMPORTANT: in a JS regex literal, / must be escaped as \/, hyphen is fine in a [] class.
-  const abs = raw.match(/^(\d{1,2})\/-(?:\/-)?$/);
 
-  if (abs) {  
-    const day = Math.min(31, parseInt(abs[1], 10));
-    const mon = Math.max(1, Math.min(12, parseInt(abs[2], 10))) - 1;
-    let year = abs[3] ? parseInt(abs[3], 10) : base.getFullYear();
-    // Two-digit year → 20xx
-    if (abs[3] && abs[3].length === 2) year = 2000 + year;
-    const d = new Date(Date.UTC(year, mon, day, 0, 0, 0, 0));
-    console.log(`[parsePriceAndExpiryFromText] Parsed expiry date: ${d.toISOString()} from: "${raw}"`);
-    console.log(`[parseExpiryTextToISO] Parsed expiry date: ${d.toISOString()} from: "${raw}"`);
+  // Absolute: 15-12, 15/12, 15-12-25, 15/12/2025
+  const abs = raw.match(/^(\d{1,2})\/-(?:\/-)?$/);
+  if (abs) {
+    const dd = Math.min(31, parseInt(abs[1], 10));
+    const mm = Math.max(1, Math.min(12, parseInt(abs[2], 10))) - 1;
+    let yyyy = abs[3] ? parseInt(abs[3], 10) : base.getFullYear();
+    if (abs[3] && abs[3].length === 2) yyyy = 2000 + yyyy;
+    const d = new Date(Date.UTC(yyyy, mm, dd, 0, 0, 0, 0));
     return d.toISOString();
   }
-  
   return null;
 }
+
 
 // Local fallback: normalize a date-like into an ISO date at midnight UTC
 function toISODateUTC(dateLike) {
@@ -1212,70 +1214,43 @@ function bumpExpiryYearIfPast(proposedISO, baseISO) {
 function parsePriceAndExpiryFromText(text, baseISO = null) {
   const out = { price: null, expiryISO: null, ok: false, skipExpiry: false };
   if (!text) return out;
-  const t = text.trim().toLowerCase();
+  const t = String(text).trim().toLowerCase();
   if (t === 'ok' || t === 'okay') { out.ok = true; return out; }
   if (t === 'skip') { out.skipExpiry = true; return out; }
-  // Common tokens "exp", "expiry", "expires"   
-  // Extract only the date-like part that follows exp/expiry/expires
-    const expSegmentMatch = text.match(/\b(?:expiry|expires?|exp)\b[^\d+]*([0-9/+\-]{3,})/i);
-    const expSegment = expSegmentMatch ? expSegmentMatch[1] : null;
 
-    // NEW: if no exp-token present, try to spot ANY date token in the text
-      // Matches: +7d / +3m / +1y / 15-12 / 15/12 / 15-12-25 / 15/12/2025
-      const anyDateMatch = !expSegment
-        ? text.match(/(\+\d+\s*[dmy]|\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?)/i)
-        : null;
-  
-    const expiry = expSegment
-        ? parseExpiryTextToISO(expSegment, baseISO)
-        : (anyDateMatch ? parseExpiryTextToISO(anyDateMatch[1], baseISO) : null);
+  // Prefer explicit exp/expiry/expires segment
+  let dateToken = null;
+  const m1 = text.match(/\b(?:expiry|expires?|exp)\b[^\d+]*([0-9]{1,2}[\/-][0-9]{1,2}(?:[\/-][0-9]{2,4})?|\+\d+\s*[dmy])/i);
+  if (m1) dateToken = m1[1];
 
-  if (expiry) out.expiryISO = expiry; 
-  // price: first decimal number in text (more careful parsing to avoid date confusion)
-  const withoutExpiry = text
-    // Remove expiry-related text more carefully
-    .replace(/\b(?:expiry|expires?|exp)\s+[0-9\/\-]+/gi, ' ')  // Remove "exp 11/12" patterns
-    .replace(/\b(?:expiry|expires?|exp)\b[^0-9]*/gi, ' ')     // Remove other expiry mentions
-    .replace(/[,]/g, ' ')
-    .trim();
-  
-  // Try to find price with currency symbol first (more specific pattern)
-  let priceMatch = withoutExpiry.match(/(?:₹|rs\.?)\s*(\d+(?:\.\d+)?)/i);
-  
-  // If no currency symbol found, look for standalone numbers (but avoid date-like patterns)
-  if (!priceMatch) {
-    // Split by spaces and check each token
-    const tokens = withoutExpiry.split(/\s+/);
-    for (const token of tokens) {
-      // Skip if token looks like a date (contains / or -)
-      if (token.includes('/') || token.includes('-')) continue;
-      
-      // Check if token is a valid number
-      const numMatch = token.match(/^(\d+(?:\.\d+)?)$/);
-      if (numMatch) {
-        const p = parseFloat(numMatch[1]);
-        // Only consider it a price if it's reasonable (not too large to be a date)
-        if (Number.isFinite(p) && p > 0 && p < 10000) {
-          priceMatch = [token, p.toString()];
-          break;
-        }
-      }
+  // Otherwise: first date-like token anywhere
+  if (!dateToken) {
+    const m2 = text.match(/(\+\d+\s*[dmy]|\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?)/i);
+    if (m2) dateToken = m2[1];
+  }
+  if (dateToken) {
+    const iso = parseExpiryTextToISO(dateToken, baseISO);
+    if (iso) out.expiryISO = iso;
+  }
+
+  // Price extraction: ₹60 / rs 60 / standalone number (avoid dates)
+  const cleaned = text.replace(/\b(?:expiry|expires?|exp)\b[\s\S]*$/i, ' ');
+  let pMatch = cleaned.match(/(?:₹|rs\.?\s*)(\d+(?:\.\d+)?)/i);
+  if (!pMatch) {
+    for (const tok of cleaned.split(/\s+/)) {
+      if (/^\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?$/.test(tok)) continue; // skip dates
+      const m = tok.match(/^(\d+(?:\.\d+)?)$/);
+      if (m) { pMatch = m; break; }
     }
   }
-  
-  if (priceMatch) {
-    const p = parseFloat(priceMatch[1]);
-    if (Number.isFinite(p) && p > 0) {
-      out.price = p;
-      console.log(`[parsePriceAndExpiryFromText] Extracted price: ${p} from: "${priceMatch[0]}"`);
-    }
+  if (pMatch) {
+    const p = parseFloat(pMatch[1]);
+    if (Number.isFinite(p) && p > 0) out.price = p;
   }
-// Debug: see what we extracted for expiry  
-console.log('[parsePriceAndExpiryFromText] expSegment:', expSegment,
-              'anyDate:', anyDateMatch ? anyDateMatch[1] : null,
-              '=> expiryISO:', out.expiryISO);
+
   return out;
 }
+
 
 
 // Helper function to calculate days between two dates
@@ -1298,7 +1273,12 @@ function daysBetween(date1, date2) {
  *      "expiring कितने दिन?"  -> "expiring 30" (defaults to 30 if none given)
  *  - Guarantees: keeps BRAND/PRODUCT names and NUMBERS as-is, no quotes, one line.
  */
-async function normalizeCommandText(text, detectedLanguage = 'en', requestId = 'cmd-norm') {
+async function normalizeCommandText(text, detectedLanguage = 'en', requestId = 'cmd-norm') { 
+// If the message clearly looks like a transaction (qty/unit + buy/sell verb), never rewrite it
+   // into an English quick command like "sales today".
+   if (looksLikeTransaction(text)) {
+     return String(text).trim();
+   }
   try {
     if (!text || !text.trim()) return text;
     const lang = (detectedLanguage || 'en').toLowerCase();
