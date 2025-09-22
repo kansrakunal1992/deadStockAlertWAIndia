@@ -48,7 +48,12 @@ function normalizeUnit(unit) {
   const unitMap = {
     'g': 'kg', 'gram': 'kg', 'grams': 'kg', 'ग्राम': 'kg',
     'ml': 'liters', 'milliliter': 'liters', 'milliliters': 'liters',
-    'packet': 'packets', 'पैकेट': 'packets', 'box': 'boxes', 'बॉक्स': 'boxes'
+    'packet': 'packets', 'पैकेट': 'packets', 'box': 'boxes', 'बॉक्स': 'boxes', 
+    'કિલો': 'kg', 'કિગ્રા': 'kg', 'ગ્રામ': 'kg',
+    'લિટર': 'liters',
+    'પૅકેટ': 'packets', 'પેકેટ': 'packets',
+    'બોક્સ': 'boxes',
+    'ટુકડો': 'pieces', 'ટુકડાઓ': 'pieces', 'નંગ': 'pieces'
   };
   
   return unitMap[unit.toLowerCase()] || unit;
@@ -58,15 +63,17 @@ function normalizeUnit(unit) {
 function convertToBaseUnit(quantity, unit) {
   const u = String(unit || '').toLowerCase().trim();
   // weight
-  if (u === 'g' || u === 'gram' || u === 'grams' || u === 'ग्राम') return quantity * 0.001; // -> kg
-  if (u === 'kg' || u === 'kilogram' || u === 'kilograms') return quantity;
+  if (u === 'g' || u === 'gram' || u === 'grams' || u === 'ग्राम' || u === 'ગ્રામ') return quantity * 0.001; // -> kg
+  if (u === 'kg' || u === 'kilogram' || u === 'kilograms' || u === 'કિલો' || u === 'કિગ્રા') return quantity;
+
   // volume
   if (u === 'ml' || u === 'milliliter' || u === 'milliliters') return quantity * 0.001; // -> liters
-  if (u === 'liter' || u === 'liters' || u === 'litre' || u === 'litres') return quantity;
+  if (u === 'liter' || u === 'liters' || u === 'litre' || u === 'litres' || u === 'લિટર') return quantity;
+
   // countables
-  if (u === 'packet' || u === 'packets' || u === 'पैकेट') return quantity;
-  if (u === 'box' || u === 'boxes' || u === 'बॉक्स') return quantity;
-  if (u === 'piece' || u === 'pieces' || u === '') return quantity;
+  if (u === 'packet' || u === 'packets' || u === 'पैकेट' || u === 'પૅકેટ' || u === 'પેકેટ') return quantity;
+  if (u === 'box' || u === 'boxes' || u === 'बॉक्स' || u === 'બોક્સ') return quantity;
+  if (u === 'piece' || u === 'pieces' || u === '' || u === 'टुकड़ा' || u === 'टुकड़े' || u === 'ટુકડો' || u === 'ટુકડાઓ' || u === 'નંગ') return quanity;
   return quantity; // default passthrough
 }
 
