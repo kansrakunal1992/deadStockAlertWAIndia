@@ -1,5 +1,19 @@
 <!DOCTYPE html>
 <html lang="en">
+<style>
+.ea-banner {
+  position: sticky; top: 0; z-index: 9999;
+  background: #0b5; color: #fff; font: 600 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+  padding: 10px 14px; display: flex; align-items: center; gap: 10px; justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+}
+.ea-banner .ea-pill { background: rgba(255,255,255,.2); padding: 4px 8px; border-radius: 999px; font-weight: 700; }
+.ea-banner a { color: #072; background: #fff; font-weight: 700; padding: 6px 10px; border-radius: 6px; text-decoration: none; }
+.ea-banner .ea-close { position: absolute; right: 10px; top: 8px; cursor: pointer; background: transparent; border: 0; color:#fff; font-size:16px; }
+.ea-note { font-size: 13px; color: #085; background: #e9fbf1; border: 1px dashed #9bdabf; padding: 8px 10px; border-radius: 8px; margin: 8px 0; }
+.limited { color: #d9480f; font-weight: 700; }
+.hidden { display: none !important; }
+</style>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1251,6 +1265,13 @@
     </style>
 </head>
 <body>
+<!-- Early Access Banner -->
+<div class="ea-banner" id="eaBanner" role="region" aria-label="Early Access">
+  <span class="ea-pill">EARLY ACCESS</span>
+  <span>Free for first <strong>50 shops</strong> • <em>Payments coming soon</em></span>
+  #pricingEnroll Now</a>
+  <button class="ea-close" aria-label="Close banner" onclick="document.getElementById('eaBanner').classList.add('hidden')">×</button>
+</div>
     <!-- Header Ribbon with Indian Colors -->
     <div class="header-ribbon"></div>
     
@@ -1403,6 +1424,7 @@
     <section class="pricing" id="pricing">
         <div class="section-title">
             <h2>Membership Plans</h2>
+            <p class="ea-note"><strong>Note:</strong> During Early Access, onboarding is <strong>free</strong>. Payments & auto-billing will be enabled later. Your trial will not be charged automatically.</p>
             <p>Choose the plan that works best for your shop. No hidden charges!</p>
         </div>
         
@@ -1427,7 +1449,9 @@
             <!-- Free Demo Plan (First 50 Shops Only) -->
             <div class="pricing-card popular">
                 <div class="popular-tag">LIMITED</div>
-                <h3>Free Demo Plan (First 50 Shops Only)</h3>
+                <h3>Free Demo Plan (First 50 Shops Only)</h3>                      
+                <p class="limited">⏳ Limited: First 50 shops only</p>
+                <p class="ea-note">No card needed • Payments coming soon</p>
                 <div class="price">FREE<span> / 14 days</span></div>
                 <ul class="pricing-features">
                     <li>Full Enterprise access (all features)</li>
