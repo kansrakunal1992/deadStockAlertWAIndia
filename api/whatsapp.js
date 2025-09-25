@@ -408,6 +408,10 @@ const {
   updateBatchExpiry,
   saveUserPreference,
   getUserPreference,
+  saveUserPlan,
+  getUserPlan,
+  isFirst50Shops,
+  isFeatureAvailable,
   createSalesRecord,
   updateBatchQuantity,
   batchUpdateInventory,
@@ -1471,6 +1475,21 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   // Short Summary (on-demand) -- primary: "short summary", keep "summary" as alias
     if (/^\s*((short|quick|mini)\s*(summary|report|overview)|summary)\s*$/i.test(text)) {
       const shopId = From.replace('whatsapp:', '');
+
+       // Check if AI summaries are available for this plan
+      const canUseAI = await isFeatureAvailable(shopId, 'ai_summary');
+      if (!canUseAI) {
+        const planInfo = await getUserPlan(shopId);
+        let errorMessage = 'Advanced AI summaries are only available on the Enterprise plan.';
+        
+        if (planInfo.plan === 'free_demo_first_50') {
+          errorMessage = 'Your trial period has expired. Please upgrade to the Enterprise plan for advanced AI summaries.';
+        }
+        
+        await sendMessageViaAPI(From, errorMessage);
+        return true;
+      }
+            
       const msg = await generateInstantSummary(shopId, detectedLanguage, requestId);
       await sendMessageViaAPI(From, msg);
       return true;
@@ -1479,6 +1498,21 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     // Full Summary (on-demand) -- swapped to non-AI Daily Summary
     if (/^\s*((full|detailed|complete|entire)\s*(summary|report|overview))\s*$/i.test(text)) {
       const shopId = From.replace('whatsapp:', '');
+
+     // Check if AI summaries are available for this plan
+      const canUseAI = await isFeatureAvailable(shopId, 'ai_summary');
+      if (!canUseAI) {
+        const planInfo = await getUserPlan(shopId);
+        let errorMessage = 'Detailed AI summaries are only available on the Enterprise plan.';
+        
+        if (planInfo.plan === 'free_demo_first_50') {
+          errorMessage = 'Your trial period has expired. Please upgrade to the Enterprise plan for detailed summaries.';
+        }
+        
+        await sendMessageViaAPI(From, errorMessage);
+        return true;
+      }
+      
       // Uses dailySummary.js non-AI builder + sender; it sends WhatsApp itself
       await processShopSummary(shopId); // sends localized message internally
       return true;
@@ -3926,6 +3960,19 @@ async function generateInstantSummary(shopId, languageCode, requestId) {
 // Generate full-scale summary (detailed with AI insights)
 async function generateFullScaleSummary(shopId, languageCode, requestId) {
   try {
+    // Check if AI summaries are available for this plan
+    const canUseAI = await isFeatureAvailable(shopId, 'ai_summary');
+    if (!canUseAI) {
+      const planInfo = await getUserPlan(shopId);
+      let errorMessage = 'Advanced AI summaries are only available on the Enterprise plan.';
+      
+      if (planInfo.plan === 'free_demo_first_50') {
+        errorMessage = 'Your trial period has expired. Please upgrade to the Enterprise plan for advanced AI summaries.';
+      }
+      
+      return await generateMultiLanguageResponse(errorMessage, languageCode, requestId);
+    }
+    
     console.log(`[${requestId}] Generating full-scale summary for shop ${shopId}`);
     
     // Get 30-day sales data
@@ -4152,6 +4199,38 @@ function generateFallbackSummary(data, languageCode, requestId) {
 }
 
 module.exports = { generateSummaryInsights };
+
+// Add a new command handler for plan upgrades
+async function handlePlanUpgrade(Body, From, detectedLanguage, requestId) {
+  const shopId = From.replace('whatsapp:', '');
+  
+  // Simple command to upgrade to standard plan
+  if (Body.toLowerCase().includes('upgrade to standard')) {
+    await saveUserPlan(shopId, 'standard');
+    const message = await generateMultiLanguageResponse(
+      'You have been upgraded to the Standard plan. You now have access to all standard features.',
+      detectedLanguage,
+      requestId
+    );
+    await sendMessageViaAPI(From, message);
+    return true;
+  }
+  
+  // Command to upgrade to enterprise plan
+  if (Body.toLowerCase().includes('upgrade to enterprise')) {
+    await saveUserPlan(shopId, 'enterprise');
+    const message = await generateMultiLanguageResponse(
+      'You have been upgraded to the Enterprise plan. You now have access to all features including advanced AI analytics.',
+      detectedLanguage,
+      requestId
+    );
+    await sendMessageViaAPI(From, message);
+    return true;
+  }
+  
+  return false;
+}
+
 
 // Add this function after the existing helper functions
 
@@ -6805,6 +6884,30 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   console.log(`[${requestId}] Handling new interaction`);
   const shopId = From.replace('whatsapp:', '');
 
+ // Check if user already has a plan assigned
+  const planInfo = await getUserPlan(shopId);
+  
+  // If no plan assigned, assign appropriate plan
+  if (!planInfo.plan || planInfo.plan === 'free_demo') {
+    // Check if this shop qualifies for first 50 plan
+    const isFirst50 = await isFirst50Shops(shopId);
+    
+    let plan = 'free_demo';
+    let trialEndDate = null;
+    
+    if (isFirst50) {
+      plan = 'free_demo_first_50';
+      // Set trial end date to 14 days from now
+      trialEndDate = new Date();
+      trialEndDate.setDate(trialEndDate.getDate() + 14);
+    }
+    
+    // Save the plan
+    await saveUserPlan(shopId, plan, trialEndDate);
+    
+    console.log(`Assigned plan: ${plan} to shop ${shopId}`);
+  }
+  
    // ✅ Get user's language preference for personalized processing message
   let userLanguage = 'en';
   try {
