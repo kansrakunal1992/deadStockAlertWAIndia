@@ -641,6 +641,107 @@
             font-size: 0.9rem;
         }
         
+        /* Key Differentiators */
+        .key-differentiators {
+            max-width: 1400px;
+            margin: 60px auto 0;
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: var(--shadow);
+        }
+        
+        .key-differentiators h3 {
+            font-size: 2rem;
+            margin-bottom: 30px;
+            text-align: center;
+            color: var(--navy);
+        }
+        
+        .differentiators-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        
+        .differentiators-table th, .differentiators-table td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .differentiators-table th {
+            background-color: var(--light-green);
+            color: var(--navy);
+            font-weight: 600;
+        }
+        
+        .differentiators-table tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .differentiators-table tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        
+        /* Add-Ons & Discounts */
+        .add-ons {
+            max-width: 1400px;
+            margin: 60px auto 0;
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: var(--shadow);
+        }
+        
+        .add-ons h3 {
+            font-size: 2rem;
+            margin-bottom: 30px;
+            text-align: center;
+            color: var(--navy);
+        }
+        
+        .add-ons-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin-top: 30px;
+        }
+        
+        .add-on-card {
+            background: var(--light-green);
+            border-radius: 15px;
+            padding: 25px;
+            border-left: 5px solid var(--green);
+        }
+        
+        .add-on-card h4 {
+            font-size: 1.4rem;
+            margin-bottom: 15px;
+            color: var(--navy);
+        }
+        
+        .add-on-card ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .add-on-card li {
+            margin-bottom: 10px;
+            position: relative;
+            padding-left: 25px;
+        }
+        
+        .add-on-card li:before {
+            content: '\f058';
+            font-family: 'Font Awesome 5 Free';
+            font-weight: 900;
+            position: absolute;
+            left: 0;
+            top: 2px;
+            color: var(--green);
+        }
+        
         /* Testimonials */
         .testimonials {
             padding: 100px 5%;
@@ -1299,59 +1400,155 @@
     </section>
     
     <!-- Pricing Section -->
-    
-<section class="pricing" id="pricing">
-  <div class="section-title">
-    <h2>Affordable Pricing Plans</h2>
-    <p>Choose the plan that works best for your shop. No hidden charges!</p>
-  </div>
-  <div class="pricing-cards">
-    <div class="pricing-card">
-      <h3>Starter Plan</h3>
-      <div class="price">₹299<span> / shop / month</span></div>
-      <ul class="pricing-features">
-        <li>1 daily ops summary + 1 AI summary</li>
-        <li>Up to 200 replies</li>
-        <li>Overage: ₹0.50/message (Twilio + cushion)</li>
-        <li>WhatsApp support</li>
-      </ul>
-      <a href="#" class="btn btn-enroll enroll-pricing">
-        <i class="fas fa-user-plus"></i> Enroll Now
-      </a>
-    </div>
+    <section class="pricing" id="pricing">
+        <div class="section-title">
+            <h2>Membership Plans</h2>
+            <p>Choose the plan that works best for your shop. No hidden charges!</p>
+        </div>
+        
+        <div class="pricing-cards">
+            <!-- Free Demo Plan (General) -->
+            <div class="pricing-card">
+                <h3>Free Demo Plan (General)</h3>
+                <div class="price">FREE<span> / 14 days</span></div>
+                <ul class="pricing-features">
+                    <li>1 daily ops summary (30 utility templates)</li>
+                    <li>Basic AI summaries</li>
+                    <li>Up to 50 replies (total, hard limit)</li>
+                    <li>PDF invoice sending</li>
+                    <li>WhatsApp support (9 AM - 9 PM)</li>
+                </ul>
+                <p style="font-size: 0.9rem; margin-top: 15px; color: var(--text-medium); font-style: italic;">Best for: Testing core functionality</p>
+                <a href="#" class="btn btn-enroll enroll-pricing">
+                    <i class="fas fa-user-plus"></i> Start Free Trial
+                </a>
+            </div>
 
-    <div class="pricing-card popular">
-      <div class="popular-tag">MOST POPULAR</div>
-      <h3>Growth Plan</h3>
-      <div class="price">₹499<span> / shop / month</span></div>
-      <ul class="pricing-features">
-        <li>2 templates/day (Utility + Marketing)</li>
-        <li>Up to 500 replies</li>
-        <li>PDF invoice sending</li>
-        <li>Overage: ₹0.75/message</li>
-        <li>Priority support</li>
-      </ul>
-      <a href="#" class="btn btn-whatsapp enroll-pricing">
-        <i class="fas fa-user-plus"></i> Enroll Now
-      </a>
-    </div>
+            <!-- Free Demo Plan (First 50 Shops Only) -->
+            <div class="pricing-card popular">
+                <div class="popular-tag">LIMITED</div>
+                <h3>Free Demo Plan (First 50 Shops Only)</h3>
+                <div class="price">FREE<span> / 14 days</span></div>
+                <ul class="pricing-features">
+                    <li>Full Enterprise access (all features)</li>
+                    <li>Priority onboarding support</li>
+                    <li>After trial: Auto-downgrade to Standard unless upgraded</li>
+                </ul>
+                <a href="#" class="btn btn-whatsapp enroll-pricing">
+                    <i class="fas fa-user-plus"></i> Start Free Trial
+                </a>
+            </div>
 
-    <div class="pricing-card">
-      <h3>Pro Plan</h3>
-      <div class="price">₹799<span> / shop / month</span></div>
-      <ul class="pricing-features">
-        <li>3 templates/day</li>
-        <li>Unlimited replies (fair use)</li>
-        <li>Multi-language summaries</li>
-        <li>Priority support</li>
-      </ul>
-      <a href="#" class="btn btn-enroll enroll-pricing">
-        <i class="fas fa-user-plus"></i> Enroll Now
-      </a>
-    </div>
-  </div>
-</section>
+            <!-- Standard Plan -->
+            <div class="pricing-card">
+                <h3>Standard Plan</h3>
+                <div class="price">₹299<span> / shop / month</span></div>
+                <ul class="pricing-features">
+                    <li>2 templates/day (60 utility templates)</li>
+                    <li>Up to 100 replies/day</li>
+                    <li>AI: Basic AI summaries</li>
+                    <li>Analytics: None (no dashboards)</li>
+                    <li>PDF invoice sending</li>
+                    <li>WhatsApp support (9 AM - 9 PM)</li>
+                    <li>Overage: Meta pass-through + ₹0.50/reply beyond daily limit</li>
+                </ul>
+                <p style="font-size: 0.9rem; margin-top: 15px; color: var(--text-medium); font-style: italic;">Best for: Small shops needing essentials</p>
+                <a href="#" class="btn btn-enroll enroll-pricing">
+                    <i class="fas fa-user-plus"></i> Enroll Now
+                </a>
+            </div>
 
+            <!-- Enterprise Plan -->
+            <div class="pricing-card">
+                <h3>Enterprise Plan</h3>
+                <div class="price">₹599<span> / shop / month</span></div>
+                <ul class="pricing-features">
+                    <li>5 templates/day (60 utility + 30 marketing templates)</li>
+                    <li>Up to 300 replies/day</li>
+                    <li>AI: Advanced AI summaries (multi-language, predictive insights)</li>
+                    <li>Analytics: Advanced dashboards (real-time metrics, custom reports)</li>
+                    <li>PDF invoice sending</li>
+                    <li>WhatsApp support (9 AM - 9 PM)</li>
+                    <li>Priority support queue</li>
+                    <li>Overage: Meta pass-through + ₹0.75/reply beyond daily limit</li>
+                </ul>
+                <p style="font-size: 0.9rem; margin-top: 15px; color: var(--text-medium); font-style: italic;">Best for: High-volume shops needing AI/analytics</p>
+                <a href="#" class="btn btn-whatsapp enroll-pricing">
+                    <i class="fas fa-user-plus"></i> Enroll Now
+                </a>
+            </div>
+        </div>
+
+        <!-- Key Differentiators -->
+        <div class="key-differentiators">
+            <h3>Key Differentiators</h3>
+            <table class="differentiators-table">
+                <thead>
+                    <tr>
+                        <th>Feature</th>
+                        <th>Standard Plan</th>
+                        <th>Enterprise Plan</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Daily Templates</td>
+                        <td>2 (utility only)</td>
+                        <td>5 (utility + marketing)</td>
+                    </tr>
+                    <tr>
+                        <td>Daily Replies</td>
+                        <td>100</td>
+                        <td>300</td>
+                    </tr>
+                    <tr>
+                        <td>AI Summaries</td>
+                        <td>Basic</td>
+                        <td>Advanced</td>
+                    </tr>
+                    <tr>
+                        <td>Analytics</td>
+                        <td>❌ None</td>
+                        <td>✅ Advanced dashboards</td>
+                    </tr>
+                    <tr>
+                        <td>Support Priority</td>
+                        <td>Standard</td>
+                        <td>Priority</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Add-Ons & Discounts -->
+        <div class="add-ons">
+            <h3>Add-Ons & Discounts</h3>
+            <div class="add-ons-grid">
+                <div class="add-on-card">
+                    <h4>Volume Discounts (100+ shops)</h4>
+                    <ul>
+                        <li>Standard: 10% off (₹269/shop)</li>
+                        <li>Enterprise: 15% off (₹509/shop)</li>
+                        <li>Shared message pool across all shops</li>
+                    </ul>
+                </div>
+                <div class="add-on-card">
+                    <h4>Annual Prepayment</h4>
+                    <ul>
+                        <li>2 months free on both plans</li>
+                        <li>Pay for 10 months, get 12</li>
+                    </ul>
+                </div>
+                <div class="add-on-card">
+                    <h4>Onboarding Fee (Optional)</h4>
+                    <ul>
+                        <li>₹2,000–₹3,000/shop</li>
+                        <li>Setup, training, and template customization</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
     
     <!-- Testimonials -->
     <section class="testimonials" id="testimonials">
@@ -1811,7 +2008,7 @@
                 featuresTitle: "किराणा स्टोअर्ससाठी Powerful Features",
                 featuresSubtitle: "Indian shopkeepers साठी बनवले आहे जे time वाचवते आणि inventory waste कमी करते",
                 feature1Title: "Voice किंवा Text ने Update",
-                feature1Text: "Voice note किंवा text message वर तुमचे inventory update करा. AI तुमची भाषा समजून आपोआप inventory update करते.",
+                feature1Text: "Voice note किंवा text message वर तुमचे inventory update करा. AI तुमची भाषा बुझून आपोआप inventory update करते.",
                 feature2Title: "On-Demand Summary",
                 feature2Text: "WhatsApp वर 'Summary' पाठवून कधीही तुमच्या inventory चे short summary मिळवा.",
                 feature3Title: "Daily Long Summary",
@@ -1823,7 +2020,7 @@
                 step1Title: "Send Voice किंवा Text",
                 step1Text: "WhatsApp वर voice किंवा text message पाठवून update करा.",
                 step2Title: "AI Processing",
-                step2Text: "AI तुमचे message समजून inventory update करते.",
+                step2Text: "AI तुमचे message बुझून inventory update करते.",
                 step3Title: "Instant Confirmation",
                 step3Text: "Update ची confirmation आणि current stock levels मिळवा.",
                 step4Title: "AI Insights",
@@ -1837,7 +2034,7 @@
                 popularTag: "सर्वात लोकप्रिय",
                 pricingEnroll: "आत्ताच Enroll करा",
                 feature1: "अमर्यादित voice updates",
-                feature2: "रिअल-टाइम inventory tracking",
+                feature2: "रियल-टाइम inventory tracking",
                 feature3: "दैनिक summary (पर्यायी)",
                 feature4: "Dead stock alerts",
                 feature5: "WhatsApp support",
@@ -1861,7 +2058,7 @@
                 testimonial2: "\"Bundled offer suggestions ने मला जुने स्टॉक जलद साफ करण्यास मदत केली. मी एका महिन्यात ₹8,000 अतिरिक्त कमवले जे dead loss होते.",
                 client2Name: "प्रिया शर्मा",
                 client2Store: "सामान्य दुकान, मुंबई",
-                testimonial3: "\"55 वर्षांचा दुकानदार म्हणून, मला तंत्रज्ञानाची काळजी होती. पण WhatsApp मला माहित आहे! Saamagrii.AI ने inventory management इतके सोपे केले.",
+                testimonial3: "\"55 वर्षांचा दुकानदार म्हणून, मला तंत्रज्ञानाची काळजी होती. पण WhatsApp मला माहित आहे! Saamagrii.AI inventory management इतके सोपे केले.",
                 client3Name: "विजय पाटील",
                 client3Store: "किराणा दुकान, अहमदाबाद",
                 ctaTitle: "तुमचे dead stock कमी करण्यास तयार आहात का?",
@@ -1944,7 +2141,7 @@
                 feature17: "24/7 support",
                 testimonialsTitle: "கடைக்காரர்கள் என்ன சொல்கிறார்கள்",
                 testimonialsSubtitle: "Saamagrii.AI ஐ பயன்படுத்தும் Indian Shop owners இடமிருந்து கேளுங்கள்",
-                testimonial1: "\"Saamagrii.AI எனது expired பொருட்களை 40% குறைத்தது! Voice note system பிஸியான கடைக்காரர்களுக்கு பரிபூரணமானது, நாம் போன்றவர்களுக்கு காம்ப்ளெக்ஸ் சாப்ட்வேருக்கு நேரம் இல்லை.",
+                testimonial1: "\"Saamagrii.AI எனது expired பொருட்களை 40% குறைத்தது! Voice note system பிஸியான கடைக்காரர்களுக்கு பரிபூர்ணமானது, நாம் போன்றவர்களுக்கு காம்ப்ளெக்ஸ் சாப்ட்வேருக்கு நேரம் இல்லை.",
                 client1Name: "ராஜேஷ் குமார்",
                 client1Store: "கிராகரி ஸ்டோர், டெல்லி",
                 testimonial2: "\"Bundled offer suggestions எனகு பழைய ஸ்டாக் வேகமாக அழிக்க உதவியது. நான் ஒரு மாதத்தில் ₹8,000 கூடுதலாக சம்பாதித்தேன், அது dead loss ஆகியிருந்தது!",
@@ -1972,7 +2169,7 @@
                 submitBtn: "Enrollment சமர்ப்பிக்கவும்",
                 thankYouTitle: "Enroll செய்ததற்கு நன்றி!",
                 thankYouText: "உங்கள் enrollment விவரங்கள் வெற்றிகரமாக சமர்ப்பிக்கப்பட்டுள்ளன. எங்கள் குழு உங்கள் தகவலை மதிப்பாய்வு செய்து விரைவில் ஒரு activation code அனுப்பும்.",
-                whatsappHelpTitle: "உதவி தேவையா அல்லது எந்த கேள்விகள் உள்ளனவா?",
+                whatsappHelpTitle: "Help அவசியமா அல்லது எந்த கேள்விகள் உள்ளனவா?",
                 whatsappHelpText: "எந்தவொரு உதவிக்கும் அல்லது உங்களுக்கு உங்கள் activation code அவசரமாக தேவைப்பட்டால், தயவுசெய்து WhatsApp இல் எங்களைத் தொடர்பு கொள்ளுங்கள்.",
                 whatsappHelpText2: "வெறும் \"I need help with Saamagrii.AI\" என்று ஒரு message அனுப்பவும், எங்கள் குழு உங்களுக்கு உதவும்.",
                 closeBtn: "மூடுக"
