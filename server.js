@@ -459,6 +459,59 @@ app.post('/api/whatsapp', whatsappHandler);
 // Static files (if needed)
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Add this endpoint to your server.js file
+app.post('/api/enroll', async (req, res) => {
+  const requestId = req.requestId;
+  
+  try {
+    console.log(`[${requestId}] Processing enrollment form submission`);
+    
+    const { mobile, shopName, state, country } = req.body;
+    
+    // Validate required fields
+    if (!mobile || !shopName || !state || !country) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields',
+        message: 'All fields are required'
+      });
+    }
+    
+    // Create record in Airtable
+    const Airtable = require('airtable');
+    const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
+    const tableName = 'Enrollments'; // Change this to your actual table name
+    
+    const record = await base(tableName).create([
+      {
+        "fields": {
+          "Mobile": mobile,
+          "Shop Name": shopName,
+          "State": state,
+          "Country": country,
+          "Submission Date": new Date().toISOString()
+        }
+      }
+    ]);
+    
+    console.log(`[${requestId}] Enrollment record created with ID: ${record[0].getId()}`);
+    
+    res.status(201).json({
+      success: true,
+      message: 'Enrollment submitted successfully',
+      recordId: record[0].getId(),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error(`[${requestId}] Error processing enrollment:`, error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to submit enrollment',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
 // 404 handler
 app.use((req, res) => {
   console.warn(`[${req.requestId}] 404 Not Found: ${req.method} ${req.url}`);
