@@ -2644,5 +2644,9 @@ module.exports = {
   getReorderSuggestions,
   applySaleWithReconciliation,
   updateBatchPurchasePrice,
-  reattributeSaleToBatch
+  reattributeSaleToBatch,
+  saveUserPlan, 
+  getUserPlan, 
+  isFirst50Shops, 
+  isFeatureAvailable
 };
