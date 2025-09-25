@@ -5,6 +5,9 @@ const {
     getAllShopIDs,
     getCurrentInventory,    
     getUserPreference,
+    getUserPlan,
+    isFeatureAvailable,
+    isFirst50Shops,
     getTodaySalesSummary,
     getInventorySummary,
     getLowStockProducts,
@@ -305,6 +308,40 @@ async function processShopSummary(shopId) {
   try {
     console.log(`[${context}] Starting processing`);
     
+    // Check plan and feature availability
+    const canSendSummary = await isFeatureAvailable(shopId, 'daily_summary');
+    if (!canSendSummary) {
+      const planInfo = await getUserPlan(shopId);
+      let errorMessage = 'Daily summaries are not available on your current plan.';
+      
+      if (planInfo.plan === 'free_demo') {
+        errorMessage = 'You have reached your daily summary limit for the Free Demo plan.';
+      } else if (planInfo.plan === 'free_demo_first_50') {
+        errorMessage = 'Your trial period has expired. Please upgrade to continue using daily summaries.';
+      }
+      
+      // Send error message to user
+      const userPref = await getUserPreference(shopId);
+      const userLanguage = userPref.success ? userPref.language : 'en';
+      const formattedMessage = await generateMultiLanguageResponse(errorMessage, userLanguage);
+      await sendWhatsAppMessage(shopId, formattedMessage);
+      
+      return { shopId, success: false, error: 'Plan limit reached' };
+    }
+    
+    // Check if summary was already sent today (for free_demo plan)
+    const planInfo = await getUserPlan(shopId);
+    if (planInfo.plan === 'free_demo' && await wasSummarySentToday(shopId)) {
+      const userPref = await getUserPreference(shopId);
+      const userLanguage = userPref.success ? userPref.language : 'en';
+      const errorMessage = await generateMultiLanguageResponse(
+        'You have reached your daily summary limit for the Free Demo plan.',
+        userLanguage
+      );
+      await sendWhatsAppMessage(shopId, errorMessage);
+      return { shopId, success: false, error: 'Daily limit reached' };
+    }
+          
     // Get user preference
     const userPref = await getUserPreference(shopId);
     const userLanguage = userPref.success ? userPref.language : 'en';
@@ -412,7 +449,21 @@ async function processShopSummary(shopId) {
       const avgInventoryValue = inventorySummary.totalValue / inventorySummary.totalProducts;
       message += `• Average inventory value: ₹${avgInventoryValue.toFixed(2)}\n`;
     }
-    
+
+    // Add plan information
+    message += `\n📋 Plan: ${planInfo.plan === 'free_demo' ? 'Free Demo' : 
+      planInfo.plan === 'free_demo_first_50' ? 'Free Demo (First 50)' :
+      planInfo.plan === 'standard' ? 'Standard' : 'Enterprise'}`;
+
+    if (planInfo.trialEndDate) {
+      const daysLeft = Math.ceil((planInfo.trialEndDate - new Date()) / (1000 * 60 * 60 * 24));
+      if (daysLeft > 0) {
+        message += `\n⏳ Trial days remaining: ${daysLeft}`;
+      } else {
+        message += `\n⚠️ Trial expired. Please upgrade to continue.`;
+      }
+    }
+          
     message += `\nThank you for using our inventory management system!`;
     
     // Generate multilingual response
