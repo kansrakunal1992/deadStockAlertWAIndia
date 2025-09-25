@@ -2325,18 +2325,52 @@
             const state = document.getElementById('state').value;
             const country = document.getElementById('country').value;
             
-            // In a real implementation, you would send this data to a server
-            // For demo purposes, we'll just log it and show the thank you page
-            console.log('Enrollment submitted:', { mobile, shopName, state, country });
+            // Show loading state
+            const submitBtn = document.querySelector('.submit-btn');
+            const originalText = submitBtn.textContent;
+            submitBtn.textContent = 'Submitting...';
+            submitBtn.disabled = true;
             
-            // Hide modal and show thank you page
-            enrollModal.style.display = 'none';
-            document.body.style.overflow = 'auto'; // Enable scrolling
-            document.querySelector('.hero, .features, .how-it-works, .pricing, .testimonials, .cta-section, footer').style.display = 'none';
-            thankYouPage.style.display = 'block';
-            
-            // Scroll to top
-            window.scrollTo(0, 0);
+            // Send data to backend
+            fetch('/api/enroll', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    mobile,
+                    shopName,
+                    state,
+                    country
+                })
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Success:', data);
+                
+                // Hide modal and show thank you page
+                enrollModal.style.display = 'none';
+                document.body.style.overflow = 'auto'; // Enable scrolling
+                document.querySelector('.hero, .features, .how-it-works, .pricing, .testimonials, .cta-section, footer').style.display = 'none';
+                thankYouPage.style.display = 'block';
+                
+                // Scroll to top
+                window.scrollTo(0, 0);
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('There was an error submitting your enrollment. Please try again.');
+            })
+            .finally(() => {
+                // Reset button state
+                submitBtn.textContent = originalText;
+                submitBtn.disabled = false;
+            });
         });
         
         // Close thank you page
