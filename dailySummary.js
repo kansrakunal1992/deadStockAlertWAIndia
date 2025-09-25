@@ -189,6 +189,51 @@ hi: {
   en: {} // <-- critical fallback; keeps Object.keys(...) safe
 };
 
+// Helper function to split messages
+function splitMessage(message, maxLength = 1600) {
+  if (message.length <= maxLength) {
+    return [message];
+  }
+  
+  const chunks = [];
+  let currentChunk = '';
+  
+  // Split by paragraph breaks first, then by sentence-ending punctuation
+  const sentences = message
+    .split(/\n{2,}/)                               // paragraphs
+    .flatMap(p => p.match(/[^.!?]+[.!?]*/g) || [p]); // sentences (fallback to whole paragraph)
+
+  for (const sentence of sentences) {
+    if (currentChunk.length + sentence.length + 1 <= maxLength) {
+      currentChunk += sentence + ' ';
+    } else {
+      // If adding this sentence would exceed the limit, push the current chunk and start a new one
+      if (currentChunk.trim().length > 0) {
+        chunks.push(currentChunk.trim());
+        currentChunk = sentence + ' ';
+      } else {
+        // If the sentence itself is longer than maxLength, split by words
+        const words = sentence.split(' ');
+        for (const word of words) {
+          if (currentChunk.length + word.length + 1 <= maxLength) {
+            currentChunk += word + ' ';
+          } else {
+            chunks.push(currentChunk.trim());
+            currentChunk = word + ' ';
+          }
+        }
+      }
+    }
+  }
+  
+  // Add the last chunk if it has content
+  if (currentChunk.trim().length > 0) {
+    chunks.push(currentChunk.trim());
+  }
+  
+  return chunks;
+}
+
 function renderNativeglishLabels(text, languageCode) {
   const lang = (languageCode || 'en').toLowerCase();
   const dict = NL_LABELS[lang] || NL_LABELS.en;
@@ -257,36 +302,94 @@ async function sendWhatsAppMessage(to, body, maxRetries = 2) {
         const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
         console.log(`Formatted to: ${formattedTo}`);
         
-        let lastError;
-        
-        // Retry logic with exponential backoff
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                const message = await client.messages.create({
-                    body: body,
-                    from: process.env.TWILIO_WHATSAPP_NUMBER,
-                    to: formattedTo,
-                    timeout: 10000 // 10 second timeout
-                });
+        // Check if the message exceeds the WhatsApp limit (1600 characters)
+        const MAX_LENGTH = 1600;
+        if (body.length <= MAX_LENGTH) {
+            let lastError;
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                try {
+                    const message = await client.messages.create({
+                        body: body,
+                        from: process.env.TWILIO_WHATSAPP_NUMBER,
+                        to: formattedTo,
+                        timeout: 10000 // 10 second timeout
+                    });
+                    
+                    console.log(`Message sent successfully. SID: ${message.sid}`);
+                    return message;
+                } catch (error) {
+                    lastError = error;
+                    console.warn(`Attempt ${attempt} failed:`, error.message);
+                    
+                    // If this is the last attempt, throw the error
+                    if (attempt === maxRetries) {
+                        break;
+                    }
+                    
+                    // Wait before retrying (exponential backoff)
+                    const delay = Math.pow(2, attempt) * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+            throw lastError;
+        } else {
+            // Split the message into chunks
+            const chunks = splitMessage(body, MAX_LENGTH);
+            console.log(`Splitting message into ${chunks.length} chunks`);
+            
+            const messageSids = [];
+            for (let i = 0; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                // Add part indicator for multi-part messages
+                const partIndicator = `\n\n(Part ${i+1} of ${chunks.length})`;
+                const chunkWithIndicator = chunk + partIndicator;
+
+                console.log(`Sending part ${i+1}/${chunks.length} (${chunkWithIndicator.length} chars)`);
                 
-                console.log(`Message sent successfully. SID: ${message.sid}`);
-                return message;
-            } catch (error) {
-                lastError = error;
-                console.warn(`Attempt ${attempt} failed:`, error.message);
-                
-                // If this is the last attempt, throw the error
-                if (attempt === maxRetries) {
-                    break;
+                let lastError;
+                for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                    try {
+                        const message = await client.messages.create({
+                            body: chunkWithIndicator,
+                            from: process.env.TWILIO_WHATSAPP_NUMBER,
+                            to: formattedTo,
+                            timeout: 10000 // 10 second timeout
+                        });
+                        
+                        messageSids.push(message.sid);
+                        console.log(`Part ${i+1} sent successfully. SID: ${message.sid}`);
+                        
+                        // Break out of retry loop on success
+                        break;
+                    } catch (error) {
+                        lastError = error;
+                        console.warn(`Attempt ${attempt} for part ${i+1} failed:`, error.message);
+                        
+                        // If this is the last attempt, throw the error
+                        if (attempt === maxRetries) {
+                            break;
+                        }
+                        
+                        // Wait before retrying (exponential backoff)
+                        const delay = Math.pow(2, attempt) * 1000;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    }
                 }
                 
-                // Wait before retrying (exponential backoff)
-                const delay = Math.pow(2, attempt) * 1000;
-                await new Promise(resolve => setTimeout(resolve, delay));
+                // If all retries failed for this chunk, throw the last error
+                if (lastError) {
+                    throw lastError;
+                }
+                
+                // Add a small delay between parts to avoid rate limiting
+                if (i < chunks.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
             }
+            
+            // Return the first message SID as the primary one
+            return { sid: messageSids[0], parts: messageSids };
         }
-        
-        throw lastError;
     } catch (error) {
         console.error('Error sending WhatsApp message:', error);
         console.error('Error details:', error.message);
