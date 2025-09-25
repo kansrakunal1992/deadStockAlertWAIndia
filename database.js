@@ -844,6 +844,9 @@ async function testConnection() {
 async function saveUserPreference(shopId, language) {
   const context = `Save User Preference ${shopId}`;
   try {
+   // First, get current plan if it exists
+   const currentPlan = await getUserPlan(shopId);
+    
     // Format date for Airtable (YYYY-MM-DD)
     const now = new Date().toISOString().split('T')[0];
     
@@ -860,7 +863,9 @@ async function saveUserPreference(shopId, language) {
       const updateData = {
         fields: {
           Language: language,
-          LastUpdated: now
+          LastUpdated: now,
+          Plan: currentPlan.plan || 'free_demo',
+          TrialEndDate: currentPlan.trialEndDate ? currentPlan.trialEndDate.toISOString() : null
         }
       };
       
@@ -875,7 +880,9 @@ async function saveUserPreference(shopId, language) {
         fields: {
           ShopID: shopId,
           Language: language,
-          LastUpdated: now
+          LastUpdated: now,
+          Plan: 'free_demo',
+          TrialEndDate: null
         }
       };
       
@@ -892,6 +899,135 @@ async function saveUserPreference(shopId, language) {
   }
 }
 
+// Save user plan information
+async function saveUserPlan(shopId, plan, trialEndDate = null) {
+  const context = `Save User Plan ${shopId}`;
+  try {
+    const updateData = {
+      fields: {
+        Plan: plan,
+        TrialEndDate: trialEndDate ? trialEndDate.toISOString() : null
+      }
+    };
+
+    // Check if user preference exists
+    const userPref = await getUserPreference(shopId);
+    if (userPref.success) {
+      // Update existing record
+      const recordId = userPref.id; // Assuming getUserPreference returns id
+      await airtableUserPreferencesRequest({
+        method: 'patch',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${USER_PREFERENCES_TABLE_NAME}/${recordId}`,
+        data: updateData
+      }, `${context} - Update`);
+    } else {
+      // Create new record with plan info
+      updateData.fields.ShopID = shopId;
+      updateData.fields.Language = 'en'; // Default language
+      await airtableUserPreferencesRequest({
+        method: 'post',
+        data: updateData
+      }, `${context} - Create`);
+    }
+
+    return { success: true };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Get user plan information
+async function getUserPlan(shopId) {
+  const context = `Get User Plan ${shopId}`;
+  try {
+    const userPref = await getUserPreference(shopId);
+    
+    if (userPref.success) {
+      return {
+        plan: userPref.plan || 'free_demo',
+        trialEndDate: userPref.trialEndDate ? new Date(userPref.trialEndDate) : null,
+        shopId: shopId
+      };
+    }
+
+    // Default plan
+    return { 
+      plan: 'free_demo', 
+      trialEndDate: null,
+      shopId 
+    };
+  } catch (error) {
+    logError(context, error);
+    return { 
+      plan: 'free_demo', 
+      trialEndDate: null,
+      error: error.message 
+    };
+  }
+}
+
+// Check if shop is in first 50 (for free_demo_first_50 plan)
+async function isFirst50Shops(shopId) {
+  const context = `Check First 50 Shops ${shopId}`;
+  try {
+    // Get all shops with free_demo_first_50 plan
+    const filterFormula = `{Plan} = 'free_demo_first_50'`;
+    const result = await airtableUserPreferencesRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula }
+    }, context);
+
+    // If less than 50 shops have this plan, this shop qualifies
+    return result.records.length < 50;
+  } catch (error) {
+    logError(context, error);
+    return false;
+  }
+}
+
+// Check if feature is available for user's plan
+async function isFeatureAvailable(shopId, feature) {
+  const context = `Check Feature Availability ${shopId}`;
+  try {
+    const { plan, trialEndDate } = await getUserPlan(shopId);
+    
+    // Check if trial has expired
+    const isTrialExpired = trialEndDate && new Date() > trialEndDate;
+    
+    // Feature availability matrix
+    const featureMatrix = {
+      // Daily summaries
+      'daily_summary': {
+        'free_demo': true,  // 1 per day
+        'free_demo_first_50': !isTrialExpired, // Unlimited during trial
+        'standard': true,
+        'enterprise': true
+      },
+      // AI summaries
+      'ai_summary': {
+        'free_demo': false,
+        'free_demo_first_50': !isTrialExpired, // Full access during trial
+        'standard': false,
+        'enterprise': true
+      },
+      // Replies limit
+      'replies': {
+        'free_demo': true, // 50 total
+        'free_demo_first_50': !isTrialExpired, // Unlimited during trial
+        'standard': true,
+        'enterprise': true
+      }
+    };
+    
+    return featureMatrix[feature]?.[plan] || false;
+  } catch (error) {
+    logError(context, error);
+    return false;
+  }
+}
+
+
 // Get user preference from Airtable
 async function getUserPreference(shopId) {
   const context = `Get User Preference ${shopId}`;
@@ -905,7 +1041,10 @@ async function getUserPreference(shopId) {
     if (result.records.length > 0) {
       return {
         success: true,
-        language: result.records[0].fields.Language
+        language: result.records[0].fields.Language,
+        plan: result.records[0].fields.Plan || 'free_demo',
+        trialEndDate: result.records[0].fields.TrialEndDate ? new Date(result.records[0].fields.TrialEndDate) : null,
+        id: result.records[0].id
       };
     }
     
