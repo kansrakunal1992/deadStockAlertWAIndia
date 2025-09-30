@@ -7175,11 +7175,12 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       // Send welcome message with examples - no input method selection
       const welcomeMessage = await generateMultiLanguageResponse(
         `Welcome! I'm ready for your inventory update. You can send:
-          • Voice or Text message: "5kg sugar purchased at 20rs/kg exp 11/12", "10 Parle-G sold at 10rs/packet exp 12/11/2025"
+          • Voice or Text message: "5kg sugar purchased at 20rs/kg exp +7d", "10 Parle-G sold at 10rs/packet exp +3m"
           • Get an automated invoice pdf to send to customer upon a sale
+          • Get expired products details: "expiring 0" or "expired items"
+          • Handle returned items via Voice or Text message: "return Raddish Pickle 3 bottles" 
           • Get instant summary: "short summary"
           • Get detailed summary: "full summary"
-          
           
           What would you like to update?`,
         greetingLang,
