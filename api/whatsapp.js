@@ -361,6 +361,7 @@ function looksLikeTransaction(text) {
   try { regexPatterns.purchaseKeywords.lastIndex = 0; } catch (_) {}
   try { regexPatterns.salesKeywords.lastIndex = 0; } catch (_) {}
   try { regexPatterns.remainingKeywords.lastIndex = 0; } catch (_) {}
+  try { regexPatterns.returnKeywords.lastIndex = 0; } catch (_) {}
   try { regexPatterns.digits.lastIndex = 0; } catch (_) {}
 
   const hasDigits = regexPatterns.digits.test(s);
@@ -373,6 +374,7 @@ function looksLikeTransaction(text) {
   const hasTxnVerb =
     regexPatterns.purchaseKeywords.test(s) ||
     regexPatterns.salesKeywords.test(s) ||
+    regexPatterns.returnKeywords.test(s) ||
     /\b(opening|received|recd|restock|purchase|bought|sold)\b/i.test(s);
 
   // parse updates only when it _looks_ like a transaction
@@ -794,6 +796,16 @@ const products = [
   'ice cream', 'आइसक्रीम', 'chocolate', 'चॉकलेट', 'candy', 'कैंडी', 'mint', 'मिंट', 'mouth freshener', 'माउथ फ्रेशनर'  
 ];
 
+// --- Small helper: detect a reset message (case-insensitive, single-word phrases) ---
+function isResetMessage(text) {
+  if (!text) return false;
+  const t = String(text).trim().toLowerCase();
+  return RESET_COMMANDS.some(cmd => {
+    const re = new RegExp(`^\\s*${cmd}\\s*$`, 'i');
+    return re.test(t);
+  });
+}
+
 // Number words mapping
 const numberWords = {
   // English
@@ -900,6 +912,19 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
   const shopId = From.replace('whatsapp:', '');
   const state = await getUserStateFromDB(shopId);
   if (!state || state.mode !== 'awaitingPriceExpiry') return false;
+  
+  // NEW: allow "reset" while asking for price/expiry
+    if (isResetMessage(Body)) {
+      try { await deleteUserStateFromDB(state.id); } catch (_) {}
+      const ok = await generateMultiLanguageResponse(
+        `✅ Reset. I’ve cleared the pending price/expiry step.`,
+        detectedLanguage,
+        requestId
+      );
+      await sendMessageViaAPI(From, ok);
+      return true;
+    }
+  
   console.log(`[awaitingPriceExpiry] Raw reply for ${shopId}:`, JSON.stringify(Body));
   const data = state.data || {};
   const { batchId, product, unit, quantity, purchaseDate, autoExpiry, needsPrice, isPerishable } = data;
@@ -1065,23 +1090,23 @@ function parseBatchOverrideCommand(text, baseISO = null) {
   if (/^batch\s+oldest$/.test(t)) return { pick: 'oldest' };
   if (/^batch\s+latest$/.test(t)) return { pick: 'latest' };
 
+  
   // "batch dd-mm[/yyyy]" or "batch dd/mm[/yyyy]"
-  let m = t.match(/^batch\s+(\d{1,2})\/-(?:\/-)?$/i);
-  if (m) {
-    const dd = m[1].padStart(2, '0');
-    const mm = m[2].padStart(2, '0');
-    let yyyy = m[3] ? (m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10)) : new Date().getFullYear();
-    return { byPurchaseISO: new Date(Date.UTC(yyyy, parseInt(mm, 10) - 1, parseInt(dd, 10))).toISOString() };
-  }
-
-  // "exp dd-mm[/yyyy]" or "expiry dd/mm[/yyyy]"
-  m = t.match(/^exp(?:iry)?\s+(\d{1,2})\/-(?:\/-)?$/i);
-  if (m) {
-    const dd = m[1].padStart(2, '0');
-    const mm = m[2].padStart(2, '0');
-    let yyyy = m[3] ? (m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10)) : new Date().getFullYear();
-    return { byExpiryISO: new Date(Date.UTC(yyyy, parseInt(mm, 10) - 1, parseInt(dd, 10))).toISOString() };
-  }
+    let m = t.match(/^batch\s+(\d{1,2})\/\-(?:\/\-)?$/i);
+    if (m) {
+      const dd = m[1].padStart(2, '0');
+      const mm = m[2].padStart(2, '0');
+      let yyyy = m[3] ? (m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10)) : new Date().getFullYear();
+      return { byPurchaseISO: new Date(Date.UTC(yyyy, parseInt(mm, 10) - 1, parseInt(dd, 10))).toISOString() };
+    }
+    // "exp dd-mm[/yyyy]" or "expiry dd/mm[/yyyy]"
+    m = t.match(/^exp(?:iry)?\s+(\d{1,2})\/\-(?:\/\-)?$/i);
+    if (m) {
+      const dd = m[1].padStart(2, '0');
+      const mm = m[2].padStart(2, '0');
+      let yyyy = m[3] ? (m[3].length === 2 ? 2000 + parseInt(m[3], 10) : parseInt(m[3], 10)) : new Date().getFullYear();
+      return { byExpiryISO: new Date(Date.UTC(yyyy, parseInt(mm, 10) - 1, parseInt(dd, 10))).toISOString() };
+    }
 
   return null;
 }
@@ -1093,7 +1118,19 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   const shopId = From.replace('whatsapp:', '');
   const state = await getUserStateFromDB(shopId);
   if (!state || state.mode !== 'awaitingBatchOverride') return false;
-
+  
+  // NEW: global reset inside override state
+    if (isResetMessage(Body)) {
+      try { await deleteUserStateFromDB(state.id); } catch (_) {}
+      const msg = await generateMultiLanguageResponse(
+        `✅ Reset. Cleared the current batch-selection window.`,
+        detectedLanguage,
+        requestId
+      );
+      await sendMessageViaAPI(From, msg);
+      return true;
+    }
+  
   const data = state.data || {};
   const { saleRecordId, product, unit, quantity, oldCompositeKey, createdAtISO, timeoutSec=120 } = data;
   const createdAt = new Date(createdAtISO || Date.now());
@@ -2499,7 +2536,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
           1. product: The name of the product (e.g., "Parle-G", "sugar", "milk") - ONLY the product name, no quantities or units
           2. quantity: The numerical quantity (as a number)
           3. unit: The unit of measurement (e.g., "packets", "kg", "liters", "pieces")
-          4. action: The action being performed ("purchased", "sold", "remaining")
+          4. action: The action being performed ("purchased", "sold", "remaining", "returned")
           5. price: The price per unit (if mentioned, otherwise null)
           6. totalPrice: The total price (if mentioned, otherwise null)        
           7. expiryDate (if present), parse tokens like: "exp", "expiry", "expires on", formats dd-mm, dd/mm/yyyy, +7d, +3m, +1y
@@ -2507,6 +2544,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
           - Use "purchased" for words like "bought", "purchased", "buy", "खरीदा", "खरीदे", "लिया", "खरीदी", "khareeda"
           - Use "sold" for words like "sold", "बेचा", "बेचे", "becha", "बिक्री", "becha"
           - Use "remaining" for words like "remaining", "left", "बचा", "बचे", "बाकी", "bacha"
+          - Use "returned" for customer returns: words like "return", "returned", "customer return", "रिटर्न", "वापस", "परत", "રીટર્ન"
           If no action is specified, default to "purchased" for positive quantities and "sold" for negative quantities.
           If no unit is specified, infer the most appropriate unit based on the product type:
           - For biscuits, chips, etc.: "packets"
@@ -2558,10 +2596,18 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                               Number(update.quantity) || 0;
                 
                 // Ensure action is properly set based on quantity
-                let action = update.action || '';
-                if (!action) {
-                  action = quantity >= 0 ? 'purchased' : 'sold';
-                }
+                
+                let action = (update.action || '').toLowerCase();
+                        if (!action) { action = quantity >= 0 ? 'purchased' : 'sold'; }
+                        // Normalize common variants
+                        if (action === 'return' || action === 'returns' || action === 'returned') action = 'returned';
+                        // If transcript explicitly contains a return verb, prefer 'returned'
+                        try {
+                          const low = String(transcript || '').toLowerCase();
+                          if (/(^|\s)(return|returned|रिटर्न|वापस|परत|રીટર્ન)(\s|$)/.test(low)) {
+                            action = 'returned';
+                          }
+                        } catch(_) {}
                 
                 // Extract price information
                 let price = update.price || 0;
@@ -2589,7 +2635,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                   product: product,
                   quantity: Math.abs(quantity), // Always store positive quantity
                   unit: unit,
-                  action: action,
+                  action: action, // 'purchased' | 'sold' | 'remaining' | 'returned'
                   price: price,
                   totalPrice: totalPrice,
                   expiryISO: expiry,
@@ -2775,7 +2821,7 @@ function parseSingleUpdate(transcript) {
 function isValidInventoryUpdate(parsed) {
   // Allow unknown products but require valid quantity and action
   const validQuantity = parsed.quantity !== 0;
-  const validAction = ['purchased', 'sold', 'remaining'].includes(parsed.action);
+  const validAction = ['purchased', 'sold', 'remaining', 'returned'].includes(parsed.action);
   return validQuantity && validAction;
 }
 
@@ -2867,6 +2913,33 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       console.log(`[Update ${shopId}] Using translated product: "${translatedProduct}"`);
       // Use translated product for all operations
       const product = translatedProduct;
+      
+      // === NEW: Handle customer returns (simple add-back; no batch, no price/expiry) ===
+            if (update.action === 'returned') {
+              let result;
+              try {
+                result = await updateInventory(shopId, product, Math.abs(update.quantity), update.unit);
+                // Fetch post-update for confirmation
+                const invAfter = await getProductInventory(shopId, product);
+                const unitText = update.unit ? ` ${update.unit}` : '';
+                const newQty = invAfter?.quantity ?? result?.newQuantity;
+                const u = invAfter?.unit ?? result?.unit ?? update.unit;
+                const message = await generateMultiLanguageResponse(
+                  `↩️ Return processed — ${product}: +${Math.abs(update.quantity)} ${u || ''}`.trim() +
+                  (newQty !== undefined ? ` (Stock: ${newQty} ${u || ''})` : ''),
+                  languageCode,
+                  'return-ok'
+                );
+                await sendMessageViaAPI(`whatsapp:${shopId}`, message);
+              } catch (e) {
+                console.warn(`[Update ${shopId} - ${product}] Return failed:`, e.message);
+              }
+              results.push({
+                product, quantity: Math.abs(update.quantity), unit: update.unit, action: 'returned',
+                success: !!result?.success, newQuantity: result?.newQuantity, unitAfter: result?.unit
+              });
+              continue; // Move to next update
+            }
 
       // Get product price from database
       let productPrice = 0;
@@ -4731,6 +4804,33 @@ async function sendPriceUpdateReminders() {
   }
 }
 
+// ================================
+// (Optional) Customer Return fallback (regex-based)
+// ================================
+async function tryHandleReturnText(transcript, from, detectedLanguage, requestId) {
+  const text = String(transcript ?? '').trim();
+  // Pattern A: "return <product> <qty> <unit>"
+  let m1 = text.match(/^(?:customer\s+)?returns?\s+(.+?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z\u0900-\u097F\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF]+)$/i);
+  // Pattern B: "return <qty> <unit> <product>"
+  let m2 = text.match(/^(?:customer\s+)?returns?\s+(\d+(?:\.\d+)?)\s+([A-Za-z\u0900-\u097F\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF]+)\s+(.+)$/i);
+  if (!m1 && !m2) return false;
+  const shopId = from.replace('whatsapp:', '');
+  const qty  = Number(m1 ? m1[2] : m2[1]);
+  const unit = (m1 ? m1[3] : m2[2]).trim();
+  const raw  = (m1 ? m1[1] : m2[3]).trim();
+  const product = await translateProductName(raw, requestId + ':return-text');
+  const result = await updateInventory(shopId, product, Math.abs(qty), unit);
+  let message = `↩️ Return processed — ${product}: +${qty} ${unit}`;
+  if (result?.success) {
+    const u = result.unit ?? unit;
+    message += ` (Stock: ${result.newQuantity} ${u})`;
+  }
+  const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+  await sendMessageViaAPI(from, msg);
+  return true;
+}
+
+  
 // Start the scheduler when the module loads
 schedulePriceUpdateReminder();
 
@@ -4739,6 +4839,16 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
   const startTime = Date.now();
     
       try { 
+    
+    // --- NEW: global reset (works in any context) ---
+        if (isResetMessage(transcript)) {
+          try { await clearUserState(from); } catch (_) {}
+          await sendSystemMessage(`✅ Reset. I’ve cleared any active steps.`, from, detectedLanguage, requestId, response);
+          handledRequests.add(requestId);
+          return res.send(response.toString());
+        }
+    
+
     // --- HARD GUARD: treat summary phrases as commands, not inventory updates
     const shopId = from.replace('whatsapp:', '');
     const intent = resolveSummaryIntent(transcript);
@@ -4759,6 +4869,16 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
 
     console.log(`[${requestId}] [6] Parsing updates using AI...`);
     const updates = await parseMultipleUpdates(transcript);
+    
+    // Optional fallback: if AI/Rules returned nothing, try a simple "return ..." handler once
+        if (!updates || updates.length === 0) {
+          const didReturn = await tryHandleReturnText(transcript, from, detectedLanguage, requestId);
+          if (didReturn) {
+            handledRequests.add(requestId);
+            return res.send(response.toString());
+          }
+        }
+        
     if (updates.length === 0) {
       console.log(`[${requestId}] Rejected: No valid inventory updates`);
       await sendSystemMessage(
