@@ -1,0 +1,90 @@
+A) Quick info / analytics (any time)
+
+stock <product name>  (aliases allowed: inventory, qty)  — e.g., stock <product name> 
+low stock  (also accepts: stockout, out of stock) 
+batches <product name> (also accepts: expiry <product name> for viewing batches/expiries) 
+expiring <days> (defaults to 30 if <days> omitted) — e.g., expiring 30 
+sales today|week|month (also accepts this week, this month) — e.g., sales week 
+top <N> products [today|week|month] (defaults: <N>=5, period=month) — e.g., top 5 products week 
+reorder (also accepts: reorder suggestions, what should i reorder) 
+inventory value (aliases: stock value, value summary) 
+products [<page>] (alias: list products [<page>]) — e.g., products 2, products page 3 
+products search <term> (alias: search products <term>) — e.g., products search <term> 
+prices [<page>] (aliases: price updates [<page>], stale prices [<page>]) — e.g., prices 2 
+
+
+B) Summaries (on‑demand)
+
+short summary (alias: summary) — sends the instant/concise summary. 
+full summary — triggers the full (detailed) summary flow. 
+
+
+Note: The bot can also surface a button menu with replies like “Short Summary” and “Full Summary”; tapping those is equivalent to the commands above. 
+
+
+C) Product expiry actions
+
+View batches/expiries: expiry <product name> (same as batches <product name>) 
+Set expiry on latest batch: expiry <product name> <date>
+Accepted <date> formats: dd-mm, dd/mm, dd-mm-yyyy, dd/mm/yyyy, +7d, +3m, +1y. 
+
+
+D) Price management
+
+Bulk/single price updates:
+update price <product 1> <price 1>[, <product 2> <price 2>[, ...]]
+(also accepts price update ...; separators can be comma/semicolon/“and”/“aur”/&; numbers in words are handled) 
+Backlog of items that need price refresh: prices [<page>] (aliases above) 
+
+
+E) Reset / exit (any time)
+
+reset | start over | restart | cancel | exit | stop — exits any ongoing flow. 
+
+
+F) State‑based commands (appear only in specific flows)
+1) 2‑minute post‑sale batch override
+(only works immediately after a sale, while the override window is open) 
+
+batch oldest 
+batch latest 
+batch <dd-mm> (or <dd/mm>, optional [/yyyy]) — e.g., batch 12-09 
+exp <dd-mm> (or <dd/mm>, optional [/yyyy]) — e.g., exp 20-09 
+(You can always send batches <product name> to see all remaining batches.) 
+
+2) Awaiting price/expiry after a perishable purchase
+(the bot explicitly asks for these—reply with) 
+
+₹<price> [per <unit>] — e.g., ₹60 per kg, 10 
+exp <date> — same date formats as above. 
+ok — keep the auto‑calculated expiry. 
+skip — clear/remove expiry. 
+
+3) Transcript / item confirmation prompts
+(only when the bot asks you to confirm) 
+
+yes / no — confirm or reject the heard transcript. 
+1 — product is wrong; 2 — quantity is wrong; 3 — action is wrong; 4 — all wrong (I’ll type it). 
+
+
+G) Natural‑language transaction messages (not “commands” but supported)
+These are free‑form purchase/sale/remaining updates (multi‑language verbs & units recognized). Examples (placeholders shown): 
+
+Purchase: bought <product name> <qty> <unit> @<price> [exp <date>] 
+Sale: sold <product name> <qty> <unit> [@<price>] 
+Remaining: remaining <qty> <unit> <product name> (or “left” etc.) 
+
+
+The parser also understands common Indian‑language verbs (e.g., खरीदी/बेचा/ખરીદી/વેચ્યું etc.), units (kg, ltr, packets, pieces, Gujarati variants), basic price tokens (₹, rs.), and date short‑hands (+7d, +3m, +1y). 
+
+
+H) Helpful triggers (not commands)
+
+Greetings like hello, hi, namaste, vanakkam, etc., show quick purchase examples to guide new users. 
+
+
+Notes / defaults the code enforces
+
+If you type expiring without days, it defaults to 30. 
+top <N> products defaults to top 5 and month if you omit them. 
+expiry <product name> <date> sets the expiry on the latest batch of that product. 
