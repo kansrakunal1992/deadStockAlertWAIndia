@@ -3026,7 +3026,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               ``,
               needBoth ? `Reply with **both** (any order):` : `Reply with:`,
               needsPrice ? `• ₹<price>` : null,
-              isPerishable ? `• exp <dd-mm> | <dd/mm/yyyy> | +7d | +3m | +1y` : null,
+              isPerishable ? `• exp +7d | +3m | +1y` : null,
               `Or reply:`,
               `• 'ok' to keep current expiry${needsPrice ? ' (still need price)' : ''}`,
               `• 'skip' to clear expiry`,
