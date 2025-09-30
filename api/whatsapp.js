@@ -1317,6 +1317,7 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
       '  • "reorder" (or "reorder suggestions")',
       '  • "inventory value" (aka "stock value" or "value summary")',
       '  • "prices [<page>]" (aka "price updates [<page>]" or "stale prices [<page>]")',
+      '  • "expired items" → "expiring 0"',
       '  • "products [<page>]" or "list products [<page>]"',
       '  • "products search <term>" or "search products <term>"',      
       '  • "short summary" (aka "summary", "छोटा सारांश", "chhota saraansh")',
@@ -1442,7 +1443,46 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     await sendMessageViaAPI(From, examples);
     return true;
   }
+  
+  // =======================
+  // Customer Return command
+  // =======================
+  // Pattern A: "return <product> <qty> <unit>"
+  // Pattern B: "return <qty> <unit> <product>"
+  let r1 = text.match(/^(?:customer\s+)?returns?\s+(.+?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z\u0900-\u097F\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF]+)$/i);
+  let r2 = text.match(/^(?:customer\s+)?returns?\s+(\d+(?:\.\d+)?)\s+([A-Za-z\u0900-\u097F\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF]+)\s+(.+)$/i);
+  if (r1 || r2) {
+    const shopId = From.replace('whatsapp:', '');
+    const qty  = Number(r1 ? r1[2] : r2[1]);
+    const unit = (r1 ? r1[3] : r2[2]).trim();
+    const raw  = (r1 ? r1[1] : r2[3]).trim();
+    const product = await translateProductName(raw, requestId + ':return');
+    const result = await updateInventory(shopId, product, Math.abs(qty), unit); // add back
+    let message = `↩️ Return processed — ${product}: +${qty} ${unit}`;
+    if (result?.success) {
+      const u = result.unit ?? unit;
+      message += ` (Stock: ${result.newQuantity} ${u})`;
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
 
+  // ==================================
+  // Alias: "expired"/"expired items"
+  // ==================================
+  if (/^expired(?:\s+items?)?$/i.test(text)) {
+    const shopId = From.replace('whatsapp:', '');
+    const exp = await getExpiringProducts(shopId, 0);
+    let message = `❌ Already expired:\n`;
+    message += exp.length
+      ? exp.map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n')
+      : `No expired items.`;
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+    
   // NEW (2.f): expiry <product> <date>
   // Accepted date formats: 20-09 | 20/09/2025 | +7d | +3m | +1y
   let m1 = text.match(/^expiry\s+(.+?)\s+([0-9+\/\-]{3,})$/i);
@@ -1776,15 +1816,23 @@ if (pricePage) {
   }
 
   // 4) Expiring soon
+  // Allow "expiring 0" for already-expired items
   m = text.match(/^expiring(?:\s+(\d+))?$/i);
   if (m) {
-    const days = m[1] ? Math.max(1, parseInt(m[1],10)) : 30;
+    const days = m[1] !== undefined ? Math.max(0, parseInt(m[1], 10)) : 30; // allow 0
     const exp = await getExpiringProducts(shopId, days);
-    let message = `⏰ Expiring in next ${days} day(s):\n`;
-    if (!exp.length) message += `No items found.`;
+    const header = days === 0
+      ? `❌ Already expired:`
+      : `⏰ Expiring in next ${days} day(s):`;
+    let message = `${header}\n`;
+    if (!exp.length) message += days === 0 ? `No expired items.` : `No items found.`;
     else {
-      message += exp.map(p=>`• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n');
-      message += `\n\n💡 Move to eye‑level, bundle, or mark‑down 5–15%.`;
+      message += exp
+        .map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`)
+        .join('\n');
+      message += days === 0
+        ? `\n\n💡 Move expired stock off-shelf and create a return-to-supplier note if applicable.`
+        : `\n\n💡 Move to eye‑level, bundle, or mark‑down 5–15%.`;
     }
     const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
@@ -1880,6 +1928,46 @@ try{
     return true;
   }
 
+  // =======================
+  // Customer Return command
+  // =======================
+  // Pattern A: "return <product> <qty> <unit>"
+  // Pattern B: "return <qty> <unit> <product>"
+  let r1 = text.match(/^(?:customer\s+)?returns?\s+(.+?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z\u0900-\u097F\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF]+)$/i);
+  let r2 = text.match(/^(?:customer\s+)?returns?\s+(\d+(?:\.\d+)?)\s+([A-Za-z\u0900-\u097F\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF]+)\s+(.+)$/i);
+  if (r1 || r2) {
+    const shopId = From.replace('whatsapp:', '');
+    const qty  = Number(r1 ? r1[2] : r2[1]);
+    const unit = (r1 ? r1[3] : r2[2]).trim();
+    const raw  = (r1 ? r1[1] : r2[3]).trim();
+    const product = await translateProductName(raw, requestId + ':return');
+    const result = await updateInventory(shopId, product, Math.abs(qty), unit); // add back
+    let message = `↩️ Return processed — ${product}: +${qty} ${unit}`;
+    if (result?.success) {
+      const u = result.unit ?? unit;
+      message += ` (Stock: ${result.newQuantity} ${u})`;
+    }
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // ==================================
+  // Alias: "expired"/"expired items"
+  // ==================================
+  if (/^expired(?:\s+items?)?$/i.test(text)) {
+    const shopId = From.replace('whatsapp:', '');
+    const exp = await getExpiringProducts(shopId, 0);
+    let message = `❌ Already expired:\n`;
+    message += exp.length
+      ? exp.map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n')
+      : `No expired items.`;
+    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  
   // NEW (2.f): expiry <product> <date>
   // Accepted date formats: 20-09 | 20/09/2025 | +7d | +3m | +1y
   let m = text.match(/^expiry\s+(.+?)\s+([0-9+\/\-]{3,})$/i);
@@ -1997,22 +2085,28 @@ try{
     return true;
   }
 
-  // 4) Expiring soon items (default 30 days, or "expiring 15")
+  // 4) Expiring soon items (default 30 days, or "expiring 15")  
   const expMatch = text.match(/^expiring(?:\s+(\d+))?$/i);
-  if (expMatch) {
-    const days = expMatch[1] ? Math.max(1, parseInt(expMatch[1], 10)) : 30;
-    const expiring = await getExpiringProducts(shopId, days);
-    let message = `⏰ Expiring in next ${days} day(s):\n`;
-    if (expiring.length === 0) {
-      message += `No items found.`;
-    } else {
-      message += expiring.map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n');
-      message += `\n\n💡 Advice: Mark-down nearing expiry items (5–15%), move to eye-level shelves, and bundle if possible.`;
+    if (expMatch) {
+      const days = (expMatch[1] !== undefined) ? Math.max(0, parseInt(expMatch[1], 10)) : 30; // allow 0
+      const expiring = await getExpiringProducts(shopId, days);
+      const header = days === 0
+        ? `❌ Already expired:`
+        : `⏰ Expiring in next ${days} day(s):`;
+      let message = `${header}\n`;
+      if (expiring.length === 0) {
+        message += days === 0 ? `No expired items.` : `No items found.`;
+      } else {
+        message += expiring.map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n');
+        message += days === 0
+          ? `\n\n💡 Move expired stock off-shelf and consider supplier returns.`
+          : `\n\n💡 Mark-down nearing expiry items (5–15%), move to eye-level shelves, and bundle if possible.`;
+      }
+      const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, msg);
+      return true;
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
-    return true;
-  }
+
 
   // 5) Sales summary for a day/week/month ("sales today|week|month")
   const salesMatch = text.match(/^sales\s+(today|this\s*week|week|this\s*month|month)$/i);
