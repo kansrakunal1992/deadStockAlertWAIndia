@@ -721,6 +721,7 @@ const regexPatterns = {
    // Added Gujarati sell verbs: વેચ્યું / વેચી / વેચ્યા (NOTE: we intentionally do NOT add ‘વેચાણ’ which is the noun “sales”)
    salesKeywords: /(बेचा|बेचे|becha|sold|बिक्री|વેચ્યું|વેચી|વેચ્યા)/gi,
    remainingKeywords: /(बचा|बचे|बाकी|remaining|left|bacha)/gi,
+   returnKeywords: /(return(?:ed)?|customer\s+return|रिटर्न|वापस|परत|रीटर्न|રીટર્ન)/gi,
    dateFormats: /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})|(\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{4})/gi,
    // Added Gujarati numerals [૦-૯]
    digits: /(\d+|[०-९]+|[૦-૯]+)/i,
