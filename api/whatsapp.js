@@ -3087,8 +3087,15 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           });
           if (batchResult?.success) createdBatchEarly = true;
     
-          // Ensure inventory reflects the purchase (existing non-sale branch will also cover; keep idempotent)
-          // (No extra call here; your later non-sale path keeps this consistent.)
+          
+          // Ensure inventory reflects the purchase *and* capture stock for summary lines
+                // (we 'continue' later in this branch, so do not rely on the outer non-sale path)
+                let invResult;
+                try {
+                  invResult = await updateInventory(shopId, product, update.quantity, update.unit);
+                } catch (_) {}
+                const stockQty  = invResult?.newQuantity;
+                const stockUnit = invResult?.unit ?? update.unit;
     
           // Save price if known now
           if (finalPrice > 0) {
@@ -3126,8 +3133,10 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             await sendMessageViaAPI(`whatsapp:${shopId}`, prompt);
     
             results.push({
-              product, quantity: update.quantity, unit: update.unit, action: update.action,
-              success: false, needsUserInput: true, awaiting: 'price', status: 'pending'
+              product, quantity: update.quantity, unit: update.unit, action: update.action,             
+              success: false, needsUserInput: true, awaiting: 'price', status: 'pending',
+              // include latest stock even in pending case (nice to have; harmless if undefined)
+              newQuantity: stockQty, unitAfter: stockUnit
             });
             continue;
           }
@@ -3163,7 +3172,10 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             quantity: update.quantity,
             unit: update.unit,
             action: update.action,
-            success: true,
+            success: true,     
+            // ensure the summary has stock figures to avoid "undefined"
+            newQuantity: stockQty,
+            unitAfter: stockUnit,
             purchasePrice: finalPrice,
             totalValue: finalPrice * Math.abs(update.quantity)
           });
