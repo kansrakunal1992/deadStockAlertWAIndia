@@ -494,21 +494,30 @@ async function updateBatchExpiry(batchId, expiryDate) {
   const context = `Update Batch Expiry ${batchId}`;
   try {
     console.log(`[${context}] Updating batch ${batchId} with expiry date ${expiryDate}`);  
-    const expiryISO = toAirtableDateTimeUTC(expiryDate);
-      if (!expiryISO) {
-        throw new Error('Invalid expiry date for Airtable');
-      }
-      const updateData = { fields: { ExpiryDate: expiryISO } };
-
+    // NEW: allow clearing expiry by sending null
+        if (expiryDate === null) {
+          const updateData = { fields: { ExpiryDate: null } };
+          await airtableBatchRequest({
+            method: 'patch',
+            url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`,
+            data: updateData
+          }, context);
+          console.log(`[${context}] Batch expiry cleared successfully`);
+          return { success: true };
+        }
     
-    const result = await airtableBatchRequest({
-      method: 'patch',
-      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`,
-      data: updateData
-    }, context);
-    
-    console.log(`[${context}] Batch expiry date updated successfully`);
-    return { success: true };
+        const expiryISO = toAirtableDateTimeUTC(expiryDate);
+        if (!expiryISO) {
+          throw new Error('Invalid expiry date for Airtable');
+        }
+        const updateData = { fields: { ExpiryDate: expiryISO } };
+        await airtableBatchRequest({
+          method: 'patch',
+          url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`,
+          data: updateData
+        }, context);
+        console.log(`[${context}] Batch expiry date updated successfully`);
+        return { success: true };
   } catch (error) {
     logError(context, error);
     return {
