@@ -1193,6 +1193,98 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   return true;
 }
 
+// === NEW: Handle the 2‑min post‑purchase expiry override window ===
+async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage, requestId) {
+  const shopId = From.replace('whatsapp:', '');
+  const state = await getUserStateFromDB(shopId);
+  if (!state || state.mode !== 'awaitingPurchaseExpiryOverride') return false;
+
+  // Global reset allowed during window
+  if (isResetMessage(Body)) {
+    try { await deleteUserStateFromDB(state.id); } catch (_) {}
+    const msg = await generateMultiLanguageResponse(
+      `✅ Reset. Cleared the expiry‑override window.`,
+      detectedLanguage,
+      requestId
+    );
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  const data = state.data || {};
+  const { batchId, product, createdAtISO, timeoutSec = 120, purchaseDateISO, currentExpiryISO } = data;
+  const createdAt = new Date(createdAtISO || Date.now());
+  if ((Date.now() - createdAt.getTime()) > (timeoutSec * 1000)) {
+    await deleteUserStateFromDB(state.id);
+    const msg = await generateMultiLanguageResponse(
+      `⏳ Sorry, the 2‑min window to change expiry has expired.`,
+      detectedLanguage,
+      requestId
+    );
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  const t = String(Body).trim().toLowerCase();
+  // Keep current
+  if (t === 'ok' || t === 'okay') {
+    await deleteUserStateFromDB(state.id);
+    const kept = currentExpiryISO ? formatDateForDisplay(currentExpiryISO) : '—';
+    const msg = await generateMultiLanguageResponse(
+      `✅ Kept expiry for ${product}: ${kept}`,
+      detectedLanguage,
+      requestId
+    );
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+  // Clear expiry
+  if (t === 'skip' || t === 'clear') {
+    try { await updateBatchExpiry(batchId, null); } catch (_) {}
+    await deleteUserStateFromDB(state.id);
+    const msg = await generateMultiLanguageResponse(
+      `✅ Cleared expiry for ${product}.`,
+      detectedLanguage,
+      requestId
+    );
+    await sendMessageViaAPI(From, msg);
+    return true;
+  }
+
+  // Set new expiry (supports: exp DD-MM / DD/MM/YYYY / +7d / +3m / +1y)
+  const wanted = parseBatchOverrideCommand(Body) || {};
+  let newISO = null;
+  if (t.startsWith('exp') || t.startsWith('expiry')) {
+    const raw = Body.replace(/^\s*(expiry|expires?|exp)\s*/i, '');
+    newISO = parseExpiryTextToISO(raw, purchaseDateISO);
+    if (newISO) newISO = bumpExpiryYearIfPast(newISO, purchaseDateISO || new Date().toISOString());
+  } else if (wanted.byExpiryISO) {
+    newISO = bumpExpiryYearIfPast(wanted.byExpiryISO, purchaseDateISO || new Date().toISOString());
+  }
+
+  if (!newISO) {
+    const help = await generateMultiLanguageResponse(
+      `Reply with:
+• exp +7d / exp +3m / exp +1y
+• skip  (to clear)`,
+      detectedLanguage, requestId
+    );
+    await sendMessageViaAPI(From, help);
+    return true;
+  }
+
+  try { await updateBatchExpiry(batchId, newISO); } catch (_) {}
+  await deleteUserStateFromDB(state.id);
+  const shown = formatDateForDisplay(newISO);
+  const ok = await generateMultiLanguageResponse(
+    `✅ Updated. ${product} expiry set to ${shown}.`,
+    detectedLanguage, requestId
+  );
+  await sendMessageViaAPI(From, ok);
+  return true;
+}
+
+
 function parseExpiryTextToISO(text, baseISO = null) {
   if (!text) return null;
   const raw = String(text).trim();
@@ -1472,7 +1564,10 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const text = String(rawBody || '').trim();
   const shopId = From.replace('whatsapp:', '');
   try{    
-// NEW: Intercept post‑sale override replies upfront
+  
+// NEW: Intercept post‑purchase expiry override first
+    if (await handleAwaitingPurchaseExpiryOverride(From, text, detectedLanguage, requestId)) return true;
+    // Intercept post‑sale batch override next
     if (await handleAwaitingBatchOverride(From, text, detectedLanguage, requestId)) return true;
     
 // NEW (2.g): Greeting -> show purchase examples incl. expiry
@@ -1956,7 +2051,9 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   const text = Body.trim();
   const shopId = From.replace('whatsapp:', '');
 try{  
-// NEW: Intercept post‑sale override replies upfront
+// NEW: Intercept post‑purchase expiry override first
+    if (await handleAwaitingPurchaseExpiryOverride(From, text, detectedLanguage, requestId)) return true;
+    // Intercept post‑sale batch override next
     if (await handleAwaitingBatchOverride(From, text, detectedLanguage, requestId)) return true;
 
 // NEW (2.g): Greeting -> show purchase examples incl. expiry
@@ -2952,9 +3049,8 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       } catch (error) {
         console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
       }
-      
-      
-      // === NEW: Layer A (auto-expiry) + Combined price+expiry correction flow — PURCHASES ONLY ===
+            
+    // === NEW PURCHASE FLOW: default expiry, price essential; do not block on expiry ===
         if (update.action === 'purchased') {
           let autoExpiry = null;
           let productMeta = null;
@@ -2966,18 +3062,20 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 const ts = new Date();
                 ts.setDate(ts.getDate() + sd);
                 autoExpiry = ts.toISOString();
-              }
+              } // else requiresExpiry=true but no shelf-life => leave blank
             }
           } catch (_) {}
+    
           const purchaseDateISO = formatDateForAirtable(new Date());
-          // Use provided or catalog price
-          const finalPrice = (update.price ?? productPrice) ?? 0;
-          const purchasePrice = finalPrice > 0 ? finalPrice : 0; // may still be 0
-      
-          // Prefer an inline expiry from AI/user -> bump year if it falls in the past; else fall back to auto
+          const priceFromMsg = Number(update.price ?? 0);
+          const priceFromCatalog = Number(productMeta?.price ?? 0);
+          const finalPrice = priceFromMsg > 0 ? priceFromMsg : (priceFromCatalog > 0 ? priceFromCatalog : 0);
+    
+          // Inline expiry from message (if any); else default/blank.
           const providedExpiryISO = bumpExpiryYearIfPast(update.expiryISO ?? null, purchaseDateISO);
           const expiryToUse = providedExpiryISO ?? autoExpiry ?? null;
-          // Create batch now (with preferred expiry if available)
+    
+          // Create batch immediately with defaulted expiry (or blank)
           const batchResult = await createBatchRecord({
             shopId,
             product,
@@ -2985,61 +3083,91 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             unit: update.unit,
             purchaseDate: purchaseDateISO,
             expiryDate: expiryToUse,
-            purchasePrice: purchasePrice
+            purchasePrice: finalPrice // may be 0 if unknown now
           });
-          if (batchResult?.success) {
-            createdBatchEarly = true;
+          if (batchResult?.success) createdBatchEarly = true;
+    
+          // Ensure inventory reflects the purchase (existing non-sale branch will also cover; keep idempotent)
+          // (No extra call here; your later non-sale path keeps this consistent.)
+    
+          // Save price if known now
+          if (finalPrice > 0) {
+            try { await upsertProduct({ name: product, price: finalPrice, unit: update.unit }); } catch (_) {}
           }
-          // Persist product price if we have one
-          if (purchasePrice > 0) {
-            try {
-              await upsertProduct({ name: product, price: purchasePrice, unit: update.unit });
-            } catch (e) {
-              console.warn(`[Update ${shopId} - ${product}] upsertProduct price failed:`, e.message);
-            }
-          }
-          // Decide if we need any user input
-          const needsPrice = purchasePrice <= 0; // no price given + not in catalog
+    
           const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
-          const needsExpiryConfirmOrSet = isPerishable && !providedExpiryISO; // don't prompt if user gave an expiry
-          if (needsPrice || needsExpiryConfirmOrSet) {
+          const edDisplay = expiryToUse ? formatDateForDisplay(expiryToUse) : '—';
+    
+          if (finalPrice <= 0) {
+            // PRICE MISSING => ask only for price (do not block on expiry)
             await setUserState(`whatsapp:${shopId}`, 'awaitingPriceExpiry', {
               batchId: batchResult?.id ?? null,
               product,
               unit: update.unit,
               quantity: update.quantity,
               purchaseDate: purchaseDateISO,
-              autoExpiry: autoExpiry ?? null,
-              needsPrice,
+              autoExpiry: expiryToUse ?? null,
+              needsPrice: true,
               isPerishable
             });
-            const autoExpiryLine =
-              autoExpiry
-                ? `I set expiry to ${formatDateForDisplay(autoExpiry)} from shelf-life.`
-                : (isPerishable ? `No expiry set yet.` : ``);
-      
-            const needBoth = needsPrice && needsExpiryConfirmOrSet;
-            const promptLines = [
-              `Got it ✅ ${product} ${update.quantity} ${update.unit}.`,
-              autoExpiryLine,
-              needsPrice ? `Price missing.` : `Price kept: ₹${purchasePrice}.`,
-              ``,
-              needBoth ? `Reply with **both** (any order):` : `Reply with:`,
-              needsPrice ? `• ₹<price>` : null,
-              isPerishable ? `• exp +7d | +3m | +1y` : null,
-              `Or reply:`,
-              `• 'ok' to keep current expiry${needsPrice ? ' (still need price)' : ''}`,
-              `• 'skip' to clear expiry`,
-              ``
-            ].filter(Boolean).join('\n');
-            const localized = await generateMultiLanguageResponse(promptLines, languageCode, 'ask-price-expiry');
-            await sendMessageViaAPI(`whatsapp:${shopId}`, localized);
+    
+            const prompt = await generateMultiLanguageResponse(
+              [
+                `Got it ✅ ${product} ${update.quantity} ${update.unit}.`,
+                isPerishable ? `Expiry set: ${edDisplay}` : `No expiry needed.`,
+                ``,
+                `Please send price per ${update.unit}, e.g. "₹60" or "₹60 per ${update.unit}".`,
+                `You can adjust expiry later (within 2 min) after price is saved:`,
+                `• exp +7d / exp +3m / exp +1y`,
+                `• skip (to clear)`
+              ].join('\n'),
+              languageCode, 'ask-price-only'
+            );
+            await sendMessageViaAPI(`whatsapp:${shopId}`, prompt);
+    
             results.push({
               product, quantity: update.quantity, unit: update.unit, action: update.action,
-              success: false, needsUserInput: true, awaiting: 'price+expiry', error: 'awaiting user input: price and/or expiry', status: 'pending'
+              success: false, needsUserInput: true, awaiting: 'price', status: 'pending'
             });
-            continue; // wait for user reply
+            continue;
           }
+    
+          // PRICE KNOWN => send final confirmation immediately (do not wait on expiry)
+          const confirm = await generateMultiLanguageResponse(
+            [
+              `✅ Purchased ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}`,
+              isPerishable ? `Expiry: ${edDisplay}` : `Expiry: —`,
+              ``,
+              `You can change expiry within 2 min:`,
+              `• exp +7d / exp +3m / exp +1y`,
+              `• skip  (to clear)`
+            ].join('\n'),
+            languageCode, 'purchase-ok'
+          );
+          await sendMessageViaAPI(`whatsapp:${shopId}`, confirm);
+    
+          // Open the 2‑min expiry override window
+          try {
+            await saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
+              batchId: batchResult?.id ?? null,
+              product,
+              purchaseDateISO,
+              currentExpiryISO: expiryToUse ?? null,
+              createdAtISO: new Date().toISOString(),
+              timeoutSec: 120
+            });
+          } catch (_) {}
+    
+          results.push({
+            product,
+            quantity: update.quantity,
+            unit: update.unit,
+            action: update.action,
+            success: true,
+            purchasePrice: finalPrice,
+            totalValue: finalPrice * Math.abs(update.quantity)
+          });
+          continue; // done with purchase branch
         }
       // === END NEW block ===
 
