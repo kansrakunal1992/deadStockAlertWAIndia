@@ -499,6 +499,42 @@ function enforceSingleScript(out, lang) {
   }
 }
 
+
+
+// === Compact/Verbose message helpers (inline; no new files) ===
+function capitalize(s) {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+/**
+ * r: { product, quantity, unit, unitAfter, action, success, error, newQuantity? }
+ */
+function formatResultLine(r, compact = true) {
+  const qty = Math.abs(r.quantity ?? 0);
+  const unit = r.unitAfter ?? r.unit ?? '';
+  const stockPart = Number.isFinite(r.newQuantity)
+    ? ` (Stock: ${r.newQuantity} ${unit})`
+    : '';
+  const act = capitalize(r.action ?? '');
+  if (compact) {
+    if (r.success) {
+      const symbol = r.action === 'returned' ? '↩️' : '✅';
+      return `${symbol} ${act} ${qty} ${unit} ${r.product}${stockPart}`.trim();
+    }
+    return `❌ ${r.product} — ${r.error ?? 'Error'}`;
+  }
+  const tail = r.success ? '✅' : `❌ ${r.error ?? 'Error'}`;
+  return `• ${r.product}: ${qty} ${unit} ${act}${stockPart} ${tail}`.trim();
+}
+
+function chooseHeader(count, compact = true, isPrice = false) {
+  if (compact) {
+    return count > 1 ? (isPrice ? '✅ Prices updated:\n' : '✅ Done:\n') : '';
+  }
+  return isPrice ? '✅ Price updates processed:\n\n' : '✅ Updates processed:\n\n';
+}
+
+
 // Localization helper: centralize generateMultiLanguageResponse + single-script clamp
 async function t(text, languageCode, requestId) {
   const out = await generateMultiLanguageResponse(text, languageCode, requestId);
@@ -4841,11 +4877,14 @@ async function applyPriceUpdates(items, shopId, detectedLanguage, requestId) {
         lines.push(`• ${product}: ₹${price} — ❌ ${err.message}`);
       }
     }
-
-    let summary = '✅ Price updates processed:\n\n' + (lines.join('\n') || 'No valid items found.');
-    summary += `\n\nUpdated: ${updated}`;
-    summary += `  •  Created: ${created}`;
-    if (failed > 0) summary += `  •  Failed: ${failed}`;
+    
+    const header = chooseHeader(lines.length, COMPACT_MODE, /* isPrice */ true);
+        let summary = header + (COMPACT_MODE
+          ? (lines.length ? lines.join('\n') : '—')
+          : (lines.length ? lines.join('\n') : 'No valid items found.'));
+        if (!COMPACT_MODE) {
+          summary += `\n\nUpdated: ${updated} • Created: ${created} • Failed: ${failed}`;
+        }
 
     const formatted = await t(summary, detectedLanguage, requestId);
     return { message: formatted };
@@ -5177,8 +5216,9 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         // Only send the summary message if there are non-pending results
         const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
         if (totalProcessed > 0) {
-          // Create base message in English first
-          let baseMessage = '✅ Updates processed:\n\n';
+          // Create base message in English first          
+          const header = chooseHeader(results.length, COMPACT_MODE, /*isPrice*/ false);
+          let baseMessage = header;
           let successCount = 0;
           let hasSales = false;
           let totalSalesValue = 0;
@@ -5204,9 +5244,10 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
             
             if (result.success) {
               successCount++;
+              
               const unitText = result.unit ? ` ${result.unit}` : '';
-        
-              // Calculate value for this result
+
+              // Calculate value for this result (same logic)
               let value = 0;
               if (result.action === 'purchased' && result.purchasePrice && result.purchasePrice > 0) {
                 value = Math.abs(result.quantity) * result.purchasePrice;
@@ -5215,8 +5256,8 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
                 value = Math.abs(result.quantity) * result.salePrice;
                 console.log(`[Update ${shopId}] Sale value calculation: ${Math.abs(result.quantity)} * ${result.salePrice} = ${value}`);
               }
-        
-              // Accumulate totals
+
+              // Accumulate totals (unchanged)
               if (result.action === 'purchased') {
                 totalPurchaseValue += value;
                 console.log(`[Update ${shopId}] Added to totalPurchaseValue: ${totalPurchaseValue}`);
@@ -5224,36 +5265,35 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
                 totalSalesValue += value;
                 console.log(`[Update ${shopId}] Added to totalSalesValue: ${totalSalesValue}`);
               }
-        
-              // NEW: show "Price updated" line for purchases that carried a rate
+
+              // Keep the "Price updated" line for purchases with a rate
               if (result.action === 'purchased' && (result.purchasePrice || 0) > 0) {
-               baseMessage += `Price updated: ${result.product} at ₹${(result.purchasePrice).toFixed(2)}/${singularize(result.unit)}\n`;
+                baseMessage += `Price updated: ${result.product} at ₹${(result.purchasePrice).toFixed(2)}/${singularize(result.unit)}\n`;
               }
-        
-              // Format based on action type
-              if (result.action === 'purchased') {
-                baseMessage += `• ${result.product}: ${result.quantity}${unitText} purchased (Stock: ${result.newQuantity}${unitText})`;
+
+              // Use helper for the main confirmation line (Compact or Verbose)
+              const line = formatResultLine(result, COMPACT_MODE);
+              if (line) baseMessage += `${line}\n`;
+
+              // Verbose mode: append value & batch lines (kept out of Compact for brevity)
+              if (!COMPACT_MODE) {
                 if (value > 0) {
-                  baseMessage += ` (Value: ₹${value.toFixed(2)})`;
+                  baseMessage += `  (Value: ₹${value.toFixed(2)})\n`;
                 }
-                baseMessage += `\n`;
-                if (result.batchDate) {
+                if (result.batchDate && result.action === 'purchased') {
                   baseMessage += `  Batch added: ${formatDateForDisplay(result.batchDate)}\n`;
                 }
-              } else if (result.action === 'sold') {
-                baseMessage += `• ${result.product}: ${Math.abs(result.quantity)}${unitText} sold (Stock: ${result.newQuantity}${unitText})`;
-                if (value > 0) {
-                  baseMessage += ` (Value: ₹${value.toFixed(2)})`;
-                }
-                baseMessage += `\n`;
+              }
+
+              if (result.action === 'sold') {
                 hasSales = true;
-              } else if (result.action === 'remaining') {
-                baseMessage += `• ${result.product}: ${result.quantity}${unitText} remaining (Stock: ${result.newQuantity}${unitText})\n`;
               }
             } else {          
             // Defensive: avoid "Error - undefined"
-                const errText = result?.error ? String(result.error) : 'pending user input';
-                baseMessage += `• ${result.product}: Error - ${errText}\n`;
+                const errText = result?.error ? String(result.error) : 'pending user input';                                
+                // Use helper for error rendering too (produces ❌ line)
+                                const errLine = formatResultLine({ ...result, success: false, error: errText }, COMPACT_MODE);
+                                baseMessage += `${errLine}\n`;
             }
           }
         
@@ -6017,20 +6057,17 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         // Process the updates
         const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
         
-        // Send results
-        let message = '✅ Updates processed:\n\n';
-        let successCount = 0;
-        
+        // Send results        
+        const header = chooseHeader(results.length, COMPACT_MODE, false);
+        let message = header;
+        let successCount = 0;  
+                
         for (const result of results) {
-          if (result.success) {
-            successCount++;
-            const unitText = result.unit ? ` ${result.unit}` : '';
-            message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-          } else {
-            message += `• ${result.product}: Error - ${result.error}\n`;
-          }
-        }
-        
+                  const line = formatResultLine(result, COMPACT_MODE);
+                  if (line) message += `${line}\n`;
+                  if (result.success) successCount++;
+                }
+
         const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
         message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
         
@@ -6425,19 +6462,16 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       const shopId = From.replace('whatsapp:', '');
       const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
       
-      // Send results
-      let message = '✅ Updates processed:\n\n';
-      let successCount = 0;
-      
+      // Send results          
+      const header = chooseHeader(results.length, COMPACT_MODE, false);
+            let message = header;
+            let successCount = 0;
+         
       for (const result of results) {
-        if (result.success) {
-          successCount++;
-          const unitText = result.unit ? ` ${result.unit}` : '';
-          message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-        } else {
-          message += `• ${result.product}: Error - ${result.error}\n`;
-        }
-      }
+              const line = formatResultLine(result, COMPACT_MODE);
+              if (line) message += `${line}\n`;
+              if (result.success) successCount++;
+            }     
       
       const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
       message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
@@ -6918,9 +6952,23 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
     const unitText = result.unit ? ` ${result.unit}` : '';
     const value = priceValue * result.quantity;
   
-    let message = `✅ Price updated: ${result.product} at ₹${priceValue}/${result.unit}\n\n`;
-  
-    message += `✅ Updates processed:\n\n• ${result.product}: ${result.quantity}${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})`;
+    let message = `✅ Price updated: ${result.product} at ₹${priceValue}/${result.unit}\n\n`;    
+        
+    {
+        const r = {
+          product: result.product,
+          quantity: result.quantity,
+          unit: result.unit,
+          unitAfter: result.unit,
+          action: result.action,
+          success: true,
+          newQuantity: result.newQuantity
+        };
+        const line = formatResultLine(r, COMPACT_MODE);
+        message += COMPACT_MODE
+          ? line
+          : `✅ Updates processed:\n\n${line.startsWith('•') ? line : `• ${line.replace(/^✅\\s*/, '')}`}`;
+      }
   
     if (result.action === 'sold') {
       message += `\n💰 Total sales value: ₹${value.toFixed(2)}`;
@@ -7230,18 +7278,17 @@ async function handleInventoryState(Body, From, state, requestId, res) {
         return res.send(response.toString());
       }
 
-    let message = '✅ Updates processed:\n\n';
-    let successCount = 0;
     
-    for (const result of results.filter(r => !r.needsPrice)) {
-      if (result.success) {
-        successCount++;
-        const unitText = result.unit ? ` ${result.unit}` : '';
-        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-      } else {
-        message += `• ${result.product}: Error - ${result.error}\n`;
-      }
-    }
+      const confirmed = results.filter(r => !r.needsPrice);
+          const header = chooseHeader(confirmed.length, COMPACT_MODE, false);
+          let message = header;
+          let successCount = 0;
+      
+          for (const result of confirmed) {
+            const line = formatResultLine(result, COMPACT_MODE);
+            if (line) message += `${line}\n`;
+            if (result.success) successCount++;
+          }
     
     const totalProcessed = results.filter(r => !r.needsPrice).length;
     message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
@@ -7564,19 +7611,16 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           const shopId = From.replace('whatsapp:', '');
           const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
           
-          // Send results
-          let message = '✅ Updates processed:\n\n';
+          // Send results                   
+          const header = chooseHeader(results.length, COMPACT_MODE, false);
+          let message = header;
           let successCount = 0;
           
           for (const result of results) {
-            if (result.success) {
-              successCount++;
-              const unitText = result.unit ? ` ${result.unit}` : '';
-              message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-            } else {
-              message += `• ${result.product}: Error - ${result.error}\n`;
+          const line = formatResultLine(result, COMPACT_MODE);
+          if (line) message += `${line}\n`;
+           if (result.success) successCount++;
             }
-          }
           
           const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
           message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
@@ -7669,18 +7713,17 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       }
     
       
-      let message = '✅ Updates processed:\n\n';
-      let successCount = 0;
       
-      for (const result of results.filter(r => !r.needsPrice)) {
-        if (result.success) {
-          successCount++;
-          const unitText = result.unit ? ` ${result.unit}` : '';
-          message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-        } else {
-          message += `• ${result.product}: Error - ${result.error}\n`;
-        }
-      }
+      const confirmed = results.filter(r => !r.needsPrice);
+            const header = chooseHeader(confirmed.length, COMPACT_MODE, false);
+            let message = header;
+            let successCount = 0;
+      
+            for (const result of confirmed) {
+              const line = formatResultLine(result, COMPACT_MODE);
+              if (line) message += `${line}\n`;
+              if (result.success) successCount++;
+            }
             
       const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
       message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`
@@ -7828,19 +7871,16 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
             return;
           }
     const results = await updateMultipleInventory(shopId, inventoryUpdates, detectedLanguage);
-    
-    let message = '✅ Updates processed:\n\n';
-    let successCount = 0;
+              
+    const header = chooseHeader(results.length, COMPACT_MODE, false);
+        let message = header;
+        let successCount = 0;
     
     for (const result of results) {
-      if (result.success) {
-        successCount++;
-        const unitText = result.unit ? ` ${result.unit}` : '';
-        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-      } else {
-        message += `• ${result.product}: Error - ${result.error}\n`;
-      }
-    }
+          const line = formatResultLine(result, COMPACT_MODE);
+          if (line) message += `${line}\n`;
+          if (result.success) successCount++;
+        }
     
     const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
     message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`
@@ -7916,19 +7956,17 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
       if (updates.length > 0) {
         // Process the confirmed updates
         const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-        
-        let message = '✅ Updates processed:\n\n';
-        let successCount = 0;
-        
+                      
+        const header = chooseHeader(results.length, COMPACT_MODE, false);
+                let message = header;
+                let successCount = 0;
+                
         for (const result of results) {
-          if (result.success) {
-            successCount++;
-            const unitText = result.unit ? ` ${result.unit}` : '';
-            message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-          } else {
-            message += `• ${result.product}: Error - ${result.error}\n`;
-          }
-        }
+                  const line = formatResultLine(result, COMPACT_MODE);
+                  if (line) message += `${line}\n`;
+                  if (result.success) successCount++;
+                } 
+
         
         const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
         message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
