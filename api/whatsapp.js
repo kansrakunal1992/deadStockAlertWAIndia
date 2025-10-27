@@ -263,6 +263,22 @@ function renderNativeglishLabels(text, languageCode) {
   return out;
 }
 
+// ---------- Composite Key Normalizer ----------
+    // Many logs showed newline-delimited keys. Normalize to a single line with a pipe separator.
+    function normalizeCompositeKey(key) {
+      if (!key) return key;
+      try {
+        let k = String(key);
+        // collapse CR/LF to '|', collapse multiple spaces, trim
+        k = k.replace(/\r?\n+/g, '|').replace(/\s{2,}/g, ' ').trim();
+        // very basic shape guard: three parts separated by '|'
+        // (shopId|product|iso) – if not, still return sanitized k to avoid throws
+        return k;
+      } catch (_) {
+        return key;
+      }
+    }
+
 // --- Lightweight text normalizer (lowercase, strip punctuation/extra spaces)
 function _normLite(s) {
   return String(s || '')
@@ -2681,23 +2697,6 @@ async function translateProductName(productName, requestId) {
         timestamp: Date.now()
       });
       return translated;
-    }
-
-    
-    // ---------- Composite Key Normalizer ----------
-    // Many logs showed newline-delimited keys. Normalize to a single line with a pipe separator.
-    function normalizeCompositeKey(key) {
-      if (!key) return key;
-      try {
-        let k = String(key);
-        // collapse CR/LF to '|', collapse multiple spaces, trim
-        k = k.replace(/\r?\n+/g, '|').replace(/\s{2,}/g, ' ').trim();
-        // very basic shape guard: three parts separated by '|'
-        // (shopId|product|iso) – if not, still return sanitized k to avoid throws
-        return k;
-      } catch (_) {
-        return key;
-      }
     }
     
     
