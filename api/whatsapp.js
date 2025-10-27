@@ -359,6 +359,7 @@ function isReadOnlyQuery(text) {
     /^(?:stock|inventory|qty)\s+\S+$/,                          // stock Maggi
     /^(?:batches?|expiry)\s+\S+$/,                              // batches milk
     /^expiring(?:\s+\d+)?$/,                                    // expiring 30
+    /^show\s+expired\s+stock$/,
     /^sales\s+(?:today|this\s*week|week|this\s*month|month)$/,   // sales today
     /^top\s*\d*\s*products(?:\s+(?:today|week|month|this\s*week|this\s*month))?$/,
     /^(?:low\s*stock|stockout|out\s*of\s*stock)$/,
@@ -1478,6 +1479,7 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
       '  • "inventory value" (aka "stock value" or "value summary")',
       '  • "prices [<page>]" (aka "price updates [<page>]" or "stale prices [<page>]")',
       '  • "expired items" → "expiring 0"',
+      '  • "show expired stock" → "expiring 0"',
       '  • "products [<page>]" or "list products [<page>]"',
       '  • "products search <term>" or "search products <term>"',      
       '  • "short summary" (aka "summary", "छोटा सारांश", "chhota saraansh")',
