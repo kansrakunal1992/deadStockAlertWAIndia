@@ -554,7 +554,9 @@ const {
 const SHOW_BATCH_SUGGESTIONS_COUNT = Number(process.env.SHOW_BATCH_SUGGESTIONS_COUNT ?? 2);
 
 // Central wrapper: run any per-request logic with engagement tips
+const TIPS_OFF = String(process.env.TIPS_OFF ?? '1').toLowerCase() === '1';
 async function runWithTips({ From, language, requestId }, fn) {
+  if (TIPS_OFF) return await fn(); // short-circuit: suppress all engagement tips
   return await withEngagementTips(
     {
       From,
@@ -564,7 +566,7 @@ async function runWithTips({ From, language, requestId }, fn) {
       intervalMs: Number(process.env.TIP_INTERVAL_MS ?? 990000),
       maxCount: Number(process.env.TIP_MAX_COUNT ?? 1),
       sendMessage: (to, body) => sendMessageViaAPI(to, body),
-      translate: (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid),
+      translate: (msg, lang, rid) => t(msg, lang, rid), // enforce SINGLE_SCRIPT_MODE
     },
     fn
   );
@@ -7433,13 +7435,13 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   try {
     // Create processing message in native script + Roman transliteration
     const processingMessages = {
-      'hi': `आपके संदेश को संसाधित किया जा रहा है...\n\nAapke sandesh ko sansadhit kiya ja raha hai...`,
-      'bn': `আপনার বার্তা প্রক্রিয়া করা হচ্ছে...\n\nApnā bārtā prakriẏā karā haẏēchē...`,
-      'ta': `உங்கள் செய்தி செயலாக்கப்படுகிறது...\n\nUṅkaḷ ceyti ceyalākkappaṭukiṟatu...`,
-      'te': `మీ సందేశం ప్రాసెస్ అవుతోంది...\n\nMī sandēśaṁ prāsēs avutōndi...`,
-      'kn': `ನಿಮ್ಮ ಸಂದೇಶವನ್ನು ಪ್ರಕ್ರಿಯೆಗೊಳಿಸಲಾಗುತ್ತಿದೆ...\n\nNim'ma sandēśavannu prakriyegoḷisalāguttide...`,
-      'gu': `તમારા સંદેશને પ્રક્રિયા કરવામાં આવે છે...\n\nTamārā sandēśanē prakriyā karavāmāṁ āvē chē...`,
-      'mr': `तुमचा संदेश प्रक्रिया केला जात आहे...\n\nTumcā sandēś prakriyā kēlā jāt āhē...`,
+      'hi': `आपके संदेश को संसाधित किया जा रहा है...`,
+      'bn': `আপনার বার্তা প্রক্রিয়া করা হচ্ছে...`,
+      'ta': `உங்கள் செய்தி செயலாக்கப்படுகிறது...`,
+      'te': `మీ సందేశం ప్రాసెస్ అవుతోంది...`,
+      'kn': `ನಿಮ್ಮ ಸಂದೇಶವನ್ನು ಪ್ರಕ್ರಿಯೆಗೊಳಿಸಲಾಗುತ್ತಿದೆ...`,
+      'gu': `તમારા સંદેશને પ્રક્રિયા કરવામાં આવે છે...`,
+      'mr': `तुमचा संदेश प्रक्रिया केला जात आहे...`,
       'en': `Processing your message...`  // ✅ Only once for English
     };
     
