@@ -8145,7 +8145,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
         for (const result of results) {
           const line = formatResultLine(result, COMPACT_MODE);
           if (line) message += `${line}\n`;
-          if (result.success) successCount++; 
+          if (result.success) successCount++; }
         
         const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
         message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
@@ -8322,7 +8322,7 @@ async function handleProductConfirmationState(Body, From, state, requestId, res)
     for (const result of results) {
       const line = formatResultLine(result, COMPACT_MODE);
       if (line) message += `${line}\n`;
-      if (result.success) successCount++; 
+      if (result.success) successCount++; }
     
     const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
     message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
