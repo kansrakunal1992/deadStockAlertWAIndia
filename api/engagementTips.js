@@ -1,7 +1,7 @@
 // api/engagementTips.js
 // Multilingual Engagement Tips (send while long replies are processing)
 
-const DEFAULT_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS || 10000);  // 10s
+const DEFAULT_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS || 20000);  // 20s
 const DEFAULT_INTERVAL_MS    = Number(process.env.TIP_INTERVAL_MS    || 990000);  // 990s
 const DEFAULT_MAX_COUNT      = Number(process.env.TIP_MAX_COUNT      || 1);      // avoid spam
 
