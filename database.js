@@ -2214,7 +2214,8 @@ async function getProductPrice(productName) {
             hsnCode: rec.fields.HSNCode ?? '',
             // NEW: Layer A (auto-expiry hints)
             requiresExpiry: !!rec.fields.RequiresExpiry,
-            shelfLifeDays: Number(rec.fields.DefaultShelfLifeDays ?? 0)
+            shelfLifeDays: Number(rec.fields.DefaultShelfLifeDays ?? 0),
+            autoExpiryCandidate: !!rec.fields.RequiresExpiry && Number(rec.fields.DefaultShelfLifeDays ?? 0) > 0
           };
     }
     
