@@ -560,7 +560,7 @@ async function runWithTips({ From, language, requestId }, fn) {
       From,
       language,
       requestId,
-      firstDelayMs: Number(process.env.TIP_FIRST_DELAY_MS ?? 10000),
+      firstDelayMs: Number(process.env.TIP_FIRST_DELAY_MS ?? 20000),
       intervalMs: Number(process.env.TIP_INTERVAL_MS ?? 990000),
       maxCount: Number(process.env.TIP_MAX_COUNT ?? 1),
       sendMessage: (to, body) => sendMessageViaAPI(to, body),
