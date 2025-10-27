@@ -232,17 +232,31 @@ const NL_LABELS = {
 };
 
 // Replace English labels with "native (English)" anywhere they appear
+
+// Single-script rendering: replace labels to native OR keep English only; never mix.
 function renderNativeglishLabels(text, languageCode) {
-  const lang = (languageCode || 'en').toLowerCase();
-  const dict = NL_LABELS[lang] || NL_LABELS.en;
+  const lang = (languageCode ?? 'en').toLowerCase();
+  // If SINGLE_SCRIPT_MODE, do NOT append "(English)" alongside native labels.
+  if (SINGLE_SCRIPT_MODE) {
+    const dict = NL_LABELS[lang] ?? NL_LABELS.en;
+    let out = text;
+    const esc = s => s.replace(/[\.\*\+?\^\${}\(\)\[\]\\]/g, '\\$&');
+    for (const key of Object.keys(dict)) {
+      const native = dict[key];
+      if (!native) continue;
+      const re = new RegExp(esc(key), 'g');
+      // Replace with native only; English label is not retained.
+      out = out.replace(re, native);
+    }
+    return out;
+  }
+  // Legacy behaviour (kept for backwards compatibility when SINGLE_SCRIPT_MODE=false)
+  const dict = NL_LABELS[lang] ?? NL_LABELS.en;
   let out = text;
-
-  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
+  const esc = s => s.replace(/[\.\*\+?\^\${}\(\)\[\]\\]/g, '\\$&');
   for (const key of Object.keys(dict)) {
     const native = dict[key];
     if (!native) continue;
-    // Replace plain label occurrences (we allow emojis/prefixes to remain)
     const re = new RegExp(esc(key), 'g');
     out = out.replace(re, `${native} (${key})`);
   }
@@ -455,6 +469,10 @@ const {
   applySaleWithReconciliation,
   reattributeSaleToBatch
 } = require('../database');
+
+// ===== Compact & Single-Script config =====
+const COMPACT_MODE = String(process.env.COMPACT_MODE ?? 'true').toLowerCase() === 'true';
+const SINGLE_SCRIPT_MODE = String(process.env.SINGLE_SCRIPT_MODE ?? 'true').toLowerCase() === 'true';
 
 // Add this at the top of the file after the imports
 const path = require('path');
@@ -1083,6 +1101,14 @@ async function selectBatchForSale(shopId, product, { byPurchaseISO=null, byExpir
   return null;
 }
 
+// Offer override only when multiple batches with qty>0 exist.
+async function shouldOfferBatchOverride(shopId, product) {
+  try {
+    const batches = await getBatchesForProductWithRemaining(shopId, product);
+    return Array.isArray(batches) && batches.filter(b => (b.quantity ?? 0) > 0).length > 1;
+  } catch { return false; }
+}
+
 function parseBatchOverrideCommand(text, baseISO = null) {
   const t = String(text || '').trim().toLowerCase();
   if (!t) return null;
@@ -1148,14 +1174,16 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   try {
     console.log(`[${requestId}] [awaitingBatchOverride] text="${String(Body).trim()}" -> wanted=`, wanted);
   } catch (_) {}
- 
+  
   if (!wanted) {
-    const help = await generateMultiLanguageResponse(
-      `Reply:\n• batch DD-MM   (e.g., batch 12-09)\n• exp DD-MM     (e.g., exp 20-09)\n• batch oldest  |  batch latest\nWithin 2 min.`,
-      detectedLanguage, requestId);
-    await sendMessageViaAPI(From, help);
-    return true;
-  }
+      const help = await generateMultiLanguageResponse(
+        COMPACT_MODE
+          ? `Reply: batch DD-MM | batch oldest | batch latest (2 min)`
+          : `Reply:\n• batch DD-MM (e.g., batch 12-09)\n• exp DD-MM (e.g., exp 20-09)\n• batch oldest | batch latest\nWithin 2 min.`,
+        detectedLanguage, requestId);
+      await sendMessageViaAPI(From, help);
+      return true;
+    }
 
   const newKey = await selectBatchForSale(shopId, product, wanted);
   // DEBUG: show which composite key we are switching to (if any)
@@ -1261,17 +1289,19 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   } else if (wanted.byExpiryISO) {
     newISO = bumpExpiryYearIfPast(wanted.byExpiryISO, purchaseDateISO || new Date().toISOString());
   }
-
+  
   if (!newISO) {
-    const help = await generateMultiLanguageResponse(
-      `Reply with:
-• exp +7d / exp +3m / exp +1y
-• skip  (to clear)`,
-      detectedLanguage, requestId
-    );
-    await sendMessageViaAPI(From, help);
-    return true;
-  }
+      const help = await generateMultiLanguageResponse(
+        COMPACT_MODE
+          ? `Reply: exp +7d | +3m | +1y  • skip (clear)`
+          : `Reply with: 
+  • exp +7d / exp +3m / exp +1y
+  • skip (to clear)`,
+        detectedLanguage, requestId
+      );
+      await sendMessageViaAPI(From, help);
+      return true;
+    }
 
   try { await updateBatchExpiry(batchId, newISO); } catch (_) {}
   await deleteUserStateFromDB(state.id);
@@ -1604,13 +1634,13 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   // ==================================
   // Alias: "expired"/"expired items"
   // ==================================
-  if (/^expired(?:\s+items?)?$/i.test(text)) {
+  if (/^(expired(?:\s+items?)?|show\s+expired\s+stock)$/i.test(text)) {
     const shopId = From.replace('whatsapp:', '');
     const exp = await getExpiringProducts(shopId, 0);
-    let message = `❌ Already expired:\n`;
+    let message = COMPACT_MODE ? `❌ Expired:` : `❌ Already expired:\n`;
     message += exp.length
       ? exp.map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n')
-      : `No expired items.`;
+      : (COMPACT_MODE ? `None` : `No expired items.`);
     const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
@@ -2300,8 +2330,11 @@ try{
 
   // 8) Inventory value summary
   if (/^(?:inventory\s*value|stock\s*value|value\s*summary)$/i.test(text)) {
-    const inv = await getInventorySummary(shopId);
-    let message = `📦 Inventory Summary:\n• Unique products: ${inv.totalProducts}\n• Total value: ₹${(inv.totalValue ?? 0).toFixed(2)}`;
+    const inv = await getInventorySummary(shopId);   
+    let message = COMPACT_MODE
+        ? `📦 Inventory: ${inv.totalProducts} items • ₹${(inv.totalValue ?? 0).toFixed(2)}`
+        : `📦 Inventory Summary:\n• Unique products: ${inv.totalProducts}\n• Total value: ₹${(inv.totalValue ?? 0).toFixed(2)}`;
+    
     if ((inv.totalPurchaseValue ?? 0) > 0) {
       message += `\n• Total cost: ₹${inv.totalPurchaseValue.toFixed(2)}`;
     }
@@ -3021,13 +3054,12 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 const invAfter = await getProductInventory(shopId, product);
                 const unitText = update.unit ? ` ${update.unit}` : '';
                 const newQty = invAfter?.quantity ?? result?.newQuantity;
-                const u = invAfter?.unit ?? result?.unit ?? update.unit;
-                const message = await generateMultiLanguageResponse(
-                  `↩️ Return processed — ${product}: +${Math.abs(update.quantity)} ${u || ''}`.trim() +
-                  (newQty !== undefined ? ` (Stock: ${newQty} ${u || ''})` : ''),
-                  languageCode,
-                  'return-ok'
-                );
+                const u = invAfter?.unit ?? result?.unit ?? update.unit;            
+                const compact = COMPACT_MODE
+                          ? `↩️ Returned ${Math.abs(update.quantity)} ${u ?? ''} ${product}. Stock: ${newQty ?? ''} ${u ?? ''}`.trim()
+                          : `↩️ Return processed — ${product}: +${Math.abs(update.quantity)} ${u ?? ''}`.trim()
+                              + (newQty !== undefined ? ` (Stock: ${newQty} ${u ?? ''})` : '');
+                const message = await generateMultiLanguageResponse(compact, languageCode, 'return-ok');
                 await sendMessageViaAPI(`whatsapp:${shopId}`, message);
               } catch (e) {
                 console.warn(`[Update ${shopId} - ${product}] Return failed:`, e.message);
@@ -3142,17 +3174,21 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           }
     
           // PRICE KNOWN => send final confirmation immediately (do not wait on expiry)
-          const confirm = await generateMultiLanguageResponse(
-            [
-              `✅ Purchased ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}`,
-              isPerishable ? `Expiry: ${edDisplay}` : `Expiry: —`,
-              ``,
-              `You can change expiry within 2 min:`,
-              `• exp +7d / exp +3m / exp +1y`,
-              `• skip  (to clear)`
-            ].join('\n'),
-            languageCode, 'purchase-ok'
-          );
+          
+          const confirmText = COMPACT_MODE
+              ? (isPerishable
+                  ? `✅ ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}. Exp: ${edDisplay}`
+                  : `✅ ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}`)
+              : [
+                  `✅ Purchased ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}`,
+                  isPerishable ? `Expiry: ${edDisplay}` : `Expiry: —`,
+                  ``,
+                  `You can change expiry within 2 min:`,
+                  `• exp +7d / exp +3m / exp +1y`,
+                  `• skip (to clear)`
+                ].join('\n');
+            const confirm = await generateMultiLanguageResponse(confirmText, languageCode, 'purchase-ok');
+
           await sendMessageViaAPI(`whatsapp:${shopId}`, confirm);
     
           // Open the 2‑min expiry override window
@@ -3430,21 +3466,58 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               }
             } catch (_) {}
 
-            const usedBatch = selectedBatchCompositeKey ? await getBatchByCompositeKey(selectedBatchCompositeKey) : null;
-            const pd = usedBatch?.fields?.PurchaseDate ? formatDateForDisplay(usedBatch.fields.PurchaseDate) : '—';
-            const ed = usedBatch?.fields?.ExpiryDate ? formatDateForDisplay(usedBatch.fields.ExpiryDate) : '—';      
-            const confirm = [
-                `✅ ${product} — sold ${Math.abs(update.quantity)} ${update.unit}${salePrice>0 ? ` @ ₹${salePrice}` : ''}`,
-              `Used batch: Purchased ${pd} (Expiry ${ed})`,
-              `To change batch (within 2 min):`,
-              `• batch DD-MM   e.g., batch 12-09`,
-              `• exp DD-MM     e.g., exp 20-09`,
-              `• batch oldest  |  batch latest`,
-              altLines,
-              `Full list → reply: batches ${product}`
-            ].filter(Boolean).join('\n');
-            await sendMessageViaAPI(`whatsapp:${shopId}`,
-            await generateMultiLanguageResponse(confirm, languageCode, 'sale-ok'));
+            
+// --- BEGIN COMPACT SALE CONFIRMATION ---
+            // If a batch was allocated, fetch its dates (used only in verbose mode)
+            const usedBatch = selectedBatchCompositeKey
+              ? await getBatchByCompositeKey(selectedBatchCompositeKey)
+              : null;
+            const pd = usedBatch?.fields?.PurchaseDate
+              ? formatDateForDisplay(usedBatch.fields.PurchaseDate)
+              : '—';
+            const ed = usedBatch?.fields?.ExpiryDate
+              ? formatDateForDisplay(usedBatch.fields.ExpiryDate)
+              : '—';
+
+            // Decide whether we should offer a batch override prompt (only if >1 batches have qty > 0)
+            const offerOverride = await shouldOfferBatchOverride(shopId, product).catch(() => false);
+
+            // Build compact message (preferred when COMPACT_MODE=true)
+            const compactLine = (() => {
+              const qty = Math.abs(update.quantity);
+              const pricePart = salePrice > 0 ? ` @ ₹${salePrice}` : '';
+              const stockPart = (result?.newQuantity !== undefined)
+                ? `. Stock: ${result.newQuantity} ${result?.unit ?? update.unit}`
+                : '';
+              return `✅ Sold ${qty} ${update.unit} ${product}${pricePart}${stockPart}`;
+            })();
+
+            // Verbose fallback (when COMPACT_MODE=false)
+            const verboseLines = (() => {
+              const qty = Math.abs(update.quantity);
+              const hdr = `✅ ${product} — sold ${qty} ${update.unit}${salePrice > 0 ? ` @ ₹${salePrice}` : ''}`;
+              const batchInfo = usedBatch ? `Used batch: Purchased ${pd} (Expiry ${ed})` : '';
+              const overrideHelp = offerOverride
+                ? [
+                    `To change batch (within 2 min):`,
+                    `• batch DD-MM   e.g., batch 12-09`,
+                    `• exp DD-MM     e.g., exp 20-09`,
+                    `• batch oldest  |  batch latest`
+                  ].join('\n')
+                : '';
+              return [hdr, batchInfo, overrideHelp, altLines, `Full list → reply: batches ${product}`]
+                .filter(Boolean)
+                .join('\n');
+            })();
+
+            // Choose message based on COMPACT_MODE
+            const confirm = COMPACT_MODE ? compactLine : verboseLines;
+
+            await sendMessageViaAPI(
+              `whatsapp:${shopId}`,
+              await generateMultiLanguageResponse(confirm, languageCode, 'sale-ok')
+            );
+            // --- END COMPACT SALE CONFIRMATION ---
              // --- END NEW ---
 
           } else {
