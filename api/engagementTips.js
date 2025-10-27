@@ -1,8 +1,8 @@
 // api/engagementTips.js
 // Multilingual Engagement Tips (send while long replies are processing)
 
-const DEFAULT_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS || 6000);  // 6s
-const DEFAULT_INTERVAL_MS    = Number(process.env.TIP_INTERVAL_MS    || 10000);  // 10s
+const DEFAULT_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS || 8000);  // 8s
+const DEFAULT_INTERVAL_MS    = Number(process.env.TIP_INTERVAL_MS    || 15000);  // 15s
 const DEFAULT_MAX_COUNT      = Number(process.env.TIP_MAX_COUNT      || 3);      // avoid spam
 
 // Short, useful business/inventory tips (localized at send-time)
