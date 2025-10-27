@@ -7181,17 +7181,14 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
     // Process the confirmed update
     const results = await updateMultipleInventory(shopId, [correctedUpdate], detectedLanguage);
     
-    let message = '✅ Update processed:\n\n';
+    const header = chooseHeader(results.length, COMPACT_MODE, false);
+    let message = header;
     let successCount = 0;
     
     for (const result of results) {
-      if (result.success) {
-        successCount++;
-        const unitText = result.unit ? ` ${result.unit}` : '';
-        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-      } else {
-        message += `• ${result.product}: Error - ${result.error}\n`;
-      }
+      const line = formatResultLine(result, COMPACT_MODE);
+      if (line) message += `${line}\n`;
+      if (result.success) successCount++; 
     }
     
     const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
@@ -8141,17 +8138,15 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
       if (updates.length > 0) {
         // Process the confirmed updates
         const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-        let message = '✅ Updates processed:\n\n';
+        const header = chooseHeader(results.length, COMPACT_MODE, false);
+        let message = header;
         let successCount = 0;
+        
         for (const result of results) {
-          if (result.success) {
-            successCount++;
-            const unitText = result.unit ? ` ${result.unit}` : '';
-            message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-          } else {
-            message += `• ${result.product}: Error - ${result.error}\n`;
-          }
-        }
+          const line = formatResultLine(result, COMPACT_MODE);
+          if (line) message += `${line}\n`;
+          if (result.success) successCount++; 
+        
         const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
         message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
         const formattedResponse = await t(message, detectedLanguage, requestId);
@@ -8320,18 +8315,14 @@ async function handleProductConfirmationState(Body, From, state, requestId, res)
     // Process the updates even with unknown products
     const results = await updateMultipleInventory(shopId, unknownProducts, detectedLanguage);
     
-    let message = '✅ Updates processed:\n\n';
+    const header = chooseHeader(results.length, COMPACT_MODE, false);
+    let message = header;
     let successCount = 0;
     
     for (const result of results) {
-      if (result.success) {
-        successCount++;
-        const unitText = result.unit ? ` ${result.unit}` : '';
-        message += `• ${result.product}: ${result.quantity} ${unitText} ${result.action} (Stock: ${result.newQuantity}${unitText})\n`;
-      } else {
-        message += `• ${result.product}: Error - ${result.error}\n`;
-      }
-    }
+      const line = formatResultLine(result, COMPACT_MODE);
+      if (line) message += `${line}\n`;
+      if (result.success) successCount++; 
     
     const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
     message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
