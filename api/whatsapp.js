@@ -501,7 +501,7 @@ function enforceSingleScript(out, lang) {
 
 // Localization helper: centralize generateMultiLanguageResponse + single-script clamp
 async function t(text, languageCode, requestId) {
-  const out = await t(text, languageCode, requestId);
+  const out = await generateMultiLanguageResponse(text, languageCode, requestId);
   return enforceSingleScript(out, languageCode);
 }
 
@@ -524,9 +524,9 @@ async function runWithTips({ From, language, requestId }, fn) {
       From,
       language,
       requestId,
-      firstDelayMs: Number(process.env.TIP_FIRST_DELAY_MS ?? 6000),
-      intervalMs: Number(process.env.TIP_INTERVAL_MS ?? 10000),
-      maxCount: Number(process.env.TIP_MAX_COUNT ?? 3),
+      firstDelayMs: Number(process.env.TIP_FIRST_DELAY_MS ?? 10000),
+      intervalMs: Number(process.env.TIP_INTERVAL_MS ?? 990000),
+      maxCount: Number(process.env.TIP_MAX_COUNT ?? 1),
       sendMessage: (to, body) => sendMessageViaAPI(to, body),
       translate: (msg, lang, rid) => generateMultiLanguageResponse(msg, lang, rid),
     },
@@ -3204,30 +3204,22 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             });
             continue;
           }
-    
-          // PRICE KNOWN => send final confirmation immediately (do not wait on expiry)
-          
-          const confirmText = COMPACT_MODE
-              ? (isPerishable
-                  ? `✅ ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}. Exp: ${edDisplay}`
-                  : `✅ ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}`)
-              : [
-                  `✅ Purchased ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}`,
-                  isPerishable ? `Expiry: ${edDisplay}` : `Expiry: —`,
-                  ``,
-                  `You can change expiry within 2 min:`,
-                  `• exp +7d / exp +3m / exp +1y`,
-                  `• skip (to clear)`
-                ].join('\n');
-                    
-          const confirmText = COMPACT_MODE
-          +    ? (isPerishable
-          +        ? `✅ ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}. Exp: ${edDisplay}`
-          +        : `✅ ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}`)
-          +    : /* keep your original verbose block */;
-          +  await sendMessageViaAPI(`whatsapp:${shopId}`, await t(confirmText, languageCode, 'purchase-ok'));
-          ``
-    
+             
+        // PRICE KNOWN => send final confirmation immediately (do not wait on expiry)
+         const confirmText = COMPACT_MODE
+           ? (isPerishable
+               ? `✅ ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}. Exp: ${edDisplay}`
+               : `✅ ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}`)
+           : [
+               `✅ Purchased ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}`,
+               isPerishable ? `Expiry: ${edDisplay}` : `Expiry: —`,
+               ``,
+               `You can change expiry within 2 min:`,
+               `• exp +7d / exp +3m / exp +1y`,
+               `• skip (to clear)`
+             ].join('\n');
+         await sendMessageViaAPI(`whatsapp:${shopId}`, await t(confirmText, languageCode, 'purchase-ok'));
+
           // Open the 2‑min expiry override window
           try {
             await saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
@@ -3472,20 +3464,21 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 result.batchError = batchError.message;
               }
             }
-
-            // --- NEW: start a short override window (2 min) and send confirmation with alternatives ---
-            try {
-              // Save user-state for post-sale override
-              await saveUserStateToDB(shopId, 'awaitingBatchOverride', {
-                saleRecordId: salesResult.id,
-                product,
-                unit: update.unit,
-                quantity: Math.abs(update.quantity),
-                oldCompositeKey: selectedBatchCompositeKey,
-                createdAtISO: new Date().toISOString(),
-                timeoutSec: 120
-              });
-            } catch (_) {}
+            
+            // --- NEW: start a short override window (2 min) only if multiple batches exist ---
+             try {
+               if (await shouldOfferBatchOverride(shopId, product)) {
+                 await saveUserStateToDB(shopId, 'awaitingBatchOverride', {
+                   saleRecordId: salesResult.id,
+                   product,
+                   unit: update.unit,
+                   quantity: Math.abs(update.quantity),
+                   oldCompositeKey: selectedBatchCompositeKey,
+                   createdAtISO: new Date().toISOString(),
+                   timeoutSec: 120
+                 });
+               }
+             } catch (_) {}
 
             // Compose confirmation message with used batch and up to N alternatives
             let altLines = '';
@@ -4596,7 +4589,7 @@ function generateFallbackSummary(data, languageCode, requestId) {
   fallbackSummary += `\n💡 Consider reviewing your sales patterns and inventory turnover for better business decisions.`;
   
   console.log(`[${requestId}] Fallback summary generated, length: ${fallbackSummary.length}`);
-  return generateMultiLanguageResponse(fallbackSummary, languageCode, requestId);
+  return t(fallbackSummary, languageCode, requestId);
 }
 
 module.exports = { generateSummaryInsights };
