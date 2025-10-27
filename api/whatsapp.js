@@ -3251,7 +3251,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
     
           const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
           const edDisplay = expiryToUse ? formatDateForDisplay(expiryToUse) : '—';
-    
+              
           if (finalPrice <= 0) {
             // PRICE MISSING => ask only for price (do not block on expiry)
             await setUserState(`whatsapp:${shopId}`, 'awaitingPriceExpiry', {
@@ -3265,23 +3265,27 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               isPerishable
             });
     
-            const prompt = await t(
-              [
-                `Got it ✅ ${product} ${update.quantity} ${update.unit}.`,
-                isPerishable ? `Expiry set: ${edDisplay}` : `No expiry needed.`,
-                ``,
-                `Please send price per ${update.unit}, e.g. "₹60" or "₹60 per ${update.unit}".`,
-                `You can adjust expiry later (within 2 min) after price is saved:`,
-                `• exp +7d / exp +3m / exp +1y`,
-                `• skip (to clear)`
-              ].join('\n'),
-              languageCode, 'ask-price-only'
-            );
+            
+    // UX: make it explicit that we’re waiting for price now
+              const prompt = await t(
+                [
+                  `Captured ✅ ${product} ${update.quantity} ${update.unit} — awaiting price.`,
+                  isPerishable ? `Expiry set: ${edDisplay}` : `No expiry needed.`,
+                  ``,
+                  `Please send price per ${update.unit}, e.g. "₹60" or "₹60 per ${update.unit}".`,
+                  `You can adjust expiry later (within 2 min) after price is saved:`,
+                  `• exp +7d / exp +3m / exp +1y`,
+                  `• skip (to clear)`
+                ].join('\n'),
+                languageCode, 'ask-price-only'
+              );
             await sendMessageViaAPI(`whatsapp:${shopId}`, prompt);
     
             results.push({
-              product, quantity: update.quantity, unit: update.unit, action: update.action,             
-              success: false, needsUserInput: true, awaiting: 'price', status: 'pending',
+              product, quantity: update.quantity, unit: update.unit, action: update.action,                                         
+              success: true, needsUserInput: true, awaiting: 'price', status: 'pending',
+              deferredPrice: true,
+
               // include latest stock even in pending case (nice to have; harmless if undefined)
               newQuantity: stockQty, unitAfter: stockUnit
             });
@@ -4225,6 +4229,15 @@ function singularize(unit) {
 // Helper: check if every result is still pending price
 function allPendingPrice(results) {
   return Array.isArray(results) && results.length > 0 && results.every(r => r.needsPrice === true);
+}
+
+// NEW: aggregate counter that EXCLUDES deferred-price items to avoid “0 of 0”
+function renderAggregateCounter(results) {
+  const completed = results.filter(r => r.success && !r.deferredPrice);
+  const totalCompleted = completed.length;
+  const totalTried = results.filter(r => r.error || (r.success && !r.deferredPrice)).length;
+  if (totalTried === 0) return ''; // nothing to report yet
+  return `✅ Successfully updated ${totalCompleted} of ${totalTried} items`;
 }
 
 
