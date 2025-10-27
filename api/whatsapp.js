@@ -1255,11 +1255,12 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
     }
 
   const newKey = await selectBatchForSale(shopId, product, wanted);
+  const newKeyNorm = normalizeCompositeKey(newKey);
   // DEBUG: show which composite key we are switching to (if any)
   try {
     console.log(`[${requestId}] [awaitingBatchOverride] product="${product}" newCompositeKey=`, newKey);
   } catch (_) {}
-  if (!newKey) {
+  if (!newKeyNorm) {
     const sorry = await t(
       `❌ Couldn’t find a matching batch with stock for ${product}. Try another date or "batches ${product}".`,
       detectedLanguage, requestId);
@@ -1268,9 +1269,10 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   }
 
   const res = await reattributeSaleToBatch({
-    saleRecordId, shopId, product,
-    qty: Math.abs(quantity), unit,
-    oldCompositeKey, newCompositeKey: newKey
+  saleRecordId, shopId, product,
+      qty: Math.abs(quantity), unit,
+      oldCompositeKey: normalizeCompositeKey(oldCompositeKey),
+      newCompositeKey: newKeyNorm
   });
   if (!res.success) {
     const fail = await t(
@@ -1280,7 +1282,7 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   }
 
   await deleteUserStateFromDB(state.id);
-  const used = await getBatchByCompositeKey(newKey);
+  const used = await getBatchByCompositeKey(newKeyNorm);
   const pd = used?.fields?.PurchaseDate ? formatDateForDisplay(used.fields.PurchaseDate) : '—';
   const ed = used?.fields?.ExpiryDate ? formatDateForDisplay(used.fields.ExpiryDate) : '—';
   const ok = await t(
@@ -2647,8 +2649,15 @@ async function translateProductName(productName, requestId) {
       return cleanProduct;
     }
     
-    // Direct Hindi to English mappings for common products
+    
+// Direct mappings (Hinglish/Indian scripts → English groceries/brands)
+    // Extend first so we short-circuit AI for staples.
     const hindiToEnglish = {
+      // Staples (potato/onion/tomato)
+      'आलू': 'potato', 'aloo': 'potato', 'aaloo': 'potato', 'aluu': 'potato', 'aalu': 'potato',
+      'प्याज़': 'onion', 'pyaz': 'onion', 'pyaaz': 'onion',
+      'टमाटर': 'tomato', 'tamatar': 'tomato',
+      // Common groceries
       'चीनी': 'sugar', 'cheeni': 'sugar',
       'दूध': 'milk', 'doodh': 'milk',
       'आटा': 'flour', 'aata': 'flour',
@@ -2658,6 +2667,7 @@ async function translateProductName(productName, requestId) {
       'मक्खन': 'butter', 'makkhan': 'butter',
       'दही': 'curd', 'dahi': 'curd',
       'पनीर': 'cheese', 'paneer': 'cheese',
+      // Popular brands/ready drinks
       'फ्रूटी': 'Frooti', 'frooti': 'Frooti'
     };
     
@@ -2672,6 +2682,24 @@ async function translateProductName(productName, requestId) {
       });
       return translated;
     }
+
+    
+    // ---------- Composite Key Normalizer ----------
+    // Many logs showed newline-delimited keys. Normalize to a single line with a pipe separator.
+    function normalizeCompositeKey(key) {
+      if (!key) return key;
+      try {
+        let k = String(key);
+        // collapse CR/LF to '|', collapse multiple spaces, trim
+        k = k.replace(/\r?\n+/g, '|').replace(/\s{2,}/g, ' ').trim();
+        // very basic shape guard: three parts separated by '|'
+        // (shopId|product|iso) – if not, still return sanitized k to avoid throws
+        return k;
+      } catch (_) {
+        return key;
+      }
+    }
+    
     
     const fuzzyMap = {
       'fruity': 'Frooti',
@@ -3322,6 +3350,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 // For now, we default to FIFO oldest; inline hints can be added to `update` later if desired
                 { byPurchaseISO: null, byExpiryISO: null, pick: 'fifo-oldest' }
               );
+              selectedBatchCompositeKey = normalizeCompositeKey(selectedBatchCompositeKey);
               if (selectedBatchCompositeKey) {
                 console.log(`[Update ${shopId} - ${product}] Selected batch (sale): ${selectedBatchCompositeKey}`);
               } else {
@@ -3492,11 +3521,13 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             // Update batch quantity if a batch was selected
             if (selectedBatchCompositeKey) {
               console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${update.quantity}`);
-              try {
+              try {                             
+              
                 const batchUpdateResult = await updateBatchQuantityByCompositeKey(
-                  selectedBatchCompositeKey,
-                  -Math.abs(update.quantity)
-                );
+                   normalizeCompositeKey(selectedBatchCompositeKey),
+                   -Math.abs(update.quantity)
+                 );
+
                 if (batchUpdateResult.success) {
                   console.log(`[Update ${shopId} - ${product}] Updated batch quantity successfully`);
                   if (batchUpdateResult.recreated) {
@@ -3547,10 +3578,11 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             } catch (_) {}
 
             
-// --- BEGIN COMPACT SALE CONFIRMATION ---
-            const usedBatch = selectedBatchCompositeKey
-              ? await getBatchByCompositeKey(selectedBatchCompositeKey)
-              : null;
+// --- BEGIN COMPACT SALE CONFIRMATION ---            
+                        
+          const usedBatch = selectedBatchCompositeKey
+             ? await getBatchByCompositeKey(normalizeCompositeKey(selectedBatchCompositeKey))
+             : null;
             const pd = usedBatch?.fields?.PurchaseDate ? formatDateForDisplay(usedBatch.fields.PurchaseDate) : '—';
             const ed = usedBatch?.fields?.ExpiryDate ? formatDateForDisplay(usedBatch.fields.ExpiryDate) : '—';
             const offerOverride = await shouldOfferBatchOverride(shopId, product).catch(() => false);
@@ -3576,13 +3608,12 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 .join('\n');
             })();
 
-            const confirm = COMPACT_MODE ? compactLine : verboseLines;         
+                      
+          // Unify confirmation building – always defined, avoid referencing undeclared vars later.
+              const confirmText = COMPACT_MODE ? compactLine : verboseLines;
+         
           // Buffer and let outer renderer send single merged message
-            const compactConfirm = `✅ Sold ${Math.abs(update.quantity)} ${update.unit} ${product}` +
-              (salePrice > 0 ? ` @ ₹${salePrice}` : '') +
-              (result?.newQuantity !== undefined ? ` (Stock: ${result.newQuantity} ${result?.unit ?? update.unit})` : '');
-
-            // --- END COMPACT SALE CONFIRMATION ---
+            // --- END COMPACT/VERBOSE SALE CONFIRMATION ---
 
           } else {
             console.error(`[Update ${shopId} - ${product}] Failed to create sales record: ${salesResult.error}`);
@@ -3606,7 +3637,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           purchasePrice: update.action === 'purchased' ? effectivePrice : undefined,
           salePrice: update.action === 'sold' ? effectivePrice : undefined,
           totalValue: (update.action === 'purchased' || update.action === 'sold') ? (effectivePrice * Math.abs(update.quantity)): 0,
-          inlineConfirmText: COMPACT_MODE ? compactConfirm : verboseLines,
+          inlineConfirmText: confirmText, // <- single source of truth; no 'compactConfirm' anywhere
           priceSource,        
 // mark updated only when we actually changed it from catalog
           priceUpdated: update.action === 'purchased'
@@ -3899,6 +3930,10 @@ finally {
 }
 }
 
+
+// Prefer HTTPS public URL for WhatsApp media (data: URLs often fail on WA routing).
+// Set USE_BASE64_PDF=true to force base64 path (not recommended).
+const USE_BASE64_PDF = String(process.env.USE_BASE64_PDF ?? 'false').toLowerCase() === 'true';
 async function sendPDFViaWhatsApp(to, pdfPath) {
   const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
   const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
@@ -3915,48 +3950,58 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
     const stats = fs.statSync(pdfPath);
     console.log(`[sendPDFViaWhatsApp] PDF file size: ${stats.size} bytes`);
     
-    // Read the PDF file as base64
-    const pdfBuffer = fs.readFileSync(pdfPath);
-    const pdfBase64 = pdfBuffer.toString('base64');
     
-    console.log(`[sendPDFViaWhatsApp] PDF read successfully, converting to base64`);
-    
-    // Send using Twilio's media URL with base64 data
-    const message = await client.messages.create({
-      body: 'Here is your invoice:',
-      mediaUrl: [`data:application/pdf;base64,${pdfBase64}`],
-      from: process.env.TWILIO_WHATSAPP_NUMBER,
-      to: formattedTo
-    });
-    
-    console.log(`[sendPDFViaWhatsApp] Message sent successfully. SID: ${message.sid}`);
-    return message;
+    // Prefer public URL flow unless explicitly overridden
+        if (!USE_BASE64_PDF) {
+          const fileName = path.basename(pdfPath);
+          const baseUrl = process.env.PUBLIC_URL || `https://${process.env.RAILWAY_SERVICE_NAME}.railway.app`;
+          const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
+          const publicUrl = `${normalizedBaseUrl}/invoice/${fileName}`;
+          console.log(`[sendPDFViaWhatsApp] Using public URL: ${publicUrl}`);
+          const msg = await client.messages.create({
+            body: 'Here is your invoice:',
+            mediaUrl: [publicUrl],
+            from: process.env.TWILIO_WHATSAPP_NUMBER,
+            to: formattedTo
+          });
+          console.log(`[sendPDFViaWhatsApp] Message sent successfully. SID: ${msg.sid}`);
+          return msg;
+        }
+        // Optional base64 path (not recommended)
+        const pdfBuffer = fs.readFileSync(pdfPath);
+        const pdfBase64 = pdfBuffer.toString('base64');
+        console.log(`[sendPDFViaWhatsApp] Sending as base64 by override`);
+        const msg64 = await client.messages.create({
+          body: 'Here is your invoice:',
+          mediaUrl: [`data:application/pdf;base64,${pdfBase64}`],
+          from: process.env.TWILIO_WHATSAPP_NUMBER,
+          to: formattedTo
+        });
+        console.log(`[sendPDFViaWhatsApp] Message sent successfully. SID: ${msg64.sid}`);
+        return msg64;
     
   } catch (error) {
     console.error(`[sendPDFViaWhatsApp] Error:`, error.message);
     
-    // Try fallback with public URL
+   
+// If we were in base64 mode, still try URL as a last resort
     try {
       const fileName = path.basename(pdfPath);
       const baseUrl = process.env.PUBLIC_URL || `https://${process.env.RAILWAY_SERVICE_NAME}.railway.app`;
       const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
       const publicUrl = `${normalizedBaseUrl}/invoice/${fileName}`;
-      
       console.log(`[sendPDFViaWhatsApp] Trying fallback URL: ${publicUrl}`);
-      
-      const fallbackMessage = await client.messages.create({
+      const fb = await client.messages.create({
         body: 'Here is your invoice:',
         mediaUrl: [publicUrl],
         from: process.env.TWILIO_WHATSAPP_NUMBER,
         to: formattedTo
       });
-      
-      console.log(`[sendPDFViaWhatsApp] Fallback message sent. SID: ${fallbackMessage.sid}`);
-      return fallbackMessage;
-      
+      console.log(`[sendPDFViaWhatsApp] Fallback message sent. SID: ${fb.sid}`);
+      return fb;
     } catch (fallbackError) {
       console.error(`[sendPDFViaWhatsApp] Fallback also failed:`, fallbackError.message);
-      throw new Error(`Both base64 and URL methods failed. Base64 error: ${error.message}, URL error: ${fallbackError.message}`);
+      throw new Error(`Media send failed. Base64/primary error: ${error.message}, URL fallback error: ${fallbackError.message}`);
     }
   }
 }
