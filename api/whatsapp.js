@@ -1668,10 +1668,28 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     // Intercept post‑sale batch override next
     if (await handleAwaitingBatchOverride(From, text, detectedLanguage, requestId)) return true;
     
-// NEW (2.g): Greeting -> show purchase examples incl. expiry
+
+// Greeting -> concise, actionable welcome (single-script friendly)
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
-    const examples = await renderPurchaseExamples(detectedLanguage, requestId);
-    await sendMessageViaAPI(From, examples);
+    const welcomeBase = [
+      '👋 Welcome to Saamagrii.AI.',
+      '',
+      'You can quickly:',
+      '• Purchase: "bought milk 5 ltr ₹60 exp +7d"',
+      '• Sale: "sold sugar 2 kg"',
+      '• Set expiry: "expiry curd 20-11" (or "exp +3m")',
+      '',
+      'Short commands:',
+      '• stock <product>',
+      '• low stock / stockout',
+      '• expiring 7',
+      '• prices',
+      '• inventory value',
+      '',
+      'Tip: You can speak or type in Hinglish/Indian languages—prices and dates are auto-read.'
+    ].join('\n');
+    const welcome = await t(welcomeBase, detectedLanguage, requestId);
+    await sendMessageViaAPI(From, welcome);
     return true;
   }
   
@@ -3240,21 +3258,14 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             });
             continue;
           }
-             
-        // PRICE KNOWN => send final confirmation immediately (do not wait on expiry)
-         const confirmText = COMPACT_MODE
-           ? (isPerishable
-               ? `✅ ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}. Exp: ${edDisplay}`
-               : `✅ ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}`)
-           : [
-               `✅ Purchased ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}`,
-               isPerishable ? `Expiry: ${edDisplay}` : `Expiry: —`,
-               ``,
-               `You can change expiry within 2 min:`,
-               `• exp +7d / exp +3m / exp +1y`,
-               `• skip (to clear)`
-             ].join('\n');
-         await sendMessageViaAPI(`whatsapp:${shopId}`, await t(confirmText, languageCode, 'purchase-ok'));
+                               
+          // PRICE KNOWN => do NOT send immediately; buffer so the caller can send ONE merged message
+            const confirmText = COMPACT_MODE
+              ? (isPerishable
+                ? `✅ Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}. Exp: ${edDisplay}`
+                : `✅ Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}`)
+              : `• ${product}: ${update.quantity} ${update.unit} purchased @ ₹${finalPrice}` +
+                (isPerishable ? `\n  Expiry: ${edDisplay}` : `\n  Expiry: —`);
 
           // Open the 2‑min expiry override window
           try {
@@ -3278,7 +3289,8 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             newQuantity: stockQty,
             unitAfter: stockUnit,
             purchasePrice: finalPrice,
-            totalValue: finalPrice * Math.abs(update.quantity)
+            totalValue: finalPrice * Math.abs(update.quantity),
+            inlineConfirmText: confirmText // <-- provide preformatted line for one-shot response
           });
           continue; // done with purchase branch
         }
@@ -3562,11 +3574,12 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 .join('\n');
             })();
 
-            const confirm = COMPACT_MODE ? compactLine : verboseLines;
-            await sendMessageViaAPI(
-              `whatsapp:${shopId}`,
-              await t(confirm, languageCode, 'sale-ok')
-            );
+            const confirm = COMPACT_MODE ? compactLine : verboseLines;         
+          // Buffer and let outer renderer send single merged message
+            const compactConfirm = `✅ Sold ${Math.abs(update.quantity)} ${update.unit} ${product}` +
+              (salePrice > 0 ? ` @ ₹${salePrice}` : '') +
+              (result?.newQuantity !== undefined ? ` (Stock: ${result.newQuantity} ${result?.unit ?? update.unit})` : '');
+
             // --- END COMPACT SALE CONFIRMATION ---
 
           } else {
@@ -3591,6 +3604,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           purchasePrice: update.action === 'purchased' ? effectivePrice : undefined,
           salePrice: update.action === 'sold' ? effectivePrice : undefined,
           totalValue: (update.action === 'purchased' || update.action === 'sold') ? (effectivePrice * Math.abs(update.quantity)): 0,
+          inlineConfirmText: COMPACT_MODE ? compactConfirm : verboseLines,
           priceSource,        
 // mark updated only when we actually changed it from catalog
           priceUpdated: update.action === 'purchased'
@@ -6057,23 +6071,26 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         // Process the updates
         const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
         
-        // Send results        
-        const header = chooseHeader(results.length, COMPACT_MODE, false);
-        let message = header;
-        let successCount = 0;  
-                
-        for (const result of results) {
-                  const line = formatResultLine(result, COMPACT_MODE);
-                  if (line) message += `${line}\n`;
-                  if (result.success) successCount++;
-                }
-
-        const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
-        message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
         
-        const formattedResponse = await t(message, detectedLanguage, requestId);
-        await sendMessageViaAPI(From, formattedResponse);
-        return;
+// Send results (INLINE-CONFIRM aware; single message)
+          const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+          const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
+          let message = header;
+          let successCount = 0;
+
+          for (const r of processed) {
+            const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+            if (!rawLine) continue;
+            const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+            const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+            message += `${rawLine}${stockPart}\n`;
+            if (r.success) successCount++;
+          }
+
+          message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+          const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+          await sendMessageViaAPI(From, formattedResponse);
+       return;
       }
     } catch (error) {
       console.warn(`[${requestId}] Failed to parse as inventory update:`, error.message);
@@ -6462,23 +6479,26 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       const shopId = From.replace('whatsapp:', '');
       const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
       
-      // Send results          
-      const header = chooseHeader(results.length, COMPACT_MODE, false);
-            let message = header;
-            let successCount = 0;
-         
-      for (const result of results) {
-              const line = formatResultLine(result, COMPACT_MODE);
-              if (line) message += `${line}\n`;
-              if (result.success) successCount++;
-            }     
       
-      const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
-      message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
-      
-      const formattedResponse = await t(message, detectedLanguage, requestId);
-      await sendMessageViaAPI(From, formattedResponse);
-      return;
+// Send results (INLINE-CONFIRM aware; single message)
+        const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+        const header = chooseHeader(processed.length, COMPACT_MODE, false);
+        let message = header;
+        let successCount = 0;
+
+        for (const r of processed) {
+          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+          if (!rawLine) continue;
+          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+          message += `${rawLine}${stockPart}\n`;
+          if (r.success) successCount++;
+        }
+
+        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+        await sendMessageViaAPI(From, formattedResponse);
+     return;
     } else {
       console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
       
@@ -7181,21 +7201,24 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
     // Process the confirmed update
     const results = await updateMultipleInventory(shopId, [correctedUpdate], detectedLanguage);
     
-    const header = chooseHeader(results.length, COMPACT_MODE, false);
-    let message = header;
-    let successCount = 0;
     
-    for (const result of results) {
-      const line = formatResultLine(result, COMPACT_MODE);
-      if (line) message += `${line}\n`;
-      if (result.success) successCount++; 
-    }
-    
-    const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
-    message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
-    
-    const formattedResponse = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, formattedResponse);
+    const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+      const header = chooseHeader(processed.length, COMPACT_MODE, false);
+      let message = header;
+      let successCount = 0;
+
+      for (const r of processed) {
+        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+        if (!rawLine) continue;
+        const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+        const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+        message += `${rawLine}${stockPart}\n`;
+        if (r.success) successCount++; 
+      }
+
+      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+      const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+      await sendMessageViaAPI(From, formattedResponse);
     
     // Clean up
     await deleteCorrectionState(originalCorrectionId);
@@ -7273,25 +7296,27 @@ async function handleInventoryState(Body, From, state, requestId, res) {
       if (allPendingUnified) {
         // The unified prompt was already sent from updateMultipleInventory(); just ACK Twilio
         return res.send(response.toString());
-      }
+      } 
+     
+        // INLINE-CONFIRM aware single message
+        const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+        const header = chooseHeader(processed.length, COMPACT_MODE, false);
+        let message = header;
+        let successCount = 0;
 
-    
-      const confirmed = results.filter(r => !r.needsPrice);
-          const header = chooseHeader(confirmed.length, COMPACT_MODE, false);
-          let message = header;
-          let successCount = 0;
-      
-          for (const result of confirmed) {
-            const line = formatResultLine(result, COMPACT_MODE);
-            if (line) message += `${line}\n`;
-            if (result.success) successCount++;
-          }
-    
-    const totalProcessed = results.filter(r => !r.needsPrice).length;
-    message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
-  
-    const formattedResponse = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, formattedResponse);
+        for (const r of processed) {
+          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+          if (!rawLine) continue;
+          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+          message += `${rawLine}${stockPart}\n`;
+          if (r.success) successCount++;
+        }
+
+        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+
+        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+        await sendMessageViaAPI(From, formattedResponse);
     
     // Clear state after processing
     await clearUserState(From);
@@ -7608,22 +7633,27 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           const shopId = From.replace('whatsapp:', '');
           const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
           
-          // Send results                   
-          const header = chooseHeader(results.length, COMPACT_MODE, false);
-          let message = header;
-          let successCount = 0;
           
-          for (const result of results) {
-          const line = formatResultLine(result, COMPACT_MODE);
-          if (line) message += `${line}\n`;
-           if (result.success) successCount++;
+          // Send results (INLINE-CONFIRM aware; single message)
+            const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+            const header = chooseHeader(processed.length, COMPACT_MODE, false);
+            let message = header;
+            let successCount = 0;
+
+            for (const r of processed) {
+              const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+              if (!rawLine) continue;
+              const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+              const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+              message += `${rawLine}${stockPart}\n`;
+              if (r.success) successCount++;
             }
-          
-          const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
-          message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
-          
-          const formattedResponse = await t(message, detectedLanguage, requestId);
-          await sendMessageViaAPI(From, formattedResponse);
+
+            message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+
+            const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+            await sendMessageViaAPI(From, formattedResponse);
+
           return res.send('<Response></Response>');
         } else {
           console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
@@ -7710,24 +7740,25 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       }
     
       
-      
-      const confirmed = results.filter(r => !r.needsPrice);
-            const header = chooseHeader(confirmed.length, COMPACT_MODE, false);
-            let message = header;
-            let successCount = 0;
-      
-            for (const result of confirmed) {
-              const line = formatResultLine(result, COMPACT_MODE);
-              if (line) message += `${line}\n`;
-              if (result.success) successCount++;
-            }
-            
-      const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
-      message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`
+// INLINE-CONFIRM aware single message
+        const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+        const header = chooseHeader(processed.length, COMPACT_MODE, false);
+        let message = header;
+        let successCount = 0;
 
-      
-      const formattedResponse = await t(message, detectedLanguage, requestId);
-      await sendMessageViaAPI(From, formattedResponse);
+        for (const r of processed) {
+          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+          if (!rawLine) continue;
+          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+          message += `${rawLine}${stockPart}\n`;
+          if (r.success) successCount++;
+        }
+
+        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`
+
+        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+        await sendMessageViaAPI(From, formattedResponse);
       
       // Clear state after processing
       await clearUserState(From);
@@ -7869,21 +7900,26 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
           }
     const results = await updateMultipleInventory(shopId, inventoryUpdates, detectedLanguage);
               
-    const header = chooseHeader(results.length, COMPACT_MODE, false);
-        let message = header;
-        let successCount = 0;
     
-    for (const result of results) {
-          const line = formatResultLine(result, COMPACT_MODE);
-          if (line) message += `${line}\n`;
-          if (result.success) successCount++;
-        }
-    
-    const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
-    message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`
-    
-    const formattedResponse = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, formattedResponse);
+// INLINE-CONFIRM aware single message
+      const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+      const header = chooseHeader(processed.length, COMPACT_MODE, false);
+      let message = header;
+      let successCount = 0;
+
+      for (const r of processed) {
+        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+        if (!rawLine) continue;
+        const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+        const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+        message += `${rawLine}${stockPart}\n`;
+        if (r.success) successCount++;
+      }
+
+      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`
+      
+      const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+      await sendMessageViaAPI(From, formattedResponse);
     
     // Clear state after processing
     await clearUserState(From);
@@ -7951,26 +7987,30 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
     try {
       const updates = await parseMultipleUpdates(pendingTranscript);
       if (updates.length > 0) {
-        // Process the confirmed updates
-        const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-                      
-        const header = chooseHeader(results.length, COMPACT_MODE, false);
-                let message = header;
-                let successCount = 0;
-                
-        for (const result of results) {
-                  const line = formatResultLine(result, COMPACT_MODE);
-                  if (line) message += `${line}\n`;
-                  if (result.success) successCount++;
-                } 
+        
+// Process the confirmed updates
+          const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+          const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+          
+const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+          const header = chooseHeader(processed.length, COMPACT_MODE, false);
+          let message = header;
+          let successCount = 0;
 
-        
-        const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
-        message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
-        
-        // FIX: Send via WhatsApp API instead of synchronous response
-        const formattedResponse = await t(message, detectedLanguage, requestId);
-        await sendMessageViaAPI(From, formattedResponse);
+          for (const r of processed) {
+            const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+            if (!rawLine) continue;
+            const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+            const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+            message += `${rawLine}${stockPart}\n`;
+            if (r.success) successCount++;
+          }
+
+          message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+          
+          // FIX: Send via WhatsApp API instead of synchronous response
+          const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+          await sendMessageViaAPI(From, formattedResponse);
         
         // Clear state after processing
         await clearUserState(From);
@@ -8134,27 +8174,43 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
     
     // Parse the transcript to get update details
     try {
-      const updates = await parseMultipleUpdates(pendingTranscript);
+      const updates = await parseMultipleUpdates(pendingTranscript);     
       if (updates.length > 0) {
-        // Process the confirmed updates
-        const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-        const header = chooseHeader(results.length, COMPACT_MODE, false);
-        let message = header;
-        let successCount = 0;
-        
-        for (const result of results) {
-          const line = formatResultLine(result, COMPACT_MODE);
-          if (line) message += `${line}\n`;
-          if (result.success) successCount++; }
-        
-        const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
-        message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
-        const formattedResponse = await t(message, detectedLanguage, requestId);
-        await sendMessageViaAPI(From, formattedResponse);
-        
-        // Clear state after processing
-        await clearUserState(From);
-      } else {
+                // Process the confirmed updates
+                const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+      
+                // Consider only non-pending items for rendering & counts
+                const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+                const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
+                let message = header;
+                let successCount = 0;
+      
+                for (const r of processed) {
+                  // Prefer inlineConfirmText (buffered in updateMultipleInventory)
+                  const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+                  if (!rawLine) continue;
+      
+                  // In Compact, ensure stock is shown once, if not already present
+                  const needsStock = COMPACT_MODE
+                    && r.newQuantity !== undefined
+                    && !/\(Stock:/.test(rawLine);
+                  const stockPart = needsStock
+                    ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})`
+                    : '';
+      
+                  message += `${rawLine}${stockPart}\n`;
+                  if (r.success) successCount++;
+                }
+      
+                // Tail line once, based on processed items only
+                message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+      
+                const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+                await sendMessageViaAPI(From, formattedResponse);
+      
+                // Clear state after processing
+                await clearUserState(From);
+              } else {
         // If parsing failed, ask to retry
         const errorMessage = await t(
           'Sorry, I couldn\'t parse your inventory update. Please try again with a clear message.',
@@ -8315,20 +8371,23 @@ async function handleProductConfirmationState(Body, From, state, requestId, res)
     // Process the updates even with unknown products
     const results = await updateMultipleInventory(shopId, unknownProducts, detectedLanguage);
     
-    const header = chooseHeader(results.length, COMPACT_MODE, false);
-    let message = header;
-    let successCount = 0;
     
-    for (const result of results) {
-      const line = formatResultLine(result, COMPACT_MODE);
-      if (line) message += `${line}\n`;
-      if (result.success) successCount++; }
-    
-    const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
-    message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
-    
-    const formattedResponse = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, formattedResponse);
+const header = chooseHeader(processed.length, COMPACT_MODE, false);
+      let message = header;
+      let successCount = 0;
+
+      for (const r of processed) {
+        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+        if (!rawLine) continue;
+        const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+        const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+        message += `${rawLine}${stockPart}\n`;
+        if (r.success) successCount++;
+      }
+
+      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+      const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+      await sendMessageViaAPI(From, formattedResponse);
     
     // Clear state after processing
     await clearUserState(From);
