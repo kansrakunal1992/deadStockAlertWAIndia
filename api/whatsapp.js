@@ -475,6 +475,36 @@ const {
 const COMPACT_MODE = String(process.env.COMPACT_MODE ?? 'true').toLowerCase() === 'true';
 const SINGLE_SCRIPT_MODE = String(process.env.SINGLE_SCRIPT_MODE ?? 'true').toLowerCase() === 'true';
 
+// Single-script sanitizer: if lang != 'en', drop Latin-only transliteration blocks;
+// if lang == 'en', drop non-Latin blocks. Heuristic keeps ₹ and punctuation.
+function enforceSingleScript(out, lang) {
+  if (!SINGLE_SCRIPT_MODE) return out;
+  const isEnglish = (String(lang || 'en').toLowerCase() === 'en');
+  // Split on blank lines to catch “native\n\nromanized” pattern
+  const parts = String(out).split(/\n\s*\n/);
+  if (parts.length < 2) {
+    // Also strip inline duplicate if it was concatenated without blank line
+    return isEnglish
+      ? out.replace(/[^\x00-\x7F₹\s.,@:%/()\-–—+*!?'"`]/g, '')
+      : out; // leave native as-is
+  }
+  const nonAscii = /[^\x00-\x7F]/;
+  if (!isEnglish) {
+    // Keep the first native block; drop trailing Latin-only paragraphs
+    const keep = parts.find(p => nonAscii.test(p)) ?? parts[0];
+    return keep;
+  } else {
+    // English user: keep only ASCII-ish paragraphs
+    return parts.filter(p => !nonAscii.test(p)).join('\n\n') || parts.join('\n\n');
+  }
+}
+
+// Localization helper: centralize generateMultiLanguageResponse + single-script clamp
+async function t(text, languageCode, requestId) {
+  const out = await t(text, languageCode, requestId);
+  return enforceSingleScript(out, languageCode);
+}
+
 // Add this at the top of the file after the imports
 const path = require('path');
 const {
@@ -936,7 +966,7 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
   // NEW: allow "reset" while asking for price/expiry
     if (isResetMessage(Body)) {
       try { await deleteUserStateFromDB(state.id); } catch (_) {}
-      const ok = await generateMultiLanguageResponse(
+      const ok = await t(
         `✅ Reset. I’ve cleared the pending price/expiry step.`,
         detectedLanguage,
         requestId
@@ -981,7 +1011,7 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
 
   // If user didn’t give a price but we still need one, prompt again (with examples)
   if (needsPrice && !updatedPrice) {
-    const again = await generateMultiLanguageResponse(
+    const again = await t(
       `Please say or type the price per unit, like "₹60 per kg" or "₹10 per packet". You can also say expiry like "exp 20-09".`,
       detectedLanguage, 'ask-price-again'
     );
@@ -1014,7 +1044,7 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
     const shown = updatedExpiryISO ? formatDateForDisplay(updatedExpiryISO) : '—';
     lines.push(`Expiry: ${shown}`);
   }
-  const done = await generateMultiLanguageResponse(
+  const done = await t(
     `✅ Saved for ${product} ${quantity} ${unit}\n` + (lines.length ? lines.join('\n') : 'No changes.'),
     detectedLanguage, 'saved-price-expiry'
   );
@@ -1150,7 +1180,7 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   // NEW: global reset inside override state
     if (isResetMessage(Body)) {
       try { await deleteUserStateFromDB(state.id); } catch (_) {}
-      const msg = await generateMultiLanguageResponse(
+      const msg = await t(
         `✅ Reset. Cleared the current batch-selection window.`,
         detectedLanguage,
         requestId
@@ -1164,7 +1194,7 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   const createdAt = new Date(createdAtISO || Date.now());
   if ((Date.now() - createdAt.getTime()) > (timeoutSec*1000)) {
     await deleteUserStateFromDB(state.id);
-    const msg = await generateMultiLanguageResponse(
+    const msg = await t(
       `⏳ Sorry, the 2‑min window to change batch has expired.`, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
@@ -1177,7 +1207,7 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   } catch (_) {}
   
   if (!wanted) {
-      const help = await generateMultiLanguageResponse(
+      const help = await t(
         COMPACT_MODE
           ? `Reply: batch DD-MM | batch oldest | batch latest (2 min)`
           : `Reply:\n• batch DD-MM (e.g., batch 12-09)\n• exp DD-MM (e.g., exp 20-09)\n• batch oldest | batch latest\nWithin 2 min.`,
@@ -1192,7 +1222,7 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
     console.log(`[${requestId}] [awaitingBatchOverride] product="${product}" newCompositeKey=`, newKey);
   } catch (_) {}
   if (!newKey) {
-    const sorry = await generateMultiLanguageResponse(
+    const sorry = await t(
       `❌ Couldn’t find a matching batch with stock for ${product}. Try another date or "batches ${product}".`,
       detectedLanguage, requestId);
     await sendMessageViaAPI(From, sorry);
@@ -1205,7 +1235,7 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
     oldCompositeKey, newCompositeKey: newKey
   });
   if (!res.success) {
-    const fail = await generateMultiLanguageResponse(
+    const fail = await t(
       `⚠️ Could not switch batch: ${res.error}`, detectedLanguage, requestId);
     await sendMessageViaAPI(From, fail);
     return true;
@@ -1215,7 +1245,7 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   const used = await getBatchByCompositeKey(newKey);
   const pd = used?.fields?.PurchaseDate ? formatDateForDisplay(used.fields.PurchaseDate) : '—';
   const ed = used?.fields?.ExpiryDate ? formatDateForDisplay(used.fields.ExpiryDate) : '—';
-  const ok = await generateMultiLanguageResponse(
+  const ok = await t(
     `✅ Updated. ${product} sale now attributed to: Purchased ${pd} (Expiry ${ed}).`,
     detectedLanguage, requestId);
   await sendMessageViaAPI(From, ok);
@@ -1231,7 +1261,7 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   // Global reset allowed during window
   if (isResetMessage(Body)) {
     try { await deleteUserStateFromDB(state.id); } catch (_) {}
-    const msg = await generateMultiLanguageResponse(
+    const msg = await t(
       `✅ Reset. Cleared the expiry‑override window.`,
       detectedLanguage,
       requestId
@@ -1245,7 +1275,7 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   const createdAt = new Date(createdAtISO || Date.now());
   if ((Date.now() - createdAt.getTime()) > (timeoutSec * 1000)) {
     await deleteUserStateFromDB(state.id);
-    const msg = await generateMultiLanguageResponse(
+    const msg = await t(
       `⏳ Sorry, the 2‑min window to change expiry has expired.`,
       detectedLanguage,
       requestId
@@ -1259,7 +1289,7 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   if (t === 'ok' || t === 'okay') {
     await deleteUserStateFromDB(state.id);
     const kept = currentExpiryISO ? formatDateForDisplay(currentExpiryISO) : '—';
-    const msg = await generateMultiLanguageResponse(
+    const msg = await t(
       `✅ Kept expiry for ${product}: ${kept}`,
       detectedLanguage,
       requestId
@@ -1271,7 +1301,7 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   if (t === 'skip' || t === 'clear') {
     try { await updateBatchExpiry(batchId, null); } catch (_) {}
     await deleteUserStateFromDB(state.id);
-    const msg = await generateMultiLanguageResponse(
+    const msg = await t(
       `✅ Cleared expiry for ${product}.`,
       detectedLanguage,
       requestId
@@ -1292,7 +1322,7 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   }
   
   if (!newISO) {
-      const help = await generateMultiLanguageResponse(
+      const help = await t(
         COMPACT_MODE
           ? `Reply: exp +7d | +3m | +1y  • skip (clear)`
           : `Reply with: 
@@ -1307,7 +1337,7 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   try { await updateBatchExpiry(batchId, newISO); } catch (_) {}
   await deleteUserStateFromDB(state.id);
   const shown = formatDateForDisplay(newISO);
-  const ok = await generateMultiLanguageResponse(
+  const ok = await t(
     `✅ Updated. ${product} expiry set to ${shown}.`,
     detectedLanguage, requestId
   );
@@ -1531,7 +1561,7 @@ const EXAMPLE_PURCHASE_EN = [
 ].join('\n');
 
 async function renderPurchaseExamples(language, requestId = 'examples') {
-  return await generateMultiLanguageResponse(EXAMPLE_PURCHASE_EN, language ?? 'en', requestId);
+  return await t(EXAMPLE_PURCHASE_EN, language ?? 'en', requestId);
 }
 
 
@@ -1560,7 +1590,7 @@ async function sendParseErrorWithExamples(From, detectedLanguage, requestId, hea
   // --- END PATCH C ---
   try {
     const examples = await renderPurchaseExamples(detectedLanguage, requestId + ':err-ex');
-    const msg = await generateMultiLanguageResponse(
+    const msg = await t(
       `${header}\n\n${examples}`,
       detectedLanguage, requestId + ':err'
     );
@@ -1628,7 +1658,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
       const u = result.unit ?? unit;
       message += ` (Stock: ${result.newQuantity} ${u})`;
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -1643,7 +1673,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     message += exp.length
       ? exp.map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n')
       : (COMPACT_MODE ? `None` : `No expired items.`);
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -1655,7 +1685,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     const product = await translateProductName(m1[1], requestId + ':expiry-cmd');
     const iso = parseExpiryTextToISO(m1[2]);
     if (!iso) {
-      const msg = await generateMultiLanguageResponse(
+      const msg = await t(
         `Invalid date. Try: 20-09 | 20/09/2025 | +7d | +3m | +1y`,
         detectedLanguage, 'bad-expiry'
       );
@@ -1667,12 +1697,12 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
       .filter(b => !!b?.fields?.PurchaseDate)
       .sort((a,b)=> new Date(b.fields.PurchaseDate) - new Date(a.fields.PurchaseDate))[0];
     if (!latest) {
-      const msg = await generateMultiLanguageResponse(`No batch found for ${product}.`, detectedLanguage, 'no-batch');
+      const msg = await t(`No batch found for ${product}.`, detectedLanguage, 'no-batch');
       await sendMessageViaAPI(From, msg);
       return true;
     }
     await updateBatchExpiry(latest.id, iso);
-    const ok = await generateMultiLanguageResponse(`✅ ${product} expiry set to ${formatDateForDisplay(iso)}`, detectedLanguage, 'expiry-set');
+    const ok = await t(`✅ ${product} expiry set to ${formatDateForDisplay(iso)}`, detectedLanguage, 'expiry-set');
     await sendMessageViaAPI(From, ok);
     return true;
   }
@@ -1734,7 +1764,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
       message += `\n\n📁 By Category:\n` +
         inv.topCategories.map((c,i)=>`${i+1}. ${c.name}: ₹${c.value.toFixed(2)} (${c.productCount} items)`).join('\n');
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -1782,7 +1812,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
       ? `🧾 Products matching “${query}” — ${pageItems.length} of ${total}`
       : `🧾 Products — Page ${pageSafe}/${totalPages} — ${pageItems.length} of ${total}`;
     if (total === 0) {
-      const msg0 = await generateMultiLanguageResponse(`${header}\nNo products found.`, detectedLanguage, requestId);
+      const msg0 = await t(`${header}\nNo products found.`, detectedLanguage, requestId);
       await sendMessageViaAPI(From, msg0);
       return true;
     }
@@ -1794,7 +1824,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
       message += `\n\n➡️ Next page: "products ${pageSafe+1}" (repeat the search term)`;
     }
     message += `\n🔎 Search: "products search <term>"`;
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -1824,7 +1854,7 @@ if (pricePage) {
         const qty  = exact.quantity ?? 0;
         const unit = exact.unit || 'pieces';
         const message = `📦 Stock — ${product}: ${qty} ${unit}`;
-        const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+        const msg = await t(message, detectedLanguage, requestId);
         await sendMessageViaAPI(From, msg);
         return true;
       }
@@ -1862,12 +1892,12 @@ if (pricePage) {
         const name = best?.fields?.Product || product;
         message = `📦 Stock — ${name}: ${qty} ${unit}`;
       }
-      const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      const msg = await t(message, detectedLanguage, requestId);
       await sendMessageViaAPI(From, msg);
       return true;
     } catch (e) {
       console.warn(`[${requestId}] Fallback list scan failed:`, e?.message);
-      const msg = await generateMultiLanguageResponse(
+      const msg = await t(
         `📦 ${rawQuery}: not found in inventory.`,
         detectedLanguage,
         requestId
@@ -1892,7 +1922,7 @@ if (pricePage) {
       if (out.length) message += `\n\nOut of stock:\n` + out.map(p=>`• ${p.name}`).join('\n');
       message += `\n\n💡 Advice: Prioritize ordering low-stock items first.`;
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -1920,7 +1950,7 @@ if (pricePage) {
         const soon = exact.filter(b => (b.expiryDate || b.fields?.ExpiryDate) &&
                         daysBetween(new Date(b.expiryDate || b.fields?.ExpiryDate), new Date()) <= 7);
         if (soon.length) message += `\n\n💡 ${soon.length} batch(es) expiring ≤7 days — clear with FIFO/discounts.`;
-        const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+        const msg = await t(message, detectedLanguage, requestId);
         await sendMessageViaAPI(From, msg);
         return true;
       }
@@ -1965,12 +1995,12 @@ if (pricePage) {
         const soon = active.filter(b => b.fields.ExpiryDate && daysBetween(new Date(b.fields.ExpiryDate), new Date()) <= 7);
         if (soon.length) message += `\n\n💡 ${soon.length} batch(es) expiring ≤7 days — clear with FIFO/discounts.`;
       }
-      const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      const msg = await t(message, detectedLanguage, requestId);
       await sendMessageViaAPI(From, msg);
       return true;
     } catch (e) {
       console.warn(`[${requestId}] Fallback batches scan failed:`, e?.message);
-      const msg = await generateMultiLanguageResponse(
+      const msg = await t(
         `📦 No active batches found for ${rawQuery}.`,
         detectedLanguage,
         requestId
@@ -1999,7 +2029,7 @@ if (pricePage) {
         ? `\n\n💡 Move expired stock off-shelf and create a return-to-supplier note if applicable.`
         : `\n\n💡 Move to eye‑level, bundle, or mark‑down 5–15%.`;
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -2014,7 +2044,7 @@ if (pricePage) {
     if ((data.topProducts ?? []).length > 0) {
       message += `\n\n🏷️ Top Sellers:\n` + data.topProducts.slice(0,5).map(p=>`• ${p.name}: ${p.quantity} ${p.unit}`).join('\n');
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -2028,7 +2058,7 @@ if (pricePage) {
     const top = (data.topProducts || []).slice(0, n);
     let message = `🏆 Top ${n} (${label}):\n`;
     message += top.length ? top.map((p,i)=>`${i+1}. ${p.name}: ${p.quantity} ${p.unit}`).join('\n') : 'No sales data.';
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -2059,7 +2089,7 @@ if (pricePage) {
     message += suggestions.length
       ? suggestions.slice(0,10).map(s=>`• ${s.name}: stock ${s.current} ${s.unit}, ~${s.daily}/day → reorder ~${s.reorderQty} ${singularize(s.unit)}`).join('\n')
       : 'No urgent reorders detected.';
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }  
@@ -2114,7 +2144,7 @@ try{
       const u = result.unit ?? unit;
       message += ` (Stock: ${result.newQuantity} ${u})`;
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -2129,7 +2159,7 @@ try{
     message += exp.length
       ? exp.map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n')
       : `No expired items.`;
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -2142,7 +2172,7 @@ try{
     const product = await translateProductName(m[1], requestId + ':expiry-cmd');
     const iso = parseExpiryTextToISO(m[2]);
     if (!iso) {
-      const msg = await generateMultiLanguageResponse(
+      const msg = await t(
         `Invalid date. Try: 20-09 | 20/09/2025 | +7d | +3m | +1y`,
         detectedLanguage, 'bad-expiry'
       );
@@ -2154,12 +2184,12 @@ try{
       .filter(b => !!b?.fields?.PurchaseDate)
       .sort((a,b)=> new Date(b.fields.PurchaseDate) - new Date(a.fields.PurchaseDate))[0];
     if (!latest) {
-      const msg = await generateMultiLanguageResponse(`No batch found for ${product}.`, detectedLanguage, 'no-batch');
+      const msg = await t(`No batch found for ${product}.`, detectedLanguage, 'no-batch');
       await sendMessageViaAPI(From, msg);
       return true;
     }
     await updateBatchExpiry(latest.id, iso);
-    const ok = await generateMultiLanguageResponse(`✅ ${product} expiry set to ${formatDateForDisplay(iso)}`, detectedLanguage, 'expiry-set');
+    const ok = await t(`✅ ${product} expiry set to ${formatDateForDisplay(iso)}`, detectedLanguage, 'expiry-set');
     await sendMessageViaAPI(From, ok);
     return true;
   }
@@ -2172,7 +2202,7 @@ try{
     const product = await translateProductName(raw, requestId + ':stock');
     const inv = await getProductInventory(shopId, product);
     if (!inv.success) {
-      const msg = await generateMultiLanguageResponse(`Error fetching stock for ${product}: ${inv.error}`, detectedLanguage, requestId);
+      const msg = await t(`Error fetching stock for ${product}: ${inv.error}`, detectedLanguage, requestId);
       await sendMessageViaAPI(From, msg);
       return true;
     }
@@ -2191,7 +2221,7 @@ try{
     let message = `📦 Stock — ${product}: ${inv.quantity} ${inv.unit}\n`;
     if (dailyRate > 0) message += `Avg sale: ${dailyRate.toFixed(2)} /day\n`;
     message += `💡 ${advise}`;
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -2221,7 +2251,7 @@ try{
       }
       message += `\n\n💡 Advice: Prioritize ordering low-stock items first; consider substitutable SKUs to avoid lost sales.`;
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -2233,7 +2263,7 @@ try{
     const product = await translateProductName(raw, requestId + ':batches');
     const batches = await getBatchesForProductWithRemaining(shopId, product);
     if (batches.length === 0) {
-      const msg = await generateMultiLanguageResponse(`No active batches found for ${product}.`, detectedLanguage, requestId);
+      const msg = await t(`No active batches found for ${product}.`, detectedLanguage, requestId);
       await sendMessageViaAPI(From, msg);
       return true;
     }
@@ -2247,7 +2277,7 @@ try{
    if (soon.length > 0) {
       message += `\n💡 Advice: ${soon.length} batch(es) expiring within 7 days — use FIFO & run a small discount to clear.`;
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -2269,7 +2299,7 @@ try{
           ? `\n\n💡 Move expired stock off-shelf and consider supplier returns.`
           : `\n\n💡 Mark-down nearing expiry items (5–15%), move to eye-level shelves, and bundle if possible.`;
       }
-      const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      const msg = await t(message, detectedLanguage, requestId);
       await sendMessageViaAPI(From, msg);
       return true;
     }
@@ -2286,7 +2316,7 @@ try{
       message += `\n\n🏷️ Top Sellers:\n` + data.topProducts.slice(0, 5)
         .map(p => `• ${p.name}: ${p.quantity} ${p.unit}`).join('\n');
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -2302,7 +2332,7 @@ try{
     else {
       message += data.top.map((p, i) => `${i + 1}. ${p.name}: ${p.quantity} ${p.unit}`).join('\n');
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -2312,7 +2342,7 @@ try{
     const { success, suggestions, days, leadTimeDays, safetyDays, error } =
       await getReorderSuggestions(shopId, { days: 30, leadTimeDays: 3, safetyDays: 2 });
     if (!success) {
-      const msg = await generateMultiLanguageResponse(`Error creating suggestions: ${error}`, detectedLanguage, requestId);
+      const msg = await t(`Error creating suggestions: ${error}`, detectedLanguage, requestId);
       await sendMessageViaAPI(From, msg);
       return true;
     }
@@ -2325,7 +2355,7 @@ try{
       ).join('\n');
       message += `\n\n💡 Advice: Confirm supplier lead-times. Increase safety days for volatile items.`;
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -2344,7 +2374,7 @@ try{
       message += `\n\n📁 By Category:\n` + inv.topCategories.map((c, i) =>
         `${i + 1}. ${c.name}: ₹${c.value.toFixed(2)} (${c.productCount} items)`).join('\n');
     }
-    const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const msg = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
     return true;
   }
@@ -3061,7 +3091,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                           ? `↩️ Returned ${Math.abs(update.quantity)} ${u ?? ''} ${product}. Stock: ${newQty ?? ''} ${u ?? ''}`.trim()
                           : `↩️ Return processed — ${product}: +${Math.abs(update.quantity)} ${u ?? ''}`.trim()
                               + (newQty !== undefined ? ` (Stock: ${newQty} ${u ?? ''})` : '');
-                const message = await generateMultiLanguageResponse(compact, languageCode, 'return-ok');
+                const message = await t(compact, languageCode, 'return-ok');
                 await sendMessageViaAPI(`whatsapp:${shopId}`, message);
               } catch (e) {
                 console.warn(`[Update ${shopId} - ${product}] Return failed:`, e.message);
@@ -3152,7 +3182,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               isPerishable
             });
     
-            const prompt = await generateMultiLanguageResponse(
+            const prompt = await t(
               [
                 `Got it ✅ ${product} ${update.quantity} ${update.unit}.`,
                 isPerishable ? `Expiry set: ${edDisplay}` : `No expiry needed.`,
@@ -3189,9 +3219,14 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                   `• exp +7d / exp +3m / exp +1y`,
                   `• skip (to clear)`
                 ].join('\n');
-            const confirm = await generateMultiLanguageResponse(confirmText, languageCode, 'purchase-ok');
-
-          await sendMessageViaAPI(`whatsapp:${shopId}`, confirm);
+                    
+          const confirmText = COMPACT_MODE
+          +    ? (isPerishable
+          +        ? `✅ ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}. Exp: ${edDisplay}`
+          +        : `✅ ${product} ${update.quantity} ${update.unit} @ ₹${finalPrice}`)
+          +    : /* keep your original verbose block */;
+          +  await sendMessageViaAPI(`whatsapp:${shopId}`, await t(confirmText, languageCode, 'purchase-ok'));
+          ``
     
           // Open the 2‑min expiry override window
           try {
@@ -3266,7 +3301,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             }
           );
           if (saleGuard.status === 'blocked' || saleGuard.status === 'error') {
-            const msg = await generateMultiLanguageResponse(
+            const msg = await t(
               `❌ Not enough stock for ${product}. You tried to sell ${update.quantity} ${update.unit}. ` +
               `Reply: "opening ${product} ${saleGuard.deficit} ${update.unit}" to set opening stock.`,
               languageCode,
@@ -3470,21 +3505,13 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
             
 // --- BEGIN COMPACT SALE CONFIRMATION ---
-            // If a batch was allocated, fetch its dates (used only in verbose mode)
             const usedBatch = selectedBatchCompositeKey
               ? await getBatchByCompositeKey(selectedBatchCompositeKey)
               : null;
-            const pd = usedBatch?.fields?.PurchaseDate
-              ? formatDateForDisplay(usedBatch.fields.PurchaseDate)
-              : '—';
-            const ed = usedBatch?.fields?.ExpiryDate
-              ? formatDateForDisplay(usedBatch.fields.ExpiryDate)
-              : '—';
-
-            // Decide whether we should offer a batch override prompt (only if >1 batches have qty > 0)
+            const pd = usedBatch?.fields?.PurchaseDate ? formatDateForDisplay(usedBatch.fields.PurchaseDate) : '—';
+            const ed = usedBatch?.fields?.ExpiryDate ? formatDateForDisplay(usedBatch.fields.ExpiryDate) : '—';
             const offerOverride = await shouldOfferBatchOverride(shopId, product).catch(() => false);
 
-            // Build compact message (preferred when COMPACT_MODE=true)
             const compactLine = (() => {
               const qty = Math.abs(update.quantity);
               const pricePart = salePrice > 0 ? ` @ ₹${salePrice}` : '';
@@ -3494,33 +3521,24 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               return `✅ Sold ${qty} ${update.unit} ${product}${pricePart}${stockPart}`;
             })();
 
-            // Verbose fallback (when COMPACT_MODE=false)
             const verboseLines = (() => {
               const qty = Math.abs(update.quantity);
               const hdr = `✅ ${product} — sold ${qty} ${update.unit}${salePrice > 0 ? ` @ ₹${salePrice}` : ''}`;
               const batchInfo = usedBatch ? `Used batch: Purchased ${pd} (Expiry ${ed})` : '';
               const overrideHelp = offerOverride
-                ? [
-                    `To change batch (within 2 min):`,
-                    `• batch DD-MM   e.g., batch 12-09`,
-                    `• exp DD-MM     e.g., exp 20-09`,
-                    `• batch oldest  |  batch latest`
-                  ].join('\n')
+                ? `To change batch (within 2 min):\n• batch DD-MM   e.g., batch 12-09\n• exp DD-MM     e.g., exp 20-09\n• batch oldest  |  batch latest`
                 : '';
               return [hdr, batchInfo, overrideHelp, altLines, `Full list → reply: batches ${product}`]
                 .filter(Boolean)
                 .join('\n');
             })();
 
-            // Choose message based on COMPACT_MODE
             const confirm = COMPACT_MODE ? compactLine : verboseLines;
-
             await sendMessageViaAPI(
               `whatsapp:${shopId}`,
-              await generateMultiLanguageResponse(confirm, languageCode, 'sale-ok')
+              await t(confirm, languageCode, 'sale-ok')
             );
             // --- END COMPACT SALE CONFIRMATION ---
-             // --- END NEW ---
 
           } else {
             console.error(`[Update ${shopId} - ${product}] Failed to create sales record: ${salesResult.error}`);
@@ -3812,7 +3830,7 @@ async function sendSystemMessage(message, from, detectedLanguage, requestId, res
       userLanguage = 'en';
     }
     // Generate multilingual response
-    const formattedMessage = await generateMultiLanguageResponse(message, userLanguage, requestId);
+    const formattedMessage = await t(message, userLanguage, requestId);
 // If long, send via API (which auto-splits) and keep TwiML minimal
     const MAX_LENGTH = 1600;
     if (formattedMessage.length > MAX_LENGTH) {
@@ -4038,7 +4056,7 @@ async function sendPriceUpdatesPaged(From, detectedLanguage, requestId, page = 1
 
   let header = `🧾 Price updates needed — ${total} item(s)`;
   if (total === 0) {
-    const msg0 = await generateMultiLanguageResponse(`${header}\nAll prices look fresh.`, detectedLanguage, requestId);
+    const msg0 = await t(`${header}\nAll prices look fresh.`, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg0);
     return true;
   }
@@ -4063,7 +4081,7 @@ async function sendPriceUpdatesPaged(From, detectedLanguage, requestId, page = 1
   }
 
   // Multilingual render and send
-  const localized = await generateMultiLanguageResponse(message.trim(), detectedLanguage, requestId);
+  const localized = await t(message.trim(), detectedLanguage, requestId);
   await sendMessageViaAPI(From, localized);
   return true;
 }
@@ -4353,7 +4371,7 @@ async function generateFullScaleSummary(shopId, languageCode, requestId) {
         errorMessage = 'Your trial period has expired. Please upgrade to the Enterprise plan for advanced AI summaries.';
       }
       
-      return await generateMultiLanguageResponse(errorMessage, languageCode, requestId);
+      return await t(errorMessage, languageCode, requestId);
     }
     
     console.log(`[${requestId}] Generating full-scale summary for shop ${shopId}`);
@@ -4391,7 +4409,7 @@ async function generateFullScaleSummary(shopId, languageCode, requestId) {
     
     // Fallback error message in user's language
     const errorMessage = `Sorry, I couldn't generate your detailed summary right now. Please try again later.`;
-    return await generateMultiLanguageResponse(errorMessage, languageCode, requestId);
+    return await t(errorMessage, languageCode, requestId);
   }
 }
 
@@ -4590,7 +4608,7 @@ async function handlePlanUpgrade(Body, From, detectedLanguage, requestId) {
   // Simple command to upgrade to standard plan
   if (Body.toLowerCase().includes('upgrade to standard')) {
     await saveUserPlan(shopId, 'standard');
-    const message = await generateMultiLanguageResponse(
+    const message = await t(
       'You have been upgraded to the Standard plan. You now have access to all standard features.',
       detectedLanguage,
       requestId
@@ -4602,7 +4620,7 @@ async function handlePlanUpgrade(Body, From, detectedLanguage, requestId) {
   // Command to upgrade to enterprise plan
   if (Body.toLowerCase().includes('upgrade to enterprise')) {
     await saveUserPlan(shopId, 'enterprise');
-    const message = await generateMultiLanguageResponse(
+    const message = await t(
       'You have been upgraded to the Enterprise plan. You now have access to all features including advanced AI analytics.',
       detectedLanguage,
       requestId
@@ -4677,7 +4695,7 @@ async function createSummaryMenu(from, languageCode, requestId) {
     menuMessage += `You can also type "short summary" or "full summary".`;
     
     // Generate multilingual response
-    const formattedMessage = await generateMultiLanguageResponse(menuMessage, userLanguage, requestId);
+    const formattedMessage = await t(menuMessage, userLanguage, requestId);
     
     // Create button message
     const twiml = new twilio.twiml.MessagingResponse();
@@ -4711,7 +4729,7 @@ async function createSummaryMenu(from, languageCode, requestId) {
     
     // Fallback to text menu
     const fallbackMessage = `📊 Please select an option:\n\n1. Instant Summary\n2. Detailed Summary\n\nYou can also type "summary" for instant or "full summary" for detailed.`;
-    return await generateMultiLanguageResponse(fallbackMessage, languageCode, requestId);
+    return await t(fallbackMessage, languageCode, requestId);
   }
 }
 
@@ -4788,7 +4806,7 @@ async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
     '• Multiple: "update price milk 60, sugar 30, Parle-G 50"\n' +
     '  (You can also separate with: and / aur / और / & / ;)\n' +
     'You may also say prices in words (e.g., "milk sixty two") — I will convert them.';
-  const formatted = await generateMultiLanguageResponse(errorMessage, detectedLanguage, requestId);
+  const formatted = await t(errorMessage, detectedLanguage, requestId);
   await sendMessageViaAPI(From, formatted);
 }
 
@@ -4836,11 +4854,11 @@ async function applyPriceUpdates(items, shopId, detectedLanguage, requestId) {
     summary += `  •  Created: ${created}`;
     if (failed > 0) summary += `  •  Failed: ${failed}`;
 
-    const formatted = await generateMultiLanguageResponse(summary, detectedLanguage, requestId);
+    const formatted = await t(summary, detectedLanguage, requestId);
     return { message: formatted };
   } catch (err) {
     console.error(`[${requestId}] applyPriceUpdates error:`, err.message);
-    const fallback = await generateMultiLanguageResponse(
+    const fallback = await t(
       'System error while applying price updates. Please try again.',
       detectedLanguage,
       requestId
@@ -4862,7 +4880,7 @@ async function sendPriceList(From, detectedLanguage, requestId) {
     
     if (products.length === 0) {
       const noProductsMessage = 'No products found in price list.';
-      const formattedMessage = await generateMultiLanguageResponse(noProductsMessage, detectedLanguage, requestId);
+      const formattedMessage = await t(noProductsMessage, detectedLanguage, requestId);
       await sendMessageViaAPI(From, formattedMessage);
       return;
     }
@@ -4872,12 +4890,12 @@ async function sendPriceList(From, detectedLanguage, requestId) {
       message += `• ${product.name}: ₹${product.price}/${product.unit}\n`;
     });
     
-    const formattedMessage = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const formattedMessage = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, formattedMessage);
   } catch (error) {
     console.error(`[${requestId}] Error sending price list:`, error.message);
     const errorMessage = 'Error fetching price list. Please try again.';
-    const formattedMessage = await generateMultiLanguageResponse(errorMessage, detectedLanguage, requestId);
+    const formattedMessage = await t(errorMessage, detectedLanguage, requestId);
     await sendMessageViaAPI(From, formattedMessage);
   }
 }
@@ -4976,7 +4994,7 @@ async function sendPriceUpdateReminders() {
           message += 'To check all products requiring price update, reply with:\n';
           message += '"prices"';
           
-          const formattedMessage = await generateMultiLanguageResponse(message, userLanguage, 'price-reminder');
+          const formattedMessage = await t(message, userLanguage, 'price-reminder');
           
           // Send reminder
           await sendMessageViaAPI(`whatsapp:${shopId}`, formattedMessage);
@@ -5041,7 +5059,7 @@ async function tryHandleReturnText(transcript, from, detectedLanguage, requestId
     const u = result.unit ?? unit;
     message += ` (Stock: ${result.newQuantity} ${u})`;
   }
-  const msg = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+  const msg = await t(message, detectedLanguage, requestId);
   await sendMessageViaAPI(from, msg);
   return true;
 }
@@ -5248,7 +5266,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         
           baseMessage += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
           
-          const formattedResponse = await generateMultiLanguageResponse(baseMessage, detectedLanguage, requestId);
+          const formattedResponse = await t(baseMessage, detectedLanguage, requestId);
           await sendMessageViaAPI(From, formattedResponse);
         }
         
@@ -5281,7 +5299,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
      // Add reset option
      baseMessage += `\nTo reset the flow, reply "reset".`;
      // Translate the entire message to user's preferred language
-     const translatedMessage = await generateMultiLanguageResponse(baseMessage, userLanguage, requestId);
+     const translatedMessage = await t(baseMessage, userLanguage, requestId);
      // Send the message
     response.message(translatedMessage);
     handledRequests.add(requestId);
@@ -5300,7 +5318,7 @@ catch (error) {
     } catch (error) {
       console.warn(`[${requestId}] Failed to get user preference:`, error.message);
     }
-    const errorMessage = await generateMultiLanguageResponse(
+    const errorMessage = await t(
       'System error. Please try again with a clear voice message.',
       userLanguage,
       requestId
@@ -6023,7 +6041,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
         message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
         
-        const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+        const formattedResponse = await t(message, detectedLanguage, requestId);
         await sendMessageViaAPI(From, formattedResponse);
         return;
       }
@@ -6431,7 +6449,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
       message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
       
-      const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      const formattedResponse = await t(message, detectedLanguage, requestId);
       await sendMessageViaAPI(From, formattedResponse);
       return;
     } else {
@@ -6550,7 +6568,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       ? '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to text input, reply "switch to text".'
       : '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to voice input, reply "switch to voice".';
     
-    const translatedMessage = await generateMultiLanguageResponse(defaultMessage, detectedLanguage, requestId);
+    const translatedMessage = await t(defaultMessage, detectedLanguage, requestId);
     
     // Send via Twilio API
     await sendMessageViaAPI(From, translatedMessage);
@@ -6707,7 +6725,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
         case 'વિગતવાર સારાંશ':
         case 'तपशीलवार सारांश':
           // Full summary handling
-          const generatingMessage = await generateMultiLanguageResponse(
+          const generatingMessage = await t(
             'Generating your detailed summary with insights... This may take a moment.',
             userLanguage,
             requestId
@@ -6722,7 +6740,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
         default:
           console.warn(`[${requestId}] Unhandled button text: "${ButtonText}"`);
           // Send a response for unhandled buttons
-          const unhandledMessage = await generateMultiLanguageResponse(
+          const unhandledMessage = await t(
             'I didn\'t understand that button selection. Please try again.',
             userLanguage,
             requestId
@@ -6762,7 +6780,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
       
       // Send reset confirmation
       const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
-      const resetMessage = await generateMultiLanguageResponse(
+      const resetMessage = await t(
         'Flow has been reset. How would you like to send your inventory update?',
         detectedLanguage,
         requestId
@@ -6828,7 +6846,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     
   } catch (error) {
     console.error(`[${requestId}] Processing Error:`, error.message);
-    const errorMessage = await generateMultiLanguageResponse(
+    const errorMessage = await t(
       'System error. Please try again with a clear message.',
       'en',
       requestId
@@ -6876,7 +6894,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
     await deleteCorrectionState(correctionState.id);
     await clearUserState(From);
     
-    const exitMessage = await generateMultiLanguageResponse(
+    const exitMessage = await t(
       'Correction cancelled. You can start fresh with a new inventory update.',
       correctionState.detectedLanguage,
       requestId
@@ -6917,17 +6935,17 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
       message += `\n📦 Total purchase value: ₹${value.toFixed(2)}`;
     }
   
-    const translated = await generateMultiLanguageResponse(message, correctionState.detectedLanguage, requestId);
+    const translated = await t(message, correctionState.detectedLanguage, requestId);
     await sendMessageViaAPI(From, translated);
   } else {
       let message = `❌ Update failed: ${results[0].error ?? 'Unknown error'}\nPlease try again.`;
-      const translated = await generateMultiLanguageResponse(message, correctionState.detectedLanguage, requestId);
+      const translated = await t(message, correctionState.detectedLanguage, requestId);
       await sendMessageViaAPI(From, translated);
     }
 
     return;
   } else {
-    const retryMessage = await generateMultiLanguageResponse(
+    const retryMessage = await t(
       'Please enter a valid price (e.g., 15 or 20.5)',
       correctionState.detectedLanguage,
       requestId
@@ -6936,7 +6954,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
     return;
   }
 } else {
-      const retryMessage = await generateMultiLanguageResponse(
+      const retryMessage = await t(
         'Please enter a valid price (e.g., 15 or 20.5)',
         correctionState.detectedLanguage,
         requestId
@@ -6990,7 +7008,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
           }
         });
         
-        const translatedMessage = await generateMultiLanguageResponse(
+        const translatedMessage = await t(
           followUpMessage,
           correctionState.detectedLanguage,
           requestId
@@ -7000,7 +7018,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
       }
     } else {
       // Invalid selection
-      const errorMessage = await generateMultiLanguageResponse(
+      const errorMessage = await t(
         'Please reply with 1, 2, 3, or 4. Or type "exit" to cancel.',
         correctionState.detectedLanguage,
         requestId
@@ -7070,7 +7088,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
         originalCorrectionId: correctionState.id
       });
       
-      const confirmationMessage = await generateMultiLanguageResponse(
+      const confirmationMessage = await t(
         `I heard: "${correctedUpdate.quantity} ${correctedUpdate.unit} of ${correctedUpdate.product}" (${correctedUpdate.action}).  
 Is this correct? Reply with "yes" or "no".`,
         correctionState.detectedLanguage,
@@ -7096,7 +7114,7 @@ Is this correct? Reply with "yes" or "no".`,
           break;
       }
       
-      const translatedMessage = await generateMultiLanguageResponse(
+      const translatedMessage = await t(
         retryMessage,
         correctionState.detectedLanguage,
         requestId
@@ -7138,7 +7156,7 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
     const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
     message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
     
-    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const formattedResponse = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, formattedResponse);
     
     // Clean up
@@ -7147,7 +7165,7 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
     
   } else if (noVariants.includes(Body.toLowerCase())) {
     // Go back to correction selection
-    const correctionMessage = await generateMultiLanguageResponse(
+    const correctionMessage = await t(
       `Please try again. What needs to be corrected?
 Reply with:
 1 – Product is wrong
@@ -7172,7 +7190,7 @@ Reply with:
     await sendMessageViaAPI(From, correctionMessage);
   } else {
     // Invalid response
-    const errorMessage = await generateMultiLanguageResponse(
+    const errorMessage = await t(
       'Please reply with "yes" or "no".',
       detectedLanguage,
       requestId
@@ -7235,7 +7253,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
     const totalProcessed = results.filter(r => !r.needsPrice).length;
     message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
   
-    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const formattedResponse = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, formattedResponse);
     
     // Clear state after processing
@@ -7281,11 +7299,11 @@ Reply with:
 3 – Action is wrong
 4 – All wrong, I'll type it instead`;
         
-        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+        const translatedMessage = await t(correctionMessage, detectedLanguage, requestId);
         await sendMessageViaAPI(From, translatedMessage);
       } else {
         // If saving correction state fails, ask to retry
-        const errorMessage = await generateMultiLanguageResponse(
+        const errorMessage = await t(
           'Please try again with a clear inventory update.',
           detectedLanguage,
           requestId
@@ -7297,7 +7315,7 @@ Reply with:
       console.error(`[${requestId}] Error in fallback parsing:`, parseError.message);
       
       // If even fallback fails, ask to retry
-      const errorMessage = await generateMultiLanguageResponse(
+      const errorMessage = await t(
         'Please try again with a clear inventory update.',
         detectedLanguage,
         requestId
@@ -7421,7 +7439,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
             } else {
               msg += `• ${updated.product}: Error - ${results[0]?.error || 'Unknown error'}`;
             }
-            const formatted = await generateMultiLanguageResponse(msg, detectedLanguage, requestId);
+            const formatted = await t(msg, detectedLanguage, requestId);
             await sendMessageViaAPI(From, formatted);
             res.send('<Response></Response>');
             return;
@@ -7465,7 +7483,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
            } else {
              msg += `• ${updated.product}: Error - ${results[0]?.error || 'Unknown error'}`;
            }
-           const formatted = await generateMultiLanguageResponse(msg, detectedLanguage, requestId);
+           const formatted = await t(msg, detectedLanguage, requestId);
            await sendMessageViaAPI(From, formatted);
            res.send('<Response></Response>');
            return;
@@ -7487,7 +7505,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       return res.send('<Response></Response>');
     } catch (err) {
       console.error(`[${requestId}] Error in handlePriceUpdate:`, err.message);
-      const msg = await generateMultiLanguageResponse(
+      const msg = await t(
         'System error. Please try again with a clear message.',
         detectedLanguage || 'en',
         requestId
@@ -7509,7 +7527,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       await saveUserPreference(shopId, greetingLang);
       
       // Send welcome message with examples - no input method selection
-      const welcomeMessage = await generateMultiLanguageResponse(
+      const welcomeMessage = await t(
         `Welcome! I'm ready for your inventory update. You can send:
           • Voice or Text message: "5kg sugar purchased at 20rs/kg exp +7d", "10 Parle-G sold at 10rs/packet exp +3m"
           • Get an automated invoice pdf to send to customer upon a sale
@@ -7570,7 +7588,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
           message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
           
-          const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+          const formattedResponse = await t(message, detectedLanguage, requestId);
           await sendMessageViaAPI(From, formattedResponse);
           return res.send('<Response></Response>');
         } else {
@@ -7675,7 +7693,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`
 
       
-      const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+      const formattedResponse = await t(message, detectedLanguage, requestId);
       await sendMessageViaAPI(From, formattedResponse);
       
       // Clear state after processing
@@ -7714,7 +7732,7 @@ if (Body) {
       let summarySent = false;
       
       // Send initial "processing" message
-      const generatingMessage = await generateMultiLanguageResponse(
+      const generatingMessage = await t(
         '🔍 Generating your detailed summary with insights... This may take a moment.',
         userLanguage,
         requestId
@@ -7724,7 +7742,7 @@ if (Body) {
       // Schedule fun facts only if summary hasn't been sent
       setTimeout(async () => {
         if (!summarySent) {
-          const tip1 = await generateMultiLanguageResponse(
+          const tip1 = await t(
             '💡 Tip: Products with expiry dates under 7 days are 3x more likely to go unsold. Consider bundling or discounting them! Detailed summary being generated...',
             userLanguage,
             requestId
@@ -7735,7 +7753,7 @@ if (Body) {
       
       setTimeout(async () => {
         if (!summarySent) {
-          const tip2 = await generateMultiLanguageResponse(
+          const tip2 = await t(
             '📦 Did you know? Low-stock alerts help prevent missed sales. Check your inventory weekly! Generating your summary right away...',
             userLanguage,
             requestId
@@ -7761,7 +7779,7 @@ if (Body) {
 }
   
   // Default response for unrecognized input
-  const defaultMessage = await generateMultiLanguageResponse(
+  const defaultMessage = await t(
     'Please send an inventory update like "10 Parle-G sold" or start with "Hello" for options.',
     'en',
     requestId
@@ -7779,7 +7797,7 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
   // Handle input method selection (though we're removing this requirement)
   if (Body === '1' || Body === '2' || Body.toLowerCase() === 'voice' || Body.toLowerCase() === 'text') {
     // Send confirmation that we're ready for input
-    const readyMessage = await generateMultiLanguageResponse(
+    const readyMessage = await t(
       `Perfect! Please send your inventory update now.`,
       greetingLang,
       requestId
@@ -7834,14 +7852,14 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
     const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
     message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`
     
-    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const formattedResponse = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, formattedResponse);
     
     // Clear state after processing
     await clearUserState(From);
   } else {
     // If not a valid update, send help message
-    const helpMessage = await generateMultiLanguageResponse(
+    const helpMessage = await t(
       `I didn't understand that. Please send an inventory update like "10 Parle-G sold".`,
       greetingLang,
       requestId
@@ -7923,14 +7941,14 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
         message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
         
         // FIX: Send via WhatsApp API instead of synchronous response
-        const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+        const formattedResponse = await t(message, detectedLanguage, requestId);
         await sendMessageViaAPI(From, formattedResponse);
         
         // Clear state after processing
         await clearUserState(From);
       } else {
         // If parsing failed, ask to retry
-        const errorMessage = await generateMultiLanguageResponse(
+        const errorMessage = await t(
           'Sorry, I couldn\'t parse your inventory update. Please try again with a clear voice message.',
           detectedLanguage,
           requestId
@@ -7941,7 +7959,7 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
     } catch (parseError) {
       console.error(`[${requestId}] Error parsing transcript for confirmation:`, parseError.message);
       // If parsing failed, ask to retry
-      const errorMessage = await generateMultiLanguageResponse(
+      const errorMessage = await t(
         'Sorry, I had trouble processing your message. Please try again.',
         detectedLanguage,
         requestId
@@ -7999,12 +8017,12 @@ Reply with:
 3 – Action is wrong
 4 – All wrong, I'll type it instead`;
         
-        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+        const translatedMessage = await t(correctionMessage, detectedLanguage, requestId);
         await sendMessageViaAPI(From, translatedMessage);
       } else {
         console.error(`[${requestId}] Failed to save correction state: ${saveResult.error}`);
         // Fallback to asking for retry
-        const errorMessage = await generateMultiLanguageResponse(
+        const errorMessage = await t(
           'Please try again with a clear voice message.',
           detectedLanguage,
           requestId
@@ -8049,11 +8067,11 @@ Reply with:
 3 – Action is wrong
 4 – All wrong, I'll type it instead`;
         
-        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+        const translatedMessage = await t(correctionMessage, detectedLanguage, requestId);
         await sendMessageViaAPI(From, translatedMessage);
       } else {
         // If even the fallback fails, ask to retry
-        const errorMessage = await generateMultiLanguageResponse(
+        const errorMessage = await t(
           'Please try again with a clear voice message.',
           detectedLanguage,
           requestId
@@ -8063,7 +8081,7 @@ Reply with:
     }
   } else {
     // Invalid response
-    const errorMessage = await generateMultiLanguageResponse(
+    const errorMessage = await t(
       'Please reply with "yes" or "no".',
       detectedLanguage,
       requestId
@@ -8105,14 +8123,14 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
         }
         const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
         message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
-        const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+        const formattedResponse = await t(message, detectedLanguage, requestId);
         await sendMessageViaAPI(From, formattedResponse);
         
         // Clear state after processing
         await clearUserState(From);
       } else {
         // If parsing failed, ask to retry
-        const errorMessage = await generateMultiLanguageResponse(
+        const errorMessage = await t(
           'Sorry, I couldn\'t parse your inventory update. Please try again with a clear message.',
           detectedLanguage,
           requestId
@@ -8123,7 +8141,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
     } catch (parseError) {
       console.error(`[${requestId}] Error parsing transcript for confirmation:`, parseError.message);
       // If parsing failed, ask to retry
-      const errorMessage = await generateMultiLanguageResponse(
+      const errorMessage = await t(
         'Sorry, I had trouble processing your message. Please try again.',
         detectedLanguage,
         requestId
@@ -8181,12 +8199,12 @@ Reply with:
 3 – Action is wrong
 4 – All wrong, I'll type it instead`;
         
-        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+        const translatedMessage = await t(correctionMessage, detectedLanguage, requestId);
         await sendMessageViaAPI(From, translatedMessage);
       } else {
         console.error(`[${requestId}] Failed to save correction state: ${saveResult.error}`);
         // Fallback to asking for retry
-        const errorMessage = await generateMultiLanguageResponse(
+        const errorMessage = await t(
           'Please try again with a clear message.',
           detectedLanguage,
           requestId
@@ -8231,11 +8249,11 @@ Reply with:
 3 – Action is wrong
 4 – All wrong, I'll type it instead`;
         
-        const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+        const translatedMessage = await t(correctionMessage, detectedLanguage, requestId);
         await sendMessageViaAPI(From, translatedMessage);
       } else {
         // If even the fallback fails, ask to retry
-        const errorMessage = await generateMultiLanguageResponse(
+        const errorMessage = await t(
           'Please try again with a clear message.',
           detectedLanguage,
           requestId
@@ -8245,7 +8263,7 @@ Reply with:
     }
   } else {
     // Invalid response
-    const errorMessage = await generateMultiLanguageResponse(
+    const errorMessage = await t(
       'Please reply with "yes" or "no".',
       detectedLanguage,
       requestId
@@ -8287,7 +8305,7 @@ async function handleProductConfirmationState(Body, From, state, requestId, res)
     const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
     message += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
     
-    const formattedResponse = await generateMultiLanguageResponse(message, detectedLanguage, requestId);
+    const formattedResponse = await t(message, detectedLanguage, requestId);
     await sendMessageViaAPI(From, formattedResponse);
     
     // Clear state after processing
@@ -8325,12 +8343,12 @@ Reply with:
 3 – Action is wrong
 4 – All wrong, I'll type it instead`;
       
-      const translatedMessage = await generateMultiLanguageResponse(correctionMessage, detectedLanguage, requestId);
+      const translatedMessage = await t(correctionMessage, detectedLanguage, requestId);
       await sendMessageViaAPI(From, translatedMessage);
     }
   } else {
     // Invalid response
-    const errorMessage = await generateMultiLanguageResponse(
+    const errorMessage = await t(
       'Please reply with "yes" or "no".',
       detectedLanguage,
       requestId
