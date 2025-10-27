@@ -7992,7 +7992,6 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
           const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
           const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
           
-const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
           const header = chooseHeader(processed.length, COMPACT_MODE, false);
           let message = header;
           let successCount = 0;
