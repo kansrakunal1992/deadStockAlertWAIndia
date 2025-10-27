@@ -1015,9 +1015,9 @@ async function isFeatureAvailable(shopId, feature) {
       },
       // AI summaries
       'ai_summary': {
-        'free_demo': false,
-        'free_demo_first_50': !isTrialExpired, // Full access during trial
-        'standard': false,
+        'free_demo': true,
+        'free_demo_first_50': true, //!isTrialExpired, // Full access during trial
+        'standard': true,
         'enterprise': true
       },
       // Replies limit
