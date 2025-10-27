@@ -1,9 +1,9 @@
 // api/engagementTips.js
 // Multilingual Engagement Tips (send while long replies are processing)
 
-const DEFAULT_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS || 8000);  // 8s
-const DEFAULT_INTERVAL_MS    = Number(process.env.TIP_INTERVAL_MS    || 15000);  // 15s
-const DEFAULT_MAX_COUNT      = Number(process.env.TIP_MAX_COUNT      || 3);      // avoid spam
+const DEFAULT_FIRST_DELAY_MS = Number(process.env.TIP_FIRST_DELAY_MS || 10000);  // 10s
+const DEFAULT_INTERVAL_MS    = Number(process.env.TIP_INTERVAL_MS    || 990000);  // 990s
+const DEFAULT_MAX_COUNT      = Number(process.env.TIP_MAX_COUNT      || 1);      // avoid spam
 
 // Short, useful business/inventory tips (localized at send-time)
 const BUSINESS_TIPS_EN = [
@@ -71,11 +71,13 @@ function startEngagementTips({
   };
 
   // First tip after delay (skipped if final reply completes faster)
+  
   state.timer = setTimeout(async () => {
-    if (state.canceled) return;
-    await sendNext();
-    if (!state.canceled) state.interval = setInterval(sendNext, state.cfg.intervalMs);
-  }, state.cfg.firstDelayMs);  
+      if (state.canceled) return;
+      await sendNext();
+      // No interval loop; single tip only.
+    }, state.cfg.firstDelayMs);
+
   try { state.timer.unref?.(); } catch {}
   try { state.interval?.unref?.(); } catch {}
 
