@@ -5374,7 +5374,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     
       if (allPendingPrice(results)) {
         try {
-          await setUserState(From, 'correction'correction', {
+          await setUserState(From, 'correction', {
             correctionState: {
               correctionType: 'price',
               pendingUpdate: results[0],
@@ -6312,7 +6312,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       console.log(`[${requestId}] [5.5] Low confidence (${confidence}), requesting confirmation...`);
       
       // FIX: Set confirmation state before sending the request
-      await setUserState(From, 'correction'correction'confirmation', {
+      await setUserState(From, 'confirmation', {
         pendingTranscript: cleanTranscript,
         detectedLanguage,
         confidence,
@@ -6359,7 +6359,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
           
           // FIX: Set confirmation state before sending the request
-          await setUserState(From, 'correction'confirmation', {
+          await setUserState(From, 'confirmation', {
             pendingTranscript: cleanTranscript,
             detectedLanguage,
             confidence: 1.0, // High confidence since we're confirming product
@@ -6537,7 +6537,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
         
         // FIX: Set correction state
-        await setUserState(From, 'correction'correction', {
+        await setUserState(From, 'correction', {
           correctionState: {
             correctionType,
             pendingUpdate: pending.update,
@@ -6579,7 +6579,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         console.log(`[${requestId}] Saved language preference: ${greetingLang} for user ${shopId}`);
         
         // FIX: Set greeting state
-        await setUserState(From, 'correction'greeting', { greetingLang });
+        await setUserState(From, 'greeting', { greetingLang });
         
         // Get user preference
         let userPreference = 'voice'; // Default to voice
@@ -6705,7 +6705,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
       
       // FIX: Set confirmation state before sending the request
-      await setUserState(From, 'correction'confirmation', {
+      await setUserState(From, 'confirmation', {
         pendingTranscript: Body,
         detectedLanguage,
         confidence: 1.0, // High confidence since we're confirming product
@@ -7271,7 +7271,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
       
       if (updateResult.success) {
         // Update user state
-        await setUserState(From, 'correction'correction', {
+        await setUserState(From, 'correction', {
           correctionState: {
             ...correctionState,
             correctionType: newCorrectionType,
@@ -7353,7 +7353,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
     
     if (isValidInput) {
       // Move to confirmation state
-      await setUserState(From, 'correction'confirmation', {
+      await setUserState(From, 'confirmation', {
         correctedUpdate,
         detectedLanguage: correctionState.detectedLanguage,
         originalCorrectionId: correctionState.id
@@ -7449,7 +7449,7 @@ Reply with:
     
     // Update correction state back to selection
     await saveCorrectionState(shopId, 'selection', correctedUpdate, detectedLanguage);
-    await setUserState(From, 'correction'correction', {
+    await setUserState(From, 'correction', {
       correctionState: {
         correctionType: 'selection',
         pendingUpdate: correctedUpdate,
@@ -7485,7 +7485,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
     
     if (allPendingPrice(results)) {
         try {
-          await setUserState(From, 'correction'correction', {
+          await setUserState(From, 'correction', {
             correctionState: {
               correctionType: 'price',
               pendingUpdate: results[0],
@@ -7555,7 +7555,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
       const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
       
       if (saveResult.success) {
-        await setUserState(From, 'correction'correction', {
+        await setUserState(From, 'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -7912,7 +7912,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
             return;
           }
           
-          await setUserState(From, 'correction'inventory', { updates, detectedLanguage });
+          await setUserState(From, 'inventory', { updates, detectedLanguage });
           
           // Process the updates
           const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
@@ -7920,7 +7920,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
               if (allPendingPrice(results)) {
                 // Move user into 'correction' flow with price type so the next number goes to price handler.
                 try {
-                  await setUserState(From, 'correction'correction', {
+                  await setUserState(From, 'correction', {
                     correctionState: {
                       correctionType: 'price',
                       pendingUpdate: results[0],
@@ -8271,7 +8271,7 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
         
         // Set correction state
-        await setUserState(From, 'correction'correction', {
+        await setUserState(From, 'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -8321,7 +8321,7 @@ Reply with:
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id} (fallback)`);
         
         // Set correction state
-        await setUserState(From, 'correction'correction', {
+        await setUserState(From, 'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -8467,7 +8467,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
         
         // Set correction state
-        await setUserState(From, 'correction'correction', {
+        await setUserState(From, 'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -8517,7 +8517,7 @@ Reply with:
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id} (fallback)`);
         
         // Set correction state
-        await setUserState(From, 'correction'correction', {
+        await setUserState(From, 'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -8610,7 +8610,7 @@ const header = chooseHeader(processed.length, COMPACT_MODE, false);
       console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
       
       // Set correction state
-      await setUserState(From, 'correction'correction', {
+      await setUserState(From, 'correction', {
         correctionState: {
           correctionType: 'selection',
           pendingUpdate: update,
