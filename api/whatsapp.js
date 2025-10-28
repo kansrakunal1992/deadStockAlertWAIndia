@@ -301,13 +301,32 @@ function _normLite(s) {
     .trim();
 }
 
- // Map button taps / list selections to your existing quick-query router
  
+// Map button taps / list selections to your existing quick-query router
+ // Robust to multiple Twilio payload shapes + safe fallback
  async function handleInteractiveSelection(req) {
-   const from    = req.body.From;
-   const payload = String(req.body.ButtonPayload || '');
-   const listId  = String(req.body.ListPickerSelection || req.body.SelectedListItem || '');
-   const text    = String(req.body.ButtonText || req.body.Body || ''); // fallback if needed
+  const raw = req.body || {};
+  const from = raw.From;
+  // Quick‑Reply payloads (Twilio replies / Content API postbacks)
+  const payload = String(
+    raw.ButtonPayload ||
+    raw.ButtonId ||
+    raw.PostbackData ||
+    ''
+  );
+  // List‑Picker selections across possible fields/shapes
+  const lr = (raw.ListResponse || raw.List || raw.Interactive || {});
+  const lrId = (lr.Id || lr.id || lr.ListItemId || lr.SelectedItemId)
+            || raw.ListId || raw.ListPickerSelection || raw.SelectedListItem
+            || raw.ListReplyId || raw.PostbackData || '';
+  let listId = String(lrId || '');
+  // Text fallbacks (rare deliveries echoing IDs in Body)
+  const text = String(raw.ButtonText || raw.Body || '');
+  if (!listId && /^list_/.test(text)) listId = text.trim();
+  // Debug snapshot to verify what we received in prod logs
+  try {
+    console.log(`[interact] payload=${payload || '—'} listId=${listId || '—'} body=${text || '—'}`);
+  } catch (_) {}
 
    // Quick‑Reply buttons (payload IDs are language‑independent)
    if (payload === 'qr_purchase') {
@@ -1756,6 +1775,27 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();
   const shopId = From.replace('whatsapp:', '');
+  
+// Fallback: if an interactive list id leaked into Body, map it to command
+  {
+    const id = text.toLowerCase();
+    const listMap = {
+      'list_short_summary': 'short summary',
+      'list_full_summary': 'full summary',
+      'list_reorder_suggest': 'reorder suggestions',
+      'list_sales_week': 'sales week',
+      'list_expiring_30': 'expiring 30',
+      'list_low': 'low stock',
+      'list_expiring': 'expiring 0',
+      'list_sales_day': 'sales today',
+      'list_top_month': 'top 5 products month',
+      'list_value': 'value summary'
+    };
+    if (listMap[id]) {
+      return await handleQuickQueryEN(listMap[id], From, detectedLanguage, `${requestId}::listfb`);
+    }
+  }
+  
   try{    
   
 // NEW: Intercept post‑purchase expiry override first
