@@ -6739,6 +6739,32 @@ module.exports = async (req, res) => {
     (req.body && (req.body.From || req.body.from)) ||
     (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
 
+  
+  /**
+     * >>> NEW (Option B): Handle WhatsApp interactive events FIRST.
+     * Processes Quick‑Reply button taps (ButtonPayload/ButtonText)
+     * and List‑Picker selections (ListPickerSelection/SelectedListItem)
+     * before doing language detection or any free‑text parsing.
+     *
+     * Why first? Twilio posts button/list selections to the same Incoming
+     * Message Webhook as normal messages. Handling them up front prevents
+     * them from falling through into free‑text logic.  
+     */
+    try {
+      if (await handleInteractiveSelection(req)) {
+        // We already replied using the Programmable Messaging API.
+        // Return a minimal TwiML response to acknowledge the webhook.
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message('');
+        res.type('text/xml').send(twiml.toString());
+        trackResponseTime(requestStart, requestId);
+        return;
+      }
+    } catch (e) {
+      console.warn(`[${requestId}] interactiveSelection handler error:`, e.message);
+      // Continue with normal text flow if something goes wrong.
+    }
+
   // Language detection (also persists preference)
   const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
 
