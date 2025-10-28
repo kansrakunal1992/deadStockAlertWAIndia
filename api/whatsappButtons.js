@@ -48,12 +48,16 @@
          body: 'Query inventory',
          button: 'Select an option',
          items: [
-           { item: 'Stock for a product', id: 'list_stock',      description: 'Check qty' },
-           { item: 'Low stock',           id: 'list_low',        description: 'Items ≤5' },
-           { item: 'Expiring soon',       id: 'list_expiring',   description: 'Next 30 days' },
-           { item: 'Sales today',         id: 'list_sales_day',  description: 'Daily sales' },
-           { item: 'Top products (month)',id: 'list_top_month',  description: 'Best sellers' },
-           { item: 'Inventory value',     id: 'list_value',      description: 'Est. value' }
+           { item: 'Stock for a product', id: 'list_stock',      description: 'Check existing product quantity' },
+           { item: 'Low stock',           id: 'list_low',        description: '' },
+           { item: 'Reorder suggestions',           id: 'list_reorder_suggest',        description: '' },
+           { item: 'Expiring 0',       id: 'list_expiring',   description: '' },
+           { item: 'Expiring 30',       id: 'list_expiring_30',   description: '' },
+           { item: 'Sales today',         id: 'list_sales_day',  description: '' },
+           { item: 'Sales week',         id: 'list_sales_week',  description: '' },
+           { item: 'Top products month',id: 'list_top_month',  description: '' },
+           { item: 'Inventory value',     id: 'list_value',      description: '' },
+           { item: 'Prices',     id: 'list_prices',      description: '' }
          ]
        }
      }
