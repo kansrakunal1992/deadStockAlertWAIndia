@@ -327,13 +327,38 @@ function _normLite(s) {
    // List‑Picker selections → your quick‑query router
    const route = (cmd) => handleQuickQueryEN(cmd, from, 'en', 'lp');
    switch (listId) {
-     case 'list_stock':      await sendMessageViaAPI(from, 'Type: stock <product>   e.g.,  stock Maggi'); return true;
-     case 'list_low':        await route('low stock');      return true;
-     case 'list_expiring':   await route('expiring 30');    return true;
-     case 'list_sales_day':  await route('sales today');    return true;
-     case 'list_top_month':  await route('top 5 products month'); return true;
-     case 'list_value':      await route('value summary');  return true;
-   }
+             
+        case 'list_short_summary':
+            await route('short summary'); return true;
+        
+          case 'list_full_summary':
+            await route('full summary'); return true;
+        
+          case 'list_reorder_suggest':
+            await route('reorder suggestions'); return true;
+        
+          case 'list_sales_week':
+            await route('sales week'); return true;
+        
+          case 'list_expiring_30':
+            await route('expiring 30'); return true;
+        
+          // keep existing IDs working:
+          case 'list_low':
+            await route('low stock'); return true;
+        
+          case 'list_expiring': // your "Expiring 0"
+            await route('expiring 0'); return true;
+        
+          case 'list_sales_day':
+            await route('sales today'); return true;
+        
+          case 'list_top_month':
+            await route('top 5 products month'); return true;
+        
+          case 'list_value':
+            await route('value summary'); return true;
+}
 
    // If Twilio only sent text (rare), you can optionally pattern‑match:
    if (/record\s+purchase/i.test(text)) { /* ... */ }
