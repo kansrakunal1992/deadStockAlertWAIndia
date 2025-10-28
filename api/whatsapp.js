@@ -235,6 +235,9 @@ const NL_LABELS = {
 const { sendContentTemplate } = require('./whatsappButtons');
 const { ensureLangTemplates, getLangSids } = require('./contentCache');
 
+const safeFrom   = String(From || '').trim();
+const safeShopId = safeFrom.replace('whatsapp:', '');
+
 async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
    const toNumber = From.replace('whatsapp:', '');
    await ensureLangTemplates(detectedLanguage); // creates once per lang, then reuses
@@ -330,18 +333,18 @@ function _normLite(s) {
 
    // Quick‑Reply buttons (payload IDs are language‑independent)
    if (payload === 'qr_purchase') {
-     await setUserState(from, 'awaitingTransactionDetails', { action: 'purchase' });
+     await setUserState(From, 'correction'awaitingTransactionDetails', { action: 'purchase' });
      const msg = 'Examples (purchase):\n• bought milk 10 ltr ₹60 exp +7d\n• खरीदी दूध 10 लीटर ₹60 exp +7d';
      await sendMessageViaAPI(from, msg);
      return true;
    }
    if (payload === 'qr_sale') {
-     await setUserState(from, 'awaitingTransactionDetails', { action: 'sale' });
+     await setUserState(From, 'correction'awaitingTransactionDetails', { action: 'sale' });
      await sendMessageViaAPI(from, 'Examples (sale):\n• sold sugar 2 kg\n• becha doodh 3 ltr');
      return true;
    }
    if (payload === 'qr_return') {
-     await setUserState(from, 'awaitingTransactionDetails', { action: 'returned' });
+     await setUserState(From, 'correction'awaitingTransactionDetails', { action: 'returned' });
      await sendMessageViaAPI(from, 'Examples (return):\n• return Parle-G 3 packets\n• customer return milk 1 liter');
      return true;
    }
@@ -1084,13 +1087,13 @@ const STATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const RESET_COMMANDS = ['reset', 'start over', 'restart', 'cancel', 'exit', 'stop'];
 
 async function getUserState(from) {
-  const shopId = from.replace('whatsapp:', '');
+  const shopId = safeShopId;
   const state = await getUserStateFromDB(shopId);
   return state;
 }
 
 async function setUserState(from, mode, data = {}) {
-  const shopId = from.replace('whatsapp:', '');
+  const shopId = safeShopId;
   const result = await saveUserStateToDB(shopId, mode, data);
   if (result.success) {
     console.log(`[State] Set state for ${from}: ${mode}`);
@@ -1100,7 +1103,7 @@ async function setUserState(from, mode, data = {}) {
 }
 
 async function clearUserState(from) {
-  const shopId = from.replace('whatsapp:', '');
+  const shopId = safeShopId;
   const state = await getUserStateFromDB(shopId);
   if (state && state.id) {
     await deleteUserStateFromDB(state.id);
@@ -1110,7 +1113,7 @@ async function clearUserState(from) {
 
 // Handle awaitingPriceExpiry unified correction
 async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId) {
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
   const state = await getUserStateFromDB(shopId);
   if (!state || state.mode !== 'awaitingPriceExpiry') return false;
   
@@ -1324,7 +1327,7 @@ function parseBatchOverrideCommand(text, baseISO = null) {
 
 // ===== NEW: Handle the 2-min post-sale override window =====
 async function handleAwaitingBatchOverride(From, Body, detectedLanguage, requestId) {
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
   const state = await getUserStateFromDB(shopId);
   if (!state || state.mode !== 'awaitingBatchOverride') return false;
   
@@ -1407,7 +1410,7 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
 
 // === NEW: Handle the 2‑min post‑purchase expiry override window ===
 async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage, requestId) {
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
   const state = await getUserStateFromDB(shopId);
   if (!state || state.mode !== 'awaitingPurchaseExpiryOverride') return false;
 
@@ -1777,7 +1780,7 @@ function _norm(s) { return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,''
 async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
   
 // Fallback: if an interactive list id leaked into Body, map it to command
   {
@@ -1822,7 +1825,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   let r1 = text.match(/^(?:customer\s+)?returns?\s+(.+?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z\u0900-\u097F\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF]+)$/i);
   let r2 = text.match(/^(?:customer\s+)?returns?\s+(\d+(?:\.\d+)?)\s+([A-Za-z\u0900-\u097F\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF]+)\s+(.+)$/i);
   if (r1 || r2) {
-    const shopId = From.replace('whatsapp:', '');
+    const shopId = safeShopId;
     const qty  = Number(r1 ? r1[2] : r2[1]);
     const unit = (r1 ? r1[3] : r2[2]).trim();
     const raw  = (r1 ? r1[1] : r2[3]).trim();
@@ -1842,7 +1845,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   // Alias: "expired"/"expired items"
   // ==================================
   if (/^(expired(?:\s+items?)?|show\s+expired\s+stock)$/i.test(text)) {
-    const shopId = From.replace('whatsapp:', '');
+    const shopId = safeShopId;
     const exp = await getExpiringProducts(shopId, 0);
     let message = COMPACT_MODE ? `❌ Expired:` : `❌ Already expired:\n`;
     message += exp.length
@@ -1884,7 +1887,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   
   // Short Summary (on-demand) -- primary: "short summary", keep "summary" as alias
     if (/^\s*((short|quick|mini)\s*(summary|report|overview)|summary)\s*$/i.test(text)) {
-      const shopId = From.replace('whatsapp:', '');
+      const shopId = safeShopId;
 
        // Check if AI summaries are available for this plan
       const canUseAI = await isFeatureAvailable(shopId, 'ai_summary');
@@ -1907,7 +1910,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   
     // Full Summary (on-demand) -- swapped to non-AI Daily Summary
     if (/^\s*((full|detailed|complete|entire)\s*(summary|report|overview))\s*$/i.test(text)) {
-      const shopId = From.replace('whatsapp:', '');
+      const shopId = safeShopId;
 
      // Check if AI summaries are available for this plan
       const canUseAI = await isFeatureAvailable(shopId, 'ai_summary');
@@ -2286,7 +2289,7 @@ function parsePeriodKeyword(txt) {
 async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = Body.trim();
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
 try{  
 // NEW: Intercept post‑purchase expiry override first
     if (await handleAwaitingPurchaseExpiryOverride(From, text, detectedLanguage, requestId)) return true;
@@ -2308,7 +2311,7 @@ try{
   let r1 = text.match(/^(?:customer\s+)?returns?\s+(.+?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z\u0900-\u097F\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF]+)$/i);
   let r2 = text.match(/^(?:customer\s+)?returns?\s+(\d+(?:\.\d+)?)\s+([A-Za-z\u0900-\u097F\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF]+)\s+(.+)$/i);
   if (r1 || r2) {
-    const shopId = From.replace('whatsapp:', '');
+    const shopId = safeShopId;
     const qty  = Number(r1 ? r1[2] : r2[1]);
     const unit = (r1 ? r1[3] : r2[2]).trim();
     const raw  = (r1 ? r1[1] : r2[3]).trim();
@@ -2328,7 +2331,7 @@ try{
   // Alias: "expired"/"expired items"
   // ==================================
   if (/^expired(?:\s+items?)?$/i.test(text)) {
-    const shopId = From.replace('whatsapp:', '');
+    const shopId = safeShopId;
     const exp = await getExpiringProducts(shopId, 0);
     let message = `❌ Already expired:\n`;
     message += exp.length
@@ -2711,7 +2714,7 @@ async function detectLanguageWithFallback(text, from, requestId) {
     console.log(`[${requestId}] Detected language: ${detectedLanguage}`);
     // Save the detected language preference
     if (from) {
-      const shopId = from.replace('whatsapp:', '');
+      const shopId = safeShopId;
       // Don't wait for this to complete
       saveUserPreference(shopId, detectedLanguage)
         .catch(error => console.warn(`[${requestId}] Failed to save language preference:`, error.message));
@@ -3004,7 +3007,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
 async function parseMultipleUpdates(transcript, from) {  
   const updates = [];
   const t = String(transcript || '').trim(); 
-  const shopId = from.replace('whatsapp:', '');
+  const shopId = safeShopId;
   const userState = await getUserStateFromDB(shopId);
 
   // Never treat summary commands as inventory messages
@@ -4017,7 +4020,7 @@ async function sendSystemMessage(message, from, detectedLanguage, requestId, res
     // Try to get user preference from database if not provided
     if (!userLanguage && from) {
       try {
-        const shopId = from.replace('whatsapp:', '');
+        const shopId = safeShopId;
         const userPref = await getUserPreference(shopId);
         if (userPref.success) {
           userLanguage = userPref.language;
@@ -4827,7 +4830,7 @@ module.exports = { generateSummaryInsights };
 
 // Add a new command handler for plan upgrades
 async function handlePlanUpgrade(Body, From, detectedLanguage, requestId) {
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
   
   // Simple command to upgrade to standard plan
   if (Body.toLowerCase().includes('upgrade to standard')) {
@@ -4960,7 +4963,7 @@ async function createSummaryMenu(from, languageCode, requestId) {
 // Handle price update command
 // === START: handlePriceUpdate (PASTE-REPLACE) ===
 async function handlePriceUpdate(Body, From, detectedLanguage, requestId) {
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
 
   // Drop the prefix for AI & fallback parsing
   const userText = Body.replace(/^\s*(update\s+price|price\s+update)\s*/iu, '').trim();
@@ -5275,7 +5278,7 @@ async function tryHandleReturnText(transcript, from, detectedLanguage, requestId
   // Pattern B: "return <qty> <unit> <product>"
   let m2 = text.match(/^(?:customer\s+)?returns?\s+(\d+(?:\.\d+)?)\s+([A-Za-z\u0900-\u097F\u0A80-\u0AFF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF]+)\s+(.+)$/i);
   if (!m1 && !m2) return false;
-  const shopId = from.replace('whatsapp:', '');
+  const shopId = safeShopId;
   const qty  = Number(m1 ? m1[2] : m2[1]);
   const unit = (m1 ? m1[3] : m2[2]).trim();
   const raw  = (m1 ? m1[1] : m2[3]).trim();
@@ -5303,15 +5306,15 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     
     // --- NEW: global reset (works in any context) ---
         if (isResetMessage(transcript)) {
-          try { await clearUserState(from); } catch (_) {}
-          await sendSystemMessage(`✅ Reset. I’ve cleared any active steps.`, from, detectedLanguage, requestId, response);
+          try { await clearUserState(From); } catch (_) {}
+          await sendSystemMessage(`✅ Reset. I’ve cleared any active steps.`, From, detectedLanguage, requestId, response);
           handledRequests.add(requestId);
           return res.send(response.toString());
         }
     
 
     // --- HARD GUARD: treat summary phrases as commands, not inventory updates
-    const shopId = from.replace('whatsapp:', '');
+    const shopId = safeShopId;
     const intent = resolveSummaryIntent(transcript);
     if (intent === 'short summary') {
       const msg = await generateInstantSummary(shopId, detectedLanguage, requestId);
@@ -5344,7 +5347,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       console.log(`[${requestId}] Rejected: No valid inventory updates`);
       await sendSystemMessage(
         'Please send inventory updates only. Examples: "10 Parle-G sold at 10/packet exp 11/12/25", "5kg sugar purchased at 20/kg exp 14/11", "2 boxes Maggi bought at 22/packet exp 11/12/2025". You can send multiple updates in one message!',
-        from,
+        From,
         detectedLanguage,
         requestId,
         response
@@ -5358,7 +5361,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       console.error(`[${requestId}] Airtable connection failed`);
       await sendSystemMessage(
         'Database connection error. Please try again later.',
-        from,
+        From,
         detectedLanguage,
         requestId,
         response
@@ -5371,7 +5374,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     
       if (allPendingPrice(results)) {
         try {
-          await setUserState(from, 'correction', {
+          await setUserState(From, 'correction'correction', {
             correctionState: {
               correctionType: 'price',
               pendingUpdate: results[0],
@@ -5538,7 +5541,7 @@ catch (error) {
     // Get user's preferred language for error message too
     let userLanguage = detectedLanguage;
     try {
-      const shopId = from.replace('whatsapp:', '');
+      const shopId = safeShopId;
       const userPref = await getUserPreference(shopId);
       if (userPref.success) {
         userLanguage = userPref.language;
@@ -5563,14 +5566,14 @@ async function confirmTranscript(transcript, from, detectedLanguage, requestId) 
   const response = new twilio.twiml.MessagingResponse();
   await sendSystemMessage(
     `I heard: "${transcript}". Is this correct? You can reply with "yes" or "no", either by voice or text.`,
-    from,
+    From,
     detectedLanguage,
     requestId,
     response
   );
   
   // Save to database
-  const shopId = from.replace('whatsapp:', '');
+  const shopId = safeShopId;
   await savePendingTranscription(shopId, transcript, detectedLanguage);
   
   return response.toString();
@@ -5587,7 +5590,7 @@ Reply with:
 2 – Quantity is wrong
 3 – Action is wrong
 4 – All wrong, I'll type it instead`,
-  from,
+  From,
   detectedLanguage,
   requestId,
   response
@@ -5688,7 +5691,7 @@ function isExpiryDateUpdate(message) {
 async function handleBatchSelectionResponse(body, from, response, requestId, languageCode = 'en') {
   try {
     console.log(`[${requestId}] Processing batch selection response: "${body}"`);
-    const shopId = from.replace('whatsapp:', '');
+    const shopId = safeShopId;
     const lowerBody = body.toLowerCase();
     let product = null;
     const products = [
@@ -5755,7 +5758,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId, lan
     if (!product) {
       await sendSystemMessage(
         'Please specify which product you are referring to.',
-        from,
+        From,
         languageCode,
         requestId,
         response
@@ -5766,7 +5769,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId, lan
     if (batches.length === 0) {
       await sendSystemMessage(
         `No batches found for ${product}.`,
-        from,
+        From,
         languageCode,
         requestId,
         response
@@ -5804,7 +5807,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId, lan
         await updateBatchExpiry(selectedBatch.id, formattedDate);
         await sendSystemMessage(
           `✅ Updated expiry date for ${product} batch to ${formatDateForDisplay(parsedDate)}`,
-          from,
+          From,
           languageCode,
           requestId,
           response
@@ -5814,7 +5817,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId, lan
     }
     await sendSystemMessage(
   `✅ Selected ${product} batch from ${formatDateForDisplay(selectedBatch.fields.PurchaseDate)}`,
-  from,
+  From,
   languageCode,
   requestId,
   response
@@ -5827,7 +5830,7 @@ async function handleBatchSelectionResponse(body, from, response, requestId, lan
     console.error(`[${requestId}] Error handling batch selection response:`, error.message);
     await sendSystemMessage(
       'Error processing batch selection. Please try again.',
-      from,
+      From,
       languageCode,
       requestId,
       response
@@ -5844,7 +5847,7 @@ async function handleExpiryDateUpdate(body, from, response, requestId, languageC
       console.log(`[${requestId}] Invalid expiry date format`);
       await sendSystemMessage(
         'Invalid format. Please use: "Product: DD/MM/YYYY" or "Product: DD Month YYYY"',
-        from,
+        From,
         languageCode,
         requestId,
         response
@@ -5859,21 +5862,21 @@ async function handleExpiryDateUpdate(body, from, response, requestId, languageC
       console.log(`[${requestId}] Failed to parse expiry date`);
       await sendSystemMessage(
         'Invalid date format. Please use: "Product: DD/MM/YYYY" or "Product: DD Month YYYY"',
-        from,
+        From,
         languageCode,
         requestId,
         response
       );
       return;
     }
-    const shopId = from.replace('whatsapp:', '');
+    const shopId = safeShopId;
     console.log(`[${requestId}] Looking for recent batches for ${product}`);
     const batches = await getBatchRecords(shopId, product);
     if (batches.length === 0) {
       console.log(`[${requestId}] No recent purchase found for ${product}`);
       await sendSystemMessage(
         `No recent purchase found for ${product}. Please make a purchase first.`,
-        from,
+        From,
         languageCode,
         requestId,
         response
@@ -5889,7 +5892,7 @@ console.log(`[${requestId}] Updating batch ${latestBatch.id} (purchased: ${lates
       console.log(`[${requestId}] Successfully updated batch with expiry date`);
       await sendSystemMessage(
         `✅ Expiry date updated for ${product}: ${formatDateForDisplay(expiryDate)}`,
-        from,
+        From,
         languageCode,
         requestId,
         response
@@ -5898,7 +5901,7 @@ console.log(`[${requestId}] Updating batch ${latestBatch.id} (purchased: ${lates
       console.error(`[${requestId}] Failed to update batch: ${batchResult.error}`);
       await sendSystemMessage(
         `Error updating expiry date for ${product}. Please try again.`,
-        from,
+        From,
         languageCode,
         requestId,
         response
@@ -5908,7 +5911,7 @@ console.log(`[${requestId}] Updating batch ${latestBatch.id} (purchased: ${lates
     console.error(`[${requestId}] Error handling expiry date update:`, error.message);
     await sendSystemMessage(
       'Error processing expiry date. Please try again.',
-      from,
+      From,
       languageCode,
       requestId,
       response
@@ -6000,7 +6003,7 @@ async function checkAndUpdateLanguage(text, from, currentLanguage, requestId) {
         timestamp: Date.now()
       };
       // Also update the user preference
-      const shopId = from.replace('whatsapp:', '');
+      const shopId = safeShopId;
       await saveUserPreference(shopId, detectedLanguage);
     }
     return detectedLanguage;
@@ -6239,7 +6242,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     const detectedLanguage = await checkAndUpdateLanguage(cleanTranscript, From, conversationState?.language, requestId);
     
     // Save user preference
-    const shopId = From.replace('whatsapp:', '');
+    const shopId = safeShopId;
     await saveUserPreference(shopId, detectedLanguage);
     
     // First, try to parse as inventory update (higher priority)
@@ -6309,7 +6312,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       console.log(`[${requestId}] [5.5] Low confidence (${confidence}), requesting confirmation...`);
       
       // FIX: Set confirmation state before sending the request
-      await setUserState(From, 'confirmation', {
+      await setUserState(From, 'correction'correction'confirmation', {
         pendingTranscript: cleanTranscript,
         detectedLanguage,
         confidence,
@@ -6356,7 +6359,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
           
           // FIX: Set confirmation state before sending the request
-          await setUserState(From, 'confirmation', {
+          await setUserState(From, 'correction'confirmation', {
             pendingTranscript: cleanTranscript,
             detectedLanguage,
             confidence: 1.0, // High confidence since we're confirming product
@@ -6473,13 +6476,13 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     // === FRONT-DOOR SUMMARY GUARD (text path) ===
     const intentAtEntry = resolveSummaryIntent(Body);
     if (intentAtEntry === 'short summary') {
-      const shopId = From.replace('whatsapp:', '');
+      const shopId = safeShopId;
       const msg = await generateInstantSummary(shopId, conversationState?.language || 'en', requestId);
       await sendMessageViaAPI(From, msg);
       return;
     }
     if (intentAtEntry === 'full summary') {
-      const shopId = From.replace('whatsapp:', '');
+      const shopId = safeShopId;
       await processShopSummary(shopId); // sends itself (now Nativeglish via dailySummary.js patch)
       return;
     }   
@@ -6527,14 +6530,14 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       });
       
       // Save correction state to database
-      const shopId = From.replace('whatsapp:', '');
+      const shopId = safeShopId;
       const saveResult = await saveCorrectionState(shopId, correctionType, pending.update, pending.detectedLanguage);
       
       if (saveResult.success) {
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
         
         // FIX: Set correction state
-        await setUserState(From, 'correction', {
+        await setUserState(From, 'correction'correction', {
           correctionState: {
             correctionType,
             pendingUpdate: pending.update,
@@ -6571,12 +6574,12 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           delete globalState.conversationState[From];
         }
         // Save user preference
-        const shopId = From.replace('whatsapp:', '');
+        const shopId = safeShopId;
         await saveUserPreference(shopId, greetingLang);
         console.log(`[${requestId}] Saved language preference: ${greetingLang} for user ${shopId}`);
         
         // FIX: Set greeting state
-        await setUserState(From, 'greeting', { greetingLang });
+        await setUserState(From, 'correction'greeting', { greetingLang });
         
         // Get user preference
         let userPreference = 'voice'; // Default to voice
@@ -6657,7 +6660,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
       
       // Process inventory updates here
-      const shopId = From.replace('whatsapp:', '');
+      const shopId = safeShopId;
       const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
       
       
@@ -6702,7 +6705,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
       
       // FIX: Set confirmation state before sending the request
-      await setUserState(From, 'confirmation', {
+      await setUserState(From, 'correction'confirmation', {
         pendingTranscript: Body,
         detectedLanguage,
         confidence: 1.0, // High confidence since we're confirming product
@@ -6910,7 +6913,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     }
     
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
-    const shopId = From.replace('whatsapp:', '');
+    const shopId = safeShopId;
     // AUTHENTICATION CHECK FIRST
     // =========================
     console.log(`[${requestId}] Checking authentication for ${shopId}`);
@@ -7118,10 +7121,10 @@ async function confirmCorrectedUpdate(update, from, detectedLanguage, requestId)
 Is this correct?  
 Reply with "yes" or "no".`;
   
-  await sendSystemMessage(confirmationMessage, from, detectedLanguage, requestId, response);
+  await sendSystemMessage(confirmationMessage, From, detectedLanguage, requestId, response);
   
   // Store the update temporarily in global state with a different key
-  const shopId = from.replace('whatsapp:', '');
+  const shopId = safeShopId;
   if (!globalState.correctedUpdates) {
     globalState.correctedUpdates = {};
   }
@@ -7137,7 +7140,7 @@ Reply with "yes" or "no".`;
 async function handleCorrectionState(Body, From, state, requestId, res) {
   console.log(`[${requestId}] Handling correction state with input: "${Body}"`);
   
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
   const correctionState = state.data.correctionState;
   
   // Check if user is trying to exit correction mode
@@ -7268,7 +7271,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
       
       if (updateResult.success) {
         // Update user state
-        await setUserState(From, 'correction', {
+        await setUserState(From, 'correction'correction', {
           correctionState: {
             ...correctionState,
             correctionType: newCorrectionType,
@@ -7350,7 +7353,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
     
     if (isValidInput) {
       // Move to confirmation state
-      await setUserState(From, 'confirmation', {
+      await setUserState(From, 'correction'confirmation', {
         correctedUpdate,
         detectedLanguage: correctionState.detectedLanguage,
         originalCorrectionId: correctionState.id
@@ -7399,7 +7402,7 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
   console.log(`[${requestId}] Handling confirmation state with input: "${Body}"`);
   
   const { correctedUpdate, detectedLanguage, originalCorrectionId } = state.data;
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
   
   const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
   const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
@@ -7446,7 +7449,7 @@ Reply with:
     
     // Update correction state back to selection
     await saveCorrectionState(shopId, 'selection', correctedUpdate, detectedLanguage);
-    await setUserState(From, 'correction', {
+    await setUserState(From, 'correction'correction', {
       correctionState: {
         correctionType: 'selection',
         pendingUpdate: correctedUpdate,
@@ -7474,7 +7477,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
   console.log(`[${requestId}] Handling inventory state with input: "${Body}"`);
   
   const { updates, detectedLanguage } = state.data;
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
   
   // Process the updates
   try {
@@ -7482,7 +7485,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
     
     if (allPendingPrice(results)) {
         try {
-          await setUserState(From, 'correction', {
+          await setUserState(From, 'correction'correction', {
             correctionState: {
               correctionType: 'price',
               pendingUpdate: results[0],
@@ -7552,7 +7555,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
       const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
       
       if (saveResult.success) {
-        await setUserState(From, 'correction', {
+        await setUserState(From, 'correction'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -7599,7 +7602,7 @@ Reply with:
 
 async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {
   console.log(`[${requestId}] Handling new interaction`);
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
 
  // Check if user already has a plan assigned
   const planInfo = await getUserPlan(shopId);
@@ -7792,7 +7795,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       console.log(`[${requestId}] Detected greeting in language: ${greetingLang}`);
       
       // Save user preference
-      const shopId = From.replace('whatsapp:', '');
+      const shopId = safeShopId;
       await saveUserPreference(shopId, greetingLang);
       
       
@@ -7832,7 +7835,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
           
           // Process the updates
-          const shopId = From.replace('whatsapp:', '');
+          const shopId = safeShopId;
           const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
           
           
@@ -7909,7 +7912,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
             return;
           }
           
-          await setUserState(From, 'inventory', { updates, detectedLanguage });
+          await setUserState(From, 'correction'inventory', { updates, detectedLanguage });
           
           // Process the updates
           const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
@@ -7917,7 +7920,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
               if (allPendingPrice(results)) {
                 // Move user into 'correction' flow with price type so the next number goes to price handler.
                 try {
-                  await setUserState(From, 'correction', {
+                  await setUserState(From, 'correction'correction', {
                     correctionState: {
                       correctionType: 'price',
                       pendingUpdate: results[0],
@@ -8083,7 +8086,7 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
   if (inventoryUpdates.length > 0) {
     console.log(`[${requestId}] Parsed ${inventoryUpdates.length} updates from text message`);
     
-    const shopId = From.replace('whatsapp:', '');
+    const shopId = safeShopId;
     const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
     // NEW: resolve pending combined corrections (price+expiry) BEFORE routing
           const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
@@ -8177,7 +8180,7 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
   }
   
   const { pendingTranscript, detectedLanguage, type } = state.data;
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
   
   const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
   const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
@@ -8268,7 +8271,7 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
         
         // Set correction state
-        await setUserState(From, 'correction', {
+        await setUserState(From, 'correction'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -8318,7 +8321,7 @@ Reply with:
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id} (fallback)`);
         
         // Set correction state
-        await setUserState(From, 'correction', {
+        await setUserState(From, 'correction'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -8365,7 +8368,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
   console.log(`[${requestId}] Handling text confirmation with input: "${Body}"`);
   
   const { pendingTranscript, detectedLanguage, type } = state.data;
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
   
   const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
   const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
@@ -8464,7 +8467,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
         
         // Set correction state
-        await setUserState(From, 'correction', {
+        await setUserState(From, 'correction'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -8514,7 +8517,7 @@ Reply with:
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id} (fallback)`);
         
         // Set correction state
-        await setUserState(From, 'correction', {
+        await setUserState(From, 'correction'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -8561,7 +8564,7 @@ async function handleProductConfirmationState(Body, From, state, requestId, res)
   console.log(`[${requestId}] Handling product confirmation with input: "${Body}"`);
   
   const { pendingTranscript, detectedLanguage, unknownProducts } = state.data;
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
   
   const yesVariants = ['yes', 'haan', 'हाँ', 'ha', 'ok', 'okay'];
   const noVariants = ['no', 'nahin', 'नहीं', 'nahi', 'cancel'];
@@ -8607,7 +8610,7 @@ const header = chooseHeader(processed.length, COMPACT_MODE, false);
       console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
       
       // Set correction state
-      await setUserState(From, 'correction', {
+      await setUserState(From, 'correction'correction', {
         correctionState: {
           correctionType: 'selection',
           pendingUpdate: update,
@@ -8653,7 +8656,7 @@ async function verifyStatePersistence(from, expectedMode) {
 
 // Check user authentication
 async function checkUserAuthorization(From, Body, requestId) {
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = safeShopId;
   console.log(`[${requestId}] Checking authorization for shopId: "${shopId}"`);
   
   // First check if user is already authorized
