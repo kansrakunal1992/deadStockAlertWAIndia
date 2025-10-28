@@ -330,15 +330,18 @@ function _normLite(s) {
 
    // Quick‑Reply buttons (payload IDs are language‑independent)
    if (payload === 'qr_purchase') {
+     await setUserState(from, 'awaitingTransactionDetails', { action: 'purchase' });
      const msg = 'Examples (purchase):\n• bought milk 10 ltr ₹60 exp +7d\n• खरीदी दूध 10 लीटर ₹60 exp +7d';
      await sendMessageViaAPI(from, msg);
      return true;
    }
    if (payload === 'qr_sale') {
+     await setUserState(from, 'awaitingTransactionDetails', { action: 'sale' });
      await sendMessageViaAPI(from, 'Examples (sale):\n• sold sugar 2 kg\n• becha doodh 3 ltr');
      return true;
    }
    if (payload === 'qr_return') {
+     await setUserState(from, 'awaitingTransactionDetails', { action: 'returned' });
      await sendMessageViaAPI(from, 'Examples (return):\n• return Parle-G 3 packets\n• customer return milk 1 liter');
      return true;
    }
@@ -2875,7 +2878,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
         messages: [
           {
             role: "system",
-            content: `You are an inventory parsing assistant. Extract inventory information from the user's message and return it in JSON format.
+            content: `You are an inventory parsing assistant. Extract inventory information from the user's message and return it in JSON format. If no action is specified, default to the user's current intent if known (e.g., sale, purchase, return).
           Extract the following fields:
           1. product: The name of the product (e.g., "Parle-G", "sugar", "milk") - ONLY the product name, no quantities or units
           2. quantity: The numerical quantity (as a number)
@@ -3000,7 +3003,10 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
 // Parse multiple inventory updates from transcript
 async function parseMultipleUpdates(transcript) {  
   const updates = [];
-  const t = String(transcript || '').trim();
+  const t = String(transcript || '').trim(); 
+  const shopId = from.replace('whatsapp:', '');
+  const userState = await getUserStateFromDB(shopId);
+
   // Never treat summary commands as inventory messages
   if (resolveSummaryIntent(t)) return [];
   // NEW: ignore read-only inventory queries outright
@@ -3018,10 +3024,18 @@ async function parseMultipleUpdates(transcript) {
     console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);  
     const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
     // Only accept AI results if they are valid inventory updates (qty > 0 + valid action)
-    if (aiUpdate && aiUpdate.length > 0) {
-      const cleaned = aiUpdate.filter(isValidInventoryUpdate);
+    if (aiUpdate && aiUpdate.length > 0) {          
+    const cleaned = aiUpdate.map(update => {
+            if (!update.action && userState?.mode === 'awaitingTransactionDetails') {
+              update.action = userState.data.action;
+            }
+            return update;
+          }).filter(isValidInventoryUpdate);
       if (cleaned.length > 0) {
-        console.log(`[AI Parsing] Successfully parsed ${cleaned.length} valid updates using AI`);
+        console.log(`[AI Parsing] Successfully parsed ${cleaned.length} valid updates using AI`);              
+        if (userState?.mode === 'awaitingTransactionDetails') {
+                  await deleteUserStateFromDB(userState.id);
+                }
         return cleaned;
       } else {
         console.log(`[AI Parsing] AI produced ${aiUpdate.length} updates but none were valid. Falling back to rule-based parsing.`);
@@ -3033,6 +3047,13 @@ async function parseMultipleUpdates(transcript) {
   } catch (error) {
     console.warn(`[AI Parsing] Failed, falling back to rule-based parsing:`, error.message);
   }
+  
+    
+  // Fallback prompt if no action and no state
+    if (!userState) {
+      await sendMessageViaAPI(from, 'Did you mean to record a purchase, sale, or return?');
+      return [];
+    }
   
   // Fallback to rule-based parsing ONLY if AI fails
   // Better sentence splitting to handle conjunctions
@@ -3054,7 +3075,10 @@ async function parseMultipleUpdates(transcript) {
       }
     }
   }
-  console.log(`[Rule-based Parsing] Parsed ${updates.length} valid updates from transcript`);
+  console.log(`[Rule-based Parsing] Parsed ${updates.length} valid updates from transcript`);   
+  if (userState?.mode === 'awaitingTransactionDetails') {
+      await deleteUserStateFromDB(userState.id);
+    }
   return updates;
 }
 
