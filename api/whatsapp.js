@@ -231,8 +231,19 @@ const NL_LABELS = {
   en: {}
 };
 
-// Replace English labels with "native (English)" anywhere they appear
 
+const { sendContentTemplate } = require('./whatsappButtons');
+const { ensureLangTemplates, getLangSids } = require('./contentCache');
+
+async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
+   const toNumber = From.replace('whatsapp:', '');
+   await ensureLangTemplates(detectedLanguage); // creates once per lang, then reuses
+   const sids = getLangSids(detectedLanguage);
+   await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.quickReplySid });
+   await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid });
+ }
+
+// Replace English labels with "native (English)" anywhere they appear
 // Single-script rendering: replace labels to native OR keep English only; never mix.
 function renderNativeglishLabels(text, languageCode) {
   const lang = (languageCode ?? 'en').toLowerCase();
@@ -289,6 +300,45 @@ function _normLite(s) {
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+ // Map button taps / list selections to your existing quick-query router
+ 
+ async function handleInteractiveSelection(req) {
+   const from    = req.body.From;
+   const payload = String(req.body.ButtonPayload || '');
+   const listId  = String(req.body.ListPickerSelection || req.body.SelectedListItem || '');
+   const text    = String(req.body.ButtonText || req.body.Body || ''); // fallback if needed
+
+   // Quick‑Reply buttons (payload IDs are language‑independent)
+   if (payload === 'qr_purchase') {
+     const msg = 'Examples (purchase):\n• bought milk 10 ltr ₹60 exp +7d\n• खरीदी दूध 10 लीटर ₹60 exp +7d';
+     await sendMessageViaAPI(from, msg);
+     return true;
+   }
+   if (payload === 'qr_sale') {
+     await sendMessageViaAPI(from, 'Examples (sale):\n• sold sugar 2 kg\n• becha doodh 3 ltr');
+     return true;
+   }
+   if (payload === 'qr_return') {
+     await sendMessageViaAPI(from, 'Examples (return):\n• return Parle-G 3 packets\n• customer return milk 1 liter');
+     return true;
+   }
+
+   // List‑Picker selections → your quick‑query router
+   const route = (cmd) => handleQuickQueryEN(cmd, from, 'en', 'lp');
+   switch (listId) {
+     case 'list_stock':      await sendMessageViaAPI(from, 'Type: stock <product>   e.g.,  stock Maggi'); return true;
+     case 'list_low':        await route('low stock');      return true;
+     case 'list_expiring':   await route('expiring 30');    return true;
+     case 'list_sales_day':  await route('sales today');    return true;
+     case 'list_top_month':  await route('top 5 products month'); return true;
+     case 'list_value':      await route('value summary');  return true;
+   }
+
+   // If Twilio only sent text (rare), you can optionally pattern‑match:
+   if (/record\s+purchase/i.test(text)) { /* ... */ }
+   return false;
+ }
 
 // --- Tiny edit distance (Damerau-Levenshtein would be nicer; classic Levenshtein is fine here)
 function _editDistance(a, b) {
@@ -1690,28 +1740,11 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     
 
 // Greeting -> concise, actionable welcome (single-script friendly)
+    
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
-    const welcomeBase = [
-      '👋 Welcome to Saamagrii.AI.',
-      '',
-      'You can quickly:',
-      '• Purchase: "bought milk 5 ltr ₹60 exp +7d"',
-      '• Sale: "sold sugar 2 kg"',
-      '• Set expiry: "expiry curd 20-11" (or "exp +3m")',
-      '',
-      'Short commands:',
-      '• stock <product>',
-      '• low stock / stockout',
-      '• expiring 7',
-      '• prices',
-      '• inventory value',
-      '',
-      'Tip: You can speak or type in Hinglish/Indian languages—prices and dates are auto-read.'
-    ].join('\n');
-    const welcome = await t(welcomeBase, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, welcome);
+    await sendWelcomeFlowLocalized(From, detectedLanguage || 'en');
     return true;
-  }
+   }
   
   // =======================
   // Customer Return command
@@ -2193,11 +2226,11 @@ try{
     if (await handleAwaitingBatchOverride(From, text, detectedLanguage, requestId)) return true;
 
 // NEW (2.g): Greeting -> show purchase examples incl. expiry
+    
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
-    const examples = await renderPurchaseExamples(detectedLanguage, requestId);
-    await sendMessageViaAPI(From, examples);
+    await sendWelcomeFlowLocalized(From, detectedLanguage || 'en');
     return true;
-  }
+   }
 
   // =======================
   // Customer Return command
