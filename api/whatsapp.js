@@ -7706,24 +7706,19 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       const shopId = From.replace('whatsapp:', '');
       await saveUserPreference(shopId, greetingLang);
       
-      // Send welcome message with examples - no input method selection
-      const welcomeMessage = await t(
-        `Welcome! I'm ready for your inventory update. You can send:
-          • Voice or Text message: "5kg sugar purchased at 20rs/kg exp +7d", "10 Parle-G sold at 10rs/packet exp +3m"
-          • Get an automated invoice pdf to send to customer upon a sale
-          • Get expired products details: "expiring 0" or "expired items"
-          • Handle returned items via Voice or Text message: "return Raddish Pickle 3 bottles" 
-          • Get instant summary: "short summary"
-          • Get detailed summary: "full summary"
-          
-          What would you like to update?`,
-        greetingLang,
-        requestId
-      );
       
-      await sendMessageViaAPI(From, welcomeMessage);
-      res.send('<Response></Response>');
-      return;
+      // Send INTERACTIVE welcome (Quick‑Reply + List‑Picker) using ContentSid templates
+            // Keep the rest of the function's behavior unchanged.
+            await sendWelcomeFlowLocalized(From, greetingLang, requestId);
+            // Minimal TwiML ack so Twilio is satisfied; avoid double text sends downstream.
+            try {
+              const twiml = new twilio.twiml.MessagingResponse();
+              twiml.message('');
+              res.type('text/xml').send(twiml.toString());
+            } catch (_) {
+              res.status(200).end();
+            }
+            return;
     }
   }
   
