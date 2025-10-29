@@ -330,19 +330,19 @@ function _normLite(s) {
 
    // Quick‑Reply buttons (payload IDs are language‑independent)
    if (payload === 'qr_purchase') {
-     await setUserState(From, 'awaitingTransactionDetails', { action: 'purchase' });
+     await setUserState(from, 'awaitingTransactionDetails', { action: 'purchase' });
      const msg = 'Examples (purchase):\n• bought milk 10 ltr ₹60 exp +7d\n• खरीदी दूध 10 लीटर ₹60 exp +7d';
-     await sendMessageViaAPI(From, msg);
+     await sendMessageViaAPI(from, msg);
      return true;
    }
    if (payload === 'qr_sale') {
-     await setUserState(From, 'awaitingTransactionDetails', { action: 'sale' });
-     await sendMessageViaAPI(From, 'Examples (sale):\n• sold sugar 2 kg\n• becha doodh 3 ltr');
+     await setUserState(from, 'awaitingTransactionDetails', { action: 'sale' });
+     await sendMessageViaAPI(from, 'Examples (sale):\n• sold sugar 2 kg\n• becha doodh 3 ltr');
      return true;
    }
    if (payload === 'qr_return') {
-     await setUserState(From, 'awaitingTransactionDetails', { action: 'returned' });
-     await sendMessageViaAPI(From, 'Examples (return):\n• return Parle-G 3 packets\n• customer return milk 1 liter');
+     await setUserState(from, 'awaitingTransactionDetails', { action: 'returned' });
+     await sendMessageViaAPI(from, 'Examples (return):\n• return Parle-G 3 packets\n• customer return milk 1 liter');
      return true;
    }
 
@@ -3051,7 +3051,7 @@ async function parseMultipleUpdates(transcript) {
     
   // Fallback prompt if no action and no state
     if (!userState) {
-      await sendMessageViaAPI(From, 'Did you mean to record a purchase, sale, or return?');
+      await sendMessageViaAPI(from, 'Did you mean to record a purchase, sale, or return?');
       return [];
     }
   
@@ -4035,7 +4035,7 @@ async function sendSystemMessage(message, from, detectedLanguage, requestId, res
 // If long, send via API (which auto-splits) and keep TwiML minimal
     const MAX_LENGTH = 1600;
     if (formattedMessage.length > MAX_LENGTH) {
-     await sendMessageViaAPI(From, formattedMessage);
+     await sendMessageViaAPI(from, formattedMessage);
       // Optional: small ack so Twilio gets a valid TwiML
       response.message('✅ Sent.');
       return formattedMessage;
@@ -5287,7 +5287,7 @@ async function tryHandleReturnText(transcript, from, detectedLanguage, requestId
     message += ` (Stock: ${result.newQuantity} ${u})`;
   }
   const msg = await t(message, detectedLanguage, requestId);
-  await sendMessageViaAPI(From, msg);
+  await sendMessageViaAPI(from, msg);
   return true;
 }
 
@@ -5316,7 +5316,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     if (intent === 'short summary') {
       const msg = await generateInstantSummary(shopId, detectedLanguage, requestId);
       // send via API to avoid Twilio body-length issues; then ack Twilio
-      await sendMessageViaAPI(From, msg);
+      await sendMessageViaAPI(from, msg);
       response.message('✅ Short summary sent.');
       handledRequests.add(requestId);
       return res.send(response.toString());
@@ -5371,7 +5371,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     
       if (allPendingPrice(results)) {
         try {
-          await setUserState(From, 'correction', {
+          await setUserState(from, 'correction', {
             correctionState: {
               correctionType: 'price',
               pendingUpdate: results[0],
