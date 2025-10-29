@@ -3313,33 +3313,34 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       const product = translatedProduct;
       
       // === NEW: Handle customer returns (simple add-back; no batch, no price/expiry) ===
-            if (update.action === 'returned') {
-              let result;
-              try {
-                result = await updateInventory(shopId, product, Math.abs(update.quantity), update.unit);
-                // Fetch post-update for confirmation
-                const invAfter = await getProductInventory(shopId, product);
-                const unitText = update.unit ? ` ${update.unit}` : '';
-                const newQty = invAfter?.quantity ?? result?.newQuantity;
-                const u = invAfter?.unit ?? result?.unit ?? update.unit;            
-                const compact = COMPACT_MODE
-                          ? `↩️ Returned ${Math.abs(update.quantity)} ${u ?? ''} ${product}. Stock: ${newQty ?? ''} ${u ?? ''}`.trim()
-                          : `↩️ Return processed — ${product}: +${Math.abs(update.quantity)} ${u ?? ''}`.trim()
-                              + (newQty !== undefined ? ` (Stock: ${newQty} ${u ?? ''})` : '');
-                const message = await t(compact, languageCode, 'return-ok');
-                await sendMessageViaAPI(`whatsapp:${shopId}`, message);
-              } catch (e) {
-                console.warn(`[Update ${shopId} - ${product}] Return failed:`, e.message);
-              }
-              results.push({
-                product, quantity: Math.abs(update.quantity), unit: update.unit, action: 'returned',
-                success: !!result?.success, newQuantity: result?.newQuantity, unitAfter: result?.unit
-              });
-              continue; // Move to next update
-            }
+      if (update.action === 'returned') {
+        let result;
+        try {
+          result = await updateInventory(shopId, product, Math.abs(update.quantity), update.unit);
+          // Fetch post-update for confirmation
+          const invAfter = await getProductInventory(shopId, product);
+          const unitText = update.unit ? ` ${update.unit}` : '';
+          const newQty = invAfter?.quantity ?? result?.newQuantity;
+          const u = invAfter?.unit ?? result?.unit ?? update.unit;            
+          const compact = COMPACT_MODE
+                    ? `↩️ Returned ${Math.abs(update.quantity)} ${u ?? ''} ${product}. Stock: ${newQty ?? ''} ${u ?? ''}`.trim()
+                    : `↩️ Return processed — ${product}: +${Math.abs(update.quantity)} ${u ?? ''}`.trim()
+                        + (newQty !== undefined ? ` (Stock: ${newQty} ${u ?? ''})` : '');
+          const message = await t(compact, languageCode, 'return-ok');
+          await sendMessageViaAPI(`whatsapp:${shopId}`, message);
+        } catch (e) {
+          console.warn(`[Update ${shopId} - ${product}] Return failed:`, e.message);
+        }
+        results.push({
+          product, quantity: Math.abs(update.quantity), unit: update.unit, action: 'returned',
+          success: !!result?.success, newQuantity: result?.newQuantity, unitAfter: result?.unit
+        });
+        continue; // Move to next update
+      }
 
       // Get product price from database
       let productPrice = 0;
+      let needsPriceInput = false;
       try {
         const priceResult = await getProductPrice(product);
         if (priceResult.success) {    
@@ -3374,6 +3375,72 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           const providedExpiryISO = bumpExpiryYearIfPast(update.expiryISO ?? null, purchaseDateISO);
           const expiryToUse = providedExpiryISO ?? autoExpiry ?? null;
     
+          // Check if we need to ask for price
+          if (finalPrice <= 0) {
+            console.log(`[Update ${shopId} - ${product}] No price available, asking for input`);
+            
+            // Create batch first without price
+            const batchResult = await createBatchRecord({
+              shopId,
+              product,
+              quantity: update.quantity,
+              unit: update.unit,
+              purchaseDate: purchaseDateISO,
+              expiryDate: expiryToUse,
+              purchasePrice: 0 // Will be updated later
+            });
+            
+            if (batchResult?.success) createdBatchEarly = true;
+            
+            // Set state to await price input
+            await setUserState(`whatsapp:${shopId}`, 'awaitingPriceExpiry', {
+              batchId: batchResult?.id ?? null,
+              product,
+              unit: update.unit,
+              quantity: update.quantity,
+              purchaseDate: purchaseDateISO,
+              autoExpiry: expiryToUse ?? null,
+              needsPrice: true,
+              isPerishable: !!(productMeta?.success && productMeta.requiresExpiry)
+            });
+            
+            // Send price request message
+            const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
+            const edDisplay = expiryToUse ? formatDateForDisplay(expiryToUse) : '—';
+                
+            const prompt = await t(
+              [
+                `Captured ✅ ${product} ${update.quantity} ${update.unit} — awaiting price.`,
+                isPerishable ? `Expiry set: ${edDisplay}` : `No expiry needed.`,
+                ``,
+                `Please send price per ${update.unit}, e.g. "₹60" or "₹60 per ${update.unit}".`,
+                `You can adjust expiry later (within 2 min) after price is saved:`,
+                `• exp +7d / exp +3m / exp +1y`,
+                `• skip (to clear)`
+              ].join('\n'),
+              languageCode, 'ask-price-only'
+            );
+            await sendMessageViaAPI(`whatsapp:${shopId}`, prompt);
+            
+            // Return result indicating we need user input
+            results.push({
+              product, 
+              quantity: update.quantity, 
+              unit: update.unit, 
+              action: update.action,                                         
+              success: true, 
+              needsUserInput: true, 
+              awaiting: 'price', 
+              status: 'pending',
+              deferredPrice: true,
+              // include latest stock even in pending case (nice to have; harmless if undefined)
+              newQuantity: update.quantity, // Since we just added this quantity
+              unitAfter: update.unit
+            });
+            continue; // Move to next update
+          }
+          
+          // If we have a price, continue with normal flow
           // Create batch immediately with defaulted expiry (or blank)
           const batchResult = await createBatchRecord({
             shopId,
@@ -3385,74 +3452,32 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             purchasePrice: finalPrice // may be 0 if unknown now
           });
           if (batchResult?.success) createdBatchEarly = true;
-    
-          
+      
           // Ensure inventory reflects the purchase *and* capture stock for summary lines
-                // (we 'continue' later in this branch, so do not rely on the outer non-sale path)
-                let invResult;
-                try {
-                  invResult = await updateInventory(shopId, product, update.quantity, update.unit);
-                } catch (_) {}
-                const stockQty  = invResult?.newQuantity;
-                const stockUnit = invResult?.unit ?? update.unit;
-    
+          let invResult;
+          try {
+            invResult = await updateInventory(shopId, product, update.quantity, update.unit);
+          } catch (_) {}
+          const stockQty  = invResult?.newQuantity;
+          const stockUnit = invResult?.unit ?? update.unit;
+      
           // Save price if known now
           if (finalPrice > 0) {
             try { await upsertProduct({ name: product, price: finalPrice, unit: update.unit }); } catch (_) {}
           }
-    
+      
           const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
           const edDisplay = expiryToUse ? formatDateForDisplay(expiryToUse) : '—';
               
-          if (finalPrice <= 0) {
-            // PRICE MISSING => ask only for price (do not block on expiry)
-            await setUserState(`whatsapp:${shopId}`, 'awaitingPriceExpiry', {
-              batchId: batchResult?.id ?? null,
-              product,
-              unit: update.unit,
-              quantity: update.quantity,
-              purchaseDate: purchaseDateISO,
-              autoExpiry: expiryToUse ?? null,
-              needsPrice: true,
-              isPerishable
-            });
-    
-            
-    // UX: make it explicit that we're waiting for price now
-              const prompt = await t(
-                [
-                  `Captured ✅ ${product} ${update.quantity} ${update.unit} — awaiting price.`,
-                  isPerishable ? `Expiry set: ${edDisplay}` : `No expiry needed.`,
-                  ``,
-                  `Please send price per ${update.unit}, e.g. "₹60" or "₹60 per ${update.unit}".`,
-                  `You can adjust expiry later (within 2 min) after price is saved:`,
-                  `• exp +7d / exp +3m / exp +1y`,
-                  `• skip (to clear)`
-                ].join('\n'),
-                languageCode, 'ask-price-only'
-              );
-            await sendMessageViaAPI(`whatsapp:${shopId}`, prompt);
-    
-            results.push({
-              product, quantity: update.quantity, unit: update.unit, action: update.action,                                         
-              success: true, needsUserInput: true, awaiting: 'price', status: 'pending',
-              deferredPrice: true,
+          // Create confirmation text
+          const confirmText = COMPACT_MODE
+            ? (isPerishable
+              ? `✅ Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}. Exp: ${edDisplay}`
+              : `✅ Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}`)
+            : `• ${product}: ${update.quantity} ${update.unit} purchased @ ₹${finalPrice}` +
+              (isPerishable ? `\n  Expiry: ${edDisplay}` : `\n  Expiry: —`);
 
-              // include latest stock even in pending case (nice to have; harmless if undefined)
-              newQuantity: stockQty, unitAfter: stockUnit
-            });
-            continue;
-          }
-                               
-          // PRICE KNOWN => do NOT send immediately; buffer so the caller can send ONE merged message
-            const confirmText = COMPACT_MODE
-              ? (isPerishable
-                ? `✅ Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}. Exp: ${edDisplay}`
-                : `✅ Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}`)
-              : `• ${product}: ${update.quantity} ${update.unit} purchased @ ₹${finalPrice}` +
-                (isPerishable ? `\n  Expiry: ${edDisplay}` : `\n  Expiry: —`);
-
-          // Open the 2‑min expiry override window
+          // Open the 2-min expiry override window
           try {
             await saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
               batchId: batchResult?.id ?? null,
@@ -3463,7 +3488,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               timeoutSec: 120
             });
           } catch (_) {}
-    
+      
           results.push({
             product,
             quantity: update.quantity,
@@ -3479,7 +3504,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           });
           continue; // done with purchase branch
         }
-      // === END NEW block ===
+        // === END NEW block ===
 
       // Use provided price or fall back to database price            
       // NEW: reliable price/value without leaking block-scoped vars
@@ -3497,21 +3522,21 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       const isSale = update.action === 'sold';
       
       // For sales, determine which batch to use (with hints later; default FIFO oldest)
-            let selectedBatchCompositeKey = null;
-            if (isSale) {
-              selectedBatchCompositeKey = await selectBatchForSale(
-                shopId,
-                product,
-                // For now, we default to FIFO oldest; inline hints can be added to `update` later if desired
-                { byPurchaseISO: null, byExpiryISO: null, pick: 'fifo-oldest' }
-              );
-              selectedBatchCompositeKey = normalizeCompositeKey(selectedBatchCompositeKey);
-              if (selectedBatchCompositeKey) {
-                console.log(`[Update ${shopId} - ${product}] Selected batch (sale): ${selectedBatchCompositeKey}`);
-              } else {
-                console.warn(`[Update ${shopId} - ${product}] No batch with positive quantity found for sale allocation`);
-              }
-            }
+      let selectedBatchCompositeKey = null;
+      if (isSale) {
+        selectedBatchCompositeKey = await selectBatchForSale(
+          shopId,
+          product,
+          // For now, we default to FIFO oldest; inline hints can be added to `update` later if desired
+          { byPurchaseISO: null, byExpiryISO: null, pick: 'fifo-oldest' }
+        );
+        selectedBatchCompositeKey = normalizeCompositeKey(selectedBatchCompositeKey);
+        if (selectedBatchCompositeKey) {
+          console.log(`[Update ${shopId} - ${product}] Selected batch (sale): ${selectedBatchCompositeKey}`);
+        } else {
+          console.warn(`[Update ${shopId} - ${product}] No batch with positive quantity found for sale allocation`);
+        }
+      }
 
       // Update the inventory using translated product name
       let result;
