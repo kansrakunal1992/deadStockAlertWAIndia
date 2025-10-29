@@ -7834,8 +7834,11 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       if (Body) {
         
         console.log(`[${requestId}] Attempting to parse as inventory update`);
+        // Create mock request object
+        const mockReq = { body: { From, Body } };
+        
         // First, try to parse as inventory update (higher priority)
-        const parsedUpdates = await parseMultipleUpdates(req);
+        const parsedUpdates = await parseMultipleUpdates(mockReq);
         if (parsedUpdates.length > 0) {
           console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
           
@@ -7894,7 +7897,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         }
         
         // Try to parse as inventory update
-        const inventoryUpdates = await parseMultipleUpdates(Body);
+        const inventoryUpdates = await parseMultipleUpdates(mockReq);
         if (inventoryUpdates.length > 0) {
           console.log(`[${requestId}] Parsed ${inventoryUpdates.length} updates from text message`);
           
