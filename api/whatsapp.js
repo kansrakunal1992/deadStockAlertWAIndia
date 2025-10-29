@@ -3005,7 +3005,7 @@ async function parseMultipleUpdates(req) {
    const from = req.body?.From;
    const transcript = req.body?.Body ?? '';
    if (!from) {
-     console.warn('[parseMultipleUpdates] Missing "From" in request body');
+     console.warn('[parseMultipleUpdates] Missing "From" in request body:', JSON.stringify(req.body, null, 2));
      return [];
    }
   const shopId = from.replace('whatsapp:', '');
