@@ -3303,7 +3303,9 @@ async function validateTranscript(transcript, requestId) {
 // Handle multiple inventory updates with batch tracking
 async function updateMultipleInventory(shopId, updates, languageCode) {
   const results = [];
-  for (const update of updates) {
+  for (const update of updates) {      
+  // Hoisted: keep a per-update confirmation line available beyond branch scope
+    let confirmTextLine;
     let createdBatchEarly = false;
     try {
       // Translate product name before processing
@@ -3468,14 +3470,14 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       
           const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
           const edDisplay = expiryToUse ? formatDateForDisplay(expiryToUse) : '—';
-              
-          // Create confirmation text
-          const confirmText = COMPACT_MODE
-            ? (isPerishable
-              ? `✅ Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}. Exp: ${edDisplay}`
-              : `✅ Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}`)
-            : `• ${product}: ${update.quantity} ${update.unit} purchased @ ₹${finalPrice}` +
-              (isPerishable ? `\n  Expiry: ${edDisplay}` : `\n  Expiry: —`);
+                            
+          // Assign to hoisted holder so we can use it later safely
+                  confirmTextLine = COMPACT_MODE
+                    ? (isPerishable
+                      ? `✅ Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}. Exp: ${edDisplay}`
+                      : `✅ Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}`)
+                    : `• ${product}: ${update.quantity} ${update.unit} purchased @ ₹${finalPrice}`
+                      + (isPerishable ? `\n Expiry: ${edDisplay}` : `\n Expiry: —`);
 
           // Open the 2-min expiry override window
           try {
@@ -3500,7 +3502,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             unitAfter: stockUnit,
             purchasePrice: finalPrice,
             totalValue: finalPrice * Math.abs(update.quantity),
-            inlineConfirmText: confirmText // <-- provide preformatted line for one-shot response
+            inlineConfirmText: confirmTextLine
           });
           continue; // done with purchase branch
         }
@@ -3699,10 +3701,10 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             })();
             
             // Update batch quantity if a batch was selected
-            if (selectedBatchCompositeKey) {
-              console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${update.quantity}`);
-              try {                             
-              
+            if (selectedBatchCompositeKey) {                         
+            // Log the actual delta we will apply (-abs) to avoid confusion
+            console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${-Math.abs(update.quantity)}`);
+              try {                                 
                 const batchUpdateResult = await updateBatchQuantityByCompositeKey(
                    normalizeCompositeKey(selectedBatchCompositeKey),
                    -Math.abs(update.quantity)
@@ -3790,8 +3792,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
                       
           // Unify confirmation building – always defined, avoid referencing undeclared vars later.
-              const confirmText = COMPACT_MODE ? compactLine : verboseLines;
-         
+          // Assign to hoisted holder so we can use it later safely
+          confirmTextLine = COMPACT_MODE ? compactLine : verboseLines;
+        
           // Buffer and let outer renderer send single merged message
             // --- END COMPACT/VERBOSE SALE CONFIRMATION ---
 
@@ -3817,7 +3820,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           purchasePrice: update.action === 'purchased' ? effectivePrice : undefined,
           salePrice: update.action === 'sold' ? effectivePrice : undefined,
           totalValue: (update.action === 'purchased' || update.action === 'sold') ? (effectivePrice * Math.abs(update.quantity)): 0,
-          inlineConfirmText: confirmText, // <- single source of truth; no 'compactConfirm' anywhere
+          inlineConfirmText: confirmTextLine,   // safe: defined if a purchase/sale branch built it
           priceSource,        
 // mark updated only when we actually changed it from catalog
           priceUpdated: update.action === 'purchased'
