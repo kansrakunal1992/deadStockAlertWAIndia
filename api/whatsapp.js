@@ -3016,6 +3016,13 @@ async function parseMultipleUpdates(req) {
   // Standardize valid actions - use 'sold' consistently
   const VALID_ACTIONS = ['purchase', 'sold', 'remaining', 'returned'];
   
+  // Get pending action from user state if available
+  let pendingAction = null;
+  if (userState && userState.mode === 'awaitingTransactionDetails' && userState.data.action) {
+    pendingAction = userState.data.action;
+    console.log(`[parseMultipleUpdates] Using pending action from state: ${pendingAction}`);
+  }
+  
   // Never treat summary commands as inventory messages
   if (resolveSummaryIntent(t)) return [];
   // NEW: ignore read-only inventory queries outright
@@ -3037,12 +3044,11 @@ async function parseMultipleUpdates(req) {
     const cleaned = aiUpdate.map(update => {
         try {
           // Apply state override with validation
-          if (transactionState && transactionState.action && 
-              VALID_ACTIONS.includes(transactionState.action)) {
-            update.action = transactionState.action;
+          if (pendingAction && VALID_ACTIONS.includes(pendingAction)) {
+            update.action = pendingAction;
             console.log(`[AI Parsing] Overriding AI action with state action: ${update.action}`);
-          } else if (transactionState && transactionState.action) {
-            console.warn(`[AI Parsing] Invalid action in state: ${transactionState.action}`);
+          } else if (pendingAction) {
+            console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
           }
           return update;
         } catch (error) {
@@ -3084,9 +3090,8 @@ async function parseMultipleUpdates(req) {
         let update = parseSingleUpdate(trimmed);
         if (update && update.product) {
           // Apply state override for rule-based parsing too
-          if (transactionState && transactionState.action && 
-              VALID_ACTIONS.includes(transactionState.action)) {
-            update.action = transactionState.action;
+          if (pendingAction && VALID_ACTIONS.includes(pendingAction)) {
+            update.action = pendingAction;
             console.log(`[Rule Parsing] Overriding rule action with state action: ${update.action}`);
           }          
           // Only translate if not already processed by AI
