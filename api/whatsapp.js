@@ -3032,9 +3032,11 @@ async function parseMultipleUpdates(req) {
     // Only accept AI results if they are valid inventory updates (qty > 0 + valid action)
     if (aiUpdate && aiUpdate.length > 0) {          
     const cleaned = aiUpdate.map(update => {
-            if (!update.action && userState?.mode === 'awaitingTransactionDetails') {
-              update.action = userState.data.action;
-            }
+              // IMPORTANT: If we're in a transaction state, use the action from state, not AI
+         if (userState?.mode === 'awaitingTransactionDetails' && userState.data.action) {
+           update.action = userState.data.action;
+           console.log(`[AI Parsing] Overriding AI action with state action: ${update.action}`);
+         }
             return update;
           }).filter(isValidInventoryUpdate);
       if (cleaned.length > 0) {
