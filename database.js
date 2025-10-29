@@ -73,7 +73,7 @@ function convertToBaseUnit(quantity, unit) {
   // countables
   if (u === 'packet' || u === 'packets' || u === 'पैकेट' || u === 'પૅકેટ' || u === 'પેકેટ') return quantity;
   if (u === 'box' || u === 'boxes' || u === 'बॉक्स' || u === 'બોક્સ') return quantity;
-  if (u === 'piece' || u === 'pieces' || u === '' || u === 'टुकड़ा' || u === 'टुकड़े' || u === 'ટુકડો' || u === 'ટુકડાઓ' || u === 'નંગ') return quanity;
+  if (u === 'piece' || u === 'pieces' || u === '' || u === 'टुकड़ा' || u === 'टुकड़े' || u === 'ટુકડો' || u === 'ટુકડાઓ' || u === 'નંગ') return quantity;
   return quantity; // default passthrough
 }
 
