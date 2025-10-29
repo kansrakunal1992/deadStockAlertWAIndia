@@ -3418,7 +3418,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             });
     
             
-    // UX: make it explicit that we’re waiting for price now
+    // UX: make it explicit that we're waiting for price now
               const prompt = await t(
                 [
                   `Captured ✅ ${product} ${update.quantity} ${update.unit} — awaiting price.`,
@@ -3489,7 +3489,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         : (unitPriceForCalc * Math.abs(update.quantity));
       const priceSource = (Number(update.price) > 0)
          ? 'message'
-         : (productPrice > 0 ? 'db' : null); // only mark db if it’s actually > 0
+         : (productPrice > 0 ? 'db' : null); // only mark db if it's actually > 0
 
       // Rest of the function remains the same...
       console.log(`[Update ${shopId} - ${product}] Processing update: ${update.quantity} ${update.unit}`);
@@ -3621,7 +3621,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                   unit: update.unit,
                   saleDate: new Date().toISOString(),
                   batchCompositeKey: selectedBatchCompositeKey, // Uses composite key
-                  salePrice: salePrice,
+                  salePrice: salePrice, // Fixed: Use salePrice instead of finalPrice
                   saleValue: saleValue
                 });
           
@@ -3646,7 +3646,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                   product: product,
                   quantity: Math.abs(update.quantity), // Convert to positive for display
                   unit: update.unit,
-                  rate: salePrice,
+                  rate: salePrice, // Fixed: Use salePrice
                   saleDate: new Date().toISOString()
                 };
                 
@@ -3744,7 +3744,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
             const compactLine = (() => {
               const qty = Math.abs(update.quantity);
-              const pricePart = salePrice > 0 ? ` @ ₹${salePrice}` : '';
+              const pricePart = salePrice > 0 ? ` @ ₹${salePrice}` : ''; // Fixed: Use salePrice
               const stockPart = (result?.newQuantity !== undefined)
                 ? `. Stock: ${result.newQuantity} ${result?.unit ?? update.unit}`
                 : '';
@@ -3753,7 +3753,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
             const verboseLines = (() => {
               const qty = Math.abs(update.quantity);
-              const hdr = `✅ ${product} — sold ${qty} ${update.unit}${salePrice > 0 ? ` @ ₹${salePrice}` : ''}`;
+              const hdr = `✅ ${product} — sold ${qty} ${update.unit}${salePrice > 0 ? ` @ ₹${salePrice}` : ''}`; // Fixed: Use salePrice
               const batchInfo = usedBatch ? `Used batch: Purchased ${pd} (Expiry ${ed})` : '';
               const overrideHelp = offerOverride
                 ? `To change batch (within 2 min):\n• batch DD-MM   e.g., batch 12-09\n• exp DD-MM     e.g., exp 20-09\n• batch oldest  |  batch latest`
