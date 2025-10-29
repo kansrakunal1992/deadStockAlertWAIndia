@@ -3001,10 +3001,16 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
           }
 
 // Parse multiple inventory updates from transcript
-async function parseMultipleUpdates(transcript) {  
+async function parseMultipleUpdates(req) {
+   const from = req.body?.From;
+   const transcript = req.body?.Body ?? '';
+   if (!from) {
+     console.warn('[parseMultipleUpdates] Missing "From" in request body');
+     return [];
+   }
+  const shopId = from.replace('whatsapp:', '');
   const updates = [];
   const t = String(transcript || '').trim(); 
-  const shopId = from.replace('whatsapp:', '');
   const userState = await getUserStateFromDB(shopId);
 
   // Never treat summary commands as inventory messages
@@ -5329,7 +5335,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     }
 
     console.log(`[${requestId}] [6] Parsing updates using AI...`);
-    const updates = await parseMultipleUpdates(transcript);
+    const updates = await parseMultipleUpdates(req);
     
     // Optional fallback: if AI/Rules returned nothing, try a simple "return ..." handler once
         if (!updates || updates.length === 0) {
@@ -6652,7 +6658,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     console.log(`[${requestId}] Attempting to parse as inventory update`);
     
     // First, try to parse as inventory update (higher priority)
-    const parsedUpdates = await parseMultipleUpdates(Body);
+    const parsedUpdates = await parseMultipleUpdates(req);
     if (parsedUpdates.length > 0) {
       console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
       
@@ -7309,7 +7315,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
         break;
       case 'quantity':
         try {
-          const quantityUpdate = await parseMultipleUpdates(Body);
+          const quantityUpdate = await parseMultipleUpdates(req);
           if (quantityUpdate.length > 0) {
             correctedUpdate.quantity = quantityUpdate[0].quantity;
             correctedUpdate.unit = quantityUpdate[0].unit;
@@ -7335,7 +7341,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
         break;
       case 'all':
         try {
-          const fullUpdate = await parseMultipleUpdates(Body);
+          const fullUpdate = await parseMultipleUpdates(req);
           if (fullUpdate.length > 0) {
             correctedUpdate = fullUpdate[0];
           } else {
@@ -7532,7 +7538,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
     
     // If processing fails, try to parse the input again and enter correction flow
     try {
-      const parsedUpdates = await parseMultipleUpdates(Body);
+      const parsedUpdates = await parseMultipleUpdates(req);
       let update;
       
       if (parsedUpdates.length > 0) {
@@ -7827,7 +7833,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         
         console.log(`[${requestId}] Attempting to parse as inventory update`);
         // First, try to parse as inventory update (higher priority)
-        const parsedUpdates = await parseMultipleUpdates(Body);
+        const parsedUpdates = await parseMultipleUpdates(req);
         if (parsedUpdates.length > 0) {
           console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
           
