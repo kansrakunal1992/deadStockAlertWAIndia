@@ -7314,8 +7314,9 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
         }
         break;
       case 'quantity':
-        try {
-          const quantityUpdate = await parseMultipleUpdates(req);
+        try {      
+        const fakeReq = { body: { From, Body } };
+        const quantityUpdate = await parseMultipleUpdates(fakeReq);
           if (quantityUpdate.length > 0) {
             correctedUpdate.quantity = quantityUpdate[0].quantity;
             correctedUpdate.unit = quantityUpdate[0].unit;
@@ -7340,8 +7341,9 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
         }
         break;
       case 'all':
-        try {
-          const fullUpdate = await parseMultipleUpdates(req);
+        try {         
+      const fakeReq = { body: { From, Body } };
+      const fullUpdate = await parseMultipleUpdates(fakeReq);
           if (fullUpdate.length > 0) {
             correctedUpdate = fullUpdate[0];
           } else {
