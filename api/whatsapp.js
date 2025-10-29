@@ -336,7 +336,7 @@ function _normLite(s) {
      return true;
    }
    if (payload === 'qr_sale') {
-     await setUserState(from, 'awaitingTransactionDetails', { action: 'sale' });
+     await setUserState(from, 'awaitingTransactionDetails', { action: 'sold' });
      await sendMessageViaAPI(from, 'Examples (sale):\n• sold sugar 2 kg\n• becha doodh 3 ltr');
      return true;
    }
@@ -3013,6 +3013,9 @@ async function parseMultipleUpdates(req) {
   const t = String(transcript || '').trim(); 
   const userState = await getUserStateFromDB(shopId);
 
+  // Standardize valid actions - use 'sold' consistently
+  const VALID_ACTIONS = ['purchase', 'sold', 'remaining', 'returned'];
+  
   // Never treat summary commands as inventory messages
   if (resolveSummaryIntent(t)) return [];
   // NEW: ignore read-only inventory queries outright
@@ -3032,13 +3035,21 @@ async function parseMultipleUpdates(req) {
     // Only accept AI results if they are valid inventory updates (qty > 0 + valid action)
     if (aiUpdate && aiUpdate.length > 0) {          
     const cleaned = aiUpdate.map(update => {
-              // IMPORTANT: If we're in a transaction state, use the action from state, not AI
-         if (userState?.mode === 'awaitingTransactionDetails' && userState.data.action) {
-           update.action = userState.data.action;
-           console.log(`[AI Parsing] Overriding AI action with state action: ${update.action}`);
-         }
-            return update;
-          }).filter(isValidInventoryUpdate);
+        try {
+          // Apply state override with validation
+          if (transactionState && transactionState.action && 
+              VALID_ACTIONS.includes(transactionState.action)) {
+            update.action = transactionState.action;
+            console.log(`[AI Parsing] Overriding AI action with state action: ${update.action}`);
+          } else if (transactionState && transactionState.action) {
+            console.warn(`[AI Parsing] Invalid action in state: ${transactionState.action}`);
+          }
+          return update;
+        } catch (error) {
+          console.warn(`[AI Parsing] Error processing update:`, error.message);
+          return update;
+        }
+      }).filter(isValidInventoryUpdate);
       if (cleaned.length > 0) {
         console.log(`[AI Parsing] Successfully parsed ${cleaned.length} valid updates using AI`);              
         if (userState?.mode === 'awaitingTransactionDetails') {
@@ -3072,6 +3083,12 @@ async function parseMultipleUpdates(req) {
       try {
         let update = parseSingleUpdate(trimmed);
         if (update && update.product) {
+          // Apply state override for rule-based parsing too
+          if (transactionState && transactionState.action && 
+              VALID_ACTIONS.includes(transactionState.action)) {
+            update.action = transactionState.action;
+            console.log(`[Rule Parsing] Overriding rule action with state action: ${update.action}`);
+          }          
           // Only translate if not already processed by AI
           update.product = await translateProductName(update.product, 'rule-parsing');
         }
