@@ -4504,6 +4504,20 @@ function singularize(unit) {
 }
 
 
+// --- Small helper: build a minimal req-like object for the parser ---
+function buildFakeReq(from, body) {
+  return { body: { From: from, Body: body } };
+}
+
+// --- Unified helper: parse updates or handle a lone "return ..." message ---
+async function parseOrReturn(transcript, from, detectedLanguage, requestId) {
+  const updates = await parseMultipleUpdates(buildFakeReq(from, transcript));
+  if (updates && updates.length > 0) return updates;
+  const didReturn = await tryHandleReturnText(transcript, from, detectedLanguage, requestId);
+  if (didReturn) return []; // already handled via API; caller should short-circuit
+  return [];
+}
+
 // Helper: check if every result is still pending price
 function allPendingPrice(results) {
   return Array.isArray(results) && results.length > 0 && results.every(r => r.needsPrice === true);
@@ -5482,22 +5496,15 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       response.message('✅ Full summary sent.');
       handledRequests.add(requestId);
       return res.send(response.toString());
-    }
-    
-    
-  // Build a minimal req-like object for the parser and parse updates
-    const fakeReq = { body: { From: from, Body: transcript } };
+    }       
+        
     console.log(`[${requestId}] [6] Parsing updates using AI...`);
-    const updates = await parseMultipleUpdates(fakeReq);
-  
-    // Optional fallback: if AI/Rules returned nothing, try a simple "return ..." handler once
-    if (!updates || updates.length === 0) {
-      const didReturn = await tryHandleReturnText(transcript, from, detectedLanguage, requestId);
-      if (didReturn) {
+      const updates = await parseOrReturn(transcript, from, detectedLanguage, requestId);
+      if (updates.length === 0) {
         handledRequests.add(requestId);
-        return res.send(response.toString());
+        return res.send(response.toString()); // "return ..." case already replied
       }
-    }
+
      
     if (updates.length === 0) {
       console.log(`[${requestId}] Rejected: No valid inventory updates`);
@@ -7062,6 +7069,10 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     
     // Clean up caches periodically
     cleanupCaches();
+        
+    // Ensure "updates" exists across all branches (prevents ReferenceError)
+    let updates = [];
+
     
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
