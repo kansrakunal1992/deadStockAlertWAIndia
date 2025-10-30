@@ -8061,9 +8061,10 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         }
         
         // Try to parse as inventory update
-        const inventoryUpdates = await parseMultipleUpdates(mockReq);
-        if (inventoryUpdates.length > 0) {
-          console.log(`[${requestId}] Parsed ${inventoryUpdates.length} updates from text message`);
+        const updates = await parseMultipleUpdates(mockReq);
+        if (updates.length > 0) {
+          console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
+          const shopId = From.replace('whatsapp:', '');
           
           // Set user state to inventory mode
           const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
