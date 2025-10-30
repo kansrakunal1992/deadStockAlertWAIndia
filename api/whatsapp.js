@@ -3441,7 +3441,59 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             });
             continue; // Move to next update
           }
-          
+
+         // Check if we need to ask for price
+          if (finalPrice <= 0) {
+            console.log(`[Update ${shopId} - ${product}] No price available, asking for input`);
+            
+            // Set state to await price input
+            await setUserState(`whatsapp:${shopId}`, 'awaitingPriceExpiry', {
+              batchId: batchResult?.id ?? null,
+              product,
+              unit: update.unit,
+              quantity: update.quantity,
+              purchaseDate: purchaseDateISO,
+              autoExpiry: expiryToUse ?? null,
+              needsPrice: true,
+              isPerishable: !!(productMeta?.success && productMeta.requiresExpiry)
+            });
+            
+            // Send price request message
+            const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
+            const edDisplay = expiryToUse ? formatDateForDisplay(expiryToUse) : '—';
+                
+            const prompt = await t(
+              [
+                `Captured ✅ ${product} ${update.quantity} ${update.unit} — awaiting price.`,
+                isPerishable ? `Expiry set: ${edDisplay}` : `No expiry needed.`,
+                ``,
+                `Please send price per ${update.unit}, e.g. "₹60" or "₹60 per ${update.unit}".`,
+                `You can adjust expiry later (within 2 min) after price is saved:`,
+                `• exp +7d / exp +3m / exp +1y`,
+                `• skip (to clear)`
+              ].join('\n'),
+              detectedLanguage, 'ask-price-only'
+            );
+            await sendMessageViaAPI(`whatsapp:${shopId}`, prompt);
+            
+            // Return result indicating we need user input
+            results.push({
+              product, 
+              quantity: update.quantity, 
+              unit: update.unit, 
+              action: update.action,                                         
+              success: true, 
+              needsUserInput: true, 
+              awaiting: 'price', 
+              status: 'pending',
+              deferredPrice: true,
+              // include latest stock even in pending case (nice to have; harmless if undefined)
+              newQuantity: update.quantity, // Since we just added this quantity
+              unitAfter: update.unit
+            });
+            continue; // Move to next update
+          }
+                    
           // If we have a price, continue with normal flow
           // Create batch immediately with defaulted expiry (or blank)
           const batchResult = await createBatchRecord({
@@ -3452,7 +3504,8 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             purchaseDate: purchaseDateISO,
             expiryDate: expiryToUse,
             purchasePrice: finalPrice // may be 0 if unknown now
-          });
+          });          
+          
           if (batchResult?.success) createdBatchEarly = true;
       
           // Ensure inventory reflects the purchase *and* capture stock for summary lines
@@ -3514,6 +3567,27 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       const finalTotalPrice = Number.isFinite(update.totalPrice)
         ? Number(update.totalPrice)
         : (unitPriceForCalc * Math.abs(update.quantity));
+
+      // Add validation for zero price
+        if (unitPriceForCalc <= 0 && update.action === 'sold') {
+          console.warn(`[Update ${shopId} - ${product}] Cannot process sale with zero price`);
+          const errorMsg = await t(
+            `Cannot process sale: No valid price found for ${product}. Please set a price first.`,
+            detectedLanguage,
+            'zero-price-error'
+          );
+          await sendMessageViaAPI(`whatsapp:${shopId}`, errorMsg);
+          results.push({
+            product,
+            quantity: update.quantity,
+            unit: update.unit,
+            action: update.action,
+            success: false,
+            error: 'Zero price not allowed for sales'
+          });
+          continue;
+        }
+      
       const priceSource = (Number(update.price) > 0)
          ? 'message'
          : (productPrice > 0 ? 'db' : null); // only mark db if it's actually > 0
@@ -3637,7 +3711,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               console.log(`[Update ${shopId} - ${product}] Creating sales record`);
               try {
                 // Use database price (productPrice) if available, then fallback to finalPrice
-                const salePrice = productPrice || finalPrice || 0;
+                const salePrice = unitPriceForCalc; // Use pre-calculated unit price
                 const saleValue = salePrice * Math.abs(update.quantity);
                 console.log(`[Update ${shopId} - ${product}] Sales record - salePrice: ${salePrice}, saleValue: ${saleValue}`);
                 
@@ -3651,7 +3725,19 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                   salePrice: salePrice, // Fixed: Use salePrice instead of finalPrice
                   saleValue: saleValue
                 });
-          
+ 
+                // Add validation for zero price
+                if (salePrice <= 0) {
+                  console.warn(`[Update ${shopId} - ${product}] Invalid sale price: ${salePrice}`);
+                  const errorMsg = await t(
+                    `Cannot process sale: No valid price found for ${product}. Please set a price first.`,
+                    detectedLanguage,
+                    'invalid-price'
+                  );
+                  await sendMessageViaAPI(`whatsapp:${shopId}`, errorMsg);
+                  continue; // Skip this update
+                }
+               
           if (salesResult.success) {
             console.log(`[Update ${shopId} - ${product}] Sales record created with ID: ${salesResult.id}`);
 
@@ -3706,7 +3792,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${-Math.abs(update.quantity)}`);
               try {                                 
                 const batchUpdateResult = await updateBatchQuantityByCompositeKey(
-                   normalizeCompositeKey(selectedBatchCompositeKey),
+                  normalizeCompositeKey(selectedBatchCompositeKey),
                    -Math.abs(update.quantity)
                  );
 
@@ -3727,7 +3813,18 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 result.batchError = batchError.message;
               }
             }
+
+            // Add transaction logging
+            console.log(`[Transaction] Sale processed - Product: ${product}, Qty: ${Math.abs(update.quantity)}, Price: ${salePrice}, Total: ${saleValue}`);
             
+            // Send confirmation with price details
+            const confirmationMsg = await t(
+              `✅ Sold ${Math.abs(update.quantity)} ${update.unit} ${product} @ ₹${salePrice} each (Total: ₹${saleValue})`,
+              detectedLanguage,
+              'sale-confirmation'
+            );
+            await sendMessageViaAPI(`whatsapp:${shopId}`, confirmationMsg);
+                        
             // --- NEW: start a short override window (2 min) only if multiple batches exist ---
              try {
                if (await shouldOfferBatchOverride(shopId, product)) {
