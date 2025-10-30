@@ -5483,9 +5483,6 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       handledRequests.add(requestId);
       return res.send(response.toString());
     }
-
-    console.log(`[${requestId}] [6] Parsing updates using AI...`);
-    const updates = await parseMultipleUpdates(req);
     
     
   // Build a minimal req-like object for the parser and parse updates
