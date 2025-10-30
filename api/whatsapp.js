@@ -3105,6 +3105,12 @@ async function parseMultipleUpdates(req) {
       }
     }
   }
+
+  // FIX: Ensure updates is defined before accessing its length
+  if (typeof updates === 'undefined') {
+    updates = [];
+  }
+  
   console.log(`[Rule-based Parsing] Parsed ${updates.length} valid updates from transcript`);   
   if (userState?.mode === 'awaitingTransactionDetails') {
       await deleteUserStateFromDB(userState.id);
