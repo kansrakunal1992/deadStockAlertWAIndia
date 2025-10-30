@@ -3341,17 +3341,19 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         continue; // Move to next update
       }
 
-      // Get product price from database
-      let productPrice = 0;
       let needsPriceInput = false;
-      try {
-        const priceResult = await getProductPrice(product);
-        if (priceResult.success) {    
-          productPrice = Number(priceResult.price) || 0;
-        }
-      } catch (error) {
-        console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
-      }
+      // Get product price from database           
+      let productPrice = 0;
+            let productPriceUnit = null;
+            try {
+              const priceResult = await getProductPrice(product);
+              if (priceResult?.success) {
+                productPrice     = toNumberSafe(priceResult.price);
+                productPriceUnit = priceResult.unit || null;
+              }
+            } catch (error) {
+              console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
+            }
             
     // === NEW PURCHASE FLOW: default expiry, price essential; do not block on expiry ===
         if (update.action === 'purchased') {
@@ -3443,58 +3445,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             continue; // Move to next update
           }
 
-         // Check if we need to ask for price
-          if (finalPrice <= 0) {
-            console.log(`[Update ${shopId} - ${product}] No price available, asking for input`);
-            
-            // Set state to await price input
-            await setUserState(`whatsapp:${shopId}`, 'awaitingPriceExpiry', {
-              batchId: batchResult?.id ?? null,
-              product,
-              unit: update.unit,
-              quantity: update.quantity,
-              purchaseDate: purchaseDateISO,
-              autoExpiry: expiryToUse ?? null,
-              needsPrice: true,
-              isPerishable: !!(productMeta?.success && productMeta.requiresExpiry)
-            });
-            
-            // Send price request message
-            const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
-            const edDisplay = expiryToUse ? formatDateForDisplay(expiryToUse) : '—';
-                
-            const prompt = await t(
-              [
-                `Captured ✅ ${product} ${update.quantity} ${update.unit} — awaiting price.`,
-                isPerishable ? `Expiry set: ${edDisplay}` : `No expiry needed.`,
-                ``,
-                `Please send price per ${update.unit}, e.g. "₹60" or "₹60 per ${update.unit}".`,
-                `You can adjust expiry later (within 2 min) after price is saved:`,
-                `• exp +7d / exp +3m / exp +1y`,
-                `• skip (to clear)`
-              ].join('\n'),
-              detectedLanguage, 'ask-price-only'
-            );
-            await sendMessageViaAPI(`whatsapp:${shopId}`, prompt);
-            
-            // Return result indicating we need user input
-            results.push({
-              product, 
-              quantity: update.quantity, 
-              unit: update.unit, 
-              action: update.action,                                         
-              success: true, 
-              needsUserInput: true, 
-              awaiting: 'price', 
-              status: 'pending',
-              deferredPrice: true,
-              // include latest stock even in pending case (nice to have; harmless if undefined)
-              newQuantity: update.quantity, // Since we just added this quantity
-              unitAfter: update.unit
-            });
-            continue; // Move to next update
-          }
-                    
+                          
           // If we have a price, continue with normal flow
           // Create batch immediately with defaulted expiry (or blank)
           const batchResult = await createBatchRecord({
@@ -3563,20 +3514,23 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         // === END NEW block ===
 
       // Use provided price or fall back to database price            
-      // NEW: reliable price/value without leaking block-scoped vars
-      const unitPriceForCalc = Number(update.price ?? productPrice ?? 0);
+      // NEW: reliable price/value without leaking block-scoped vars            
+      const msgUnitPrice = toNumberSafe(update.price);
+            const dbAdjustedUnitPrice = productPrice * unitConvFactor(productPriceUnit, update.unit);
+            const unitPriceForCalc = msgUnitPrice > 0 ? msgUnitPrice : (dbAdjustedUnitPrice || 0);
+
       const finalTotalPrice = Number.isFinite(update.totalPrice)
         ? Number(update.totalPrice)
         : (unitPriceForCalc * Math.abs(update.quantity));
 
       // Add validation for zero price
         if (unitPriceForCalc <= 0 && update.action === 'sold') {
-          console.warn(`[Update ${shopId} - ${product}] Cannot process sale with zero price`);
+          console.warn(`[Update ${shopId} - ${product}] Cannot process sale with zero price`);                    
           const errorMsg = await t(
-            `Cannot process sale: No valid price found for ${product}. Please set a price first.`,
-            detectedLanguage,
-            'zero-price-error'
-          );
+                    `Cannot process sale: No valid price found for ${product}. Please set a price first.`,
+                    languageCode,
+                    'zero-price-error'
+                  );
           await sendMessageViaAPI(`whatsapp:${shopId}`, errorMsg);
           results.push({
             product,
@@ -3729,12 +3683,12 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
  
                 // Add validation for zero price
                 if (salePrice <= 0) {
-                  console.warn(`[Update ${shopId} - ${product}] Invalid sale price: ${salePrice}`);
+                  console.warn(`[Update ${shopId} - ${product}] Invalid sale price: ${salePrice}`);                                    
                   const errorMsg = await t(
-                    `Cannot process sale: No valid price found for ${product}. Please set a price first.`,
-                    detectedLanguage,
-                    'invalid-price'
-                  );
+                              `Cannot process sale: No valid price found for ${product}. Please set a price first.`,
+                              languageCode,
+                              'invalid-price'
+                            );
                   await sendMessageViaAPI(`whatsapp:${shopId}`, errorMsg);
                   continue; // Skip this update
                 }
@@ -3818,12 +3772,12 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             // Add transaction logging
             console.log(`[Transaction] Sale processed - Product: ${product}, Qty: ${Math.abs(update.quantity)}, Price: ${salePrice}, Total: ${saleValue}`);
             
-            // Send confirmation with price details
+            // Send confirmation with price details                        
             const confirmationMsg = await t(
-              `✅ Sold ${Math.abs(update.quantity)} ${update.unit} ${product} @ ₹${salePrice} each (Total: ₹${saleValue})`,
-              detectedLanguage,
-              'sale-confirmation'
-            );
+                      `✅ Sold ${Math.abs(update.quantity)} ${update.unit} ${product} @ ₹${salePrice} each (Total: ₹${saleValue})`,
+                      languageCode,
+                      'sale-confirmation'
+                    );
             await sendMessageViaAPI(`whatsapp:${shopId}`, confirmationMsg);
                         
             // --- NEW: start a short override window (2 min) only if multiple batches exist ---
@@ -3908,7 +3862,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
        
           // NEW: Enrich outgoing item with price/value so renderer can show them
           // Use a single effective price everywhere: message > DB > 0
-          const effectivePrice = Number(update.price ?? productPrice ?? 0);
+          const effectivePrice = toNumberSafe(update.price ?? productPrice ?? 0);
           const enriched = {
           product,
           quantity: update.quantity,
@@ -4503,6 +4457,38 @@ function singularize(unit) {
   return map[u] || unit.replace(/s$/i, '');
 }
 
+
+// === Robust price & unit helpers (added) ===
+// Safe numeric coercion: handles "₹75,000", "75,000.50", etc.
+function toNumberSafe(v) {
+  const n = Number(v);
+  if (Number.isFinite(n)) return n;
+  const cleaned = String(v).replace(/[^\d.\-]/g, '').replace(/,/g, '');
+  const p = parseFloat(cleaned);
+  return Number.isFinite(p) ? p : 0;
+}
+
+// Unit normalization & simple conversion between common base units
+const UNIT_NORMALS = {
+  kg:'kg', kilo:'kg', kgs:'kg', kilogram:'kg', kilograms:'kg',
+  g:'g', gram:'g', grams:'g',
+  l:'l', liter:'l', litre:'l', liters:'l', litres:'l',
+  ml:'ml', mls:'ml',
+  piece:'piece', pieces:'piece',
+  packet:'packet', packets:'packet',
+  box:'box', boxes:'box'
+};
+
+function unitConvFactor(fromUnit, toUnit) {
+  const f = UNIT_NORMALS[String(fromUnit || '').toLowerCase()];
+  const t = UNIT_NORMALS[String(toUnit   || '').toLowerCase()];
+  if (!f || !t) return 1;
+  if (f === 'g'  && t === 'kg') return 1000;     // 1 kg = 1000 g
+  if (f === 'kg' && t === 'g')  return 1/1000;
+  if (f === 'ml' && t === 'l')  return 1000;     // 1 l  = 1000 ml
+  if (f === 'l'  && t === 'ml') return 1/1000;
+  return 1; // same or unknown pairs
+}
 
 // --- Small helper: build a minimal req-like object for the parser ---
 function buildFakeReq(from, body) {
