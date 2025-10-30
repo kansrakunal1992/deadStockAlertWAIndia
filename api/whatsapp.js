@@ -5487,15 +5487,21 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     console.log(`[${requestId}] [6] Parsing updates using AI...`);
     const updates = await parseMultipleUpdates(req);
     
+    
+  // Build a minimal req-like object for the parser and parse updates
+    const fakeReq = { body: { From: from, Body: transcript } };
+    console.log(`[${requestId}] [6] Parsing updates using AI...`);
+    const updates = await parseMultipleUpdates(fakeReq);
+  
     // Optional fallback: if AI/Rules returned nothing, try a simple "return ..." handler once
-        if (!updates || updates.length === 0) {
-          const didReturn = await tryHandleReturnText(transcript, from, detectedLanguage, requestId);
-          if (didReturn) {
-            handledRequests.add(requestId);
-            return res.send(response.toString());
-          }
-        }
-        
+    if (!updates || updates.length === 0) {
+      const didReturn = await tryHandleReturnText(transcript, from, detectedLanguage, requestId);
+      if (didReturn) {
+        handledRequests.add(requestId);
+        return res.send(response.toString());
+      }
+    }
+     
     if (updates.length === 0) {
       console.log(`[${requestId}] Rejected: No valid inventory updates`);
       await sendSystemMessage(
@@ -6853,7 +6859,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     
     // If we get here, it's not a valid inventory update and not a quick query
     // Check if any updates are for unknown products
-    const unknownProducts = parsedUpdates.filter(u => !u.isKnown);
+    const unknownProducts = updates.filter(u => !u.isKnown);
     if (unknownProducts.length > 0) {
       console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
       
