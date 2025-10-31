@@ -1186,6 +1186,10 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
     try {
                 await updateInventory(shopId, product, quantity, unit);
                 console.log(`[handleAwaitingPriceExpiry] Inventory updated for ${product}: +${quantity} ${unit}`);
+                    
+    // ✅ ADD: Confirmation message to user
+                const confirmation = `✅ Done:\n✅ Purchased ${quantity} ${unit} ${product} (Stock: updated)\n\n✅ Successfully updated 1 of 1 items`;
+                await sendMessageViaAPI(From, confirmation)
             } catch (e) {
                 console.error(`[handleAwaitingPriceExpiry] Failed to update inventory:`, e.message);
             }
