@@ -91,6 +91,97 @@ function getModeBadge(action, lang) {
   return MODE_BADGE.none[lc] || MODE_BADGE.none.en;
 }
 
+
+// ===== Localized single-word direct-set actions (switch instantly) =====
+const LOCAL_SET_WORDS = {
+  // hi
+  'खरीद': 'purchase', 'बिक्री': 'sold', 'वापसी': 'returned',
+  // bn
+  'ক্রয়': 'purchase', 'বিক্রি': 'sold', 'রিটার্ন': 'returned',
+  // ta
+  'கொள்முதல்': 'purchase', 'விற்பனை': 'sold', 'ரிட்டர்ன்': 'returned',
+  // te
+  'కొనుగోలు': 'purchase', 'అమ్మకం': 'sold', 'రిటర్న్': 'returned',
+  // kn
+  'ಖರೀದಿ': 'purchase', 'ಮಾರಾಟ': 'sold', 'ರಿಟರ್ನ್': 'returned',
+  // mr
+  'खरेदी': 'purchase', 'विक्री': 'sold', 'परत': 'returned',
+  // gu
+  'ખરીદી': 'purchase', 'વેચાણ': 'sold', 'રીટર્ન': 'returned'
+};
+
+// Accept one-word localized switch triggers or direct-set actions
+function parseModeSwitchLocalized(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const t = raw.toLowerCase();
+
+  // Direct English form: "mode <purchase|sale|return>"
+  const m = t.match(/^mode\s+(purchase|sale|return)$/i);
+  if (m) return { set: m[1] };
+
+  // Localized direct-set (single word): e.g., 'खरीद', 'விற்பனை'
+  const setLocal = LOCAL_SET_WORDS[raw] || LOCAL_SET_WORDS[t];
+  if (setLocal) return { set: setLocal };
+
+  // One-word ask (open options): if it matches any fallback token
+  const singleWord = t.replace(/\s+/g, ' ');
+  const isSingle = !/\s/.test(singleWord);
+  const inFallbacks = SWITCH_FALLBACKS.some(x => String(x).toLowerCase() === singleWord);
+  if (isSingle && inFallbacks) return { ask: true };
+
+  // Phrase contains switch hint: open options
+  const containsFallback = SWITCH_FALLBACKS.some(x => t.includes(String(x).toLowerCase()));
+  if (containsFallback) return { ask: true };
+
+  return null;
+}
+
+// Normalize and persist sticky mode
+async function setStickyMode(from, actionOrWord) {
+  const map = {
+    purchase: 'purchase', buy: 'purchase', bought: 'purchase',
+    sale: 'sold', sell: 'sold', sold: 'sold',
+    return: 'returned', returned: 'returned'
+  };
+  const norm = (map[actionOrWord] || actionOrWord || '').toLowerCase();
+  const finalAction = ['purchase', 'sold', 'returned'].includes(norm) ? norm : 'purchase';
+  await setUserState(from, 'awaitingTransactionDetails', { action: finalAction });
+}
+
+// ===== LOCALIZED FOOTER TAG: append «<MODE_BADGE> • <SWITCH_WORD>» to every message =====
+async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
+  try {
+        
+    // Guard: if footer already present, do not append again
+    if (/«.+\s•\s.+»$/.test(text)) return text;
+
+    const shopId = String(from).replace('whatsapp:', '');
+    // 1) Read current sticky mode (awaitingTransactionDetails)
+    const state = await getUserStateFromDB(shopId);
+    const action = state?.data?.action || null; // 'purchase' | 'sold' | 'returned' | null
+
+    // 2) Resolve language to use: prefer saved user preference; else detected hint; else 'en'
+    let lang = String(detectedLanguageHint || 'en').toLowerCase();
+    try {
+      const pref = await getUserPreference(shopId);
+      if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+    } catch (_) { /* ignore */ }
+
+    // 3) Build badge in user language
+    const badge = getModeBadge(action, lang);        // e.g., 'बिक्री', 'விற்பனை', 'SALE'
+    const switchWord = getSwitchWordFor(lang);       // e.g., 'मोड', 'மோட்', 'mode'
+    const tag = `«${badge} • ${switchWord}»`;
+
+    // 4) Append on a new line; keep WA length constraints safe
+    return text.endsWith('\n') ? (text + tag) : (text + '\n' + tag);
+  } catch {
+    // Fallback if anything fails
+    return text + '\n«NONE • mode»';
+  }
+}
+
+
 // ====== SUMMARY COMMAND ALIASES (multilingual, native + translit) ======
 const SUMMARY_ALIAS_MAP = {
   hi: {
@@ -1856,7 +1947,18 @@ function _norm(s) { return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,''
 
 async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
-  const text = String(rawBody || '').trim();
+  const text = String(rawBody || '').trim();  
+    
+  if (isResetMessage(text)) {
+      await clearUserState(From);
+      await sendMessageViaAPI(
+        From,
+        await t('✅ Reset. Mode cleared.', detectedLanguage, `${requestId}::reset`),
+        detectedLanguage
+      );
+      return true;
+    }
+  
   const shopId = From.replace('whatsapp:', '');
   
 // Fallback: if an interactive list id leaked into Body, map it to command
@@ -1894,6 +1996,27 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     return true;
    }
   
+
+  // ---- Localized one-word switch handler (open options or set directly) ----
+  {
+    const switchCmd = parseModeSwitchLocalized(text);
+    if (switchCmd) {
+      if (switchCmd.ask) {
+        await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+        return true;
+      }
+      if (switchCmd.set) {
+        await setStickyMode(From, switchCmd.set);
+        await sendMessageViaAPI(
+          From,
+          await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`),
+          detectedLanguage
+        );
+        return true;
+      }
+    }
+  }
+    
   // =======================
   // Customer Return command
   // =======================
@@ -2365,7 +2488,18 @@ function parsePeriodKeyword(txt) {
 
 async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   const startTime = Date.now();
-  const text = Body.trim();
+  const text = Body.trim();    
+  
+  if (isResetMessage(text)) {
+      await clearUserState(From);
+      await sendMessageViaAPI(
+        From,
+        await t('✅ Reset. Mode cleared.', detectedLanguage, `${requestId}::reset`),
+        detectedLanguage
+      );
+      return true;
+    }
+  
   const shopId = From.replace('whatsapp:', '');
 try{  
 // NEW: Intercept post‑purchase expiry override first
@@ -2379,7 +2513,28 @@ try{
     await sendWelcomeFlowLocalized(From, detectedLanguage || 'en');
     return true;
    }
+  
 
+  // ---- Localized one-word switch handler (open options or set directly) ----
+  {
+    const switchCmd = parseModeSwitchLocalized(text);
+    if (switchCmd) {
+      if (switchCmd.ask) {
+        await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+        return true;
+      }
+      if (switchCmd.set) {
+        await setStickyMode(From, switchCmd.set);
+        await sendMessageViaAPI(
+          From,
+          await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`),
+          detectedLanguage
+        );
+        return true;
+      }
+    }
+  }
+    
   // =======================
   // Customer Return command
   // =======================
@@ -3138,9 +3293,10 @@ async function parseMultipleUpdates(req) {
       }).filter(isValidInventoryUpdate);
       if (cleaned.length > 0) {
         console.log(`[AI Parsing] Successfully parsed ${cleaned.length} valid updates using AI`);              
-        if (userState?.mode === 'awaitingTransactionDetails') {
-                  await deleteUserStateFromDB(userState.id);
-                }
+        //if (userState?.mode === 'awaitingTransactionDetails') {
+        //          await deleteUserStateFromDB(userState.id);
+        //        }
+        // STICKY MODE: keep awaitingTransactionDetails until user switches/resets
         return cleaned;
       } else {
         console.log(`[AI Parsing] AI produced ${aiUpdate.length} updates but none were valid. Falling back to rule-based parsing.`);
@@ -3187,9 +3343,10 @@ async function parseMultipleUpdates(req) {
   }
   
   console.log(`[Rule-based Parsing] Parsed ${updates.length} valid updates from transcript`);   
-  if (userState?.mode === 'awaitingTransactionDetails') {
-      await deleteUserStateFromDB(userState.id);
-    }
+  //if (userState?.mode === 'awaitingTransactionDetails') {
+  //    await deleteUserStateFromDB(userState.id);
+  //  }
+  // STICKY MODE: keep awaitingTransactionDetails until user switches/resets
   return updates;
 }
 
@@ -4220,19 +4377,22 @@ async function sendSystemMessage(message, from, detectedLanguage, requestId, res
     if (!userLanguage) {
       userLanguage = 'en';
     }
-    // Generate multilingual response
+    // Generate multilingual response        
     const formattedMessage = await t(message, userLanguage, requestId);
-// If long, send via API (which auto-splits) and keep TwiML minimal
+        // Append localized mode footer
+        const withTag = await tagWithLocalizedMode(from, formattedMessage, userLanguage);
+        // If long, send via API (which auto-splits) and keep TwiML minimal        
     const MAX_LENGTH = 1600;
-    if (formattedMessage.length > MAX_LENGTH) {
-     await sendMessageViaAPI(from, formattedMessage);
+        if (withTag.length > MAX_LENGTH) {
+          await sendMessageViaAPI(from, withTag, userLanguage);
+
       // Optional: small ack so Twilio gets a valid TwiML
       response.message('✅ Sent.');
-      return formattedMessage;
+      return withTag;
     }
-    // Otherwise, TwiML is fine
-    response.message(formattedMessage);
-    return formattedMessage;
+    // Otherwise, TwiML is fine          
+      response.message(withTag);
+      return withTag;
     
   } catch (error) {
     console.error(`[${requestId}] Error sending system message:`, error.message);
@@ -6401,6 +6561,10 @@ async function googleTranscribe(flacBuffer, requestId) {
 // Function to send WhatsApp message via Twilio API (for async responses)
 async function sendMessageViaAPI(to, body) {
   try {
+        
+    // Append localized footer once, using saved/detected language
+    body = await tagWithLocalizedMode(to, body, detectedLanguageHint);
+    
     const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
     const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
     
