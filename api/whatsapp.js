@@ -21,6 +21,76 @@ const languageNames = {
   'en': 'English'
 };
 
+// ===== LOCALIZED MODE BADGES & SWITCH WORD (one-word, language-appropriate) =====
+// One-word badge shown for the current mode (Purchase / Sale / Return / None) in user's language.
+const MODE_BADGE = {
+  purchase: {
+    en: 'PURCHASE', hi: 'खरीद', bn: 'ক্রয়', ta: 'கொள்முதல்', te: 'కొనుగోలు',
+    kn: 'ಖರೀದಿ', mr: 'खरेदी', gu: 'ખરીદી'
+  },
+  sold: {
+    en: 'SALE', hi: 'बिक्री', bn: 'বিক্রি', ta: 'விற்பனை', te: 'అమ్మకం',
+    kn: 'ಮಾರಾಟ', mr: 'विक्री', gu: 'વેચાણ'
+  },
+  returned: {
+    en: 'RETURN', hi: 'वापसी', bn: 'রিটার্ন', ta: 'ரிட்டர்ன்', te: 'రిటర్న్',
+    kn: 'ರಿಟರ್ನ್', mr: 'परत', gu: 'રીટર્ન'
+  },
+  none: {
+    en: 'NONE', hi: 'कोई', bn: 'নাই', ta: 'இல்லை', te: 'లేను',
+    kn: 'ಇಲ್ಲ', mr: 'काही नाही', gu: 'નથી'
+  }
+};
+
+// Single-word “switch mode” hint to display in the footer (localized).
+// This is what users will see as the one-word hint to switch context.
+const SWITCH_WORD = {
+  en: 'mode',
+  hi: 'मोड',
+  bn: 'মোড',
+  ta: 'மோட்',
+  te: 'మోడ్',
+  kn: 'ಮೋಡ್',
+  mr: 'मोड',
+  gu: 'મોડ'
+};
+
+// Fallback tokens we accept from users (they might type English/Hinglish or local verbs)
+const SWITCH_FALLBACKS = [
+  // English / Hinglish
+  'mode', 'switch', 'change', 'badlo',
+  // Hindi
+  'मोड', 'बदलें', 'बदल', 'बदले',
+  // Bengali
+  'মোড', 'বদল',
+  // Tamil
+  'மோட்', 'மாற்று',
+  // Telugu
+  'మోడ్', 'మార్చు',
+  // Kannada
+  'ಮೋಡ್', 'ಬದಲಿಸಿ',
+  // Marathi
+  'मोड', 'बदला',
+  // Gujarati
+  'મોડ', 'બદલો'
+];
+
+// Helper: which one-word switch label to show for a given language
+function getSwitchWordFor(lang) {
+  const lc = String(lang || 'en').toLowerCase();
+  return SWITCH_WORD[lc] || SWITCH_WORD.en;
+}
+
+// Helper: resolve the one-word badge for current action in user's language
+function getModeBadge(action, lang) {
+  const a = (action || '').toLowerCase();
+  const lc = String(lang || 'en').toLowerCase();
+  if (a === 'purchase' || a === 'purchased') return MODE_BADGE.purchase[lc] || MODE_BADGE.purchase.en;
+  if (a === 'sold') return MODE_BADGE.sold[lc] || MODE_BADGE.sold.en;
+  if (a === 'returned') return MODE_BADGE.returned[lc] || MODE_BADGE.returned.en;
+  return MODE_BADGE.none[lc] || MODE_BADGE.none.en;
+}
+
 // ====== SUMMARY COMMAND ALIASES (multilingual, native + translit) ======
 const SUMMARY_ALIAS_MAP = {
   hi: {
