@@ -1182,7 +1182,13 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
     if (updatedPrice && batchId) {
       await updateBatchPurchasePrice(batchId, updatedPrice, quantity);
       await upsertProduct({ name: product, price: updatedPrice, unit });
-    }
+    }        
+    try {
+                await updateInventory(shopId, product, quantity, unit);
+                console.log(`[handleAwaitingPriceExpiry] Inventory updated for ${product}: +${quantity} ${unit}`);
+            } catch (e) {
+                console.error(`[handleAwaitingPriceExpiry] Failed to update inventory:`, e.message);
+            }
   } catch (e) {
     console.warn(`[${requestId}] price updates failed:`, e.message);
   }
