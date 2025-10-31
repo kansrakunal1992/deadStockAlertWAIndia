@@ -6563,7 +6563,7 @@ async function sendMessageViaAPI(to, body) {
   try {
         
     // Append localized footer once, using saved/detected language
-    body = await tagWithLocalizedMode(to, body, detectedLanguageHint);
+    body = await tagWithLocalizedMode(to, body, 'en');
     
     const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
     const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
