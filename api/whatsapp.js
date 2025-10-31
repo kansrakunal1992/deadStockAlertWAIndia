@@ -492,18 +492,18 @@ function _normLite(s) {
    // Quick‑Reply buttons (payload IDs are language‑independent)
    if (payload === 'qr_purchase') {
      await setUserState(from, 'awaitingTransactionDetails', { action: 'purchase' });
-     const msg = 'Examples (purchase):\n• bought milk 10 ltr ₹60 exp +7d\n• खरीदी दूध 10 लीटर ₹60 exp +7d';
+     const msg = 'Examples (purchase):\n• milk 10 ltr ₹60 exp +7d\n• दूध 10 लीटर ₹60 exp +7d';
      await sendMessageViaAPI(from, msg);
      return true;
    }
    if (payload === 'qr_sale') {
      await setUserState(from, 'awaitingTransactionDetails', { action: 'sold' });
-     await sendMessageViaAPI(from, 'Examples (sale):\n• sold sugar 2 kg\n• becha doodh 3 ltr');
+     await sendMessageViaAPI(from, 'Examples (sale):\n• sugar 2 kg\n• doodh 3 ltr');
      return true;
    }
    if (payload === 'qr_return') {
      await setUserState(from, 'awaitingTransactionDetails', { action: 'returned' });
-     await sendMessageViaAPI(from, 'Examples (return):\n• return Parle-G 3 packets\n• customer return milk 1 liter');
+     await sendMessageViaAPI(from, 'Examples (return):\n• Parle-G 3 packets\n• milk 1 liter');
      return true;
    }
 
