@@ -6829,12 +6829,32 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         
 // Send results (INLINE-CONFIRM aware; single message)
           const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+                  
+          // --- Single-sale confirmation (voice): send ONE crisp message and return ---
+            if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
+              const x = processed[0];
+              await sendSaleConfirmationOnce(
+                From,
+                detectedLanguage,
+                requestId,
+                {
+                  product: x.product,
+                  qty: x.quantity,
+                  unit: x.unitAfter ?? x.unit ?? '',
+                  // try common fields in your result object for per-unit price:
+                  pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+                  newQuantity: x.newQuantity
+                }
+              );
+              return;
+            }
+
           const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
           let message = header;
           let successCount = 0;
 
           for (const r of processed) {
-            const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+            const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
             if (!rawLine) continue;
             const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
             const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
@@ -7237,12 +7257,31 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       
 // Send results (INLINE-CONFIRM aware; single message)
         const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+              
+      // --- Single-sale confirmation (text #1): send ONE crisp message and return -
+        if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
+          const x = processed[0];
+          await sendSaleConfirmationOnce(
+            From,
+            detectedLanguage,
+            requestId,
+            {
+              product: x.product,
+              qty: x.quantity,
+              unit: x.unitAfter ?? x.unit ?? '',
+              pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+              newQuantity: x.newQuantity
+            }
+          );
+          return;
+        }
+
         const header = chooseHeader(processed.length, COMPACT_MODE, false);
         let message = header;
         let successCount = 0;
 
         for (const r of processed) {
-          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
           if (!rawLine) continue;
           const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
           const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
@@ -7991,11 +8030,33 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
     
     const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
       const header = chooseHeader(processed.length, COMPACT_MODE, false);
-      let message = header;
+          
+      // --- Single-sale confirmation (confirmation flow): one message + return ----
+        if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
+          const x = processed[0];
+          await sendSaleConfirmationOnce(
+            From,
+            detectedLanguage,
+            requestId,
+            {
+              product: x.product,
+              qty: x.quantity,
+              unit: x.unitAfter ?? x.unit ?? '',
+              pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+              newQuantity: x.newQuantity
+            }
+          );
+          // Clear state after sending the single confirmation
+          await clearUserState(From);
+          return;
+        }
+        // --------------------------------------------------------------------------
+        let message = header;
+    
       let successCount = 0;
 
       for (const r of processed) {
-        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
         if (!rawLine) continue;
         const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
         const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
@@ -8092,7 +8153,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
         let successCount = 0;
 
         for (const r of processed) {
-          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
           if (!rawLine) continue;
           const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
           const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
@@ -8421,12 +8482,31 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           
           // Send results (INLINE-CONFIRM aware; single message)
             const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+                        
+            // --- Single-sale confirmation (text #1): send ONE crisp message and return -
+              if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
+                const x = processed[0];
+                await sendSaleConfirmationOnce(
+                  From,
+                  detectedLanguage,
+                  requestId,
+                  {
+                    product: x.product,
+                    qty: x.quantity,
+                    unit: x.unitAfter ?? x.unit ?? '',
+                    pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+                    newQuantity: x.newQuantity
+                  }
+                );
+                return;
+              }
+
             const header = chooseHeader(processed.length, COMPACT_MODE, false);
             let message = header;
             let successCount = 0;
 
             for (const r of processed) {
-              const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+              const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
               if (!rawLine) continue;
               const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
               const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
@@ -8533,7 +8613,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         let successCount = 0;
 
         for (const r of processed) {
-          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
           if (!rawLine) continue;
           const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
           const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
@@ -8694,7 +8774,7 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
       let successCount = 0;
 
       for (const r of processed) {
-        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
         if (!rawLine) continue;
         const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
         const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
@@ -8783,7 +8863,7 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
           let successCount = 0;
 
           for (const r of processed) {
-            const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+            const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
             if (!rawLine) continue;
             const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
             const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
@@ -8972,7 +9052,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
       
                 for (const r of processed) {
                   // Prefer inlineConfirmText (buffered in updateMultipleInventory)
-                  const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+                  const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
                   if (!rawLine) continue;
       
                   // In Compact, ensure stock is shown once, if not already present
@@ -9162,7 +9242,7 @@ const header = chooseHeader(processed.length, COMPACT_MODE, false);
       let successCount = 0;
 
       for (const r of processed) {
-        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE);
+        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
         if (!rawLine) continue;
         const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
         const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
