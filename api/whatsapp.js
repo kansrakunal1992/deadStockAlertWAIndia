@@ -3298,10 +3298,6 @@ async function parseMultipleUpdates(req) {
           } else {
             console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
           }
-
-          else if (pendingAction) {
-            console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
-          }
           return update;
         } catch (error) {
           console.warn(`[AI Parsing] Error processing update:`, error.message);
