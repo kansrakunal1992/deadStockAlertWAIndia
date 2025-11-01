@@ -3278,11 +3278,28 @@ async function parseMultipleUpdates(req) {
     if (aiUpdate && aiUpdate.length > 0) {          
     const cleaned = aiUpdate.map(update => {
         try {
-          // Apply state override with validation
-          if (pendingAction && VALID_ACTIONS.includes(pendingAction)) {
-            update.action = pendingAction;
-            console.log(`[AI Parsing] Overriding AI action with state action: ${update.action}`);
-          } else if (pendingAction) {
+          // Apply state override with validation            
+          const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
+          const ACTION_MAP = {
+            purchase: 'purchased',
+            buy: 'purchased',
+            bought: 'purchased',
+            sold: 'sold',
+            sale: 'sold',
+            return: 'returned',
+            returned: 'returned'
+          };
+          
+          const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
+          
+          if (['purchased', 'sold', 'remaining', 'returned'].includes(finalAction)) {
+            update.action = finalAction;
+            console.log(`[AI Parsing] Overriding AI action with normalized state action: ${update.action}`);
+          } else {
+            console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
+          }
+
+          else if (pendingAction) {
             console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
           }
           return update;
@@ -3325,11 +3342,26 @@ async function parseMultipleUpdates(req) {
       try {
         let update = parseSingleUpdate(trimmed);
         if (update && update.product) {
-          // Apply state override for rule-based parsing too
-          if (pendingAction && VALID_ACTIONS.includes(pendingAction)) {
-            update.action = pendingAction;
-            console.log(`[Rule Parsing] Overriding rule action with state action: ${update.action}`);
-          }          
+          // Apply state override for rule-based parsing too                    
+          const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
+          const ACTION_MAP = {
+            purchase: 'purchased',
+            buy: 'purchased',
+            bought: 'purchased',
+            sold: 'sold',
+            sale: 'sold',
+            return: 'returned',
+            returned: 'returned'
+          };
+          
+          const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
+          
+          if (['purchased', 'sold', 'remaining', 'returned'].includes(finalAction)) {
+            update.action = finalAction;
+            console.log(`[AI Parsing] Overriding AI action with normalized state action: ${update.action}`);
+          } else {
+            console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
+          }      
           // Only translate if not already processed by AI
           update.product = await translateProductName(update.product, 'rule-parsing');
         }
