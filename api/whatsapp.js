@@ -3466,9 +3466,18 @@ function isValidInventoryUpdate(parsed) {
     console.warn(`[Validation] Rejected due to invalid action: ${parsed.action}`);
   }
   
-  // Allow unknown products but require valid quantity and action
+  // Allow unknown products but require valid quantity and action    
+  const normalizedAction = String(parsed.action ?? '').toLowerCase();
+  const validAction = ['purchased', 'sold', 'remaining', 'returned'].includes(normalizedAction);
   const validQuantity = parsed.quantity !== 0;
-  const validAction = ['purchased', 'sold', 'remaining', 'returned'].includes(parsed.action);
+  
+  if (!validAction) {
+    console.warn(`[Validation] Rejected due to invalid action: ${parsed.action}`);
+  }
+  if (!validQuantity) {
+    console.warn(`[Validation] Rejected due to zero quantity: ${parsed.quantity}`);
+  }
+  
   return validQuantity && validAction;
 }
 
