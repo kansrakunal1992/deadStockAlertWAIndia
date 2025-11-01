@@ -802,12 +802,12 @@ function capitalize(s) {
 /**
  * r: { product, quantity, unit, unitAfter, action, success, error, newQuantity? }
  */
-function formatResultLine(r, compact = true) {
+function formatResultLine(r, compact = true, includeStockPart = true) {
   const qty = Math.abs(r.quantity ?? 0);
-  const unit = r.unitAfter ?? r.unit ?? '';
-  const stockPart = Number.isFinite(r.newQuantity)
-    ? ` (Stock: ${r.newQuantity} ${unit})`
-    : '';
+  const unit = r.unitAfter ?? r.unit ?? '';    
+  const stockPart = (includeStockPart && Number.isFinite(r.newQuantity))
+      ? ` (Stock: ${r.newQuantity} ${unit})`
+      : '';
   const act = capitalize(r.action ?? '');
   if (compact) {
     if (r.success) {
@@ -819,6 +819,30 @@ function formatResultLine(r, compact = true) {
   const tail = r.success ? '✅' : `❌ ${r.error ?? 'Error'}`;
   return `• ${r.product}: ${qty} ${unit} ${act}${stockPart} ${tail}`.trim();
 }
+
+// --- Single-sale confirmation (compose & send once) --------------------------
+const saleConfirmTracker = new Set();
+
+function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity }) {
+  const total = Number.isFinite(pricePerUnit) ? (pricePerUnit * Math.abs(qty)) : null;
+  const priceTxt = Number.isFinite(pricePerUnit)
+    ? `@ ₹${pricePerUnit} each — Total: ₹${total}`
+    : `@ ₹? each`;
+  const header = `✅ Sold ${Math.abs(qty)} ${unit} ${product} ${priceTxt}`.trim();
+  const stockLine = Number.isFinite(newQuantity) ? `Stock: ${newQuantity} ${unit}` : '';
+  return stockLine ? `${header}\n${stockLine}` : header;
+}
+
+async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, info) {
+  // Gate duplicates per request
+  if (saleConfirmTracker.has(requestId)) return;
+  saleConfirmTracker.add(requestId);
+  const body = composeSaleConfirmation(info);
+  const msg = await t(body, detectedLanguage ?? 'en', requestId);
+  await sendMessageViaAPI(From, msg);
+}
+// ----------------------------------------------------------------------------- 
+
 
 function chooseHeader(count, compact = true, isPrice = false) {
   if (compact) {
