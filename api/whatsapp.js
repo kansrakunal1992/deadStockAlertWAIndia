@@ -3797,6 +3797,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             await saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
               batchId: batchResult?.id ?? null,
               product,
+              action: 'purchase',
               purchaseDateISO,
               currentExpiryISO: expiryToUse ?? null,
               createdAtISO: new Date().toISOString(),
@@ -4094,6 +4095,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                  await saveUserStateToDB(shopId, 'awaitingBatchOverride', {
                    saleRecordId: salesResult.id,
                    product,
+                   action: 'purchase',
                    unit: update.unit,
                    quantity: Math.abs(update.quantity),
                    oldCompositeKey: selectedBatchCompositeKey,
