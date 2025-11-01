@@ -157,9 +157,28 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
     if (/«.+\s•\s.+»$/.test(text)) return text;
 
     const shopId = String(from).replace('whatsapp:', '');
-    // 1) Read current sticky mode (awaitingTransactionDetails)
+    
+// 1) Read current state and derive the *effective* action used for footer
     const state = await getUserStateFromDB(shopId);
-    const action = state?.data?.action || null; // 'purchase' | 'sold' | 'returned' | null
+    let action = null; // 'purchase' | 'sold' | 'returned' | null
+    if (state) {
+      switch (state.mode) {
+        case 'awaitingTransactionDetails':
+          action = state.data?.action ?? null;
+          break;
+        case 'awaitingBatchOverride':
+          // Still in SALE context during the 2‑min post-sale window
+          action = 'sold';
+          break;
+        case 'awaitingPurchaseExpiryOverride':
+        case 'awaitingPriceExpiry':
+          // Purchase flows (price/expiry capture & quick override)
+          action = 'purchase';
+          break;
+        default:
+          action = state.data?.action ?? null;
+      }
+    }
 
     // 2) Resolve language to use: prefer saved user preference; else detected hint; else 'en'
     let lang = String(detectedLanguageHint || 'en').toLowerCase();
@@ -1502,8 +1521,14 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   const shopId = From.replace('whatsapp:', '');
   const state = await getUserStateFromDB(shopId);
   if (!state || state.mode !== 'awaitingBatchOverride') return false;
-
   
+// Self-heal: ensure action is present for any consumers that rely on state.data.action
+  if (!state.data || !state.data.action) {
+    try {
+      await saveUserStateToDB(shopId, 'awaitingBatchOverride', { ...(state.data ?? {}), action: 'sold' });
+    } catch (_) { /* best effort */ }
+  }
+ 
   // Allow 'mode' / localized one-word switch while in the 2-min override window
     {
       const switchCmd = parseModeSwitchLocalized(Body);
