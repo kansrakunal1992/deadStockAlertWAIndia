@@ -1502,6 +1502,27 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   const shopId = From.replace('whatsapp:', '');
   const state = await getUserStateFromDB(shopId);
   if (!state || state.mode !== 'awaitingBatchOverride') return false;
+
+  
+  // Allow 'mode' / localized one-word switch while in the 2-min override window
+    {
+      const switchCmd = parseModeSwitchLocalized(Body);
+      if (switchCmd) {
+        try { await deleteUserStateFromDB(state.id); } catch (_) {}
+        if (switchCmd.ask) {
+          await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+          return true;
+        }
+        if (switchCmd.set) {
+          await setStickyMode(From, switchCmd.set); // purchase | sold | returned
+          await sendMessageViaAPI(
+            From,
+            await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`)
+          );
+          return true;
+        }
+      }
+    }
   
   // NEW: global reset inside override state
     if (isResetMessage(Body)) {
@@ -1520,7 +1541,7 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
     }
   
   const data = state.data || {};
-  const { saleRecordId, product, unit, quantity, oldCompositeKey, createdAtISO, timeoutSec=120 } = data;
+  const { saleRecordId, product, unit, quantity, oldCompositeKey, createdAtISO, timeoutSec=120, action: 'sold'} = data;
   const createdAt = new Date(createdAtISO || Date.now());
   if ((Date.now() - createdAt.getTime()) > (timeoutSec*1000)) {      
   //if (state?.mode !== 'awaitingTransactionDetails') {
@@ -1537,16 +1558,22 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   try {
     console.log(`[${requestId}] [awaitingBatchOverride] text="${String(Body).trim()}" -> wanted=`, wanted);
   } catch (_) {}
-  
+    
   if (!wanted) {
-      const help = await t(
-        COMPACT_MODE
-          ? `Reply: batch DD-MM | batch oldest | batch latest (2 min)`
-          : `Reply:\n• batch DD-MM (e.g., batch 12-09)\n• exp DD-MM (e.g., exp 20-09)\n• batch oldest | batch latest\nWithin 2 min.`,
-        detectedLanguage, requestId);
-      await sendMessageViaAPI(From, help);
-      return true;
-    }
+     // If the message looks like a transaction, let the normal txn parser handle it
+     if (looksLikeTransaction(String(Body))) {
+       return false; // do NOT consume; downstream parser will use sticky 'sold'
+     }
+     // Otherwise (non-transaction chatter), show help
+     const help = await t(
+       COMPACT_MODE
+         ? `Reply: batch DD-MM \n batch oldest \n batch latest (2 min)`
+         : `Reply:\n• batch DD-MM (e.g., batch 12-09)\n• exp DD-MM (e.g., exp 20-09)\n• batch oldest \n batch latest\nWithin 2 min.`,
+       detectedLanguage, requestId
+     );
+     await sendMessageViaAPI(From, help);
+     return true;
+   }
 
   const newKey = await selectBatchForSale(shopId, product, wanted);
   const newKeyNorm = normalizeCompositeKey(newKey);
@@ -3295,12 +3322,20 @@ async function parseMultipleUpdates(req) {
   // Standardize valid actions - use 'sold' consistently
   const VALID_ACTIONS = ['purchase', 'sold', 'remaining', 'returned'];
   
-  // Get pending action from user state if available
+  // Get pending action from user state if available    
   let pendingAction = null;
-  if (userState && userState.mode === 'awaitingTransactionDetails' && userState.data.action) {
-    pendingAction = userState.data.action;
-    console.log(`[parseMultipleUpdates] Using pending action from state: ${pendingAction}`);
-  }
+    if (userState) {
+      if (userState.mode === 'awaitingTransactionDetails' && userState.data?.action) {
+        pendingAction = userState.data.action;              // purchase | sold | returned
+      } else if (userState.mode === 'awaitingBatchOverride') {
+        pendingAction = 'sold';                             // still in SALE context
+      } else if (userState.mode === 'awaitingPurchaseExpiryOverride') {
+        pendingAction = 'purchase';                         // still in PURCHASE context
+      }
+      if (pendingAction) {
+        console.log(`[parseMultipleUpdates] Using pending action from state: ${pendingAction}`);
+      }
+    }
   
   // Never treat summary commands as inventory messages
   if (resolveSummaryIntent(t)) return [];
