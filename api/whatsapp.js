@@ -3455,6 +3455,17 @@ function parseSingleUpdate(transcript) {
 
 // Validate if transcript is an inventory update - now allows unknown products
 function isValidInventoryUpdate(parsed) {
+  if (!parsed) {
+    console.warn('[Validation] Parsed update is null or undefined');
+    return false;
+  }
+  if (parsed.quantity === 0) {
+    console.warn(`[Validation] Rejected due to zero quantity: ${JSON.stringify(parsed)}`);
+  }
+  if (!['purchased', 'sold', 'remaining', 'returned'].includes(parsed.action)) {
+    console.warn(`[Validation] Rejected due to invalid action: ${parsed.action}`);
+  }
+  
   // Allow unknown products but require valid quantity and action
   const validQuantity = parsed.quantity !== 0;
   const validAction = ['purchased', 'sold', 'remaining', 'returned'].includes(parsed.action);
