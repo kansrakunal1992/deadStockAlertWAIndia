@@ -4185,14 +4185,20 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
             // Add transaction logging
             console.log(`[Transaction] Sale processed - Product: ${product}, Qty: ${Math.abs(update.quantity)}, Price: ${salePrice}, Total: ${saleValue}`);
-            
-            // Send confirmation with price details                        
-            const confirmationMsg = await t(
-                      `✅ Sold ${Math.abs(update.quantity)} ${update.unit} ${product} @ ₹${salePrice} each (Total: ₹${saleValue})`,
-                      languageCode,
-                      'sale-confirmation'
-                    );
-            await sendMessageViaAPI(`whatsapp:${shopId}`, confirmationMsg);
+                                                
+            // Send a single confirmation (dedup) and append stock if we have it
+              await sendSaleConfirmationOnce(
+                `whatsapp:${shopId}`,
+                languageCode,
+                'sale-confirmation', // requestId scope for dedupe
+                {
+                  product,
+                  qty: Math.abs(update.quantity),
+                  unit: update.unit,
+                  pricePerUnit: salePrice,
+                  newQuantity: result?.newQuantity   // ensures "Stock: 5 liters" gets appended
+                }
+              );
                         
             // --- NEW: start a short override window (2 min) only if multiple batches exist ---
              try {
@@ -4259,8 +4265,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
                       
           // Unify confirmation building – always defined, avoid referencing undeclared vars later.
-          // Assign to hoisted holder so we can use it later safely
-          confirmTextLine = COMPACT_MODE ? compactLine : verboseLines;
+          // Assign to hoisted holder so we can use it later safely                   
+          // We already sent a single, correct confirmation above; suppress any secondary summary line.
+            confirmTextLine = '';  // <- prevents the later “Sold ... @ ₹0 ... Stock: ...” message from sending
         
           // Buffer and let outer renderer send single merged message
             // --- END COMPACT/VERBOSE SALE CONFIRMATION ---
