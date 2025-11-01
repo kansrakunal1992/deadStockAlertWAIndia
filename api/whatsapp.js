@@ -828,7 +828,7 @@ function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity
   const priceTxt = Number.isFinite(pricePerUnit)
     ? `@ ₹${pricePerUnit} each — Total: ₹${total}`
     : `@ ₹? each`;
-  const header = `✅ Sold ${Math.abs(qty)} ${unit} ${product} ${priceTxt}`.trim();
+  const header = '✅ Sold ${Math.abs(qty)} ${unit} ${product} ${priceTxt}`.trim();
   const stockLine = Number.isFinite(newQuantity) ? `Stock: ${newQuantity} ${unit}` : '';
   return stockLine ? `${header}\n${stockLine}` : header;
 }
@@ -3717,7 +3717,9 @@ async function validateTranscript(transcript, requestId) {
 // Handle multiple inventory updates with batch tracking
 async function updateMultipleInventory(shopId, updates, languageCode) {
   const results = [];
-  for (const update of updates) {      
+  for (const update of updates) {  
+  // NEW: lock the chosen sale price for this specific update (prevents ₹0 fallbacks)
+    let chosenSalePrice = null;
   // Hoisted: keep a per-update confirmation line available beyond branch scope
     let confirmTextLine;
     let createdBatchEarly = false;
@@ -4079,8 +4081,10 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             if (isSale && result.success) {
               console.log(`[Update ${shopId} - ${product}] Creating sales record`);
               try {
-                // Use database price (productPrice) if available, then fallback to finalPrice
+                // Use database price (productPrice) if available, then fallback to finalPrice                      
                 const salePrice = unitPriceForCalc; // Use pre-calculated unit price
+                          // NEW: remember the actual sale price used for this transaction
+                          chosenSalePrice = salePrice;
                 const saleValue = salePrice * Math.abs(update.quantity);
                 console.log(`[Update ${shopId} - ${product}] Sales record - salePrice: ${salePrice}, saleValue: ${saleValue}`);
                 
@@ -4281,16 +4285,19 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         }
       }
             
-       
+                           
           // NEW: Enrich outgoing item with price/value so renderer can show them
-          // Use a single effective price everywhere: message > DB > 0
-          const effectivePrice = toNumberSafe(update.price ?? productPrice ?? 0);
+            // Use a single effective price everywhere; for *sales*, prefer the locked-in chosenSalePrice.
+            const fallbackEffective = toNumberSafe(update.price ?? productPrice ?? 0);
+            const effectivePrice = (update.action === 'sold')
+              ? (chosenSalePrice ?? fallbackEffective)
+              : fallbackEffective;
           const enriched = {
           product,
           quantity: update.quantity,
           unit: update.unit,
           action: update.action,
-          ...result,       
+          ...result,                       
           purchasePrice: update.action === 'purchased' ? effectivePrice : undefined,
           salePrice: update.action === 'sold' ? effectivePrice : undefined,
           totalValue: (update.action === 'purchased' || update.action === 'sold') ? (effectivePrice * Math.abs(update.quantity)): 0,
