@@ -1541,7 +1541,7 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
     }
   
   const data = state.data || {};
-  const { saleRecordId, product, unit, quantity, oldCompositeKey, createdAtISO, timeoutSec=120, action: 'sold'} = data;
+  const { saleRecordId, product, unit, quantity, oldCompositeKey, createdAtISO, timeoutSec=120, action='sold'} = data;
   const createdAt = new Date(createdAtISO || Date.now());
   if ((Date.now() - createdAt.getTime()) > (timeoutSec*1000)) {      
   //if (state?.mode !== 'awaitingTransactionDetails') {
