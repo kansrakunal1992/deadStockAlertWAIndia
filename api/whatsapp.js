@@ -1625,9 +1625,30 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
     return true;
   }
 
-  const t = String(Body).trim().toLowerCase();
+  
+// Avoid shadowing the translator helper `t(...)`
+  const txt = String(Body).trim().toLowerCase();
+
+  // Allow 'mode' / localized switch words during the override window too.
+  // If user wants to switch context, clear this short-lived state and act.
+  const switchCmd = parseModeSwitchLocalized(Body);
+  if (switchCmd) {
+    try { await deleteUserStateFromDB(state.id); } catch (_) {}
+    if (switchCmd.ask) {
+      await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+      return true;
+    }
+    if (switchCmd.set) {
+      await setStickyMode(From, switchCmd.set);
+      await sendMessageViaAPI(
+        From,
+        await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`)
+      );
+      return true;
+    }
+  }
   // Keep current
-  if (t === 'ok' || t === 'okay') {        
+  if (txt === 'ok' || txt === 'okay') {        
     //if (state?.mode !== 'awaitingTransactionDetails') {
     //  await deleteUserStateFromDB(state.id);
     //}
@@ -1641,7 +1662,7 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
     return true;
   }
   // Clear expiry
-  if (t === 'skip' || t === 'clear') {
+  if (txt === 'skip' || txt === 'clear') {
     try { await updateBatchExpiry(batchId, null); } catch (_) {}          
       //if (state?.mode !== 'awaitingTransactionDetails') {
       //  await deleteUserStateFromDB(state.id);
@@ -1658,7 +1679,7 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   // Set new expiry (supports: exp DD-MM / DD/MM/YYYY / +7d / +3m / +1y)
   const wanted = parseBatchOverrideCommand(Body) || {};
   let newISO = null;
-  if (t.startsWith('exp') || t.startsWith('expiry')) {
+  if (txt.startsWith('exp') || txt.startsWith('expiry')) {
     const raw = Body.replace(/^\s*(expiry|expires?|exp)\s*/i, '');
     newISO = parseExpiryTextToISO(raw, purchaseDateISO);
     if (newISO) newISO = bumpExpiryYearIfPast(newISO, purchaseDateISO || new Date().toISOString());
