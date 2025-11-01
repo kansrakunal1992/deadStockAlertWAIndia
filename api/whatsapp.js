@@ -1263,8 +1263,10 @@ async function setUserState(from, mode, data = {}) {
 async function clearUserState(from) {
   const shopId = from.replace('whatsapp:', '');
   const state = await getUserStateFromDB(shopId);
-  if (state && state.id) {
-    await deleteUserStateFromDB(state.id);
+  if (state && state.id) {        
+    if (state?.mode !== 'awaitingTransactionDetails') {
+      await deleteUserStateFromDB(state.id);
+    }
     console.log(`[State] Cleared state for ${from}`);
   }
 }
@@ -1277,7 +1279,11 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
   
   // NEW: allow "reset" while asking for price/expiry
     if (isResetMessage(Body)) {
-      try { await deleteUserStateFromDB(state.id); } catch (_) {}
+      try {                   
+          if (state?.mode !== 'awaitingTransactionDetails') {
+            await deleteUserStateFromDB(state.id);
+          }
+      } catch (_) {}
       const ok = await t(
         `✅ Reset. I’ve cleared the pending price/expiry step.`,
         detectedLanguage,
@@ -1358,8 +1364,10 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
     console.warn(`[${requestId}] price updates failed:`, e.message);
   }
 
-  // Confirm and clear state
-  await deleteUserStateFromDB(state.id);
+  // Confirm and clear state      
+    if (state?.mode !== 'awaitingTransactionDetails') {
+      await deleteUserStateFromDB(state.id);
+    }
   const lines = [];
   if (updatedPrice) lines.push(`Price: ₹${updatedPrice}`);
   if (isPerishable) {
@@ -1501,7 +1509,11 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   
   // NEW: global reset inside override state
     if (isResetMessage(Body)) {
-      try { await deleteUserStateFromDB(state.id); } catch (_) {}
+      try {                 
+        if (state?.mode !== 'awaitingTransactionDetails') {
+          await deleteUserStateFromDB(state.id);
+        } 
+      } catch (_) {}
       const msg = await t(
         `✅ Reset. Cleared the current batch-selection window.`,
         detectedLanguage,
@@ -1514,8 +1526,10 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   const data = state.data || {};
   const { saleRecordId, product, unit, quantity, oldCompositeKey, createdAtISO, timeoutSec=120 } = data;
   const createdAt = new Date(createdAtISO || Date.now());
-  if ((Date.now() - createdAt.getTime()) > (timeoutSec*1000)) {
+  if ((Date.now() - createdAt.getTime()) > (timeoutSec*1000)) {      
+  if (state?.mode !== 'awaitingTransactionDetails') {
     await deleteUserStateFromDB(state.id);
+  }
     const msg = await t(
       `⏳ Sorry, the 2‑min window to change batch has expired.`, detectedLanguage, requestId);
     await sendMessageViaAPI(From, msg);
@@ -1564,8 +1578,11 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
     await sendMessageViaAPI(From, fail);
     return true;
   }
-
-  await deleteUserStateFromDB(state.id);
+  
+    
+  if (state?.mode !== 'awaitingTransactionDetails') {
+    await deleteUserStateFromDB(state.id);
+  }
   const used = await getBatchByCompositeKey(newKeyNorm);
   const pd = used?.fields?.PurchaseDate ? formatDateForDisplay(used.fields.PurchaseDate) : '—';
   const ed = used?.fields?.ExpiryDate ? formatDateForDisplay(used.fields.ExpiryDate) : '—';
@@ -1584,7 +1601,11 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
 
   // Global reset allowed during window
   if (isResetMessage(Body)) {
-    try { await deleteUserStateFromDB(state.id); } catch (_) {}
+    try {             
+      if (state?.mode !== 'awaitingTransactionDetails') {
+        await deleteUserStateFromDB(state.id);
+      } 
+    } catch (_) {}
     const msg = await t(
       `✅ Reset. Cleared the expiry‑override window.`,
       detectedLanguage,
@@ -1597,8 +1618,10 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   const data = state.data || {};
   const { batchId, product, createdAtISO, timeoutSec = 120, purchaseDateISO, currentExpiryISO } = data;
   const createdAt = new Date(createdAtISO || Date.now());
-  if ((Date.now() - createdAt.getTime()) > (timeoutSec * 1000)) {
-    await deleteUserStateFromDB(state.id);
+  if ((Date.now() - createdAt.getTime()) > (timeoutSec * 1000)) {        
+    if (state?.mode !== 'awaitingTransactionDetails') {
+      await deleteUserStateFromDB(state.id);
+    }
     const msg = await t(
       `⏳ Sorry, the 2‑min window to change expiry has expired.`,
       detectedLanguage,
@@ -1610,8 +1633,10 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
 
   const t = String(Body).trim().toLowerCase();
   // Keep current
-  if (t === 'ok' || t === 'okay') {
-    await deleteUserStateFromDB(state.id);
+  if (t === 'ok' || t === 'okay') {        
+    if (state?.mode !== 'awaitingTransactionDetails') {
+      await deleteUserStateFromDB(state.id);
+    }
     const kept = currentExpiryISO ? formatDateForDisplay(currentExpiryISO) : '—';
     const msg = await t(
       `✅ Kept expiry for ${product}: ${kept}`,
@@ -1623,8 +1648,10 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   }
   // Clear expiry
   if (t === 'skip' || t === 'clear') {
-    try { await updateBatchExpiry(batchId, null); } catch (_) {}
-    await deleteUserStateFromDB(state.id);
+    try { await updateBatchExpiry(batchId, null); } catch (_) {}          
+      if (state?.mode !== 'awaitingTransactionDetails') {
+        await deleteUserStateFromDB(state.id);
+      }
     const msg = await t(
       `✅ Cleared expiry for ${product}.`,
       detectedLanguage,
@@ -1658,8 +1685,10 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
       return true;
     }
 
-  try { await updateBatchExpiry(batchId, newISO); } catch (_) {}
-  await deleteUserStateFromDB(state.id);
+  try { await updateBatchExpiry(batchId, newISO); } catch (_) {}      
+    if (state?.mode !== 'awaitingTransactionDetails') {
+      await deleteUserStateFromDB(state.id);
+    }
   const shown = formatDateForDisplay(newISO);
   const ok = await t(
     `✅ Updated. ${product} expiry set to ${shown}.`,
