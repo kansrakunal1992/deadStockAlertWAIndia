@@ -828,7 +828,7 @@ function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity
   const priceTxt = Number.isFinite(pricePerUnit)
     ? `@ ₹${pricePerUnit} each — Total: ₹${total}`
     : `@ ₹? each`;
-  const header = '✅ Sold ${Math.abs(qty)} ${unit} ${product} ${priceTxt}`.trim();
+  const header = `✅ Sold ${Math.abs(qty)} ${unit} ${product} ${priceTxt}`.trim();
   const stockLine = Number.isFinite(newQuantity) ? `Stock: ${newQuantity} ${unit}` : '';
   return stockLine ? `${header}\n${stockLine}` : header;
 }
