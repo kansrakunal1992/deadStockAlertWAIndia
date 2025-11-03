@@ -91,6 +91,40 @@ function getModeBadge(action, lang) {
   return MODE_BADGE.none[lc] || MODE_BADGE.none.en;
 }
 
+// --- Summary/low-stock sanitization helpers ---
+const UNIT_WORDS = new Set([
+  'packet','packets','bottle','bottles','box','boxes','bag','bags',
+  'piece','pieces','metre','metres','meter','meters','time','times'
+]);
+function looksLikeCommandOrSlug(name) {
+  const n = String(name || '').trim().toLowerCase();
+  return (
+    n.startsWith('list_') ||
+    /^expiring\s*\d+$/.test(n) ||
+    /^sales\b/.test(n) ||
+    n === 'daily summary'
+  );
+}
+function sanitizeProductRows(arr) {
+  // Accepts rows like {name, quantity, unit} OR Airtable-style with fields
+  const dedup = new Map(); // lcName -> {name, quantity, unit}
+  for (const r of (arr || [])) {
+    const rawName = r?.name ?? r?.fields?.Product ?? '';
+    const name = String(rawName).trim();
+    if (!name) continue;
+    const lc = name.toLowerCase();
+    if (UNIT_WORDS.has(lc)) continue;
+    if (looksLikeCommandOrSlug(lc)) continue;
+    const quantity = r?.quantity ?? r?.fields?.Quantity;
+    const unit = r?.unit ?? r?.fields?.Units ?? 'pieces';
+    const prev = dedup.get(lc);
+    // Prefer the entry with the lower quantity (stricter warning) and keep original casing
+    if (!prev || (Number.isFinite(quantity) && quantity < (prev.quantity ?? Infinity))) {
+      dedup.set(lc, { name, quantity, unit });
+    }
+  }
+  return Array.from(dedup.values());
+}
 
 // ===== Localized single-word direct-set actions (switch instantly) =====
 const LOCAL_SET_WORDS = {
@@ -781,12 +815,12 @@ function enforceSingleScript(out, lang) {
       ? out.replace(/[^\x00-\x7F₹\s.,@:%/()\-–—+*!?'"`]/g, '')
       : out; // leave native as-is
   }
-  const nonAscii = /[^\x00-\x7F]/;
+  const nonAscii = /[^\x00-\x7F]/;    
   if (!isEnglish) {
-    // Keep the first native block; drop trailing Latin-only paragraphs
-    const keep = parts.find(p => nonAscii.test(p)) ?? parts[0];
-    return keep;
-  } else {
+      // Keep ALL native (non‑ASCII) paragraphs; drop ASCII‑only ones
+      const kept = parts.filter(p => nonAscii.test(p)).join('\n\n');
+      return kept || parts[0];
+    } else {
     // English user: keep only ASCII-ish paragraphs
     return parts.filter(p => !nonAscii.test(p)).join('\n\n') || parts.join('\n\n');
   }
@@ -2406,9 +2440,10 @@ if (pricePage) {
   }
 
 
-  // 2) Low stock / Stockout
-  if (/^(?:low\s*stock|stockout|out\s*of\s*stock)$/i.test(text)) {
-    const low = await getLowStockProducts(shopId, 5);
+  // 2) Low stock / Stockout    
+  if (/^(?:low\s*stock|stockout|out\s*of\s*stock)$/.test(text)) {
+     let low = await getLowStockProducts(shopId, 5);
+     low = sanitizeProductRows(low);
     const all = await getCurrentInventory(shopId);
     const out = all.filter(r => (r.fields.Quantity ?? 0) <= 0).map(r => ({
       name: r.fields.Product, unit: r.fields.Units || 'pieces'
@@ -2766,8 +2801,9 @@ try{
 
   
   // 2) Low stock or stock-out items (+ advice)
-  if (/^(?:low\s*stock|stockout|out\s*of\s*stock)\b/i.test(text)) {
-    const low = await getLowStockProducts(shopId, 5);
+  if (/^(?:low\s*stock|stockout|out\s*of\s*stock)\b/i.test(text)) {        
+    let low = await getLowStockProducts(shopId, 5);
+    low = sanitizeProductRows(low);
     const out = await getStockoutItems(shopId);
     let message = `⚠️ Low & Stockout:\n`;
     if (low.length === 0 && out.length === 0) {
@@ -6751,64 +6787,102 @@ async function googleTranscribe(flacBuffer, requestId) {
 }
 
 // Function to send WhatsApp message via Twilio API (for async responses)
+
 async function sendMessageViaAPI(to, body) {
   try {
-        
-    // Append localized footer once, using saved/detected language
-    body = await tagWithLocalizedMode(to, body, 'en');
-    
     const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
     const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
-    
+
     console.log(`[sendMessageViaAPI] Preparing to send message to: ${formattedTo}`);
-    console.log(`[sendMessageViaAPI] Message length: ${body.length} characters`);
-    
-    // Check if the message exceeds the WhatsApp limit (1600 characters)
+    console.log(`[sendMessageViaAPI] Message length: ${String(body).length} characters`);
+
+    // Twilio hard limit for WhatsApp (exceeding returns Error 21617)
+    // Ref: https://www.twilio.com/docs/api/errors/21617, https://help.twilio.com/articles/360033806753
     const MAX_LENGTH = 1600;
-    if (body.length <= MAX_LENGTH) {
+    const PART_SUFFIX = (i, n) => `\n\n(Part ${i} of ${n})`;
+
+    // We will append the localized footer ONLY to the final part.
+    // Measure footer length by tagging an empty string once.
+    const emptyTagged = await tagWithLocalizedMode(formattedTo, '', 'en');
+    const footerLen = emptyTagged.length; // e.g., «SALE • mode»
+
+    // Smart line-based splitter that respects a given safe limit
+    const smartSplit = (text, safeLimit) => {
+      const out = [];
+      let chunk = '';
+      for (const line of String(text).split('\n')) {
+        const add = chunk ? '\n' + line : line;
+        if ((chunk + add).length > safeLimit) {
+          if (chunk) out.push(chunk);
+          // If a single line itself exceeds the safe limit, clamp it
+          chunk = add.slice(0, safeLimit);
+        } else {
+          chunk += add;
+        }
+      }
+      if (chunk) out.push(chunk);
+      return out;
+    };
+
+    // If the message fits, tag once and send
+    if (String(body).length <= MAX_LENGTH) {
+      const tagged = await tagWithLocalizedMode(formattedTo, body, 'en');
       const message = await client.messages.create({
-        body: body,
+        body: tagged,
         from: process.env.TWILIO_WHATSAPP_NUMBER,
         to: formattedTo
       });
       console.log(`[sendMessageViaAPI] Message sent successfully. SID: ${message.sid}`);
       return message;
-    } else {
-      // Split the message into chunks
-      const chunks = splitMessage(body, MAX_LENGTH);
-      console.log(`[sendMessageViaAPI] Splitting message into ${chunks.length} chunks`);
-      
-      const messageSids = [];
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-        // Add part indicator for multi-part messages
-        const partIndicator = `\n\n(Part ${i+1} of ${chunks.length})`;
-        const chunkWithIndicator = chunk + partIndicator;
-
-        console.log(`[sendMessageViaAPI] Sending part ${i+1}/${chunks.length} (${chunkWithIndicator.length} chars)`);
-        
-        const message = await client.messages.create({
-          body: chunkWithIndicator,
-          from: process.env.TWILIO_WHATSAPP_NUMBER,
-          to: formattedTo
-        });
-        messageSids.push(message.sid);
-        console.log(`[sendMessageViaAPI] Part ${i+1} sent successfully. SID: ${message.sid}`);
-        
-        // Add a small delay between parts to avoid rate limiting
-        if (i < chunks.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
-      
-      // Return the first message SID as the primary one
-      return { sid: messageSids[0], parts: messageSids };
     }
+
+    // Multi-part path:
+    // First split roughly, then re-split each part with exact room for the
+    // "(Part i of n)" suffix and (only on the last part) the footer.
+    let parts = smartSplit(body, MAX_LENGTH - 14); // provisional
+    const final = [];
+    for (let i = 0; i < parts.length; i++) {
+      const isLast = i === parts.length - 1;
+      const suffix = PART_SUFFIX(i + 1, parts.length);
+      const reserved = suffix.length + (isLast ? footerLen : 0);
+      const safeLimit = MAX_LENGTH - reserved;
+      const resplit = smartSplit(parts[i], safeLimit);
+      for (const frag of resplit) final.push(frag);
+    }
+
+    console.log(`[sendMessageViaAPI] Splitting message into ${final.length} chunks`);
+    const messageSids = [];
+    for (let i = 0; i < final.length; i++) {
+      const isLast = i === final.length - 1;
+      let text = final[i] + PART_SUFFIX(i + 1, final.length);
+      // Append footer ONLY on the last part
+      if (isLast) {
+        text = await tagWithLocalizedMode(formattedTo, text, 'en');
+      }
+
+      console.log(`[sendMessageViaAPI] Sending part ${i+1}/${final.length} (${text.length} chars)`);
+      const message = await client.messages.create({
+        body: text,
+        from: process.env.TWILIO_WHATSAPP_NUMBER,
+        to: formattedTo
+      });
+      messageSids.push(message.sid);
+      console.log(`[sendMessageViaAPI] Part ${i+1} sent successfully. SID: ${message.sid}`);
+
+      // Small delay between parts to avoid rate limiting
+      if (i < final.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+
+    // Return the first SID and the list of part SIDs
+    return { sid: messageSids[0], parts: messageSids };
   } catch (error) {
     console.error('Error sending WhatsApp message via API:', error);
     throw error;
   }
 }
+
 
 // Async processing for voice messages
 async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState) {
