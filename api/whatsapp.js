@@ -235,29 +235,6 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
 }
 
 
-// --- WhatsApp typing indicator (Twilio Public Beta) ---
-// Docs: https://www.twilio.com/docs/whatsapp/api/typing-indicators-resource
-// When you send the typing indicator, Twilio marks the referenced inbound message
-// as read in the user's WhatsApp client and displays the typing indicator for up to ~25s,
-// or until your response is delivered (whichever comes first).
-async function sendWhatsAppTypingIndicator(messageId) {
-  try {
-    if (!messageId) return;
-    const url = 'https://messaging.twilio.com/v2/Indicators/Typing.json';
-    const form = new URLSearchParams({ messageId, channel: 'whatsapp' });
-    await axios.post(url, form, {
-      auth: {
-        username: process.env.ACCOUNT_SID,
-        password: process.env.AUTH_TOKEN
-      },
-      timeout: 5000
-    });
-    console.log('[typing] Indicator sent for', messageId);
-  } catch (e) {
-    console.warn('[typing] Failed to send indicator:', e.message);
-  }
-}
-
 // ====== SUMMARY COMMAND ALIASES (multilingual, native + translit) ======
 const SUMMARY_ALIAS_MAP = {
   hi: {
@@ -7557,15 +7534,7 @@ module.exports = async (req, res) => {
   const From =
     (req.body && (req.body.From || req.body.from)) ||
     (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
-  
-    
-  // Send a WhatsApp typing indicator (Public Beta) referencing the inbound message SID
-      // Twilio docs: https://www.twilio.com/docs/whatsapp/api/typing-indicators-resource
-      // Toggle via WA_TYPING=1 (default off if unset)
-      const inboundSid = raw.MessageSid || raw.SmsSid || raw.WaId /* fallback if needed */;
-      if (String(process.env.WA_TYPING || '1') === '1') {
-        sendWhatsAppTypingIndicator(inboundSid).catch(() => {});
-      }
+
   
   /**
      * >>> NEW (Option B): Handle WhatsApp interactive events FIRST.
