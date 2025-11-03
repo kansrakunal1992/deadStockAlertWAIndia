@@ -559,9 +559,15 @@ function _normLite(s) {
      await sendMessageViaAPI(from, 'Examples (return):\n• Parle-G 3 packets\n• milk 1 liter');
      return true;
    }
-
-   // List‑Picker selections → your quick‑query router
-   const route = (cmd) => handleQuickQueryEN(cmd, from, 'en', 'lp');
+    
+  // List‑Picker selections → route using user's saved language preference
+    let lpLang = 'en';
+    try {
+      const shopIdLP = String(from).replace('whatsapp:', '');
+      const prefLP = await getUserPreference(shopIdLP);
+      if (prefLP?.success && prefLP.language) lpLang = String(prefLP.language).toLowerCase();
+    } catch (_) { /* best effort */ }
+    const route = (cmd) => handleQuickQueryEN(cmd, from, lpLang, 'lp');
    switch (listId) {
              
         case 'list_short_summary':
