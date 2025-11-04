@@ -3303,8 +3303,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
           ALWAYS return a JSON ARRAY of objects (e.g., [{"product":"milk", ...}]), even if there is only one item.                  
           Omit fields that are null/unknown.
           If "price" is present, you may omit "totalPrice".
-          Return only valid JSON (no extra text, no markdown, no code fences).
-`
+          Return only valid JSON (no extra text, no markdown, no code fences).`
                     },
                     {
                       role: "user",
@@ -3332,13 +3331,42 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                     {
                       model: "deepseek-chat",
                       messages: [
-                        { role: "system", content: /* same prompt */ },
+                        { role: "system", content: `You are an inventory parsing assistant. Extract inventory information from the user's message and return it in JSON format. If no action is specified, default to the user's current intent if known (e.g., sale, purchase, return).
+          Extract the following fields:
+          1. product: The name of the product (e.g., "Parle-G", "sugar", "milk") - ONLY the product name, no quantities or units
+          2. quantity: The numerical quantity (as a number)
+          3. unit: The unit of measurement (e.g., "packets", "kg", "liters", "pieces")
+          4. action: The action being performed ("purchased", "sold", "remaining", "returned")
+          5. price: The price per unit (if mentioned, otherwise null)
+          6. totalPrice: The total price (if mentioned, otherwise null)        
+          7. expiryDate (if present), parse tokens like: "exp", "expiry", "expires on", formats dd-mm, dd/mm/yyyy, +7d, +3m, +1y
+          For the action field:
+          - Use "purchased" for words like "bought", "purchased", "buy", "खरीदा", "खरीदे", "लिया", "खरीदी", "khareeda"
+          - Use "sold" for words like "sold", "बेचा", "बेचे", "becha", "बिक्री", "becha"
+          - Use "remaining" for words like "remaining", "left", "बचा", "बचे", "बाकी", "bacha"
+          - Use "returned" for customer returns: words like "return", "returned", "customer return", "रिटर्न", "वापस", "परत", "રીટર્ન"
+          If no action is specified, default to "purchased" for positive quantities and "sold" for negative quantities.
+          If no unit is specified, infer the most appropriate unit based on the product type:
+          - For biscuits, chips, etc.: "packets"
+          - For milk, water, oil: "liters"
+          - For flour, sugar, salt: "kg"
+          - For individual items: "pieces"                    
+          ALWAYS return a JSON ARRAY of objects (e.g., [{"product":"milk", ...}]), even if there is only one item.                  
+          Omit fields that are null/unknown.
+          If "price" is present, you may omit "totalPrice".
+          Return only valid JSON (no extra text, no markdown, no code fences).` },
                         { role: "user", content: transcript }
                       ],
                       max_tokens: 1000,
                       temperature: 0.0
                     },
-                    { /* headers, timeout */ }
+                    { 
+                      headers: {
+                    'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+                    'Content-Type': 'application/json'
+                  },
+                  timeout: 10000
+                    }
                   );
                   content = r2.data.choices?.[0]?.message?.content?.trim() || content;
                 }
