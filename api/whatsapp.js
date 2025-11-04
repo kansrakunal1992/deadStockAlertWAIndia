@@ -713,9 +713,12 @@ function looksLikeTransaction(text) {
   try { regexPatterns.digits.lastIndex = 0; } catch (_) {}
 
   const hasDigits = regexPatterns.digits.test(s);
+    
   const mentionsMoney =
-    /(?:₹|rs\.?|rupees)/i.test(s) ||
-    /(?:@|per\s+(kg|liter|litre|packet|piece|box|ml|g|kg|ltr))/i.test(s);  
+     /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i.test(s)
+     ||
+     /(?:@|at)\s*(?:\d+(?:\.\d+)?)\s*(?:per\s+)?(kg|liter|litre|liters|litres|packet|packets|box|boxes|piece|pieces|ml|g|kg|ltr)/i.test(s);
+  
 // Extend unit detection with Gujarati: કિલો/કિગ્રા/ગ્રામ/લિટર/પૅકેટ/પેકેટ/બોક્સ/ટુકડો/ટુકડાઓ/નંગ
    const hasUnit =
      /(kg|g|gram|grams|ml|ltr|l|liter|litre|liters|litres|packet|packets|box|boxes|piece|pieces|કિલો|કિગ્રા|ગ્રામ|લિટર|પૅકેટ|પેકેટ|બોક્સ|ટુકડાઓ?|ટુકડો|નંગ)/i.test(s);
@@ -1170,7 +1173,9 @@ const regexPatterns = {
    // Added Gujarati numerals [૦-૯]
    digits: /(\d+|[०-९]+|[૦-૯]+)/i,
    resetCommands: /(reset|start over|restart|cancel|exit|stop)/gi,
-   conjunctions: /(and|&amp;|aur|also|और|एवं)/gi
+   conjunctions: /(and|&amp;|aur|also|और|एवं)/gi,
+  // NEW: split multi-item messages by newlines or bullets
+  lineBreaks: /\r?\n|[•\u2022]/g
  };
 
 // Global storage with cleanup mechanism
@@ -3294,8 +3299,10 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
           - For biscuits, chips, etc.: "packets"
           - For milk, water, oil: "liters"
           - For flour, sugar, salt: "kg"
-          - For individual items: "pieces"
-          Return only valid JSON with no additional text, markdown formatting, or code blocks.`
+          - For individual items: "pieces"                    
+          ALWAYS return a JSON ARRAY of objects (e.g., [{"product":"milk", ...}]), even if there is only one item.
+          Return only valid JSON with no additional text, no markdown, and no code fences.
+`
                     },
                     {
                       role: "user",
@@ -3325,7 +3332,13 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
               }
               
               // Parse the JSON response
-              try {
+    
+              // If model returned multiple objects without array brackets, wrap them
+                const cTrim = content.trim();
+                if (!/^\s*\[/.test(cTrim) && /}\s*(?:,\s*|\n)\s*{/.test(cTrim)) {
+                  content = `[${cTrim.replace(/}\s*(?:,\s*|\n)\s*{/g, '},{')}]`;
+                }         
+                try {
                 const parsed = safeJsonParse(content);
                 if (!parsed) {
                   console.error(`[${requestId}] Failed to parse AI response as JSON after cleanup`);
@@ -3500,8 +3513,12 @@ async function parseMultipleUpdates(req) {
     }
   
   // Fallback to rule-based parsing ONLY if AI fails
-  // Better sentence splitting to handle conjunctions
-  const sentences = transcript.split(regexPatterns.conjunctions);
+  // Better sentence splitting to handle conjunctions    
+  const sentences = String(transcript)
+     .split(regexPatterns.lineBreaks)               // split on newlines/bullets first
+     .flatMap(chunk => chunk.split(regexPatterns.conjunctions)) // then split on conjunctions
+     .map(s => s.trim())
+     .filter(Boolean);
   for (const sentence of sentences) {
     const trimmed = sentence.trim();
     if (trimmed) {
