@@ -3300,8 +3300,10 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
           - For milk, water, oil: "liters"
           - For flour, sugar, salt: "kg"
           - For individual items: "pieces"                    
-          ALWAYS return a JSON ARRAY of objects (e.g., [{"product":"milk", ...}]), even if there is only one item.
-          Return only valid JSON with no additional text, no markdown, and no code fences.
+          ALWAYS return a JSON ARRAY of objects (e.g., [{"product":"milk", ...}]), even if there is only one item.                  
+          Omit fields that are null/unknown.
+          If "price" is present, you may omit "totalPrice".
+          Return only valid JSON (no extra text, no markdown, no code fences).
 `
                     },
                     {
@@ -3309,7 +3311,7 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                       content: transcript
                     }
                   ],
-                  max_tokens: 150,
+                  max_tokens: 500,
                   temperature: 0.1
                 },
                 {
@@ -3321,7 +3323,26 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
                 }
               );
               
-              let content = response.data.choices[0].message.content.trim();
+              let content = response.data.choices[0].message.content.trim();                 
+              const finishReason = response.data.choices?.[0]?.finish_reason;
+                if (!content || finishReason === 'length') {
+                  // Retry once with a larger cap (defensive)
+                  const r2 = await axios.post(
+                    'https://api.deepseek.com/v1/chat/completions',
+                    {
+                      model: "deepseek-chat",
+                      messages: [
+                        { role: "system", content: /* same prompt */ },
+                        { role: "user", content: transcript }
+                      ],
+                      max_tokens: 1000,
+                      temperature: 0.0
+                    },
+                    { /* headers, timeout */ }
+                  );
+                  content = r2.data.choices?.[0]?.message?.content?.trim() || content;
+                }
+
               console.log(`[${requestId}] AI parsing result: ${content}`);
               
               // Clean up the response to remove markdown code blocks if present
@@ -3575,15 +3596,19 @@ function extractProduct(transcript) {
     .replace(regexPatterns.remainingKeywords, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  // Try to match with known products first
+    
+  // Strip common trailing price fragments: "at 50/piece" or "@60/litre"
+    const priceTail = /\s+(?:at|@)\s*\d+(?:\.\d+)?(?:\/[A-Za-z]+)?\s*$/i;
+    const nameOnly = cleaned.replace(priceTail, '').trim();
+
+  // Try to match with known products first   
   for (const product of products) {
-    if (cleaned.toLowerCase().includes(product.toLowerCase()) ||
-      product.toLowerCase().includes(cleaned.toLowerCase())) {
-      return product;
+      if (nameOnly.toLowerCase().includes(product.toLowerCase()) ||
+          product.toLowerCase().includes(nameOnly.toLowerCase())) {
+        return product;
+      }
     }
-  }
-  // If no match, return the cleaned text as potential product
-  return cleaned;
+    return nameOnly;
 }
 
 // Improved parse single update with proper action detection and unit handling
