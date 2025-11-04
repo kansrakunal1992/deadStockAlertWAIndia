@@ -3381,15 +3381,15 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
               }
                           
               // If model returned adjacent objects without brackets, wrap into an array
-              +  const cTrim = content.trim();
-              +  if (!/^\s*\[/.test(cTrim) && /}\s*(?:,\s*|\n)\s*{/.test(cTrim)) {
-              +    content = `[${cTrim.replace(/}\s*(?:,\s*|\n)\s*{/g, '},{')}]`;
-              +  }
-              +  // If array looks cut mid-stream, salvage up to the last complete object and close the bracket
-              +  if (/^\s*\[/.test(content) && !/\]\s*$/.test(content)) {
-              +    const lastObjEnd = content.lastIndexOf('}');
-              +    if (lastObjEnd > 0) content = content.slice(0, lastObjEnd + 1) + ']';
-              +  }
+                const cTrim = content.trim();
+                if (!/^\s*\[/.test(cTrim) && /}\s*(?:,\s*|\n)\s*{/.test(cTrim)) {
+                  content = `[${cTrim.replace(/}\s*(?:,\s*|\n)\s*{/g, '},{')}]`;
+                }
+                // If array looks cut mid-stream, salvage up to the last complete object and close the bracket
+                if (/^\s*\[/.test(content) && !/\]\s*$/.test(content)) {
+                  const lastObjEnd = content.lastIndexOf('}');
+                  if (lastObjEnd > 0) content = content.slice(0, lastObjEnd + 1) + ']';
+                }
            
               // Parse the JSON response
     
