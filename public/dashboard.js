@@ -1,7 +1,15 @@
 // Saamagrii.AI Dashboard front-end
 // This file expects backend endpoints (examples below). It does not include synthetic data.
 // Configure the BASE_URL to point to your Node/Express server.
-const BASE_URL = '';
+
+let BASE_URL = '';
+// Try reading from /config.json if present, fallback to same-origin
+(async function bootstrapBaseUrl(){
+  try {
+    const cfg = await fetch('/config.json').then(r => r.ok ? r.json() : {}).catch(()=>({}));
+    if (cfg && typeof cfg.BASE_URL === 'string' && cfg.BASE_URL.trim()) BASE_URL = cfg.BASE_URL.replace(/\/$/, '');
+  } catch {}
+})();
 
 const els = {
   kpiSales: document.getElementById('kpiSales'),
@@ -10,7 +18,11 @@ const els = {
   kpiExp: document.getElementById('kpiExp'),
   period: document.getElementById('period'),
   expiryDays: document.getElementById('expiryDays'),
-  refreshBtn: document.getElementById('refreshBtn'),
+  refreshBtn: document.getElementById('refreshBtn'),    
+  fltState: document.getElementById('fltState'),
+  fltCity: document.getElementById('fltCity'),
+  fltSegment: document.getElementById('fltSegment'),
+  fltShop: document.getElementById('fltShop'),
   tblLowBody: document.querySelector('#tblLow tbody'),
   tblExpBody: document.querySelector('#tblExp tbody'),
   tblReorderBody: document.querySelector('#tblReorder tbody'),
@@ -22,6 +34,7 @@ const els = {
 };
 
 let chartTop;
+let filterCache = { states: [], cities: [], segments: [], shops: [] };
 
 function setText(el, val){ el.textContent = (val ?? '–'); }
 function showEmpty(el, show){ el.hidden = !show; }
@@ -39,32 +52,80 @@ function renderRows(tbody, rows){
 }
 
 async function fetchJSON(path){
-  const url = BASE_URL + path;
+  const url = (BASE_URL || '') + path;
   const res = await fetch(url);
   if(!res.ok) throw new Error('HTTP ' + res.status);
   return res.json();
 }
 
+function currentFilterQS(){
+  const qs = new URLSearchParams();
+  const s = els.fltState.value || '';
+  const c = els.fltCity.value || '';
+  const g = els.fltSegment.value || '';
+  const h = els.fltShop.value || '';
+  if (s) qs.set('state', s);
+  if (c) qs.set('city', c);
+  if (g) qs.set('segment', g);
+  if (h) qs.set('shopId', h);
+  return qs.toString() ? ('&' + qs.toString()) : '';
+}
+
+async function loadFilters(){
+  const data = await fetchJSON('/api/dashboard/filters');
+  filterCache.states = data.states || [];
+  filterCache.cities = data.cities || [];
+  filterCache.segments = data.segments || [];
+  // shops list: derive lazily via low-stock (contains shopId/state/city/segment) or summary
+  // For simplicity, keep shop select blank unless a state/city narrows it.
+  populateSelect(els.fltState, filterCache.states);
+  populateSelect(els.fltSegment, filterCache.segments);
+  // City depends on state
+  populateCitiesForState();
+  // Shop depends on state/city/segment — we’ll fill after first KPI call
+}
+function populateSelect(sel, values){
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All</option>' + values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+  // restore if possible
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+}
+function populateCitiesForState(){
+  const s = els.fltState.value;
+  let cities = filterCache.cities;
+  // If state chosen, we can filter cities by calling low-stock once and picking distinct cities from returned items
+  // (cheap heuristic; avoids a dedicated shops endpoint)
+  // Otherwise keep all cities.
+  populateSelect(els.fltCity, cities);
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
 async function loadKPIs(){
   const period = els.period.value;
-  try{
-    const sum = await fetchJSON(`/api/dashboard/summary?period=${encodeURIComponent(period)}`);
+  try{    
+    const qs = currentFilterQS();
+    const sum = await fetchJSON(`/api/dashboard/summary?period=${encodeURIComponent(period)}${qs}`);
     setText(els.kpiSales, sum.totalValue?.toFixed?.(2) ?? '–');
     setText(els.kpiItems, sum.totalItems ?? '–');
   }catch(e){ setText(els.kpiSales, '–'); setText(els.kpiItems, '–'); }
 
-  try{
-    const low = await fetchJSON('/api/dashboard/low-stock?limit=50');
+  try{        
+    const qs = currentFilterQS();
+    const low = await fetchJSON(`/api/dashboard/low-stock?limit=50${qs}`);
     setText(els.kpiLow, (low.items?.length ?? 0));
     if((low.items?.length ?? 0) > 0){
       renderRows(els.tblLowBody, low.items.map(p => [p.name, p.quantity, p.unit]));
-      showEmpty(els.emptyLow, false);
+      showEmpty(els.emptyLow, false);            
+      // Use low-stock response to populate Shop dropdown contextually (distinct shopIds)
+      const shops = Array.from(new Set((low.items || []).map(x => x.shopId))).filter(Boolean);
+      populateSelect(els.fltShop, shops);
     } else { renderRows(els.tblLowBody, []); showEmpty(els.emptyLow, true); }
   }catch(e){ renderRows(els.tblLowBody, []); showEmpty(els.emptyLow, true); }
 
   const days = els.expiryDays.value;
-  try{
-    const exp = await fetchJSON(`/api/dashboard/expiring?days=${encodeURIComponent(days)}`);
+  try{     
+    const qs = currentFilterQS();
+    const exp = await fetchJSON(`/api/dashboard/expiring?days=${encodeURIComponent(days)}${qs}`);
     setText(els.kpiExp, (exp.items?.length ?? 0));
     if((exp.items?.length ?? 0) > 0){
       renderRows(els.tblExpBody, exp.items.map(p => [p.name, p.displayDate, p.quantity]));
@@ -75,8 +136,9 @@ async function loadKPIs(){
 
 async function loadTopProducts(){
   const period = els.period.value;
-  try{
-    const top = await fetchJSON(`/api/dashboard/top-products?period=${encodeURIComponent(period)}&limit=10`);
+  try{       
+    const qs = currentFilterQS();
+    const top = await fetchJSON(`/api/dashboard/top-products?period=${encodeURIComponent(period)}&limit=10${qs}`);
     const labels = (top.items ?? []).map(x => x.name);
     const data = (top.items ?? []).map(x => x.quantity);
     const ctx = document.getElementById('chartTop').getContext('2d');
@@ -92,8 +154,9 @@ async function loadTopProducts(){
 }
 
 async function loadReorder(){
-  try{
-    const reo = await fetchJSON('/api/dashboard/reorder');
+  try{        
+    const qs = currentFilterQS();
+    const reo = await fetchJSON(`/api/dashboard/reorder${qs}`);
     if((reo.items?.length ?? 0) > 0){
       renderRows(els.tblReorderBody, reo.items.map(s => [s.name, s.dailyRate, s.currentQty, s.reorderQty]));
       showEmpty(els.emptyReorder, false);
@@ -112,11 +175,18 @@ async function loadPrices(){
 }
 
 async function refreshAll(){
-  await loadKPIs();
-  await loadTopProducts();
-  await loadReorder();
-  await loadPrices();
+  await Promise.all([loadKPIs(), loadTopProducts(), loadReorder(), loadPrices()]);
 }
 
 els.refreshBtn.addEventListener('click', refreshAll);
-window.addEventListener('load', refreshAll);
+window.addEventListener('load', async () => {
+  await loadFilters();
+  await refreshAll();
+});
+// When filters change, re-run
+['period','expiryDays','fltState','fltCity','fltSegment','fltShop'].forEach(id => {
+  els[id].addEventListener('change', async () => {
+    if (id === 'fltState') populateCitiesForState();
+    await refreshAll();
+  });
+});
