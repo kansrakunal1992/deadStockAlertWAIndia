@@ -5,6 +5,7 @@ const USER_STATE_TABLE_NAME = process.env.AIRTABLE_USER_STATE_TABLE_NAME || 'Use
 const TRANSLATIONS_TABLE_NAME = process.env.AIRTABLE_TRANSLATIONS_TABLE_NAME || 'Translations';
 const STATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
+const BASE_URL = 'https://deadstockalertwaindia-production.up.railway.app';
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
 
 // Clean the base ID
