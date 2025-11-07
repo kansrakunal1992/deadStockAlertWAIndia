@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="dashboard.css" />
   <!-- Chart.js CDN (loaded at runtime in browser) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>.filters { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }</style>
 </head>
 <body>
   <header>
@@ -18,7 +19,29 @@
           <option value="week">This Week</option>
           <option value="month" selected>This Month</option>
         </select>
-      </label>
+      </label>            
+      <div class="filters">
+              <label>State:
+                <select id="fltState">
+                  <option value="">All</option>
+                </select>
+              </label>
+              <label>City:
+                <select id="fltCity">
+                  <option value="">All</option>
+                </select>
+              </label>
+              <label>Segment:
+                <select id="fltSegment">
+                  <option value="">All</option>
+                </select>
+              </label>
+              <label>Shop:
+                <select id="fltShop">
+                  <option value="">All</option>
+                </select>
+              </label>
+            </div>
       <label>Days to Expiry:
         <select id="expiryDays">
           <option value="0">Expired</option>
@@ -83,7 +106,7 @@
   </main>
 
   <footer>
-    <small>Data powered by Saamagrii.AI (Airtable). This dashboard calls backend JSON endpoints (see dashboard.js).
+    <small>Data powered by Saamagrii.AI (Airtable). Filters: State / City / Segment / Shop. This dashboard calls backend JSON endpoints (see dashboard.js).
     </small>
   </footer>
 
