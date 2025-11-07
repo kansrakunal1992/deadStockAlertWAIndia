@@ -21,7 +21,8 @@ const {
   getTopSellingProductsForPeriod,
   getReorderSuggestions,
   getAllShopIDs,
-  getCurrentInventory
+  getCurrentInventory,
+  getShopDetails
 } = require('./database');
 
 const app = express();
@@ -472,6 +473,61 @@ app.post('/api/whatsapp', whatsappHandler);
 app.use(express.static(path.join(__dirname, 'public')));
 
 // =========================
+// Dashboard filters support
+// =========================
+// Helper: normalize shop meta and match query filters
+function normalizeShopMeta(details) {
+  // Adjust these keys if your Airtable uses different names
+  const state   = (details.state   || details.State   || details.fields?.State   || '').trim();
+  const city    = (details.city    || details.City    || details.fields?.City    || '').trim();
+  const segment = (details.segment || details.Segment || details.fields?.Segment || '').trim();
+  const shopId  = (details.shopId  || details.ShopId  || details.fields?.ShopId  || details.id || '').toString();
+  const shopName= (details.shopName|| details['Shop Name'] || details.fields?.['Shop Name'] || '').trim();
+  return { state, city, segment, shopId, shopName };
+}
+function matchesFilter(meta, q) {
+  if (q.state   && meta.state.toLowerCase()   !== String(q.state).toLowerCase()) return false;
+  if (q.city    && meta.city.toLowerCase()    !== String(q.city).toLowerCase()) return false;
+  if (q.segment && meta.segment.toLowerCase() !== String(q.segment).toLowerCase()) return false;
+  if (q.shopId  && meta.shopId.toString()     !== String(q.shopId)) return false;
+  return true;
+}
+async function shopMetaMap(shopIds) {
+  const map = new Map();
+  for (const id of shopIds) {
+    try {
+      const d = await getShopDetails(id);
+      if (d?.success && d.shopDetails) {
+        map.set(id, normalizeShopMeta({ ...d.shopDetails, shopId: id }));
+      } else {
+        map.set(id, normalizeShopMeta({ shopId: id })); // minimal
+      }
+    } catch {
+      map.set(id, normalizeShopMeta({ shopId: id }));
+    }
+  }
+  return map;
+}
+// Endpoint to fetch distinct filter options
+app.get('/api/dashboard/filters', async (req, res) => {
+  try {
+    const shopIds = await getAllShopIDs();
+    const metas = await shopMetaMap(shopIds);
+    const states  = new Set(), cities = new Set(), segments = new Set();
+    for (const m of metas.values()) {
+      if (m.state)   states.add(m.state);
+      if (m.city)    cities.add(m.city);
+      if (m.segment) segments.add(m.segment);
+    }
+    res.json({ states: [...states].sort(), cities: [...cities].sort(), segments: [...segments].sort(), shopCount: shopIds.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+
+// =========================
 // Dashboards (JSON APIs)
 // =========================
 // These endpoints power dashboard.html/js in /public.
@@ -503,13 +559,16 @@ const toNum = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
 async function aggregateSales(periodKey) {
   const { start, end } = periodWindow(periodKey);
   const shopIds = await getAllShopIDs(); // from your DB layer
+  const meta = await shopMetaMap(shopIds);
   let totalItems = 0, totalValue = 0;
   const topMap = new Map(); // name -> { quantity, unit }
   const CONC = 5; // mild concurrency to respect Airtable limits
 
   for (let i = 0; i < shopIds.length; i += CONC) {
     const batch = shopIds.slice(i, i + CONC);
-    await Promise.all(batch.map(async (shopId) => {
+    await Promise.all(batch.map(async (shopId) => {           
+      const m = meta.get(shopId) || normalizeShopMeta({ shopId });
+      if (!matchesFilter(m, q)) return;
       const data = await getSalesDataForPeriod(shopId, start, end);
       totalItems += toNum(data.totalItems);
       totalValue += toNum(data.totalValue);
@@ -532,9 +591,9 @@ async function aggregateSales(periodKey) {
 
 // KPI summary (network-wide)
 app.get('/api/dashboard/summary', async (req, res) => {
-  try {
-    const period = req.query.period || 'month';
-    const agg = await aggregateSales(period);
+  try {     
+    const { period = 'month', state, city, segment, shopId } = req.query;
+    const agg = await aggregateSales(period, { state, city, segment, shopId });
     res.json({ period, ...agg });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -544,9 +603,9 @@ app.get('/api/dashboard/summary', async (req, res) => {
 // Top products (network-wide)
 app.get('/api/dashboard/top-products', async (req, res) => {
   try {
-    const period = req.query.period || 'month';
+    const { period = 'month', state, city, segment, shopId } = req.query;
     const limit = Math.max(1, Number(req.query.limit || 10));
-    const agg = await aggregateSales(period);
+    const agg = await aggregateSales(period, { state, city, segment, shopId });
     res.json({ period, items: agg.top.slice(0, limit) });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -557,16 +616,21 @@ app.get('/api/dashboard/top-products', async (req, res) => {
 app.get('/api/dashboard/low-stock', async (req, res) => {
   try {
     const limit = Math.max(1, Number(req.query.limit || 50));
-    const shopIds = await getAllShopIDs();
+    const shopIds = await getAllShopIDs();        
+    const { state, city, segment, shopId } = req.query;
+    const meta = await shopMetaMap(shopIds);
     const items = [];
-    for (const shopId of shopIds) {
+    for (const shopId of shopIds) {           
+      const m = meta.get(sid) || normalizeShopMeta({ shopId: sid });
+      if (!matchesFilter(m, { state, city, segment, shopId })) continue;
       const low = await getLowStockProducts(shopId, 5);
       for (const p of low) {
         items.push({
           name: p.name || p.fields?.Product,
           quantity: toNum(p.quantity ?? p.fields?.Quantity),
-          unit: p.unit || p.fields?.Units || 'pieces',
-          shopId
+          unit: p.unit || p.fields?.Units || 'pieces',                    
+          shopId: sid,
+          state: m.state, city: m.city, segment: m.segment
         });
       }
     }
@@ -587,17 +651,22 @@ app.get('/api/dashboard/low-stock', async (req, res) => {
 app.get('/api/dashboard/expiring', async (req, res) => {
   try {
     const days = Math.max(0, Number(req.query.days || 30));
-    const shopIds = await getAllShopIDs();
-    const items = [];
-    for (const shopId of shopIds) {
-      const exp = await getExpiringProducts(shopId, days);
-      for (const p of exp) {
+    const shopIds = await getAllShopIDs();        
+    const { state, city, segment, shopId } = req.query;
+    const meta = await shopMetaMap(shopIds);
+    const items = [];        
+    for (const sid of shopIds) {
+          const m = meta.get(sid) || normalizeShopMeta({ shopId: sid });
+          if (!matchesFilter(m, { state, city, segment, shopId })) continue;
+          const exp = await getExpiringProducts(sid, days);
+    for (const p of exp) {
         items.push({
           name: p.name,
           quantity: toNum(p.quantity),
-          expiryDate: p.expiryDate,
+          expiryDate: p.expiryDate,                    
           displayDate: p.expiryDate,
-          shopId
+          shopId: sid,
+          state: m.state, city: m.city, segment: m.segment
         });
       }
     }
@@ -610,11 +679,15 @@ app.get('/api/dashboard/expiring', async (req, res) => {
 // Reorder suggestions (30d velocity, lead=3, safety=2)
 app.get('/api/dashboard/reorder', async (req, res) => {
   try {
-    const shopIds = await getAllShopIDs();
-    const items = [];
-    for (const shopId of shopIds) {
-      const { success, suggestions } =
-        await getReorderSuggestions(shopId, { days: 30, leadTimeDays: 3, safetyDays: 2 });
+    const shopIds = await getAllShopIDs();        
+    const { state, city, segment, shopId } = req.query;
+    const meta = await shopMetaMap(shopIds);
+    const items = [];        
+    for (const sid of shopIds) {
+          const m = meta.get(sid) || normalizeShopMeta({ shopId: sid });
+          if (!matchesFilter(m, { state, city, segment, shopId })) continue;
+          const { success, suggestions } =
+            await getReorderSuggestions(sid, { days: 30, leadTimeDays: 3, safetyDays: 2 });
       if (!success) continue;
       for (const s of suggestions) {
         items.push({
@@ -622,8 +695,9 @@ app.get('/api/dashboard/reorder', async (req, res) => {
           unit: s.unit,
           currentQty: toNum(s.currentQty),
           dailyRate: toNum(s.dailyRate),
-          reorderQty: toNum(s.reorderQty),
-          shopId
+          reorderQty: toNum(s.reorderQty),                    
+          shopId: sid,
+          state: m.state, city: m.city, segment: m.segment
         });
       }
     }
