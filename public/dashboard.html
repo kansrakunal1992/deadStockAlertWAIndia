@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Saamagrii.AI – FMCG Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css" />
+  <!-- Chart.js CDN (loaded at runtime in browser) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Saamagrii.AI – FMCG / Distributor Insights</h1>
+    <div class="controls">
+      <label>Period:
+        <select id="period">
+          <option value="today">Today</option>
+          <option value="week">This Week</option>
+          <option value="month" selected>This Month</option>
+        </select>
+      </label>
+      <label>Days to Expiry:
+        <select id="expiryDays">
+          <option value="0">Expired</option>
+          <option value="7">7</option>
+          <option value="15">15</option>
+          <option value="30" selected>30</option>
+          <option value="60">60</option>
+        </select>
+      </label>
+      <button id="refreshBtn">Refresh</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="kpis">
+      <div class="kpi"><span id="kpiSales">–</span><label>Sales (₹)</label></div>
+      <div class="kpi"><span id="kpiItems">–</span><label>Items Sold</label></div>
+      <div class="kpi"><span id="kpiLow">–</span><label>Low Stock SKUs</label></div>
+      <div class="kpi"><span id="kpiExp">–</span><label>Expiring Soon</label></div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <h2>Top Products</h2>
+        <canvas id="chartTop"></canvas>
+        <div class="empty" id="emptyTop" hidden>No top products found.</div>
+      </div>
+      <div class="card">
+        <h2>Low Stock (≤5)</h2>
+        <table id="tblLow">
+          <thead><tr><th>Product</th><th>Qty</th><th>Unit</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="empty" id="emptyLow" hidden>No low stock items.</div>
+      </div>
+      <div class="card">
+        <h2>Expiring</h2>
+        <table id="tblExp">
+          <thead><tr><th>Product</th><th>Expiry</th><th>Qty</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="empty" id="emptyExp" hidden>No expiring items.</div>
+      </div>
+      <div class="card">
+        <h2>Reorder Suggestions</h2>
+        <table id="tblReorder">
+          <thead><tr><th>Product</th><th>Daily Rate</th><th>Current</th><th>Suggested</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="empty" id="emptyReorder" hidden>No reorder suggestions.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Price Updates Needed</h2>
+      <table id="tblPrices">
+        <thead><tr><th>Product</th><th>Current Price</th><th>Unit</th><th>Last Updated</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty" id="emptyPrices" hidden>All prices look fresh.</div>
+    </section>
+  </main>
+
+  <footer>
+    <small>Data powered by Saamagrii.AI (Airtable). This dashboard calls backend JSON endpoints (see dashboard.js).
+    </small>
+  </footer>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
