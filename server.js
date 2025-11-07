@@ -4,14 +4,26 @@ const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
 const { runDailySummary } = require('./dailySummary');
-const { 
-  getAllProducts, 
-  getProductPrice, 
-  upsertProduct, 
-  updateProductPrice, 
+const {
+  // existing
+  getAllProducts,
+  getProductPrice,
+  upsertProduct,
+  updateProductPrice,
   getProductsNeedingPriceUpdate,
-  sendPriceUpdateReminders
+  sendPriceUpdateReminders,
+  // dashboard helpers (present in your codebase per whatsapp.js imports)
+  // NOTE: these are used to aggregate across shops for dashboard views.
+  getSalesDataForPeriod,
+  getInventorySummary,
+  getLowStockProducts,
+  getExpiringProducts,
+  getTopSellingProductsForPeriod,
+  getReorderSuggestions,
+  getAllShopIDs,
+  getCurrentInventory
 } = require('./database');
+
 const app = express();
 const tempDir = path.join(__dirname, 'temp');
 
@@ -458,6 +470,188 @@ app.post('/api/whatsapp', whatsappHandler);
 
 // Static files (if needed)
 app.use(express.static(path.join(__dirname, 'public')));
+
+// =========================
+// Dashboards (JSON APIs)
+// =========================
+// These endpoints power dashboard.html/js in /public.
+// Front-end calls:
+//  - /api/dashboard/summary?period=today|week|month
+//  - /api/dashboard/top-products?period=today|week|month&limit=10
+//  - /api/dashboard/low-stock?limit=50
+//  - /api/dashboard/expiring?days=30
+//  - /api/dashboard/reorder
+//  - /api/dashboard/prices/stale?page=1
+
+function periodWindow(period) {
+  const now = new Date();
+  const p = String(period || 'month').toLowerCase();
+  if (p === 'today' || p === 'day') {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    return { start, end, label: 'today' };
+  }
+  if (p.includes('week')) {
+    const start = new Date(now); start.setDate(now.getDate() - 7);
+    return { start, end: now, label: 'week' };
+  }
+  const start = new Date(now.getFullYear(), now.getMonth(), 1);
+  return { start, end: now, label: 'month' };
+}
+const toNum = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
+
+async function aggregateSales(periodKey) {
+  const { start, end } = periodWindow(periodKey);
+  const shopIds = await getAllShopIDs(); // from your DB layer
+  let totalItems = 0, totalValue = 0;
+  const topMap = new Map(); // name -> { quantity, unit }
+  const CONC = 5; // mild concurrency to respect Airtable limits
+
+  for (let i = 0; i < shopIds.length; i += CONC) {
+    const batch = shopIds.slice(i, i + CONC);
+    await Promise.all(batch.map(async (shopId) => {
+      const data = await getSalesDataForPeriod(shopId, start, end);
+      totalItems += toNum(data.totalItems);
+      totalValue += toNum(data.totalValue);
+      for (const p of (data.topProducts || [])) {
+        const prev = topMap.get(p.name) || { quantity: 0, unit: p.unit };
+        prev.quantity += toNum(p.quantity);
+        prev.unit = p.unit || prev.unit;
+        topMap.set(p.name, prev);
+      }
+    }));
+    // tiny pause to be gentle with Airtable API limits
+    await new Promise(r => setTimeout(r, 250));
+  }
+  const top = Array.from(topMap.entries())
+    .map(([name, v]) => ({ name, quantity: v.quantity, unit: v.unit }))
+    .sort((a,b) => b.quantity - a.quantity)
+    .slice(0, 10);
+  return { totalItems, totalValue, top };
+}
+
+// KPI summary (network-wide)
+app.get('/api/dashboard/summary', async (req, res) => {
+  try {
+    const period = req.query.period || 'month';
+    const agg = await aggregateSales(period);
+    res.json({ period, ...agg });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Top products (network-wide)
+app.get('/api/dashboard/top-products', async (req, res) => {
+  try {
+    const period = req.query.period || 'month';
+    const limit = Math.max(1, Number(req.query.limit || 10));
+    const agg = await aggregateSales(period);
+    res.json({ period, items: agg.top.slice(0, limit) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Low stock (network-wide, dedup by product name)
+app.get('/api/dashboard/low-stock', async (req, res) => {
+  try {
+    const limit = Math.max(1, Number(req.query.limit || 50));
+    const shopIds = await getAllShopIDs();
+    const items = [];
+    for (const shopId of shopIds) {
+      const low = await getLowStockProducts(shopId, 5);
+      for (const p of low) {
+        items.push({
+          name: p.name || p.fields?.Product,
+          quantity: toNum(p.quantity ?? p.fields?.Quantity),
+          unit: p.unit || p.fields?.Units || 'pieces',
+          shopId
+        });
+      }
+    }
+    // Deduplicate by name (pick strictest qty)
+    const pick = new Map();
+    for (const r of items) {
+      const k = String(r.name).toLowerCase();
+      const prev = pick.get(k);
+      if (!prev || r.quantity < prev.quantity) pick.set(k, r);
+    }
+    res.json({ items: Array.from(pick.values()).slice(0, limit) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Expiring (network-wide)
+app.get('/api/dashboard/expiring', async (req, res) => {
+  try {
+    const days = Math.max(0, Number(req.query.days || 30));
+    const shopIds = await getAllShopIDs();
+    const items = [];
+    for (const shopId of shopIds) {
+      const exp = await getExpiringProducts(shopId, days);
+      for (const p of exp) {
+        items.push({
+          name: p.name,
+          quantity: toNum(p.quantity),
+          expiryDate: p.expiryDate,
+          displayDate: p.expiryDate,
+          shopId
+        });
+      }
+    }
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Reorder suggestions (30d velocity, lead=3, safety=2)
+app.get('/api/dashboard/reorder', async (req, res) => {
+  try {
+    const shopIds = await getAllShopIDs();
+    const items = [];
+    for (const shopId of shopIds) {
+      const { success, suggestions } =
+        await getReorderSuggestions(shopId, { days: 30, leadTimeDays: 3, safetyDays: 2 });
+      if (!success) continue;
+      for (const s of suggestions) {
+        items.push({
+          name: s.name,
+          unit: s.unit,
+          currentQty: toNum(s.currentQty),
+          dailyRate: toNum(s.dailyRate),
+          reorderQty: toNum(s.reorderQty),
+          shopId
+        });
+      }
+    }
+    items.sort((a,b) => (b.reorderQty - a.reorderQty) || (b.dailyRate - a.dailyRate));
+    res.json({ items: items.slice(0, 100) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Stale prices (global backlog, paged)
+app.get('/api/dashboard/prices/stale', async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page || 1));
+    const PAGE_SIZE = 50;
+    const list = await getProductsNeedingPriceUpdate();
+    const start = (page - 1) * PAGE_SIZE;
+    const slice = list.slice(start, start + PAGE_SIZE).map(it => ({
+      name: it.name,
+      currentPrice: toNum(it.currentPrice),
+      unit: it.unit || 'pieces',
+      lastUpdated: it.lastUpdated
+    }));
+    res.json({ page, total: list.length, items: slice });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // Add this endpoint to your server.js file
 app.post('/api/enroll', async (req, res) => {
