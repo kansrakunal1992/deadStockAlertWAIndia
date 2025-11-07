@@ -910,6 +910,93 @@ const {
   withEngagementTips
 } = require('./engagementTips');
 
+// --- Gamification tracker (JSON file; same pattern as summary_tracker.json) ---
+const GAMIFY_TRACK_FILE = path.join(__dirname, 'gamify_tracker.json');
+
+function readGamify() {
+  try {
+    if (!fs.existsSync(GAMIFY_TRACK_FILE)) return {};
+    return JSON.parse(fs.readFileSync(GAMIFY_TRACK_FILE, 'utf8'));
+  } catch (e) {
+    console.warn('[gamify] read failed:', e.message);
+    return {};
+  }
+}
+function writeGamify(state) {
+  try {
+    fs.writeFileSync(GAMIFY_TRACK_FILE, JSON.stringify(state, null, 2));
+    return true;
+  } catch (e) {
+    console.warn('[gamify] write failed:', e.message);
+    return false;
+  }
+}
+// IST helpers
+function todayIST() {
+  const now = new Date();
+  const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+  return ist.toISOString().split('T')[0]; // YYYY-MM-DD (IST day)
+}
+function isYesterdayIST(dateStr) {
+  try {
+    if (!dateStr) return false;
+    const [y, m, d] = String(dateStr).split('-').map(Number);
+    const thenUTC = Date.UTC(y, m - 1, d);
+    const [ty, tm, td] = todayIST().split('-').map(Number);
+    const todayUTC = Date.UTC(ty, tm - 1, td);
+    const diffDays = Math.round((todayUTC - thenUTC) / (24 * 3600 * 1000));
+    return diffDays === 1;
+  } catch { return false; }
+}
+// Points by action
+function pointsFor(action) {
+  switch (String(action).toLowerCase()) {
+    case 'sold': return 2;
+    case 'purchase':
+    case 'purchased': return 1;
+    case 'returned': return 1;
+    default: return 1;
+  }
+}
+// Badge rules
+const ENTRY_BADGES = [1, 5, 10, 50];
+const STREAK_BADGES = [3, 7, 30];
+function maybeAwardBadges(gs) {
+  const awarded = [];
+  for (const n of ENTRY_BADGES) { const label = `${n} Entries`; if (gs.entries >= n && !gs.badges.includes(label)) { gs.badges.push(label); awarded.push(label); } }
+  if (gs.entries >= 1 && !gs.badges.includes('First Entry')) { gs.badges.push('First Entry'); awarded.push('First Entry'); }
+  for (const s of STREAK_BADGES) { const label = `${s}-Day Streak`; if (gs.streakDays >= s && !gs.badges.includes(label)) { gs.badges.push(label); awarded.push(label); } }
+  return awarded;
+}
+// Update state per shop
+function updateGamifyState(shopId, action) {
+  const state = readGamify();
+  const gs = state[shopId] || { points: 0, entries: 0, streakDays: 0, lastActivityDate: null, badges: [] };
+  const today = todayIST();
+  if (gs.lastActivityDate === today) {
+    // same day, keep streak
+  } else if (isYesterdayIST(gs.lastActivityDate)) {
+    gs.streakDays += 1;
+  } else {
+    gs.streakDays = 1;
+  }
+  gs.points += pointsFor(action);
+  gs.entries += 1;
+  gs.lastActivityDate = today;
+  const newlyAwarded = maybeAwardBadges(gs);
+  state[shopId] = gs;
+  writeGamify(state);
+  return { ok: true, newlyAwarded, snapshot: gs };
+}
+// Short celebration text (base EN → localized via t())
+function composeGamifyToast({ action, gs, newlyAwarded }) {
+  const head = `🎉 Nice! +${pointsFor(action)} point(s) for ${action}.`;
+  const body = `Total: ${gs.points} points • Streak: ${gs.streakDays} day(s) • Entries: ${gs.entries}`;
+  const badges = (newlyAwarded && newlyAwarded.length) ? `🏅 New badge: ${newlyAwarded.join(', ')}` : '';
+  return [head, body, badges].filter(Boolean).join('\n');
+}
+
+
 // ===== NEW ENV: how many alternative batches to show in the confirmation (default 2) =====
 const SHOW_BATCH_SUGGESTIONS_COUNT = Number(process.env.SHOW_BATCH_SUGGESTIONS_COUNT ?? 2);
 
@@ -2122,7 +2209,26 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
         detectedLanguage
       );
       return true;
+    } 
+    
+  // --- Gamification progress quick query ---
+    // Place early so it's responsive and doesn't collide with other commands
+    if (/^(progress|gamification|badges)$/i.test(text)) {
+      const shopId = From.replace('whatsapp:', '');
+      const state = readGamify();
+      const gs = state[shopId] || { points: 0, entries: 0, streakDays: 0, lastActivityDate: '—', badges: [] };
+      const msgEn =
+        `⭐ Progress\n` +
+        `• Points: ${gs.points}\n` +
+        `• Entries: ${gs.entries}\n` +
+        `• Streak: ${gs.streakDays} day(s)\n` +
+        `• Last activity: ${gs.lastActivityDate}\n` +
+        (gs.badges.length ? `• Badges: ${gs.badges.join(', ')}` : `• Badges: —`);
+      const msg = await t(msgEn, detectedLanguage, requestId);
+      await sendMessageViaAPI(From, msg);
+      return true;
     }
+  
   
   const shopId = From.replace('whatsapp:', '');
   
@@ -3876,6 +3982,16 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           product, quantity: Math.abs(update.quantity), unit: update.unit, action: 'returned',
           success: !!result?.success, newQuantity: result?.newQuantity, unitAfter: result?.unit
         });
+              
+        // --- Gamify toast for successful return ---
+                try {
+                  if (result?.success) {
+                    const gam = updateGamifyState(String(shopId), update.action);
+                    const toast = await t(composeGamifyToast({ action: update.action, gs: gam.snapshot, newlyAwarded: gam.newlyAwarded }), languageCode, 'gamify-toast');
+                    await sendMessageViaAPI(`whatsapp:${shopId}`, toast);
+                  }
+                } catch (e) { console.warn('[gamify] toast failed:', e.message); }
+        
         continue; // Move to next update
       }
 
@@ -4048,6 +4164,14 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             totalValue: finalPrice * Math.abs(update.quantity),
             inlineConfirmText: confirmTextLine
           });
+          
+          // --- Gamify toast for successful purchase ---
+                try {
+                  const gam = updateGamifyState(String(shopId), update.action);
+                  const toast = await t(composeGamifyToast({ action: update.action, gs: gam.snapshot, newlyAwarded: gam.newlyAwarded }), languageCode, 'gamify-toast');
+                  await sendMessageViaAPI(`whatsapp:${shopId}`, toast);
+                } catch (e) { console.warn('[gamify] toast failed:', e.message); }
+
           continue; // done with purchase branch
         }
         // === END NEW block ===
@@ -4438,8 +4562,17 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           + `salePrice=${enriched.salePrice ?? '-'}, `
           + `totalValue=${enriched.totalValue}`
         );
+             
+        // --- Gamify toast for successful non-return branch (purchase handled earlier; sale here) ---
+        try {
+          if (result && result.success) {
+            const gam = updateGamifyState(String(shopId), update.action);
+            const toast = await t(composeGamifyToast({ action: update.action, gs: gam.snapshot, newlyAwarded: gam.newlyAwarded }), languageCode, 'gamify-toast');
+            await sendMessageViaAPI(`whatsapp:${shopId}`, toast);
+          }
+        } catch (e) { console.warn('[gamify] toast failed:', e.message); }
+        results.push(enriched);
       
-      results.push(enriched);
     } catch (error) {
       console.error(`[Update ${shopId} - ${update.product}] Error:`, error.message);
       results.push({
