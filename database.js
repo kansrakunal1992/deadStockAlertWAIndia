@@ -2196,19 +2196,25 @@ async function upsertProduct(productData) {
   async function getProductPrice(productName, shopId = null) {
     const context = `Get Product Price ${productName}`;
   try {          
-      const nameLower = productName.toLowerCase().trim();
-          const shopScoped = shopId
+      const nameLower = productName.toLowerCase().trim();               
+      const shopScoped = shopId
             ? `AND({ShopID}='${escapeFormula(shopId)}', OR(LOWER(TRIM({Name}))='${escapeFormula(nameLower)}', FIND('${escapeFormula(nameLower)}', LOWER(TRIM({Name})))>0))`
-            : `OR(LOWER(TRIM({Name}))='${escapeFormula(nameLower)}', FIND('${escapeFormula(nameLower)}', LOWER(TRIM({Name})))>0))`;
+            : `OR(LOWER(TRIM({Name}))='${escapeFormula(nameLower)}', FIND('${escapeFormula(nameLower)}', LOWER(TRIM({Name})))>0)`;
       
-          const result = await airtableProductsRequest({
-            method: 'get',
-            params: {
-              filterByFormula: shopScoped,
-              maxRecords: 1,
-              sort: [{ field: 'LastUpdated', direction: 'desc' }]
-            }
-          }, context);
+          // Try primary lookup; if it throws (e.g., invalid formula), fall back gracefully
+          let result = null;
+          try {
+            result = await airtableProductsRequest({
+              method: 'get',
+              params: {
+                filterByFormula: shopScoped,
+                maxRecords: 1,
+                sort: [{ field: 'LastUpdated', direction: 'desc' }]
+              }
+            }, `${context} - Primary`);
+          } catch (e) {
+            console.warn(`[${context}] primary lookup failed, falling back:`, e?.message);
+          }
     
     if (result.records && result.records.length > 0) {
       const rec = result.records[0];
@@ -2346,7 +2352,7 @@ async function updateProductPrice(productId, newPrice) {
           const result = await airtableProductsRequest({
             method: 'get',
             params: {
-              filterByFormula,
+              filterByFormula: filterFormula,
               sort: [{ field: 'LastUpdated', direction: 'asc' }]
             }
           }, context);
