@@ -1516,11 +1516,12 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
   } catch (e) {
     console.warn(`[${requestId}] updateBatchExpiry failed:`, e.message);
   }
-  try {
+  try {        
     if (updatedPrice && batchId) {
-      await updateBatchPurchasePrice(batchId, updatedPrice, quantity);
-      await upsertProduct({ name: product, price: updatedPrice, unit });
-    }        
+            await updateBatchPurchasePrice(batchId, updatedPrice, quantity);
+            // NEW: shop-scoped product price upsert
+            await upsertProduct({ shopId, name: product, price: updatedPrice, unit });
+          } 
     try {
                 await updateInventory(shopId, product, quantity, unit);
                 console.log(`[handleAwaitingPriceExpiry] Inventory updated for ${product}: +${quantity} ${unit}`);
