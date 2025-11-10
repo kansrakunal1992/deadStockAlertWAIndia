@@ -1806,9 +1806,9 @@ async function getInventorySummary(shopId) {
       method: 'get',
       params: { filterByFormula: filterFormula }
     }, context);
-
-    // 2) Pull all products (name, price, unit, category)
-    const products = await getAllProducts(); // [{name, price, unit, category, ...}]
+      
+  // 2) Pull shop-scoped products (name, price, unit, category)
+      const products = await getAllProducts(shopId); // [{name, price, unit, category, ...}]
     const priceMap = new Map(products.map(p => [String(p.name).toLowerCase(), {
       price: Number(p.price ?? 0),
       unit: p.unit ?? 'pieces',
@@ -2135,11 +2135,19 @@ async function getShopDetails(shopId) {
 }
 
 // Create or update product with price
+// Helper: escape single quotes for Airtable formulas
+function escapeFormula(val) {
+  return String(val ?? '').replace(/'/g, "''");
+}
+
+// NEW: shop-scoped upsert (requires ShopID)
 async function upsertProduct(productData) {
   const context = `Upsert Product ${productData.name}`;
   try {
-    const { name, price, unit, category, hsnCode } = productData;
-    const filterFormula = `LOWER(TRIM({Name})) = '${name.toLowerCase().replace(/'/g, "''").trim()}'`;
+    const { shopId, name, price, unit, category, hsnCode } = productData;
+    const nameLc = String(name).toLowerCase().trim();
+    const filterFormula =
+      `AND({ShopID}='${escapeFormula(shopId)}', LOWER(TRIM({Name}))='${escapeFormula(nameLc)}')`;
     const findResult = await airtableProductsRequest({
       method: 'get',
       params: { filterByFormula: filterFormula, maxRecords: 1 }
@@ -2151,6 +2159,7 @@ async function upsertProduct(productData) {
 
     const productRecord = {
       fields: {
+        ShopID: shopId,
         Name: name.trim(),
         Price: sanitizedPrice,
         Unit: unit ?? 'pieces',
@@ -2182,21 +2191,24 @@ async function upsertProduct(productData) {
 }
 
 
-// Get product price
-async function getProductPrice(productName) {
-  const context = `Get Product Price ${productName}`;
-  try {
-    const nameLower = productName.toLowerCase().replace(/'/g, "''").trim();
-    // Use flexible matching: exact match OR substring match
-    const filterFormula = `OR(LOWER(TRIM({Name})) = '${nameLower}', FIND('${nameLower}', LOWER(TRIM({Name}))) > 0)`;
-    const result = await airtableProductsRequest({
-      method: 'get',
-      params: {
-        filterByFormula: filterFormula,
-        maxRecords: 1,
-        sort: [{ field: 'LastUpdated', direction: 'desc' }] // prefer latest
-      }
-    }, context);
+// Get product price  
+  // NEW: shop-scoped price fetch with global fallback
+  async function getProductPrice(productName, shopId = null) {
+    const context = `Get Product Price ${productName}`;
+  try {          
+      const nameLower = productName.toLowerCase().trim();
+          const shopScoped = shopId
+            ? `AND({ShopID}='${escapeFormula(shopId)}', OR(LOWER(TRIM({Name}))='${escapeFormula(nameLower)}', FIND('${escapeFormula(nameLower)}', LOWER(TRIM({Name})))>0))`
+            : `OR(LOWER(TRIM({Name}))='${escapeFormula(nameLower)}', FIND('${escapeFormula(nameLower)}', LOWER(TRIM({Name})))>0))`;
+      
+          const result = await airtableProductsRequest({
+            method: 'get',
+            params: {
+              filterByFormula: shopScoped,
+              maxRecords: 1,
+              sort: [{ field: 'LastUpdated', direction: 'desc' }]
+            }
+          }, context);
     
     if (result.records && result.records.length > 0) {
       const rec = result.records[0];
@@ -2218,7 +2230,36 @@ async function getProductPrice(productName) {
             shelfLifeDays: Number(rec.fields.DefaultShelfLifeDays ?? 0),
             autoExpiryCandidate: !!rec.fields.RequiresExpiry && Number(rec.fields.DefaultShelfLifeDays ?? 0) > 0
           };
-    }
+    }    
+        
+    // Fallback to global (ShopID blank or missing) if shop-scoped not found
+        if (shopId) {
+          const globalResult = await airtableProductsRequest({
+            method: 'get',
+            params: {
+              filterByFormula:
+                `AND(OR({ShopID}='' , {ShopID}=BLANK()), OR(LOWER(TRIM({Name}))='${escapeFormula(nameLower)}', FIND('${escapeFormula(nameLower)}', LOWER(TRIM({Name})))>0))`,
+              maxRecords: 1,
+              sort: [{ field: 'LastUpdated', direction: 'desc' }]
+            }
+          }, `${context} - GlobalFallback`);
+          if (globalResult.records && globalResult.records.length > 0) {
+            const rec = globalResult.records[0];
+            const raw = rec.fields.Price;
+            const priceNum = (typeof raw === 'number')
+              ? raw
+              : parseFloat(String(raw).replace(/[^\d.]/g, '')) || 0;
+            return {
+              success: true,
+              price: priceNum,
+              unit: rec.fields.Unit ?? 'pieces',
+              category: rec.fields.Category ?? 'General',
+              hsnCode: rec.fields.HSNCode ?? '',
+              requiresExpiry: !!rec.fields.RequiresExpiry,
+              shelfLifeDays: Number(rec.fields.DefaultShelfLifeDays ?? 0)
+            };
+          }
+        }
     
     return { success: false, error: 'Product not found' };
   } catch (error) {
@@ -2228,19 +2269,22 @@ async function getProductPrice(productName) {
 }
 
 
-// Get all products
-async function getAllProducts() {
-  const context = 'Get All Products';
-  try {
-    const result = await airtableProductsRequest({
-      method: 'get',
-      params: {
-        sort: [{ field: 'Name', direction: 'asc' }]
-      }
-    }, context);
-    
+// Get all products  
+  // NEW: optionally shop-scoped list
+  async function getAllProducts(shopId = null) {
+    const context = 'Get All Products';
+  try {          
+      const params = {
+            sort: [{ field: 'Name', direction: 'asc' }]
+          };
+          if (shopId) {
+            params.filterByFormula = `{ShopID}='${escapeFormula(shopId)}'`;
+          }
+          const result = await airtableProductsRequest({ method: 'get', params }, context);
+   
     return result.records.map(record => ({
       id: record.id,
+      shopId: record.fields.ShopID ?? '',
       name: record.fields.Name,
       price: record.fields.Price || 0,
       unit: record.fields.Unit || 'pieces',
@@ -2278,36 +2322,38 @@ async function updateProductPrice(productId, newPrice) {
   }
 }
 
-// Get products needing price update (no price updated in last 7 days)
-async function getProductsNeedingPriceUpdate() {
-  const context = 'Get Products Needing Price Update';
+// Get products needing price update (no price updated in last 7 days)  
+  // NEW: optionally shop-scoped stale price list
+  async function getProductsNeedingPriceUpdate(shopId = null) {
+    const context = 'Get Products Needing Price Update';
   try {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     const dateISO = sevenDaysAgo.toISOString();
     
-    const filterFormula = `OR(
+    let filterFormula = `OR(
       IS_BEFORE(
         {LastUpdated},
         DATETIME_PARSE("${dateISO}", "YYYY-MM-DDTHH:mm:ss.SSSZ")
       ),
       {LastUpdated} = BLANK(),
       {Price} = 0,
-      {Price} = BLANK()
-    )`;
-
-    
-    const result = await airtableProductsRequest({
-      method: 'get',
-      params: {
-        filterByFormula: filterFormula,
-        sort: [{ field: 'LastUpdated', direction: 'asc' }]
-      }
-    }, context);
-
+      {Price} = BLANK()          
+      )`;
+          if (shopId) {
+            filterFormula = `AND({ShopID}='${escapeFormula(shopId)}', ${filterFormula})`;
+          }
+          const result = await airtableProductsRequest({
+            method: 'get',
+            params: {
+              filterByFormula,
+              sort: [{ field: 'LastUpdated', direction: 'asc' }]
+            }
+          }, context);
     
     return result.records.map(record => ({
       id: record.id,
+      shopId: record.fields.ShopID ?? '',
       name: record.fields.Name,
       currentPrice: record.fields.Price || 0,
       unit: record.fields.Unit || 'pieces',
