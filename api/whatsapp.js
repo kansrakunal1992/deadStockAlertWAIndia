@@ -4001,7 +4001,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       let productPrice = 0;
             let productPriceUnit = null;
             try {
-              const priceResult = await getProductPrice(product);
+              const priceResult = await getProductPrice(product, shopId);
               if (priceResult?.success) {
                 productPrice     = toNumberSafe(priceResult.price);
                 productPriceUnit = priceResult.unit || null;
@@ -4014,8 +4014,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         if (update.action === 'purchased') {
           let autoExpiry = null;
           let productMeta = null;
-          try {
-            productMeta = await getProductPrice(product);
+          try {                        
+            // Prefer shop-scoped product meta for expiry hints
+            productMeta = await getProductPrice(product, shopId);
             if (productMeta?.success && productMeta.requiresExpiry) {
               const sd = Number(productMeta.shelfLifeDays ?? 0);
               if (sd > 0) {
@@ -4125,7 +4126,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       
           // Save price if known now
           if (finalPrice > 0) {
-            try { await upsertProduct({ name: product, price: finalPrice, unit: update.unit }); } catch (_) {}
+            try { await upsertProduct({ shopId, name: product, price: finalPrice, unit: update.unit }); } catch (_) {}
           }
       
           const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
@@ -4311,12 +4312,13 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
       // ✅ Update product price in DB after purchase — only if we have a positive rate
       if (productPrice > 0) {
-        try {
+        try {          
           await upsertProduct({
-            name: product,
-            price: productPrice,
-            unit: update.unit
-          });
+                    shopId,
+                    name: product,
+                    price: productPrice,
+                    unit: update.unit
+                  });
           console.log(`[Update ${shopId} - ${product}] Product price updated in DB: ₹${productPrice}/${update.unit}`);
         } catch (err) {
           console.warn(`[Update ${shopId} - ${product}] Failed to update product price in DB:`, err.message);
