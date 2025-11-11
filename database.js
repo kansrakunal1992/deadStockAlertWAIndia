@@ -1686,6 +1686,58 @@ async function isUserAuthorized(shopId, authCode = null) {
   }
 }
 
+// NEW: Touch AuthUsers.LastUsed for arbitrary inbound activity (lightweight)
+async function touchUserLastUsed(shopId) {
+  const context = `Touch LastUsed ${shopId}`;
+  try {
+    const escapedShopId = shopId.replace(/'/g, "''");
+    const filterFormula = `{ShopID} = '${escapedShopId}'`;
+    const find = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula },
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`
+    }, `${context} - Find`);
+    if (find.records.length > 0) {
+      const recordId = find.records[0].id;
+      await airtableRequest({
+        method: 'patch',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}/${recordId}`,
+        data: { fields: { LastUsed: new Date().toISOString() } }
+      }, `${context} - Patch`);
+      return { success: true };
+    }
+    return { success: false, error: 'User not found' };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// NEW: List active users whose LastUsed is older than a threshold
+async function getUsersInactiveSince(thresholdISO) {
+  const context = 'Get Inactive Users';
+  try {
+    const esc = s => String(s).replace(/'/g, "''");
+    const iso = esc(thresholdISO);
+    const filterFormula =
+      `AND({StatusUser}='active', OR({LastUsed}=BLANK(), {LastUsed} < DATETIME_PARSE("${iso}", "YYYY-MM-DDTHH:mm:ss.SSSZ")))`;
+    const result = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula },
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`
+    }, context);
+    return (result.records || []).map(r => ({
+      id: r.id,
+      shopId: r.fields.ShopID,
+      name: r.fields.Name || '',
+      lastUsed: r.fields.LastUsed || null
+    }));
+  } catch (error) {
+    logError(context, error);
+    return [];
+  }
+}
+
 // Deactivate user
 async function deactivateUser(shopId) {
   const context = `Deactivate User ${shopId}`;
@@ -2683,7 +2735,9 @@ module.exports = {
   getUserStateFromDB,
   deleteUserStateFromDB,
   isUserAuthorized,
-  deactivateUser,
+  deactivateUser,    
+  touchUserLastUsed,
+  getUsersInactiveSince,
   getTodaySalesSummary,
   getInventorySummary,
   getLowStockProducts,
