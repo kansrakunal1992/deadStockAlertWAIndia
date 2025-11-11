@@ -781,7 +781,9 @@ const {
   deleteUserStateFromDB,
   updateBatchPurchasePrice,
   isUserAuthorized,
-  deactivateUser,
+  deactivateUser,    
+  touchUserLastUsed,
+  getUsersInactiveSince,
   getTodaySalesSummary,
   getInventorySummary,
   getLowStockProducts,
@@ -909,6 +911,85 @@ const {
   stopEngagementTips,
   withEngagementTips
 } = require('./engagementTips');
+
+// ===== Inactivity Nudge Config & Tracker =====
+const NUDGE_OFF = String(process.env.NUDGE_OFF ?? '0').toLowerCase() === '1';
+const NUDGE_HOURS = Number(process.env.NUDGE_HOURS ?? 12);              // threshold before nudge
+const NUDGE_COOLDOWN_HOURS = Number(process.env.NUDGE_COOLDOWN_HOURS ?? 24);
+const NUDGE_INTERVAL_MS = Number(process.env.NUDGE_INTERVAL_MS ?? (60 * 60 * 1000)); // run each hour
+const INACTIVITY_TRACK_FILE = path.join(__dirname, 'inactivity_nudge_tracker.json');
+
+function readNudgeTracker() {
+  try {
+    if (!fs.existsSync(INACTIVITY_TRACK_FILE)) return {};
+    return JSON.parse(fs.readFileSync(INACTIVITY_TRACK_FILE, 'utf8'));
+  } catch { return {}; }
+}
+function writeNudgeTracker(state) {
+  try { fs.writeFileSync(INACTIVITY_TRACK_FILE, JSON.stringify(state, null, 2)); return true; }
+  catch { return false; }
+}
+function wasNudgedRecently(shopId, cooldownHours) {
+  const state = readNudgeTracker();
+  const last = state[shopId];
+  if (!last) return false;
+  const diffMs = Date.now() - new Date(last).getTime();
+  return diffMs < (cooldownHours * 60 * 60 * 1000);
+}
+function markNudged(shopId) {
+  const state = readNudgeTracker();
+  state[shopId] = new Date().toISOString();
+  writeNudgeTracker(state);
+}
+
+async function composeNudge(shopId, language, hours = NUDGE_HOURS) {
+  const base =
+    `🟢 It’s been ${hours}+ hours since you used Saamagrii.AI.\n` +
+    `Try a quick entry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m\n` +
+    `Or type “mode” to switch context.`;
+  // translate & single-script sanitize
+  return await t(base, language ?? 'en', `nudge-${shopId}-${hours}`);
+}
+
+async function sendInactivityNudges() {
+  if (NUDGE_OFF) return;
+  try {
+    const thresholdISO = new Date(Date.now() - NUDGE_HOURS * 60 * 60 * 1000).toISOString();
+    const users = await getUsersInactiveSince(thresholdISO); // from database.js
+    for (const u of users) {
+      const shopId = u.shopId;
+      if (!shopId) continue;
+      if (wasNudgedRecently(shopId, NUDGE_COOLDOWN_HOURS)) continue; // respect cooldown
+      // language preference
+      let lang = 'en';
+      try {
+        const pref = await getUserPreference(shopId);
+        if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+      } catch {}
+      const msg = await composeNudge(shopId, lang, NUDGE_HOURS);
+      await sendMessageViaAPI(`whatsapp:${shopId}`, msg);
+      markNudged(shopId);
+      console.log(`[nudge] sent to ${shopId} (LastUsed=${u.lastUsed ?? '—'})`);
+      // tiny delay to avoid rate limits
+      await new Promise(r => setTimeout(r, 250));
+    }
+  } catch (e) {
+    console.warn('[nudge] job failed:', e.message);
+  }
+}
+
+function scheduleInactivityNudges() {
+  if (NUDGE_OFF) {
+    console.log('[nudge] OFF');
+    return;
+  }
+  console.log(`[nudge] scheduler every ${Math.round(NUDGE_INTERVAL_MS/60000)} min; threshold ${NUDGE_HOURS}h; cooldown ${NUDGE_COOLDOWN_HOURS}h`);
+  // first kick after ~5 minutes, then at set interval
+  setTimeout(() => {
+    sendInactivityNudges();
+    setInterval(sendInactivityNudges, NUDGE_INTERVAL_MS);
+  }, 5 * 60 * 1000);
+}
 
 // --- Gamification tracker (JSON file; same pattern as summary_tracker.json) ---
 const GAMIFY_TRACK_FILE = path.join(__dirname, 'gamify_tracker.json');
@@ -1220,6 +1301,8 @@ async function sendDailySummaries() {
 // Start the AI Full Summary scheduler (10 PM IST)
 scheduleFullAISummary();
 
+// Start the inactivity nudge scheduler (hourly)
+scheduleInactivityNudges();
 
 // Performance tracking
 const responseTimes = {
@@ -2200,7 +2283,9 @@ function _norm(s) { return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,''
 
 async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
-  const text = String(rawBody || '').trim();  
+  const text = String(rawBody || '').trim();    
+  // NEW: record activity (touch LastUsed) for every inbound
+  try { await touchUserLastUsed(String(From).replace('whatsapp:', '')); } catch {}
     
   if (isResetMessage(text)) {
       await clearUserState(From);
@@ -2761,7 +2846,9 @@ function parsePeriodKeyword(txt) {
 
 async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   const startTime = Date.now();
-  const text = Body.trim();    
+  const text = Body.trim();      
+  // NEW: record activity (touch LastUsed) for every inbound
+  try { await touchUserLastUsed(String(From).replace('whatsapp:', '')); } catch {}
   
   if (isResetMessage(text)) {
       await clearUserState(From);
