@@ -1625,6 +1625,7 @@ async function deleteUserStateFromDB(id) {
 // Constants for authentication
 const AUTH_USERS_TABLE_NAME = process.env.AIRTABLE_AUTH_USERS_TABLE_NAME || 'AuthUsers';
 const AUTH_CODE_EXPIRY = 24 * 60 * 60 * 1000; // 24 hours
+const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 3);
 
 // In database.js, update these functions:
 
@@ -1682,6 +1683,117 @@ async function isUserAuthorized(shopId, authCode = null) {
     console.error(`[${context}] Error:`, error.message);
     console.error(`[${context}] Status:`, error.response?.status);
     console.error(`[${context}] Data:`, error.response?.data);
+    return { success: false, error: error.message };
+  }
+}
+
+// === NEW: fetch AuthUsers record by ShopID ===
+async function getAuthUserRecord(shopId) {
+  const context = `Get AuthUser ${shopId}`;
+  try {
+    const escapedShopId = shopId.replace(/'/g, "''");
+    const filterByFormula = `{ShopID}='${escapedShopId}'`;
+    const result = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula, maxRecords: 1 },
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`
+    }, context);
+    return (result.records?.[0]) ?? null;
+  } catch (error) {
+    logError(context, error);
+    return null;
+  }
+}
+
+// === NEW: start (or restart) a trial for this user ===
+async function startTrialForAuthUser(shopId, days = TRIAL_DAYS) {
+  const context = `Start Trial ${shopId}`;
+  try {
+    const now = new Date();
+    const end = new Date(now); end.setDate(end.getDate() + Number(days ?? 3));
+    const existing = await getAuthUserRecord(shopId);
+    const fields = {
+      ShopID: shopId,
+      StatusUser: 'active',
+      LastUsed: now.toISOString()
+    };
+    if (existing) {
+      await airtableRequest({
+        method: 'patch',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}/${existing.id}`,
+        data: { fields }
+      }, `${context} - Patch`);
+    } else {
+      await airtableRequest({
+        method: 'post',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`,
+        data: { fields }
+      }, `${context} - Create`);
+    }
+    // persist plan + trial end in UserPreferences (you already have helpers)
+    await saveUserPlan(shopId, 'trial', end); // writes TrialEndDate ISO
+    return { success: true, start: now, end };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// === NEW: mark user as paid ===
+async function markAuthUserPaid(shopId) {
+  const context = `Mark Paid ${shopId}`;
+  try {
+    const rec = await getAuthUserRecord(shopId);
+    if (!rec) return { success: false, error: 'User not found' };
+    await airtableRequest({
+      method: 'patch',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}/${rec.id}`,
+      data: { fields: { StatusUser: 'active', LastUsed: new Date().toISOString() } }
+    }, `${context} - Patch`);
+    await saveUserPlan(shopId, 'paid', null); // clears TrialEndDate
+    return { success: true, id: rec.id };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// === NEW: trials expiring before an ISO threshold (UserPreferences table) ===
+async function getTrialsExpiringBefore(thresholdISO) {
+  const context = 'Get Trials Expiring';
+  try {
+    const esc = s => String(s).replace(/'/g, "''");
+    const iso = esc(thresholdISO);
+    const filterByFormula =
+      `AND({Plan}='trial', {TrialEndDate} <= DATETIME_PARSE("${iso}", "YYYY-MM-DDTHH:mm:ss.SSSZ"))`;
+    const result = await airtableUserPreferencesRequest({
+      method: 'get',
+      params: { filterByFormula }
+    }, context);
+    return (result.records ?? []).map(r => ({
+      id: r.id,
+      shopId: r.fields.ShopID,
+      trialEnd: r.fields.TrialEndDate ?? null,
+      lastReminder: r.fields.LastTrialReminder ?? null
+    }));
+  } catch (error) {
+    logError(context, error);
+    return [];
+  }
+}
+
+// === NEW: stamp last reminder time on UserPreferences ===
+async function setTrialReminderSent(recordId, whenISO = new Date().toISOString()) {
+  const context = `Set Trial Reminder ${recordId}`;
+  try {
+    await airtableUserPreferencesRequest({
+      method: 'patch',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${USER_PREFERENCES_TABLE_NAME}/${recordId}`,
+      data: { fields: { LastTrialReminder: whenISO } }
+    }, context);
+    return { success: true };
+  } catch (error) {
+    logError(context, error);
     return { success: false, error: error.message };
   }
 }
@@ -2735,7 +2847,12 @@ module.exports = {
   getUserStateFromDB,
   deleteUserStateFromDB,
   isUserAuthorized,
-  deactivateUser,    
+  deactivateUser,        
+  getAuthUserRecord,         // NEW
+  startTrialForAuthUser,     // NEW
+  markAuthUserPaid,          // NEW
+  getTrialsExpiringBefore,   // NEW
+  setTrialReminderSent,      // NEW
   touchUserLastUsed,
   getUsersInactiveSince,
   getTodaySalesSummary,
