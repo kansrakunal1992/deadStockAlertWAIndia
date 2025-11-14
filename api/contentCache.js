@@ -155,17 +155,27 @@ const LIST_LABELS = {
 
 
  const cache = new Map(); // lang -> { quickReplySid, listPickerSid, ts }
- 
- // --- NEW: Activate CTA labels (body + single button title) ---
- const ACTIVATE_LABELS = {
-   en: { body: 'Ready to get started?', button: 'Activate now' },
-   hi: { body: 'शुरू करने के लिए तैयार?', button: 'अभी सक्रिय करें' },
-   gu: { body: 'શરૂ કરવા તૈયાર?', button: 'હવે સક્રિય કરો' },
-   ta: { body: 'தொடங்க தயார்?', button: 'இப்போது செயல்படுத்து' },
-   te: { body: 'ప్రారంభించడానికి సిద్ధమా?', button: 'ఇప్పుడే యాక్టివేట్ చేయండి' },
-   kn: { body: 'ಪ್ರಾರಂಭಿಸಲು ಸಿದ್ಧವಾ?', button: 'ಈಗ ಸಕ್ರಿಯಗೊಳಿಸಿ' },
-   mr: { body: 'सुरू करण्यास तयार?', button: 'आता सक्रिय करा' },
-   bn: { body: 'শুরু করতে প্রস্তুত?', button: 'এখনই সক্রিয় করুন' }
+  
+ // --- NEW: CTA labels ---
+ const ACTIVATE_TRIAL_LABELS = {
+   en: { body: 'Try Saamagrii.AI free for 3 days', button: 'Activate Trial Plan' },
+   hi: { body: 'Saamagrii.AI को 3 दिन मुफ़्त में आज़माएँ', button: 'ट्रायल प्लान एक्टिवेट करें' },
+   gu: { body: 'Saamagrii.AI ને 3 દિવસ મફત અજમાવો', button: 'ટ્રાયલ પ્લાન સક્રિય કરો' },
+   ta: { body: 'Saamagrii.AI ஐ 3 நாட்கள் இலவசமாக முயற்சி செய்யுங்கள்', button: 'ட்ரயல் பிளான் செயல்படுத்தவும்' },
+   te: { body: 'Saamagrii.AI ను 3 రోజులు ఉచితంగా ప్రయత్నించండి', button: 'ట్రయల్ ప్లాన్ యాక్టివేట్ చేయండి' },
+   kn: { body: 'Saamagrii.AI ಅನ್ನು 3 ದಿನ ಉಚಿತವಾಗಿ ಪ್ರಯತ್ನಿಸಿ', button: 'ಟ್ರಯಲ್ ಪ್ಲಾನ್ ಸಕ್ರಿಯಗೊಳಿಸಿ' },
+   mr: { body: 'Saamagrii.AI 3 दिवस मोफत वापरून पहा', button: 'ट्रायल प्लॅन सक्रिय करा' },
+   bn: { body: 'Saamagrii.AI ৩ দিন ফ্রি ট্রাই করুন', button: 'ট্রায়াল প্ল্যান সক্রিয় করুন' }
+ };
+ const ACTIVATE_PAID_LABELS = {
+   en: { body: 'Upgrade to paid for uninterrupted access', button: 'Activate Paid Plan' },
+   hi: { body: 'निरंतर सेवा के लिए पेड प्लान एक्टिवेट करें', button: 'पेड प्लान एक्टिवेट करें' },
+   gu: { body: 'નિરંતર સેવા માટે પેઈડ પ્લાન સક્રિય કરો', button: 'પેઈડ પ્લાન સક્રિય કરો' },
+   ta: { body: 'தொடர்ச்சி சேவைக்கு Paid Plan செயல்படுத்தவும்', button: 'Paid Plan செயல்படுத்து' },
+   te: { body: 'నిరంతర సేవ కోసం Paid ప్లాన్ యాక్టివేట్ చేయండి', button: 'Paid ప్లాన్ యాక్టివేట్' },
+   kn: { body: 'ನಿರಂತರ ಸೇವೆಗೆ ಪೈಡ್ ಪ್ಲಾನ್ ಸಕ್ರಿಯಗೊಳಿಸಿ', button: 'ಪೈಡ್ ಪ್ಲಾನ್ ಸಕ್ರಿಯಗೊಳಿಸಿ' },
+   mr: { body: 'सतत सेवेसाठी पेड प्लॅन सक्रिय करा', button: 'पेड प्लॅन सक्रिय करा' },
+   bn: { body: 'অবিচ্ছিন্ন সেবার জন্য Paid Plan সক্রিয় করুন', button: 'Paid Plan সক্রিয় করুন' }
  };
  
  async function createQuickReplyForLang(lang) {
@@ -224,38 +234,61 @@ const l  = LIST_LABELS[lang] ?? LIST_LABELS.en;
    return data.sid;
  }
 
- // --- NEW: Create single-button "Activate now" Quick Reply ---
- async function createActivateCTAForLang(lang) {
-   const l = ACTIVATE_LABELS[lang] ?? ACTIVATE_LABELS.en;
-   const payload = {
-     friendly_name: `saamagrii_activate_cta_${lang}_${Date.now()}`,
-     language: 'en',
-     types: {
-       'twilio/quick-reply': {
-         body: l.body,
-         actions: [
-           { type: 'QUICK_REPLY', title: l.button, id: 'activate_now' }
-         ]
-       }
-     }
-   };
-   const { data } = await axios.post(CONTENT_API_URL, payload, {
-     auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
-   });
-   console.log(`[contentCache] Created Activate-CTA for ${lang}: ContentSid=${data.sid}`);
-   return data.sid;
- }
+// --- NEW: Trial CTA (single-button quick reply) ---
+async function createActivateTrialCTAForLang(lang) {
+  const l = ACTIVATE_TRIAL_LABELS[lang] ?? ACTIVATE_TRIAL_LABELS.en;
+  const payload = {
+    friendly_name: `saamagrii_activate_trial_${lang}_${Date.now()}`,
+    language: 'en',
+    types: {
+      'twilio/quick-reply': {
+        body: l.body,
+        actions: [
+          { type: 'QUICK_REPLY', title: l.button, id: 'activate_trial' }
+        ]
+      }
+    }
+  };
+  const { data } = await axios.post(CONTENT_API_URL, payload, {
+    auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
+  });
+  console.log(`[contentCache] Created Activate-Trial for ${lang}: ContentSid=${data.sid}`);
+  return data.sid;
+}
+
+// --- NEW: Paid CTA (single-button quick reply) ---
+async function createActivatePaidCTAForLang(lang) {
+  const l = ACTIVATE_PAID_LABELS[lang] ?? ACTIVATE_PAID_LABELS.en;
+  const payload = {
+    friendly_name: `saamagrii_activate_paid_${lang}_${Date.now()}`,
+    language: 'en',
+    types: {
+      'twilio/quick-reply': {
+        body: l.body,
+        actions: [
+          { type: 'QUICK_REPLY', title: l.button, id: 'activate_paid' }
+        ]
+      }
+    }
+  };
+  const { data } = await axios.post(CONTENT_API_URL, payload, {
+    auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
+  });
+  console.log(`[contentCache] Created Activate-Paid for ${lang}: ContentSid=${data.sid}`);
+  return data.sid;
+}
 
  async function ensureLangTemplates(lang = 'en') {
    const now = Date.now();
-   const entry = cache.get(lang);      
+   const entry = cache.get(lang);            
    if (entry && (now - entry.ts) < TTL_MS) return entry;
      const quickReplySid = await createQuickReplyForLang(lang);
      const listPickerSid = await createListPickerForLang(lang);
-     const activateSid    = await createActivateCTAForLang(lang);
-     const updated = { quickReplySid, listPickerSid, activateSid, ts: now };
+     const activateTrialSid = await createActivateTrialCTAForLang(lang);
+     const activatePaidSid  = await createActivatePaidCTAForLang(lang);
+     const updated = { quickReplySid, listPickerSid, activateTrialSid, activatePaidSid, ts: now };
    cache.set(lang, updated);
-   console.log(`[contentCache] Cached SIDs for ${lang}: QR=${quickReplySid}, LP=${listPickerSid}, ACT=${activateSid}`);
+   console.log(`[contentCache] Cached SIDs for ${lang}: QR=${quickReplySid}, LP=${listPickerSid}, TRIAL=${activateTrialSid}, PAID=${activatePaidSid}`);
    return updated;
  }
 
