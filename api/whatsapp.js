@@ -782,6 +782,11 @@ const {
   updateBatchPurchasePrice,
   isUserAuthorized,
   deactivateUser,    
+  getAuthUserRecord,        // NEW
+  startTrialForAuthUser,    // NEW
+  markAuthUserPaid,         // NEW
+  getTrialsExpiringBefore,  // NEW
+  setTrialReminderSent,     // NEW
   touchUserLastUsed,
   getUsersInactiveSince,
   getTodaySalesSummary,
@@ -812,6 +817,12 @@ const {
 // ===== Compact & Single-Script config =====
 const COMPACT_MODE = String(process.env.COMPACT_MODE ?? 'true').toLowerCase() === 'true';
 const SINGLE_SCRIPT_MODE = String(process.env.SINGLE_SCRIPT_MODE ?? 'true').toLowerCase() === 'true';
+// ===== Paywall / Trial / Links (env-driven) =====
+const PAYTM_NUMBER = String(process.env.PAYTM_NUMBER ?? '9013283687');
+const PAYTM_NAME   = String(process.env.PAYTM_NAME   ?? 'Kunal Kansra');
+const TRIAL_DAYS   = Number(process.env.TRIAL_DAYS   ?? 3);
+const WHATSAPP_LINK = String(process.env.WHATSAPP_LINK ?? '<whatsapp_link>');
+const PAYMENT_LINK  = String(process.env.PAYMENT_LINK  ?? '<payment_link>');
 
 // Single-script sanitizer: if lang != 'en', drop Latin-only transliteration blocks;
 // if lang == 'en', drop non-Latin blocks. Heuristic keeps ₹ and punctuation.
@@ -903,6 +914,119 @@ async function t(text, languageCode, requestId) {
   return enforceSingleScript(out, languageCode);
 }
 
+// ===== AI onboarding (Deepseek) — concise, trusted advisor with numbered choices =====
+async function composeAIOnboarding(language = 'en') {
+  const sys = 'You are a concise WhatsApp sales assistant for Saamagrii.AI.';
+  const prompt =
+    `Reply in ${language}. In 2–3 short lines: (1) answer briefly and `
+  + `explain Saamagrii.AI manages inventory & sales on WhatsApp; `
+  + `offer a FREE ${TRIAL_DAYS}-day trial with simple choices 1/2/3. `
+  + `STRICT: do not invent features beyond stock updates, batch/expiry, sales entries, summaries, low-stock alerts. `
+  + `Always append: "For further queries, you can reach out at ${WHATSAPP_LINK}".`;
+  try {
+    const resp = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: [{ role: 'system', content: sys }, { role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: 140
+      },
+      {
+        headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 10000
+      }
+    );
+    return String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
+  } catch {
+    // Fallback copy if model fails
+    return `Namaste! Manage stock & sales on WhatsApp. Start a FREE ${TRIAL_DAYS}-day trial?\n`
+         + `Reply:\n1) Start trial\n2) Ask a question\n3) Skip\nFor further queries, you can reach out at ${WHATSAPP_LINK}`;
+  }
+}
+
+// ===== Access Gate & Onboarding =====
+async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
+  const shopId = String(From).replace('whatsapp:', '');
+  const lang = (detectedLanguage ?? 'en').toLowerCase();
+  const text = String(Body ?? '').trim().toLowerCase();
+
+  // Fast path: "paid" confirmation (Hinglish + English variants)
+  if (/(\bpaid\b|\bpayment done\b|\bpaydone\b|\bmaine pay kiya\b|\bpaid ho gaya\b)/i.test(text)) {
+    const ok = await markAuthUserPaid(shopId);
+    if (ok.success) {
+      const msg = await t(
+        `💸 Thanks! Your paid plan is queued — account will be activated in 4–6 hours.\n`
+        + `You can continue using all features.`,
+        lang, `paid-ok-${shopId}`
+      );
+      await sendMessageViaAPI(From, msg);
+      return { allow: true };
+    }
+    await sendMessageViaAPI(From, await t(
+      `We couldn't verify your record yet. Please try again or contact support.`,
+      lang, `paid-fail-${shopId}`
+    ));
+    return { allow: false };
+  }
+
+  // Lookup record in AuthUsers
+  const rec = await getAuthUserRecord(shopId);
+  if (!rec) {
+    // New user → AI onboarding (with numbered options)
+    const intro = await composeAIOnboarding(lang);
+    await sendMessageViaAPI(From, await t(intro, lang, `onboard-intro-${shopId}`));
+    // If user already typed "1" / "start"
+    if (/^(1|yes|haan|start|trial|ok)$/i.test(text)) {
+      const s = await startTrialForAuthUser(shopId, TRIAL_DAYS);
+      if (s.success) {
+        const body = await t(
+          `🎉 Trial activated for ${TRIAL_DAYS} days!\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
+          lang, `trial-welcome-${shopId}`
+        );
+        await sendMessageViaAPI(From, body);
+        return { allow: true };
+      }
+      await sendMessageViaAPI(From, await t(
+        `Sorry, we couldn't start your trial right now. Please try again.`,
+        lang, `trial-failed-${shopId}`
+      ));
+    }
+    return { allow: false }; // pause normal flow until explicit choice
+  }
+
+  // Existing user — gate by status/plan
+  const status = String(rec.fields?.StatusUser ?? '').toLowerCase();
+  const pref = await getUserPreference(shopId); // to read plan & trial end
+  const plan = String(pref?.plan ?? '').toLowerCase();
+  const trialEnd = pref?.trialEndDate ? new Date(pref.trialEndDate) : null;
+
+  // If inactive → pay wall
+  if (status !== 'active') {
+    const pay = await t(
+      `⚠️ Your account is inactive.\nTo continue, pay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\n`
+      + `Or pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`,
+      lang, `inactive-pay-${shopId}`
+    );
+    await sendMessageViaAPI(From, pay);
+    return { allow: false };
+  }
+
+  // Trial ended → gentle pay wall
+  if (plan === 'trial' && trialEnd && Date.now() > trialEnd.getTime()) {
+    const pay2 = await t(
+      `⏳ Your FREE trial has ended.\nContinue for ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\n`
+      + `Or pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`,
+      lang, `trial-ended-pay-${shopId}`
+    );
+    await sendMessageViaAPI(From, pay2);
+    return { allow: false };
+  }
+
+  // Active (trial or paid) → allow normal flows
+  return { allow: true };
+}
+
 // Add this at the top of the file after the imports
 const path = require('path');
 const {
@@ -989,6 +1113,36 @@ function scheduleInactivityNudges() {
     sendInactivityNudges();
     setInterval(sendInactivityNudges, NUDGE_INTERVAL_MS);
   }, 5 * 60 * 1000);
+}
+
+// ===== NEW: Day‑3 trial reminder (hourly scan) =====
+async function sendTrialExpiryReminders() {
+  try {
+    const nowISO = new Date().toISOString();
+    const due = await getTrialsExpiringBefore(nowISO);
+    for (const u of due) {
+      // skip if already reminded in last 24h
+      const last = u.lastReminder ? new Date(u.lastReminder).getTime() : 0;
+      if (Date.now() - last < 24 * 60 * 60 * 1000) continue;
+      // language preference
+      let lang = 'en';
+      try { const pref = await getUserPreference(u.shopId); if (pref?.success && pref.language) lang = String(pref.language).toLowerCase(); } catch {}
+      const body = await t(
+        `⚠️ Your Saamagrii.AI trial ends today.\nPay ₹11 at: ${PAYMENT_LINK}\nOr Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nReply "paid" to activate ✅`,
+        lang, `trial-reminder-${u.shopId}`
+      );
+      await sendMessageViaAPI(`whatsapp:${u.shopId}`, body);
+      await setTrialReminderSent(u.id, new Date().toISOString());
+      await new Promise(r => setTimeout(r, 250));
+    }
+  } catch (e) {
+    console.warn('[trial-reminder] job failed:', e.message);
+  }
+}
+function scheduleTrialExpiryReminders() {
+  console.log('[trial-reminder] hourly scan enabled');
+  setInterval(sendTrialExpiryReminders, 60 * 60 * 1000);
+  setTimeout(sendTrialExpiryReminders, 30 * 1000);
 }
 
 // --- Gamification tracker (JSON file; same pattern as summary_tracker.json) ---
@@ -1303,6 +1457,9 @@ scheduleFullAISummary();
 
 // Start the inactivity nudge scheduler (hourly)
 scheduleInactivityNudges();
+
+// Start trial expiry reminders (hourly)
+scheduleTrialExpiryReminders();
 
 // Performance tracking
 const responseTimes = {
@@ -2285,7 +2442,10 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();    
   // NEW: record activity (touch LastUsed) for every inbound
-  try { await touchUserLastUsed(String(From).replace('whatsapp:', '')); } catch {}
+  try { await touchUserLastUsed(String(From).replace('whatsapp:', '')); } catch {}    
+  // NEW: gate for paywall/onboarding
+  const gate = await ensureAccessOrOnboard(From, rawBody, detectedLanguage);
+  if (!gate.allow) return true; // already responded
     
   if (isResetMessage(text)) {
       await clearUserState(From);
@@ -2848,7 +3008,10 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = Body.trim();      
   // NEW: record activity (touch LastUsed) for every inbound
-  try { await touchUserLastUsed(String(From).replace('whatsapp:', '')); } catch {}
+  try { await touchUserLastUsed(String(From).replace('whatsapp:', '')); } catch {}    
+  // NEW: gate for paywall/onboarding
+  const gate = await ensureAccessOrOnboard(From, Body, detectedLanguage);
+  if (!gate.allow) return true; // already responded
   
   if (isResetMessage(text)) {
       await clearUserState(From);
