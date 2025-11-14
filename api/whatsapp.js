@@ -8002,6 +8002,8 @@ module.exports = async (req, res) => {
     (req.body && (req.body.From || req.body.from)) ||
     (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
 
+  // (optional) quick log to confirm gate path in prod logs
+    try { console.log('[webhook]', { From, Body: String(Body).slice(0,120) }); } catch(_) 
   
   /**
      * >>> NEW (Option B): Handle WhatsApp interactive events FIRST.
@@ -8029,7 +8031,24 @@ module.exports = async (req, res) => {
     }
 
   // Language detection (also persists preference)
-  const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
+  const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);  
+    
+  // >>> GATE FIRST: onboarding/paywall/trial/paid
+    // This MUST run before any legacy authorization checks or routing.
+    try {
+      const gate = await ensureAccessOrOnboard(From, Body, detectedLanguage);
+      if (!gate.allow) {
+        // The gate already sent the appropriate reply (onboarding / paywall / trial end).
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message(''); // minimal ack for webhook
+        res.type('text/xml').send(twiml.toString());
+        trackResponseTime(requestStart, requestId);
+        return;
+      }
+    } catch (e) {
+      console.warn(`[${requestId}] gate error:`, e.message);
+      // If the gate fails for any reason, fall through to normal flow gracefully.
+    }
 
   // === Centralized engagement tips: wrap the entire request handling ===
   await runWithTips({ From, language: detectedLanguage, requestId }, async () => {
