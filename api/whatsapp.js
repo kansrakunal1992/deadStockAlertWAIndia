@@ -996,9 +996,8 @@ async function composeAIOnboarding(language = 'en') {
 
 // ===== Access Gate & Onboarding =====
 async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
-  const shopId = String(From).replace('whatsapp:', '');    
+  const shopId = String(From).replace('whatsapp:', '');        
   let lang = (detectedLanguage ?? 'en').toLowerCase();
-    // prefer saved user language to keep single-script consistent
     try {
       const pref = await getUserPreference(shopId);
       if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
@@ -1027,10 +1026,10 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
   // Lookup record in AuthUsers
   const rec = await getAuthUserRecord(shopId);
   if (!rec) {
-    // New user → AI onboarding (with numbered options)
-    const intro = await composeAIOnboarding(lang);        
-    // send single-script text (t() enforces script if needed)
-    await sendMessageViaAPI(From, await t(intro, lang, `onboard-intro-${shopId}`));
+    // New user → AI onboarding (with numbered options)       
+    const intro = await composeAIOnboarding(lang);       // compose in user's saved language
+        const msg   = await t(intro, lang, `onboard-intro-${shopId}`); // single-script sanitize
+        await sendMessageViaAPI(From, msg);
     // If user already typed "1" / "start"
     if (/^(1|yes|haan|start|trial|ok)$/i.test(text)) {
       const s = await startTrialForAuthUser(shopId, TRIAL_DAYS);
