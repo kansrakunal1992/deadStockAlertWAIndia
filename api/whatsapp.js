@@ -559,7 +559,56 @@ function _normLite(s) {
      await sendMessageViaAPI(from, 'Examples (return):\n• Parle-G 3 packets\n• milk 1 liter');
      return true;
    }
-    
+
+   
+  // --- NEW: Activate Trial Plan ---
+  if (payload === 'activate_trial') {
+    const shopId = String(from).replace('whatsapp:', '');
+    // Use saved language preference
+    let lang = 'en';
+    try {
+      const prefLP = await getUserPreference(shopId);
+      if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();
+    } catch (_) {}
+    // Treat tap as explicit confirmation to start trial
+    const start = await startTrialForAuthUser(shopId, TRIAL_DAYS);
+    if (start.success) {
+      const planNote = start.plan === 'trial'
+        ? `🎉 Trial activated for ${TRIAL_DAYS} days!`
+        : `ℹ️ Trial option not available; started demo instead.`;
+      const msg = await t(
+        `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
+        lang, `cta-trial-ok-${shopId}`
+      );
+      await sendMessageViaAPI(from, msg);
+    } else {
+      const msg = await t(
+        `Sorry, we couldn't start your trial right now. Please try again.`,
+        lang, `cta-trial-fail-${shopId}`
+      );
+      await sendMessageViaAPI(from, msg);
+    }
+    return true;
+  }
+
+  // --- NEW: Activate Paid Plan ---
+  if (payload === 'activate_paid') {
+    const shopId = String(from).replace('whatsapp:', '');
+    let lang = 'en';
+    try {
+      const prefLP = await getUserPreference(shopId);
+      if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();
+    } catch (_) {}
+    // Show paywall; activation only after user replies "paid"
+    const msg = await t(
+      `To activate the paid plan, pay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\n`
+      + `Or pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`,
+      lang, `cta-paid-${shopId}`
+    );
+    await sendMessageViaAPI(from, msg);
+    return true;
+  }
+
   // List‑Picker selections → route using user's saved language preference
     let lpLang = 'en';
     try {
@@ -7306,6 +7355,48 @@ async function sendMessageViaAPI(to, body) {
       return out;
     };
 
+    
+    // --- NEW: append correct CTA after sending text ---
+    const appendCTA = async () => {
+      try {
+        const shopId = formattedTo.replace('whatsapp:', '');
+        // Resolve preferred language
+        let lang = 'en';
+        try {
+          const pref = await getUserPreference(shopId);
+          if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+        } catch (_e) {}
+        // Read plan
+        let plan = 'none';
+        try {
+          const planInfo = await getUserPlan(shopId);
+          if (planInfo?.plan) plan = String(planInfo.plan).toLowerCase();
+        } catch (_e) {}
+        // Ensure templates exist
+        await ensureLangTemplates(lang);
+        const sids = getLangSids(lang);
+        if (!sids) return;
+        // Decide CTA:
+        if (plan === 'paid') {
+          // No CTA once paid
+          return;
+        }
+        if (plan === 'trial') {
+          // Show Paid CTA while on trial
+          if (sids.activatePaidSid) {
+            await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.activatePaidSid });
+          }
+          return;
+        }
+        // Not on trial/paid -> show Trial CTA
+        if (sids.activateTrialSid) {
+          await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.activateTrialSid });
+        }
+      } catch (ctaErr) {
+        console.warn('[activate-cta] failed to append CTA:', ctaErr.message);
+      }
+    };
+    
     // If the message fits, tag once and send
     if (String(body).length <= MAX_LENGTH) {
       const tagged = await tagWithLocalizedMode(formattedTo, body, 'en');
@@ -7315,6 +7406,7 @@ async function sendMessageViaAPI(to, body) {
         to: formattedTo
       });
       console.log(`[sendMessageViaAPI] Message sent successfully. SID: ${message.sid}`);
+      await appendCTA(); // NEW
       return message;
     }
 
@@ -7357,6 +7449,7 @@ async function sendMessageViaAPI(to, body) {
       }
     }
 
+    await appendCTA(); // NEW
     // Return the first SID and the list of part SIDs
     return { sid: messageSids[0], parts: messageSids };
   } catch (error) {
