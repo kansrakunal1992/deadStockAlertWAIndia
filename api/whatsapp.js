@@ -916,13 +916,13 @@ async function t(text, languageCode, requestId) {
 
 // ===== AI onboarding (Deepseek) — concise, trusted advisor with numbered choices =====
 async function composeAIOnboarding(language = 'en') {
-  const sys = 'You are a concise WhatsApp sales assistant for Saamagrii.AI.';
+    
+  const sys = 'You are a concise WhatsApp assistant for Saamagrii.AI. Be brief.';
   const prompt =
-    `Reply in ${language}. In 2–3 short lines: (1) answer briefly and `
-  + `explain Saamagrii.AI manages inventory & sales on WhatsApp; `
-  + `offer a FREE ${TRIAL_DAYS}-day trial with simple choices 1/2/3. `
-  + `STRICT: do not invent features beyond stock updates, batch/expiry, sales entries, summaries, low-stock alerts. `
-  + `Always append: "For further queries, you can reach out at ${WHATSAPP_LINK}".`;
+      `Reply ONLY in ${language}. Keep to 2 short lines: `
+    + `• Explain Saamagrii.AI (stock updates, batch/expiry, sales entries, summaries, low-stock alerts). `
+    + `• Offer a FREE ${TRIAL_DAYS}-day trial with choices 1/2/3. `
+    + `Append: "For further queries, you can reach out at ${WHATSAPP_LINK}".`;
   try {
     const resp = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
@@ -938,17 +938,22 @@ async function composeAIOnboarding(language = 'en') {
       }
     );
     return String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
-  } catch {
-    // Fallback copy if model fails
-    return `Namaste! Manage stock & sales on WhatsApp. Start a FREE ${TRIAL_DAYS}-day trial?\n`
-         + `Reply:\n1) Start trial\n2) Ask a question\n3) Skip\nFor further queries, you can reach out at ${WHATSAPP_LINK}`;
+  } catch {       
+    // Fallback copy if model fails — single-language message only
+        return `Manage stock & sales on WhatsApp. Start a FREE ${TRIAL_DAYS}-day trial?\n`
+             + `Reply:\n1) Start trial\n2) Ask a question\n3) Skip\nFor further queries, you can reach out at ${WHATSAPP_LINK}`;
   }
 }
 
 // ===== Access Gate & Onboarding =====
 async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
-  const shopId = String(From).replace('whatsapp:', '');
-  const lang = (detectedLanguage ?? 'en').toLowerCase();
+  const shopId = String(From).replace('whatsapp:', '');    
+  let lang = (detectedLanguage ?? 'en').toLowerCase();
+    // prefer saved user language to keep single-script consistent
+    try {
+      const pref = await getUserPreference(shopId);
+      if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+    } catch {}
   const text = String(Body ?? '').trim().toLowerCase();
 
   // Fast path: "paid" confirmation (Hinglish + English variants)
@@ -974,16 +979,20 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
   const rec = await getAuthUserRecord(shopId);
   if (!rec) {
     // New user → AI onboarding (with numbered options)
-    const intro = await composeAIOnboarding(lang);
+    const intro = await composeAIOnboarding(lang);        
+    // send single-script text (t() enforces script if needed)
     await sendMessageViaAPI(From, await t(intro, lang, `onboard-intro-${shopId}`));
     // If user already typed "1" / "start"
     if (/^(1|yes|haan|start|trial|ok)$/i.test(text)) {
       const s = await startTrialForAuthUser(shopId, TRIAL_DAYS);
-      if (s.success) {
-        const body = await t(
-          `🎉 Trial activated for ${TRIAL_DAYS} days!\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
-          lang, `trial-welcome-${shopId}`
-        );
+      if (s.success) {              
+      const planNote = s.plan === 'trial'
+                ? `Trial activated for ${TRIAL_DAYS} days!`
+                : `Trial option not available in config; started demo instead.`;
+              const body = await t(
+                `🎉 ${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
+                lang, `trial-welcome-${shopId}`
+              );
         await sendMessageViaAPI(From, body);
         return { allow: true };
       }
