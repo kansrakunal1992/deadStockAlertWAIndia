@@ -279,17 +279,35 @@ async function createActivatePaidCTAForLang(lang) {
 }
 
  async function ensureLangTemplates(lang = 'en') {
-   const now = Date.now();
-   const entry = cache.get(lang);            
-   if (entry && (now - entry.ts) < TTL_MS) return entry;
-     const quickReplySid = await createQuickReplyForLang(lang);
-     const listPickerSid = await createListPickerForLang(lang);
-     const activateTrialSid = await createActivateTrialCTAForLang(lang);
-     const activatePaidSid  = await createActivatePaidCTAForLang(lang);
-     const updated = { quickReplySid, listPickerSid, activateTrialSid, activatePaidSid, ts: now };
-   cache.set(lang, updated);
-   console.log(`[contentCache] Cached SIDs for ${lang}: QR=${quickReplySid}, LP=${listPickerSid}, TRIAL=${activateTrialSid}, PAID=${activatePaidSid}`);
-   return updated;
+   const now = Date.now();   
+   let entry = cache.get(lang);
+     if (!entry || (now - entry.ts) >= TTL_MS) {
+       // (Re)create everything
+       const quickReplySid = await createQuickReplyForLang(lang);
+       const listPickerSid = await createListPickerForLang(lang);
+       const activateTrialSid = await createActivateTrialCTAForLang(lang);
+       const activatePaidSid  = await createActivatePaidCTAForLang(lang);
+       entry = { quickReplySid, listPickerSid, activateTrialSid, activatePaidSid, ts: now };
+       cache.set(lang, entry);
+       console.log(`[contentCache] Cached SIDs for ${lang}: QR=${entry.quickReplySid}, LP=${entry.listPickerSid}, TRIAL=${entry.activateTrialSid}, PAID=${entry.activatePaidSid}`);
+       return entry;
+     }
+     // BACKFILL any missing SIDs without busting cache
+     let patched = false;
+     if (!entry.activateTrialSid) {
+       entry.activateTrialSid = await createActivateTrialCTAForLang(lang);
+       patched = true;
+     }
+     if (!entry.activatePaidSid) {
+       entry.activatePaidSid  = await createActivatePaidCTAForLang(lang);
+       patched = true;
+     }
+     if (patched) {
+       entry.ts = now;
+       cache.set(lang, entry);
+       console.log(`[contentCache] Patched cached SIDs for ${lang}: TRIAL=${entry.activateTrialSid}, PAID=${entry.activatePaidSid}`);
+     }
+     return entry;
  }
 
  function getLangSids(lang = 'en') {
