@@ -8003,7 +8003,7 @@ module.exports = async (req, res) => {
     (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
 
   // (optional) quick log to confirm gate path in prod logs
-    try { console.log('[webhook]', { From, Body: String(Body).slice(0,120) }); } catch(_) 
+    try { console.log('[webhook]', { From, Body: String(Body).slice(0,120) }); } catch(_) {}
   
   /**
      * >>> NEW (Option B): Handle WhatsApp interactive events FIRST.
