@@ -155,7 +155,19 @@ const LIST_LABELS = {
 
 
  const cache = new Map(); // lang -> { quickReplySid, listPickerSid, ts }
-
+ 
+ // --- NEW: Activate CTA labels (body + single button title) ---
+ const ACTIVATE_LABELS = {
+   en: { body: 'Ready to get started?', button: 'Activate now' },
+   hi: { body: 'शुरू करने के लिए तैयार?', button: 'अभी सक्रिय करें' },
+   gu: { body: 'શરૂ કરવા તૈયાર?', button: 'હવે સક્રિય કરો' },
+   ta: { body: 'தொடங்க தயார்?', button: 'இப்போது செயல்படுத்து' },
+   te: { body: 'ప్రారంభించడానికి సిద్ధమా?', button: 'ఇప్పుడే యాక్టివేట్ చేయండి' },
+   kn: { body: 'ಪ್ರಾರಂಭಿಸಲು ಸಿದ್ಧವಾ?', button: 'ಈಗ ಸಕ್ರಿಯಗೊಳಿಸಿ' },
+   mr: { body: 'सुरू करण्यास तयार?', button: 'आता सक्रिय करा' },
+   bn: { body: 'শুরু করতে প্রস্তুত?', button: 'এখনই সক্রিয় করুন' }
+ };
+ 
  async function createQuickReplyForLang(lang) {
    const l = QR_LABELS[lang] || QR_LABELS.en;
    const payload = {
@@ -212,15 +224,38 @@ const l  = LIST_LABELS[lang] ?? LIST_LABELS.en;
    return data.sid;
  }
 
+ // --- NEW: Create single-button "Activate now" Quick Reply ---
+ async function createActivateCTAForLang(lang) {
+   const l = ACTIVATE_LABELS[lang] ?? ACTIVATE_LABELS.en;
+   const payload = {
+     friendly_name: `saamagrii_activate_cta_${lang}_${Date.now()}`,
+     language: 'en',
+     types: {
+       'twilio/quick-reply': {
+         body: l.body,
+         actions: [
+           { type: 'QUICK_REPLY', title: l.button, id: 'activate_now' }
+         ]
+       }
+     }
+   };
+   const { data } = await axios.post(CONTENT_API_URL, payload, {
+     auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
+   });
+   console.log(`[contentCache] Created Activate-CTA for ${lang}: ContentSid=${data.sid}`);
+   return data.sid;
+ }
+
  async function ensureLangTemplates(lang = 'en') {
    const now = Date.now();
-   const entry = cache.get(lang);
+   const entry = cache.get(lang);      
    if (entry && (now - entry.ts) < TTL_MS) return entry;
-   const quickReplySid = await createQuickReplyForLang(lang);
-   const listPickerSid = await createListPickerForLang(lang);
-   const updated = { quickReplySid, listPickerSid, ts: now };
+     const quickReplySid = await createQuickReplyForLang(lang);
+     const listPickerSid = await createListPickerForLang(lang);
+     const activateSid    = await createActivateCTAForLang(lang);
+     const updated = { quickReplySid, listPickerSid, activateSid, ts: now };
    cache.set(lang, updated);
-   console.log(`[contentCache] Cached SIDs for ${lang}: QR=${quickReplySid}, LP=${listPickerSid}`);
+   console.log(`[contentCache] Cached SIDs for ${lang}: QR=${quickReplySid}, LP=${listPickerSid}, ACT=${activateSid}`);
    return updated;
  }
 
