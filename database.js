@@ -1829,21 +1829,30 @@ async function touchUserLastUsed(shopId) {
 async function getUsersInactiveSince(thresholdISO) {
   const context = 'Get Inactive Users';
   try {
-    const esc = s => String(s).replace(/'/g, "''");
+    // Build a safe filter: either LastUsed is blank OR older than threshold
+    // thresholdISO like: 2025-11-14T00:00:00.000Z
+    const esc = (s) => String(s).replace(/'/g, "''");
     const iso = esc(thresholdISO);
-    const filterFormula =
-      `AND({StatusUser}='active', OR({LastUsed}=BLANK(), {LastUsed} < DATETIME_PARSE("${iso}", "YYYY-MM-DDTHH:mm:ss.SSSZ")))`;
+    const filterByFormula =
+      `OR( {LastUsed}=BLANK(), {LastUsed} < DATETIME_PARSE('${iso}', 'YYYY-MM-DDTHH:mm:ss.SSSZ') )`;
+
     const result = await airtableRequest({
       method: 'get',
-      params: { filterByFormula },
-      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`,
+      params: {
+        filterByFormula,
+        fields: ['ShopID', 'LastUsed'],
+        pageSize: 100
+      }
     }, context);
-    return (result.records || []).map(r => ({
-      id: r.id,
-      shopId: r.fields.ShopID,
-      name: r.fields.Name || '',
-      lastUsed: r.fields.LastUsed || null
-    }));
+
+    const rows = result.records || [];
+    return rows
+      .filter(r => r?.fields?.ShopID)
+      .map(r => ({
+        shopId: r.fields.ShopID,
+        lastUsed: r.fields.LastUsed || null
+      }));
   } catch (error) {
     logError(context, error);
     return [];
