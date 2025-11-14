@@ -963,23 +963,102 @@ async function t(text, languageCode, requestId) {
   return enforceSingleScript(out, languageCode);
 }
 
-// ===== AI onboarding (Deepseek) — concise, trusted advisor with numbered choices =====
+
+// ===== AI onboarding & sales Q&A (Deepseek) — grounded, no hallucinations =====
+// Manifest is built from the real capabilities your code already supports.
+const SALES_AI_MANIFEST = Object.freeze({
+  product: 'Saamagrii.AI',
+  capabilities: [
+    'stock updates (purchase/sale/return)',
+    'batch & expiry tracking',
+    'sales entries & confirmations',
+    'summaries: short / full',
+    'low‑stock alerts & stockout',
+    'expiring items (0/7/30 days)',
+    'reorder suggestions',
+    'inventory value summary'
+  ],
+  quickCommands: [
+    'sold <product> <qty> <unit>',
+    'purchase <product> <qty> <unit> ₹<rate> exp <dd-mm|+7d>',
+    'return <product> <qty> <unit>',
+    'short summary',
+    'full summary',
+    'low stock',
+    'expiring 0|7|30',
+    'sales today|week|month',
+    'top 5 products month',
+    'value summary'
+  ],
+  plans: {
+    trialDays: TRIAL_DAYS,
+    paidCTA: `Pay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME}) or ${PAYMENT_LINK}`
+  },
+  guardrails: [
+    'Do NOT invent features beyond the capabilities list.',
+    'If question is out of scope, say you are not sure and show quick commands.',
+    'No claims about external apps/hardware/on‑site setup.'
+  ]
+});
+
 async function composeAIOnboarding(language = 'en') {
-    
-  const sys = 'You are a concise WhatsApp assistant for Saamagrii.AI. Be brief.';
-  const prompt =
-      `Reply ONLY in ${language}. Keep to 2 short lines: `
-    + `• Explain Saamagrii.AI (stock updates, batch/expiry, sales entries, summaries, low-stock alerts). `
-    + `• Offer a FREE ${TRIAL_DAYS}-day trial with choices 1/2/3. `
-    + `Append: "For further queries, you can reach out at ${WHATSAPP_LINK}".`;
+  const lang = (language || 'en').toLowerCase();
+  const sys =
+    'You are a concise, trustworthy WhatsApp sales assistant for a small retail inventory tool. ' +
+    'You must stay grounded to the MANIFEST facts and refuse to invent capabilities. ' +
+    'Keep responses in the requested language and under 2 short lines, then show a numbered CTA.';
+  const manifest = JSON.stringify(SALES_AI_MANIFEST);
+  const user =
+    `Language: ${lang}\n` +
+    `MANIFEST: ${manifest}\n` +
+    `Task: Write ONLY in ${lang}. Produce exactly 2 short lines of benefits for a kirana/grocery owner, strictly from MANIFEST.capabilities. ` +
+    `Then a third line with CTA: "Reply 1 to start FREE ${SALES_AI_MANIFEST.plans.trialDays}-day trial • 2 demo • 3 help". ` +
+    `If later asked product questions, answer only using MANIFEST.quickCommands; otherwise say "I'm not sure yet" and show 3 example commands.`;
   try {
     const resp = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
         model: 'deepseek-chat',
-        messages: [{ role: 'system', content: sys }, { role: 'user', content: prompt }],
+        messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
         temperature: 0.2,
-        max_tokens: 140
+        max_tokens: 160
+      },
+      {
+        headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 10000
+      }
+    );
+    const body = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
+    return body;
+  } catch {
+    // Deterministic, grounded fallback (no AI, no hallucination)
+    const b1 = 'Manage stock, expiry & sales on WhatsApp; get low‑stock alerts.';
+    const b2 = 'Daily/weekly summaries & reorder suggestions keep shelves full.';
+    const cta = `Reply 1 to start FREE ${SALES_AI_MANIFEST.plans.trialDays}-day trial • 2 demo • 3 help`;
+    return `${b1}\n${b2}\n${cta}`;
+  }
+}
+
+// NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
+async function composeAISalesAnswer(question, language = 'en') {
+  const lang = (language || 'en').toLowerCase();
+  const sys =
+    'Answer as a concise WhatsApp sales assistant. Stay strictly within MANIFEST. ' +
+    '1–2 short lines; if user asks outside scope, say you are not sure and show 3 valid quick commands.';
+  const manifest = JSON.stringify(SALES_AI_MANIFEST);
+  const user =
+    `Language: ${lang}\n` +
+    `MANIFEST: ${manifest}\n` +
+    `UserQuestion: ${question}\n` +
+    `Rules: Use only capabilities listed. If out of scope, respond: "I'm not sure yet" + three items from MANIFEST.quickCommands.`;
+  try {
+    const resp = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
+        temperature: 0.2,
+        max_tokens: 120
       },
       {
         headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
@@ -987,10 +1066,10 @@ async function composeAIOnboarding(language = 'en') {
       }
     );
     return String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
-  } catch {       
-    // Fallback copy if model fails — single-language message only
-        return `Manage stock & sales on WhatsApp. Start a FREE ${TRIAL_DAYS}-day trial?\n`
-             + `Reply:\n1) Start trial\n2) Ask a question\n3) Skip\nFor further queries, you can reach out at ${WHATSAPP_LINK}`;
+  } catch {
+   // Grounded fallback: show benefit or safe “not sure” with known commands
+    const cmds = SALES_AI_MANIFEST.quickCommands.slice(0, 3).join(' • ');
+    return `Automate stock & expiry on WhatsApp; get low‑stock alerts.\nTry: ${cmds}`;
   }
 }
 
@@ -2555,8 +2634,15 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     }
   }
   
-  try{    
-  
+  try{        
+      // NEW: Smart sales Q&A for non-transaction, question-like prompts (benefits/clarifications)
+      if (!looksLikeTransaction(text) && /\?\s*$/.test(text)) {
+        const ans = await composeAISalesAnswer(text, detectedLanguage);
+        const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa`);
+        await sendMessageViaAPI(From, msg);
+        return true;
+      }
+
 // NEW: Intercept post‑purchase expiry override first
     if (await handleAwaitingPurchaseExpiryOverride(From, text, detectedLanguage, requestId)) return true;
     // Intercept post‑sale batch override next
