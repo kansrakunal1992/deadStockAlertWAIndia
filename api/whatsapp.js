@@ -2915,12 +2915,14 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     let header = query
       ? `🧾 Products matching “${query}” — ${pageItems.length} of ${total}`
       : `🧾 Products — Page ${pageSafe}/${totalPages} — ${pageItems.length} of ${total}`;
+        
     if (total === 0) {
-      const msg0 = await t(`${header}\nNo products found.`, detectedLanguage, requestId);
-      await sendMessageQueued(From, msg);
-      await scheduleUpsell(gate?.upsellReason);
-      return true;
-    }
+        const msg0 = await t(`${header}\nNo products found.`, detectedLanguage, requestId);
+        await sendMessageQueued(From, msg0);
+        await scheduleUpsell(gate?.upsellReason);
+        return true;
+      }
+
     const lines = pageItems.map(p => `• ${p.name} — ${p.qty} ${p.unit}`);
     let message = `${header}\n\n${lines.join('\n')}`;
     if (!query && pageSafe < totalPages) {
@@ -2938,9 +2940,13 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   // Prices needing update (paged): "prices", "prices 2", "price updates", "stale prices"
 let pricePage = text.match(/^\s*(?:prices|price\s*updates|stale\s*prices)(?:\s+(?:page\s+)?(\d+))?\s*$/i);
 if (pricePage) {
-  const page = pricePage[1] ? parseInt(pricePage[1], 10) : 1;
-  await sendPriceUpdatesPaged(From, detectedLanguage, requestId, page);
-  return true;
+  const page = pricePage[1] ? parseInt(pricePage[1], 10) : 1;    
+  const out = await sendPriceUpdatesPaged(From, detectedLanguage, requestId, page);
+   if (out) {
+     await sendMessageQueued(From, out);
+     await scheduleUpsell(gate?.upsellReason);
+   }
+   return true;
 }
 
   
@@ -3393,9 +3399,13 @@ try{
   // Prices needing update (paged)
   const pricesMatch = Body.trim().match(/^\s*(?:prices|price\s*updates|stale\s*prices)(?:\s+(?:page\s+)?(\d+))?\s*$/i);
   if (pricesMatch) {
-    const page = pricesMatch[1] ? parseInt(pricesMatch[1], 10) : 1;
-    await sendPriceUpdatesPaged(From, detectedLanguage, requestId, page);
-    return true;
+    const page = pricesMatch[1] ? parseInt(pricesMatch[1], 10) : 1;      
+    const out = await sendPriceUpdatesPaged(From, detectedLanguage, requestId, page);
+     if (out) {
+       await sendMessageQueued(From, out);
+       await scheduleUpsell(gate?.upsellReason);
+     }
+     return true;
   }
 
   
@@ -5587,10 +5597,10 @@ async function sendPriceUpdatesPaged(From, detectedLanguage, requestId, page = 1
     message += `\n⬅️ Previous page: "prices ${pageSafe - 1}"`;
   }
 
-  // Multilingual render and send
+  
+// Multilingual render and return (let handler send & upsell)
   const localized = await t(message.trim(), detectedLanguage, requestId);
-  await sendMessageViaAPI(From, localized);
-  return true;
+  return localized;
 }
 
 
