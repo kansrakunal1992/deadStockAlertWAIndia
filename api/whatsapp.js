@@ -895,6 +895,20 @@ const {
   reattributeSaleToBatch
 } = require('../database');
 
+/**
+ * SAFE TIP WRAPPER
+ * Only invoke runWithTips if it exists and is a function; otherwise, run the handler directly.
+ * Using `typeof runWithTips` is safe even if the symbol is not declared, so no ReferenceError.
+ */
+const invokeWithTips = async (ctx, fn) => {
+  try {
+    if (typeof runWithTips === 'function') {
+      return await runWithTips(ctx, fn);
+    }
+  } catch (_) { /* noop: fall back to plain handler */ }
+  return await fn();
+};
+
 // ===== Compact & Single-Script config =====
 const COMPACT_MODE = String(process.env.COMPACT_MODE ?? 'true').toLowerCase() === 'true';
 const SINGLE_SCRIPT_MODE = String(process.env.SINGLE_SCRIPT_MODE ?? 'true').toLowerCase() === 'true';
@@ -8379,8 +8393,9 @@ module.exports = async (req, res) => {
       // If the gate fails for any reason, fall through to normal flow gracefully.
     }
 
-  // === Centralized engagement tips: wrap the entire request handling ===
-  await runWithTips({ From, language: detectedLanguage, requestId }, async () => {
+  // === Centralized engagement tips: wrap the entire request handling ===    
+  // use SAFE wrapper to avoid ReferenceError when runWithTips isn't loaded
+    await invokeWithTips({ From, language: detectedLanguage, requestId }, async () => {
     // --- NEW: resolve pending price+expiry correction BEFORE deeper routing ---
     try {
       const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
