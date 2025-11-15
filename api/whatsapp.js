@@ -2610,11 +2610,12 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     
   if (isResetMessage(text)) {
       await clearUserState(From);
-      await sendMessageViaAPI(
+      await sendMessageQueued(
         From,
         await t('✅ Reset. Mode cleared.', detectedLanguage, `${requestId}::reset`),
         detectedLanguage
       );
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     } 
     
@@ -2632,7 +2633,8 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
         `• Last activity: ${gs.lastActivityDate}\n` +
         (gs.badges.length ? `• Badges: ${gs.badges.join(', ')}` : `• Badges: —`);
       const msg = await t(msgEn, detectedLanguage, requestId);
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
   
@@ -2846,7 +2848,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
           errorMessage = 'Your trial period has expired. Please upgrade to the Enterprise plan for detailed summaries.';
         }
         
-        await sendMessageQueued(From, msg);
+        await sendMessageQueued(From, errorMessage);
         await scheduleUpsell(gate?.upsellReason);
         return true;
       }
@@ -3238,7 +3240,15 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   // NEW: record activity (touch LastUsed) for every inbound
   try { await touchUserLastUsed(String(From).replace('whatsapp:', '')); } catch {}    
   // NEW: gate for paywall/onboarding
-  const gate = await ensureAccessOrOnboard(From, Body, detectedLanguage);
+  const gate = await ensureAccessOrOnboard(From, Body, detectedLanguage);    
+  // Text-only pre-ack (non-blocking), serialized per-shop queue
+  try {
+    await sendMessageQueued(
+      From,
+      await t('Processing your message…', detectedLanguage, `${requestId}::ack`)
+    );
+  } catch {}
+
   if (!gate.allow) return true; // already responded
   
   if (isResetMessage(text)) {
@@ -5571,11 +5581,11 @@ async function sendPriceUpdatesPaged(From, detectedLanguage, requestId, page = 1
   const list = await getProductsNeedingPriceUpdate(); // [{id, name, currentPrice, unit, lastUpdated}, ...]
   const total = list.length;
 
-  let header = `🧾 Price updates needed — ${total} item(s)`;
+  let header = `🧾 Price updates needed — ${total} item(s)`;    
   if (total === 0) {
-    const msg0 = await t(`${header}\nAll prices look fresh.`, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg0);
-    return true;
+      const msg0 = await t(`${header}\nAll prices look fresh.`, detectedLanguage, requestId);
+      return msg0; // let handler send queued + upsell
+    }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
