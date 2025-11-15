@@ -27,6 +27,35 @@ const languageNames = {
   'en': 'English'
 };
 
+// ---- Static UX labels for critical fallbacks (Option A) ---------------------
+// Keep these strings ultra-concise and language-native. Extend per language as needed.
+const STATIC_LABELS = {
+  ack: {
+    en: 'Processing your message…',
+    hi: 'आपका संदेश प्रोसेस हो रहा है…',
+    bn: 'আপনার বার্তা প্রক্রিয়াকরণ হচ্ছে…',
+    ta: 'உங்கள் செய்தி செயலாக்கப்படுகிறது…',
+    te: 'మీ సందేశాన్ని ప్రాసెస్ చేస్తున్నాం…',
+    kn: 'ನಿಮ್ಮ ಸಂದೇಶವನ್ನು ಸಂಸ್ಕರಿಸಲಾಗುತ್ತಿದೆ…',
+    mr: 'आपला संदेश प्रक्रिया होत आहे…',
+    gu: 'તમારો સંદેશ પ્રોસેસ થઈ રહ્યો છે…'
+  },
+  fallbackHint: {
+    en: 'Type “mode” to switch context or ask for a summary.',
+    hi: '“मोड” लिखें संदर्भ बदलने या सारांश पूछने के लिए।',
+    bn: 'প্রসঙ্গ বদলাতে বা সারাংশ জানতে “mode” লিখুন।',
+    ta: 'சூழலை மாற்ற அல்லது சுருக்கம் கேட்க “mode” என்று தட்டச்சு செய்யவும்.',
+    te: 'సందర్భం మార్చడానికి లేదా సారాంశం అడగడానికి “mode” టైప్ చేయండి.',
+    kn: 'ಸಂದರ್ಬ ಬದಲಿಸಲು ಅಥವಾ ಸಾರಾಂಶಕ್ಕಾಗಿ “mode” ಎಂದು ಟೈಪ್ ಮಾಡಿ.',
+    mr: 'संदर्भ बदलण्यासाठी किंवा सारांश विचारण्यासाठी “mode” टाइप करा.',
+    gu: 'સંદર્ભ બદલવા અથવા સારાંશ માગવા “mode” ટાઈપ કરો.'
+  }
+};
+function getStaticLabel(key, lang) {
+  const lc = String(lang || 'en').toLowerCase();
+  return STATIC_LABELS[key]?.[lc] || STATIC_LABELS[key]?.en || '';
+}
+
 // ===== LOCALIZED MODE BADGES & SWITCH WORD (one-word, language-appropriate) =====
 // One-word badge shown for the current mode (Purchase / Sale / Return / None) in user's language.
 const MODE_BADGE = {
@@ -587,8 +616,10 @@ const { ensureLangTemplates, getLangSids } = require('./contentCache');
 async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
   const toNumber = From.replace('whatsapp:', '');
   // 1) Instant text-only ack (non-blocking visual confirmation)
-  try {
-    const ack = await t('Processing your message…', detectedLanguage ?? 'en', 'ack');
+  try {      
+    // Use localized static label and still pass through t() for SINGLE_SCRIPT_MODE handling
+        const ackLabel = getStaticLabel('ack', detectedLanguage);
+        const ack = await t(ackLabel, detectedLanguage ?? 'en', 'ack');
     await sendMessageQueued(From, ack);
   } catch { /* best effort */ }
   
@@ -652,11 +683,11 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
         // Enriched logging: show Twilio status/body when available
         const status = e?.response?.status;
         const data   = e?.response?.data;
-        console.warn('[welcome] template orchestration failed', { status, data, message: e?.message });
-        await sendMessageQueued(
-          From,
-          await t('Type “mode” to switch context or ask for a summary.', detectedLanguage ?? 'en', 'welcome-fallback')
-        );
+        console.warn('[welcome] template orchestration failed', { status, data, message: e?.message });                
+        // Localized fallback hint
+            const fhLabel = getStaticLabel('fallbackHint', detectedLanguage);
+            const fhText  = await t(fhLabel, detectedLanguage ?? 'en', 'welcome-fallback');
+            await sendMessageQueued(From, fhText);
       }
 }
 
