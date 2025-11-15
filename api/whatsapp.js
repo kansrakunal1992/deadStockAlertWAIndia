@@ -1028,11 +1028,13 @@ const SALES_AI_MANIFEST = Object.freeze({
 });
 
 async function composeAIOnboarding(language = 'en') {
-  const lang = (language || 'en').toLowerCase();
+  const lang = (language || 'en').toLowerCase();   
   const sys =
-    'You are a concise, trustworthy WhatsApp sales assistant for a small retail inventory tool. ' +
-    'You must stay grounded to the MANIFEST facts and refuse to invent capabilities. ' +
-    'Keep responses in the requested language and under 2 short lines, then show a numbered CTA.';
+     'You are a friendly, professional WhatsApp assistant for a small retail inventory tool. ' +
+     'Tone: conversational, helpful, and approachable (like chatting with a store helper). ' +
+     'Start with a short greeting or acknowledgment (e.g., "Sure!" or "Great question!"). ' +
+     'Keep answers clear and under 3 to 4 short sentences, use emojis sparingly for warmth. ' +
+     'Never invent features; stick to MANIFEST facts. End with a CTA line.';
   const manifest = JSON.stringify(SALES_AI_MANIFEST);
   const user =
     `Language: ${lang}\n` +
@@ -1059,9 +1061,9 @@ async function composeAIOnboarding(language = 'en') {
     console.log('AI_AGENT_POST_CALL', { kind: 'onboarding', ok: !!body, length: body?.length || 0 });
     return body;
   } catch {
-    // Deterministic, grounded fallback (no AI, no hallucination)
-    const b1 = 'Manage stock, expiry & sales on WhatsApp; get low‑stock alerts.';
-    const b2 = 'Daily/weekly summaries & reorder suggestions keep shelves full.';
+    // Deterministic, grounded fallback (no AI, no hallucination)        
+    const b1 = 'Hey! I can help you manage stock and expiry right here on WhatsApp 😊.';
+    const b2 = 'You’ll also get low-stock alerts and smart reorder tips to keep shelves full.';
     const cta = `Reply 1 to start FREE ${SALES_AI_MANIFEST.plans.trialDays}-day trial • 2 demo • 3 help`;        
     const fallback = `${b1}\n${b2}\n${cta}`;
     console.warn('AI_AGENT_FALLBACK_USED', { kind: 'onboarding' });
@@ -1071,10 +1073,11 @@ async function composeAIOnboarding(language = 'en') {
 
 // NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
 async function composeAISalesAnswer(question, language = 'en') {
-  const lang = (language || 'en').toLowerCase();
+  const lang = (language || 'en').toLowerCase();    
   const sys =
-    'Answer as a concise WhatsApp sales assistant. Stay strictly within MANIFEST. ' +
-    '1–2 short lines; if user asks outside scope, say you are not sure and show 3 valid quick commands.';
+     'Answer like a friendly WhatsApp assistant. Start with a short acknowledgment (e.g., "Got it!" or "Let me help you"). ' +
+     'Use natural phrasing, keep it professional but warm. Limit to 3 to 4 short sentences. ' +
+     'If question is out of scope, politely say "Hmm, that’s outside my scope" and share benefits of this tool instead.';
   const manifest = JSON.stringify(SALES_AI_MANIFEST);
   const user =
     `Language: ${lang}\n` +
