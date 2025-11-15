@@ -632,20 +632,36 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
      } catch { /* ignore plan read */ }
      const isActivated = (plan === 'trial' || plan === 'paid');
      if (!isActivated) {             
-      // NEW: Send dedicated Quick-Reply CTA template if configured
+      // NEW: Send dedicated Quick-Reply CTA template if configured                
+      let sent = false;
+          // 1) Prefer explicit env ContentSid if present
           if (TRIAL_CTA_SID) {
             try {
               await sendContentTemplate({ toWhatsApp: toNumber, contentSid: TRIAL_CTA_SID });
+              sent = true;
             } catch (e) {
               const status = e?.response?.status;
               const data   = e?.response?.data;
-              console.warn('[trial-cta] template send failed', { status, data, sid: TRIAL_CTA_SID });
-              // Fallback to localized text CTA
-              const ctaText = getTrialCtaText(detectedLanguage ?? 'en');
-              await sendMessageQueued(From, await t(ctaText, detectedLanguage ?? 'en', 'welcome-gate-fallback'));
+              console.warn('[trial-cta] env ContentSid send failed', { status, data, sid: TRIAL_CTA_SID });
             }
-          } else {
-            // If no ContentSid configured, send localized text CTA
+          }
+          // 2) If env send failed or wasn't set, try per-language ContentSid from contentCache
+          if (!sent) {
+            try {
+              await ensureLangTemplates(detectedLanguage);
+              const sids = getLangSids(detectedLanguage);
+              if (sids?.trialCtaSid) {
+                await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.trialCtaSid });
+                sent = true;
+              }
+            } catch (e) {
+              const status = e?.response?.status;
+              const data   = e?.response?.data;
+              console.warn('[trial-cta] per-language send failed', { status, data });
+            }
+          }
+          // 3) Text fallback if neither option worked
+          if (!sent) {
             const ctaText = getTrialCtaText(detectedLanguage ?? 'en');
             await sendMessageQueued(From, await t(ctaText, detectedLanguage ?? 'en', 'welcome-gate'));
           }
@@ -1390,7 +1406,7 @@ async function composeAIOnboarding(language = 'en') {
     return body;
   } catch {
     // Deterministic, grounded fallback (no AI, no hallucination)        
-    const fallback = getLocalizedOnboarding(lang);f
+    const fallback = getLocalizedOnboarding(lang);
     console.warn('AI_AGENT_FALLBACK_USED', { kind: 'onboarding' });
     return fallback;
   }
