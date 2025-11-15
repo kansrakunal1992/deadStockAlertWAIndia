@@ -5,6 +5,12 @@ const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const fs = require('fs');
 const crypto = require('crypto');
+// Performance tracking
+const responseTimes = {
+  total: 0,
+  count: 0,
+  max: 0
+};
 const authCache = new Map();
 const { processShopSummary } = require('../dailySummary');
 const { generateInvoicePDF } = require('../pdfGenerator');
@@ -1617,13 +1623,6 @@ async function sendMessageQueued(toWhatsApp, body) {
     return await sendMessageViaAPI(toWhatsApp, body);
   }
 }
-
-// Performance tracking
-const responseTimes = {
-  total: 0,
-  count: 0,
-  max: 0
-};
 
 // --- Handled/apology guard: track per-request success to prevent late apologies ---
 // If a requestId is added here, any later call to sendParseErrorWithExamples() with the
@@ -3584,10 +3583,12 @@ try{
 
 // Performance tracking function
 function trackResponseTime(startTime, requestId) {
-  const duration = Date.now() - startTime;
-  responseTimes.total += duration;
-  responseTimes.count++;
-  responseTimes.max = Math.max(responseTimes.max, duration);
+  const duration = Date.now() - startTime;    
+  if (typeof responseTimes !== 'undefined') {
+     responseTimes.total += duration;
+     responseTimes.count++;
+     responseTimes.max = Math.max(responseTimes.max, duration);
+   }
   console.log(`[${requestId}] Response time: ${duration}ms`);
   // Log slow responses (increased threshold)
   if (duration > 15000) {
