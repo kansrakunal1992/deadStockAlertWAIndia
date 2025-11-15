@@ -1149,7 +1149,7 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
   }
 
   // Existing user — gate by status/plan
-  const status = String(rec.fields?.StatusUser ?? '').toLowerCase();
+  const status = rec?.fields ? String(rec.fields.StatusUser ?? '').toLowerCase() : '';
   const pref = await getUserPreference(shopId); // to read plan & trial end
   const plan = String(pref?.plan ?? '').toLowerCase();
   const trialEnd = pref?.trialEndDate ? new Date(pref.trialEndDate) : null;
