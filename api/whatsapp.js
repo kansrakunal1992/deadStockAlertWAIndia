@@ -61,6 +61,96 @@ const SWITCH_WORD = {
   gu: 'મોડ'
 };
 
+// ==== SINGLE SOURCE: Language detection (heuristic + optional AI) ====
+// Must be declared BEFORE any calls (e.g., in handleRequest or module.exports).
+async function detectLanguageWithFallback(text, from, requestId) {
+  return (async () => {
+    try {
+      const lowerText = String(text || '').toLowerCase();
+      let detectedLanguage = 'en';
+
+      // 0) Explicit one-word switch (uses your existing tokens helper)
+      try {
+        if (typeof _matchLanguageToken === 'function') {
+          const wanted = _matchLanguageToken(text);
+          if (wanted) detectedLanguage = wanted;
+        }
+      } catch (_) {}
+
+      // 1) Script/keyword heuristics only if not decided yet
+      if (detectedLanguage === 'en') {
+        if (/[\u0900-\u097F]/.test(text)) { // Devanagari
+          const englishKeywords = ['milk','sold','purchased','bought','oreo','frooti','maggi','amul'];
+          detectedLanguage = englishKeywords.some(w => lowerText.includes(w)) ? 'en' : 'hi';
+        } else if (/[\u0980-\u09FF]/.test(text)) detectedLanguage = 'bn';
+        else if (/[\u0B80-\u0BFF]/.test(text)) detectedLanguage = 'ta';
+       else if (/[\u0C00-\u0C7F]/.test(text)) detectedLanguage = 'te';
+        else if (/[\u0C80-\u0CFF]/.test(text)) detectedLanguage = 'kn';
+        else if (/[\u0A80-\u0AFF]/.test(text)) detectedLanguage = 'gu';
+        else {
+          if (lowerText.includes('hello') || lowerText.includes('hi') || lowerText.includes('hey')) detectedLanguage = 'en';
+          else if (lowerText.includes('नमस्ते') || lowerText.includes('नमस्कार')) detectedLanguage = 'hi';
+          else if (lowerText.includes('வணக்கம்')) detectedLanguage = 'ta';
+          else if (lowerText.includes('నమస్కారం')) detectedLanguage = 'te';
+          else if (lowerText.includes('ನಮಸ್ಕಾರ')) detectedLanguage = 'kn';
+          else if (lowerText.includes('নমস্কার')) detectedLanguage = 'bn';
+          else if (lowerText.includes('નમસ્તે')) detectedLanguage = 'gu';
+          else if (lowerText.includes('नमस्कार')) detectedLanguage = 'mr';
+        }
+      }
+
+      // 2) Optional AI pass only if still 'en' and not clearly ASCII-English
+      if (detectedLanguage === 'en' && !/^[a-z0-9\s.,!?'"@:/\-]+$/i.test(lowerText)) {
+        try {
+         const resp = await axios.post(
+            'https://api.deepseek.com/v1/chat/completions',
+            {
+              model: 'deepseek-chat',
+              messages: [
+                { role: 'system', content: 'Detect the language code of this text (hi, en, ta, te, bn, kn, mr, gu). Reply with ONLY the code.' },
+                { role: 'user', content: String(text || '') }
+              ],
+              max_tokens: 10,
+              temperature: 0.1
+            },
+            { headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 10000 }
+          );
+          const code = String(resp?.data?.choices?.[0]?.message?.content || '').trim().toLowerCase();
+          if (code) detectedLanguage = code;
+        } catch (e) {
+          console.warn(`[${requestId}] AI language detection failed: ${e.message}`);
+        }
+      }
+
+      console.log(`[${requestId}] Detected language: ${detectedLanguage}`);
+
+      // 3) Persist preference (best effort)
+      try {
+        const shopId = String(from || '').replace('whatsapp:', '');
+        if (typeof saveUserPreference === 'function') {
+          await saveUserPreference(shopId, detectedLanguage);
+        }
+      } catch (e) {
+        console.warn(`[${requestId}] Failed to save language preference: ${e.message}`);
+      }
+
+      // 4) Optional in-memory cache if available in your module
+      try {
+        if (typeof languageCache !== 'undefined' && typeof LANGUAGE_CACHE_TTL !== 'undefined') {
+          const cacheKey = `${from}:${String(text || '').substring(0, 50)}`;
+          languageCache.set(cacheKey, { language: detectedLanguage, timestamp: Date.now() });
+        }
+      } catch (_) {}
+
+      return detectedLanguage;
+    } catch (error) {
+      console.warn(`[${requestId}] Language detection failed, defaulting to English: ${error.message}`);
+      return 'en';
+    }
+  })();
+}
+
+
 // Fallback tokens we accept from users (they might type English/Hinglish or local verbs)
 const SWITCH_FALLBACKS = [
   // English / Hinglish
@@ -3701,110 +3791,6 @@ function cleanupCaches() {
       }
     }
     globalState.lastCleanup = now;
-  }
-}
-
-// Improved language detection with script detection and fallback
-async function detectLanguageWithFallback(text, from, requestId) {
-  try {
-    // Check cache first
-    const cacheKey = `${from}:${text.substring(0, 50)}`;
-    const cached = languageCache.get(cacheKey);
-    if (cached && (Date.now() - cached.timestamp < LANGUAGE_CACHE_TTL)) {
-      console.log(`[${requestId}] Using cached language detection: ${cached.language}`);
-      return cached.language;
-    }
-    // First, try to detect script for more accurate language detection
-    const lowerText = text.toLowerCase();
-    let detectedLanguage = 'en'; // Default to English
-    // Check for specific language scripts first
-    if (/[\u0900-\u097F]/.test(text)) {
-  const englishKeywords = ['milk', 'sold', 'purchased', 'bought', 'Oreo', 'Frooti', 'Maggi', 'Amul'];
-  if (englishKeywords.some(word => text.toLowerCase().includes(word.toLowerCase()))) {
-    detectedLanguage = 'en';
-  } else {
-    detectedLanguage = 'hi';
-  }
-}
-    else if (/[\u0980-\u09FF]/.test(text)) { // Bengali script
-      detectedLanguage = 'bn';
-    } else if (/[\u0B80-\u0BFF]/.test(text)) { // Tamil script
-      detectedLanguage = 'ta';
-    } else if (/[\u0C00-\u0C7F]/.test(text)) { // Telugu script
-      detectedLanguage = 'te';
-    } else if (/[\u0C80-\u0CFF]/.test(text)) { // Kannada script
-      detectedLanguage = 'kn';
-    } else if (/[\u0A80-\u0AFF]/.test(text)) { // Gujarati script
-      detectedLanguage = 'gu';
-    } else {
-      // For Latin script, check for specific greeting words
-      if (lowerText.includes('hello') || lowerText.includes('hi') || lowerText.includes('hey')) {
-        detectedLanguage = 'en';
-      } else if (lowerText.includes('नमस्ते') || lowerText.includes('नमस्कार')) {
-        detectedLanguage = 'hi';
-      } else if (lowerText.includes('வணக்கம்')) {
-        detectedLanguage = 'ta';
-      } else if (lowerText.includes('నమస్కారం')) {
-        detectedLanguage = 'te';
-      } else if (lowerText.includes('ನಮಸ್ಕಾರ')) {
-        detectedLanguage = 'kn';
-      } else if (lowerText.includes('নমস্কার')) {
-        detectedLanguage = 'bn';
-      } else if (lowerText.includes('નમસ્તે')) {
-        detectedLanguage = 'gu';
-      } else if (lowerText.includes('नमस्कार')) {
-        detectedLanguage = 'mr';
-      }
-    }
-    // If we couldn't detect by script or keywords, use AI
-    if (detectedLanguage === 'en') {
-      try {
-        const response = await axios.post(
-          'https://api.deepseek.com/v1/chat/completions',
-          {
-            model: "deepseek-chat",
-            messages: [
-              {
-                role: "system",
-                content: `Detect the language of this text and respond with only the language code (e.g., "hi" for Hindi, "en" for English, "ta" for Tamil, etc.)`
-              },
-              {
-                role: "user",
-                content: text
-              }
-            ],
-            max_tokens: 10,
-            temperature: 0.1
-          },
-          {
-            headers: {
-              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-              'Content-Type': 'application/json'
-            },
-            timeout: 10000 // Increased timeout
-          }
-        );
-        detectedLanguage = response.data.choices[0].message.content.trim().toLowerCase();
-      } catch (error) {
-        console.warn(`[${requestId}] AI language detection failed, defaulting to English:`, error.message);
-        detectedLanguage = 'en';
-      }
-    }
-    console.log(`[${requestId}] Detected language: ${detectedLanguage}`);
-    // Save the detected language preference
-    if (from) {
-      const shopId = from.replace('whatsapp:', '');
-      // Don't wait for this to complete
-      saveUserPreference(shopId, detectedLanguage)
-        .catch(error => console.warn(`[${requestId}] Failed to save language preference:`, error.message));
-      console.log(`[${requestId}] Saved language preference: ${detectedLanguage} for user ${shopId}`);
-    }
-    // Cache the result
-    languageCache.set(cacheKey, { language: detectedLanguage, timestamp: Date.now() });
-    return detectedLanguage;
-  } catch (error) {
-    console.warn(`[${requestId}] Language detection failed, defaulting to English:`, error.message);
-    return 'en';
   }
 }
 
