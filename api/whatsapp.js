@@ -151,6 +151,23 @@ async function detectLanguageWithFallback(text, from, requestId) {
 }
 
 
+// Safe wrapper so missing function can’t crash the request
+async function safeSendParseError(From, detectedLanguage, requestId, header) {
+  try {
+    if (typeof sendParseErrorWithExamples === 'function') {
+      await sendParseErrorWithExamples(From, detectedLanguage, requestId, header);
+    } else {
+      // ultra-compact fallback in user's language
+      const msg = await t('Sorry, I could not understand that. Try: "sold milk 2 ltr" or "short summary".', detectedLanguage, requestId + '::err-fallback');
+      await sendMessageViaAPI(From, msg);
+    }
+  } catch (e) {
+    // last resort noop
+    console.warn('[safeSendParseError] failed:', e?.message);
+  }
+}
+
+
 // Fallback tokens we accept from users (they might type English/Hinglish or local verbs)
 const SWITCH_FALLBACKS = [
   // English / Hinglish
@@ -593,28 +610,54 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
          await sendMessageQueued(From, cta);
        } catch { /* best effort */ }
        return; // Do NOT send quick-reply/list-picker before activation
-     }
-   
-     // 3) Guarded template sends (only if SIDs exist), with plan-aware hint
-     try {
-       await ensureLangTemplates(detectedLanguage); // creates once per lang, then reuses
-       const sids = getLangSids(detectedLanguage);
-    if (sids?.quickReplySid) {
-      await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.quickReplySid });
-    }
-    if (sids?.listPickerSid) {
-      await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid });
-    }
-    // 3) Light plan-aware text nudge (kept compact)
-    const hint = plan === 'trial'
-      ? 'Tip: Try quick replies or type “mode” to switch.'
-      : 'Tip: Use quick replies and type “mode” to switch.';
-    await sendMessageQueued(From, await t(hint, detectedLanguage ?? 'en', 'welcome-hint'));
-  } catch (e) {
-    // 4) Plain-text fallback if template send fails
-    await sendMessageQueued(From, await t('Type “mode” to switch context or ask for a summary.', detectedLanguage ?? 'en', 'welcome-fallback'));
-    console.warn('[welcome] template send failed:', e?.message);
-  }
+     }       
+         
+    // 3) Guarded template sends (only if SIDs exist), with plan-aware hint
+      try {
+        await ensureLangTemplates(detectedLanguage); // creates once per lang, then reuses
+        const sids = getLangSids(detectedLanguage);
+    
+        // Send Quick-Reply (log enriched Twilio errors)
+        if (sids?.quickReplySid) {
+          try {
+            await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.quickReplySid });
+          } catch (e) {
+            const status = e?.response?.status;
+            const data   = e?.response?.data;
+            console.warn('[welcome] quickReply send failed', { status, data, sid: sids?.quickReplySid });
+            // Do not throw; continue to try list-picker and text hint
+          }
+        }
+    
+        // Send List-Picker (log enriched Twilio errors)
+        if (sids?.listPickerSid) {
+          try {
+            await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid });
+          } catch (e) {
+            const status = e?.response?.status;
+            const data   = e?.response?.data;
+            console.warn('[welcome] listPicker send failed', { status, data, sid: sids?.listPickerSid });
+            // Do not throw; continue to text hint
+          }
+        }
+    
+        // 3) Light plan-aware text nudge (kept compact)
+        const hint = plan === 'trial'
+          ? 'Tip: Try quick replies or type “mode” to switch.'
+          : 'Tip: Use quick replies and type “mode” to switch.';
+        await sendMessageQueued(From, await t(hint, detectedLanguage ?? 'en', 'welcome-hint'));
+    
+      } catch (e) {
+        // 4) Plain-text fallback if template orchestration failed before we could try any send
+        // Enriched logging: show Twilio status/body when available
+        const status = e?.response?.status;
+        const data   = e?.response?.data;
+        console.warn('[welcome] template orchestration failed', { status, data, message: e?.message });
+        await sendMessageQueued(
+          From,
+          await t('Type “mode” to switch context or ask for a summary.', detectedLanguage ?? 'en', 'welcome-fallback')
+        );
+      }
 }
 
 // Replace English labels with "native (English)" anywhere they appear
@@ -8437,7 +8480,7 @@ module.exports = async (req, res) => {
 
     // --- FINAL CATCH-ALL: If nothing above handled the message, send examples ---
     if (!res.headersSent) {
-      await sendParseErrorWithExamples(From, detectedLanguage, requestId);
+      await safeSendParseError(From, detectedLanguage, requestId);
       try {
         const twiml = new twilio.twiml.MessagingResponse();
         twiml.message(''); // minimal ack
