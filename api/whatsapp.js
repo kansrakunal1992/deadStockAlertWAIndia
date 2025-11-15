@@ -575,16 +575,31 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
     const ack = await t('Processing your message…', detectedLanguage ?? 'en', 'ack');
     await sendMessageQueued(From, ack);
   } catch { /* best effort */ }
-  // 2) Guarded template sends (only if SIDs exist), with plan-aware hint
-  try {
-    await ensureLangTemplates(detectedLanguage); // creates once per lang, then reuses
-    const sids = getLangSids(detectedLanguage);
-    // Read plan for simple hinting (trial vs paid/demo)
-    let plan = 'demo';
-    try {
-      const pref = await getUserPreference(toNumber);
-      if (pref?.success && pref.plan) plan = String(pref.plan).toLowerCase();
-    } catch { /* ignore plan read */ }
+  
+  // 2) Plan gating: only show menus for activated users (trial/paid).
+     //    Unactivated users receive a concise CTA to start the trial/paid plan.
+     let plan = 'free_demo';
+     try {
+       const pref = await getUserPreference(toNumber);
+       if (pref?.success && pref.plan) plan = String(pref.plan).toLowerCase();
+     } catch { /* ignore plan read */ }
+     const isActivated = (plan === 'trial' || plan === 'paid');
+     if (!isActivated) {
+       try {
+         const cta = await t(
+           `Reply 1 to start FREE ${TRIAL_DAYS}-day trial • 2 demo • 3 help`,
+           detectedLanguage ?? 'en',
+           'welcome-gate'
+         );
+         await sendMessageQueued(From, cta);
+       } catch { /* best effort */ }
+       return; // Do NOT send quick-reply/list-picker before activation
+     }
+   
+     // 3) Guarded template sends (only if SIDs exist), with plan-aware hint
+     try {
+       await ensureLangTemplates(detectedLanguage); // creates once per lang, then reuses
+       const sids = getLangSids(detectedLanguage);
     if (sids?.quickReplySid) {
       await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.quickReplySid });
     }
