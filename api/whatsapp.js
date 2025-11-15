@@ -449,13 +449,41 @@ const NL_LABELS = {
 const { sendContentTemplate } = require('./whatsappButtons');
 const { ensureLangTemplates, getLangSids } = require('./contentCache');
 
+
 async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
-   const toNumber = From.replace('whatsapp:', '');
-   await ensureLangTemplates(detectedLanguage); // creates once per lang, then reuses
-   const sids = getLangSids(detectedLanguage);
-   await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.quickReplySid });
-   await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid });
- }
+  const toNumber = From.replace('whatsapp:', '');
+  // 1) Instant text-only ack (non-blocking visual confirmation)
+  try {
+    const ack = await t('Processing your message…', detectedLanguage ?? 'en', 'ack');
+    await sendMessageQueued(From, ack);
+  } catch { /* best effort */ }
+  // 2) Guarded template sends (only if SIDs exist), with plan-aware hint
+  try {
+    await ensureLangTemplates(detectedLanguage); // creates once per lang, then reuses
+    const sids = getLangSids(detectedLanguage);
+    // Read plan for simple hinting (trial vs paid/demo)
+    let plan = 'demo';
+    try {
+      const pref = await getUserPreference(toNumber);
+      if (pref?.success && pref.plan) plan = String(pref.plan).toLowerCase();
+    } catch { /* ignore plan read */ }
+    if (sids?.quickReplySid) {
+      await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.quickReplySid });
+    }
+    if (sids?.listPickerSid) {
+      await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid });
+    }
+    // 3) Light plan-aware text nudge (kept compact)
+    const hint = plan === 'trial'
+      ? 'Tip: Try quick replies or type “mode” to switch.'
+      : 'Tip: Use quick replies and type “mode” to switch.';
+    await sendMessageQueued(From, await t(hint, detectedLanguage ?? 'en', 'welcome-hint'));
+  } catch (e) {
+    // 4) Plain-text fallback if template send fails
+    await sendMessageQueued(From, await t('Type “mode” to switch context or ask for a summary.', detectedLanguage ?? 'en', 'welcome-fallback'));
+    console.warn('[welcome] template send failed:', e?.message);
+  }
+}
 
 // Replace English labels with "native (English)" anywhere they appear
 // Single-script rendering: replace labels to native OR keep English only; never mix.
@@ -571,11 +599,9 @@ function _normLite(s) {
       if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();
     } catch (_) {}
     // Treat tap as explicit confirmation to start trial
-    const start = await startTrialForAuthUser(shopId, TRIAL_DAYS);
+    const start = await startTrialForAuthUser(shopId, TRIAL_DAYS);        
     if (start.success) {
-      const planNote = start.plan === 'trial'
-        ? `🎉 Trial activated for ${TRIAL_DAYS} days!`
-        : `ℹ️ Trial option not available; started demo instead.`;
+    const planNote = `🎉 Trial activated for ${TRIAL_DAYS} days!`;
       const msg = await t(
         `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
         lang, `cta-trial-ok-${shopId}`
@@ -1015,6 +1041,7 @@ async function composeAIOnboarding(language = 'en') {
     `Then a third line with CTA: "Reply 1 to start FREE ${SALES_AI_MANIFEST.plans.trialDays}-day trial • 2 demo • 3 help". ` +
     `If later asked product questions, answer only using MANIFEST.quickCommands; otherwise say "I'm not sure yet" and show 3 example commands.`;
   try {
+    console.log('AI_AGENT_PRE_CALL', { kind: 'onboarding', language: lang });
     const resp = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -1027,15 +1054,18 @@ async function composeAIOnboarding(language = 'en') {
         headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
         timeout: 10000
       }
-    );
+    );        
     const body = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
+    console.log('AI_AGENT_POST_CALL', { kind: 'onboarding', ok: !!body, length: body?.length || 0 });
     return body;
   } catch {
     // Deterministic, grounded fallback (no AI, no hallucination)
     const b1 = 'Manage stock, expiry & sales on WhatsApp; get low‑stock alerts.';
     const b2 = 'Daily/weekly summaries & reorder suggestions keep shelves full.';
-    const cta = `Reply 1 to start FREE ${SALES_AI_MANIFEST.plans.trialDays}-day trial • 2 demo • 3 help`;
-    return `${b1}\n${b2}\n${cta}`;
+    const cta = `Reply 1 to start FREE ${SALES_AI_MANIFEST.plans.trialDays}-day trial • 2 demo • 3 help`;        
+    const fallback = `${b1}\n${b2}\n${cta}`;
+    console.warn('AI_AGENT_FALLBACK_USED', { kind: 'onboarding' });
+    return fallback;
   }
 }
 
@@ -1052,6 +1082,7 @@ async function composeAISalesAnswer(question, language = 'en') {
     `UserQuestion: ${question}\n` +
     `Rules: Use only capabilities listed. If out of scope, respond: "I'm not sure yet" + three items from MANIFEST.quickCommands.`;
   try {
+    console.log('AI_AGENT_PRE_CALL', { kind: 'sales-qa', language: lang, promptHash: Buffer.from(String(question).toLowerCase()).toString('base64').slice(0,12) });
     const resp = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -1064,11 +1095,14 @@ async function composeAISalesAnswer(question, language = 'en') {
         headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
         timeout: 10000
       }
-    );
-    return String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
+    );       
+    const out = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
+    console.log('AI_AGENT_POST_CALL', { kind: 'sales-qa', ok: !!out, length: out?.length || 0 });
+    return out;
   } catch {
    // Grounded fallback: show benefit or safe “not sure” with known commands
-    const cmds = SALES_AI_MANIFEST.quickCommands.slice(0, 3).join(' • ');
+    const cmds = SALES_AI_MANIFEST.quickCommands.slice(0, 3).join(' • ');        
+    console.warn('AI_AGENT_FALLBACK_USED', { kind: 'sales-qa' });
     return `Automate stock & expiry on WhatsApp; get low‑stock alerts.\nTry: ${cmds}`;
   }
 }
@@ -1086,49 +1120,23 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
   // Fast path: "paid" confirmation (Hinglish + English variants)
   if (/(\bpaid\b|\bpayment done\b|\bpaydone\b|\bmaine pay kiya\b|\bpaid ho gaya\b)/i.test(text)) {
     const ok = await markAuthUserPaid(shopId);
-    if (ok.success) {
-      const msg = await t(
-        `💸 Thanks! Your paid plan is queued — account will be activated in 4–6 hours.\n`
-        + `You can continue using all features.`,
-        lang, `paid-ok-${shopId}`
-      );
-      await sendMessageViaAPI(From, msg);
-      return { allow: true };
+    if (ok.success) {           
+      // Do not send upsell immediately; let handlers show main content first
+      return { allow: true, language: lang, upsellReason: 'paid_confirmed', suppressUpsell: true };
     }
-    await sendMessageViaAPI(From, await t(
-      `We couldn't verify your record yet. Please try again or contact support.`,
-      lang, `paid-fail-${shopId}`
-    ));
-    return { allow: false };
+    return { allow: true, language: lang, upsellReason: 'paid_verification_failed' };
   }
 
   // Lookup record in AuthUsers
-  const rec = await getAuthUserRecord(shopId);
+  const rec = await getAuthUserRecord(shopId);    
   if (!rec) {
-    // New user → AI onboarding (with numbered options)       
-    const intro = await composeAIOnboarding(lang);       // compose in user's saved language
-        const msg   = await t(intro, lang, `onboard-intro-${shopId}`); // single-script sanitize
-        await sendMessageViaAPI(From, msg);
-    // If user already typed "1" / "start"
+  // New user → return reason, let handler show onboarding + main content
     if (/^(1|yes|haan|start|trial|ok)$/i.test(text)) {
       const s = await startTrialForAuthUser(shopId, TRIAL_DAYS);
       if (s.success) {              
-      const planNote = s.plan === 'trial'
-                ? `Trial activated for ${TRIAL_DAYS} days!`
-                : `Trial option not available in config; started demo instead.`;
-              const body = await t(
-                `🎉 ${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
-                lang, `trial-welcome-${shopId}`
-              );
-        await sendMessageViaAPI(From, body);
-        return { allow: true };
+      return { allow: true, language: lang, upsellReason: 'trial_started' };
       }
-      await sendMessageViaAPI(From, await t(
-        `Sorry, we couldn't start your trial right now. Please try again.`,
-        lang, `trial-failed-${shopId}`
-      ));
-    }
-    return { allow: false }; // pause normal flow until explicit choice
+      return { allow: true, language: lang, upsellReason: 'new_user' };
   }
 
   // Existing user — gate by status/plan
@@ -1136,31 +1144,20 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
   const pref = await getUserPreference(shopId); // to read plan & trial end
   const plan = String(pref?.plan ?? '').toLowerCase();
   const trialEnd = pref?.trialEndDate ? new Date(pref.trialEndDate) : null;
+  
+    
+  // Only hard-block truly restricted states; otherwise let main content proceed and upsell later
+    if (['deactivated','blacklisted','blocked'].includes(status)) {
+      return { allow: false, language: lang, upsellReason: 'blocked' };
+    }
 
-  // If inactive → pay wall
-  if (status !== 'active') {
-    const pay = await t(
-      `⚠️ Your account is inactive.\nTo continue, pay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\n`
-      + `Or pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`,
-      lang, `inactive-pay-${shopId}`
-    );
-    await sendMessageViaAPI(From, pay);
-    return { allow: false };
-  }
-
-  // Trial ended → gentle pay wall
+  // Trial ended → gentle pay wall    
   if (plan === 'trial' && trialEnd && Date.now() > trialEnd.getTime()) {
-    const pay2 = await t(
-      `⏳ Your FREE trial has ended.\nContinue for ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\n`
-      + `Or pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`,
-      lang, `trial-ended-pay-${shopId}`
-    );
-    await sendMessageViaAPI(From, pay2);
-    return { allow: false };
-  }
+      return { allow: true, language: lang, upsellReason: 'trial_ended' };
+    }
 
   // Active (trial or paid) → allow normal flows
-  return { allow: true };
+  return { allow: true, language: lang, upsellReason: 'none' };
 }
 
 // Add this at the top of the file after the imports
@@ -1596,6 +1593,27 @@ scheduleInactivityNudges();
 
 // Start trial expiry reminders (hourly)
 scheduleTrialExpiryReminders();
+
+// ===== NEW: Serialize outbound sends per shop to avoid jumbled sequences =====
+const _sendQueues = new Map(); // shopId -> Promise
+async function sendMessageQueued(toWhatsApp, body) {
+  try {
+    const shopId = String(toWhatsApp).replace('whatsapp:', '');
+    const prev = _sendQueues.get(shopId) || Promise.resolve();
+    const next = prev
+      .catch(() => {}) // swallow previous errors to keep queue alive
+      .then(async () => {
+        // single place to send; preserve your existing send function
+        return await sendMessageViaAPI(toWhatsApp, body);
+      });
+    _sendQueues.set(shopId, next);
+    return await next;
+  } catch (e) {
+    console.warn('[sendMessageQueued] failed:', e?.message);
+    // fall back to direct send to avoid drop
+    return await sendMessageViaAPI(toWhatsApp, body);
+  }
+}
 
 // Performance tracking
 const responseTimes = {
@@ -2579,9 +2597,16 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const text = String(rawBody || '').trim();    
   // NEW: record activity (touch LastUsed) for every inbound
   try { await touchUserLastUsed(String(From).replace('whatsapp:', '')); } catch {}    
-  // NEW: gate for paywall/onboarding
+  // NEW: gate for paywall/onboarding    
   const gate = await ensureAccessOrOnboard(From, rawBody, detectedLanguage);
-  if (!gate.allow) return true; // already responded
+    // Text-only ack, serialized, never blocks main flow
+    try { await sendMessageQueued(From, await t('Processing your message…', detectedLanguage, `${requestId}::ack`)); } catch {}
+    if (gate && gate.allow === false) {
+      // truly blocked (deactivated/blacklisted)
+      await sendMessageQueued(From, await t('Your access is currently restricted. Please contact support.', detectedLanguage, `${requestId}::blocked`));
+      trackResponseTime(startTime, requestId);
+      return true;
+    }
     
   if (isResetMessage(text)) {
       await clearUserState(From);
@@ -2634,13 +2659,43 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     }
   }
   
-  try{        
+    
+  // —helper: schedule upsell after we send any main message
+    async function scheduleUpsell(reason) {
+      try {
+        if (!reason || reason === 'none' || gate?.suppressUpsell) return;
+        let body;
+        switch (reason) {
+          case 'new_user':
+            body = await t(await composeAIOnboarding(detectedLanguage), detectedLanguage, `${requestId}::up-new`);
+            break;
+          case 'trial_ended':
+          case 'inactive':
+            body = await t(
+              `To continue, pay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nOr pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`,
+              detectedLanguage, `${requestId}::up-pay`
+            );
+            break;
+          case 'paid_verification_failed':
+            body = await t(`We couldn't verify your payment yet. Please try again or contact support.`, detectedLanguage, `${requestId}::up-paid-fail`);
+            break;
+          case 'trial_started':
+          case 'paid_confirmed':
+          default:
+            return; // no upsell needed
+        }
+        await sendMessageQueued(From, body);
+      } catch (e) { console.warn('[upsell] failed:', e?.message); }
+    }
+  
+    try {     
       // NEW: Smart sales Q&A for non-transaction, question-like prompts (benefits/clarifications)
-      if (!looksLikeTransaction(text) && /\?\s*$/.test(text)) {
-        const ans = await composeAISalesAnswer(text, detectedLanguage);
-        const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa`);
-        await sendMessageViaAPI(From, msg);
-        return true;
+      if (!looksLikeTransaction(text) && /\?\s*$/.test(text)) {             
+      const ans = await composeAISalesAnswer(text, detectedLanguage);
+      const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa`);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
+      return true;
       }
 
 // NEW: Intercept post‑purchase expiry override first
@@ -2663,15 +2718,17 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     if (switchCmd) {
       if (switchCmd.ask) {
         await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+        await scheduleUpsell(gate?.upsellReason);
         return true;
       }
       if (switchCmd.set) {
         await setStickyMode(From, switchCmd.set);
-        await sendMessageViaAPI(
+        await sendMessageQueued(
           From,
           await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`),
           detectedLanguage
         );
+        await scheduleUpsell(gate?.upsellReason);
         return true;
       }
     }
@@ -2697,7 +2754,8 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
       message += ` (Stock: ${result.newQuantity} ${u})`;
     }
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -2712,7 +2770,8 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
       ? exp.map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n')
       : (COMPACT_MODE ? `None` : `No expired items.`);
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
     
@@ -2727,7 +2786,8 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
         `Invalid date. Try: 20-09 | 20/09/2025 | +7d | +3m | +1y`,
         detectedLanguage, 'bad-expiry'
       );
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
     const batches = await getBatchRecords(shopId, product);
@@ -2736,12 +2796,14 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
       .sort((a,b)=> new Date(b.fields.PurchaseDate) - new Date(a.fields.PurchaseDate))[0];
     if (!latest) {
       const msg = await t(`No batch found for ${product}.`, detectedLanguage, 'no-batch');
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
     await updateBatchExpiry(latest.id, iso);
     const ok = await t(`✅ ${product} expiry set to ${formatDateForDisplay(iso)}`, detectedLanguage, 'expiry-set');
-    await sendMessageViaAPI(From, ok);
+    await sendMessageQueued(From, ok);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
   
@@ -2759,12 +2821,14 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
           errorMessage = 'Your trial period has expired. Please upgrade to the Enterprise plan for advanced AI summaries.';
         }
         
-        await sendMessageViaAPI(From, errorMessage);
+        await sendMessageQueued(From, errorMessage);
+        await scheduleUpsell(gate?.upsellReason);
         return true;
       }
             
       const msg = await generateInstantSummary(shopId, detectedLanguage, requestId);
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
   
@@ -2782,7 +2846,8 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
           errorMessage = 'Your trial period has expired. Please upgrade to the Enterprise plan for detailed summaries.';
         }
         
-        await sendMessageViaAPI(From, errorMessage);
+        await sendMessageQueued(From, msg);
+        await scheduleUpsell(gate?.upsellReason);
         return true;
       }
       
@@ -2803,7 +2868,8 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
         inv.topCategories.map((c,i)=>`${i+1}. ${c.name}: ₹${c.value.toFixed(2)} (${c.productCount} items)`).join('\n');
     }
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -2851,7 +2917,8 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
       : `🧾 Products — Page ${pageSafe}/${totalPages} — ${pageItems.length} of ${total}`;
     if (total === 0) {
       const msg0 = await t(`${header}\nNo products found.`, detectedLanguage, requestId);
-      await sendMessageViaAPI(From, msg0);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
     const lines = pageItems.map(p => `• ${p.name} — ${p.qty} ${p.unit}`);
@@ -2863,7 +2930,8 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     }
     message += `\n🔎 Search: "products search <term>"`;
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -2893,7 +2961,8 @@ if (pricePage) {
         const unit = exact.unit || 'pieces';
         const message = `📦 Stock — ${product}: ${qty} ${unit}`;
         const msg = await t(message, detectedLanguage, requestId);
-        await sendMessageViaAPI(From, msg);
+        await sendMessageQueued(From, msg);
+        await scheduleUpsell(gate?.upsellReason);
         return true;
       }
     } catch (e) {
@@ -2931,7 +3000,8 @@ if (pricePage) {
         message = `📦 Stock — ${name}: ${qty} ${unit}`;
       }
       const msg = await t(message, detectedLanguage, requestId);
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     } catch (e) {
       console.warn(`[${requestId}] Fallback list scan failed:`, e?.message);
@@ -2940,7 +3010,8 @@ if (pricePage) {
         detectedLanguage,
         requestId
       );
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
   }
@@ -2962,7 +3033,8 @@ if (pricePage) {
       message += `\n\n💡 Advice: Prioritize ordering low-stock items first.`;
     }
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -2990,7 +3062,8 @@ if (pricePage) {
                         daysBetween(new Date(b.expiryDate || b.fields?.ExpiryDate), new Date()) <= 7);
         if (soon.length) message += `\n\n💡 ${soon.length} batch(es) expiring ≤7 days — clear with FIFO/discounts.`;
         const msg = await t(message, detectedLanguage, requestId);
-        await sendMessageViaAPI(From, msg);
+        await sendMessageQueued(From, msg);
+        await scheduleUpsell(gate?.upsellReason);
         return true;
       }
     } catch (e) {
@@ -3035,7 +3108,8 @@ if (pricePage) {
         if (soon.length) message += `\n\n💡 ${soon.length} batch(es) expiring ≤7 days — clear with FIFO/discounts.`;
       }
       const msg = await t(message, detectedLanguage, requestId);
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     } catch (e) {
       console.warn(`[${requestId}] Fallback batches scan failed:`, e?.message);
@@ -3044,7 +3118,8 @@ if (pricePage) {
         detectedLanguage,
         requestId
       );
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
   }
@@ -3069,7 +3144,8 @@ if (pricePage) {
         : `\n\n💡 Move to eye‑level, bundle, or mark‑down 5–15%.`;
     }
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -3084,7 +3160,8 @@ if (pricePage) {
       message += `\n\n🏷️ Top Sellers:\n` + data.topProducts.slice(0,5).map(p=>`• ${p.name}: ${p.quantity} ${p.unit}`).join('\n');
     }
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -3098,7 +3175,8 @@ if (pricePage) {
     let message = `🏆 Top ${n} (${label}):\n`;
     message += top.length ? top.map((p,i)=>`${i+1}. ${p.name}: ${p.quantity} ${p.unit}`).join('\n') : 'No sales data.';
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -3129,7 +3207,8 @@ if (pricePage) {
       ? suggestions.slice(0,10).map(s=>`• ${s.name}: stock ${s.current} ${s.unit}, ~${s.daily}/day → reorder ~${s.reorderQty} ${singularize(s.unit)}`).join('\n')
       : 'No urgent reorders detected.';
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }  
 } finally {
@@ -3158,11 +3237,12 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   
   if (isResetMessage(text)) {
       await clearUserState(From);
-      await sendMessageViaAPI(
+      await sendMessageQueued(
         From,
         await t('✅ Reset. Mode cleared.', detectedLanguage, `${requestId}::reset`),
         detectedLanguage
       );
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
   
@@ -3191,11 +3271,12 @@ try{
       }
       if (switchCmd.set) {
         await setStickyMode(From, switchCmd.set);
-        await sendMessageViaAPI(
+        await sendMessageQueued(
           From,
           await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`),
           detectedLanguage
         );
+        await scheduleUpsell(gate?.upsellReason);
         return true;
       }
     }
@@ -3220,8 +3301,9 @@ try{
       const u = result.unit ?? unit;
       message += ` (Stock: ${result.newQuantity} ${u})`;
     }
-    const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    const msg = await t(message, detectedLanguage, requestId);       
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -3236,7 +3318,8 @@ try{
       ? exp.map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n')
       : `No expired items.`;
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -3252,7 +3335,8 @@ try{
         `Invalid date. Try: 20-09 | 20/09/2025 | +7d | +3m | +1y`,
         detectedLanguage, 'bad-expiry'
       );
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
     const batches = await getBatchRecords(shopId, product);
@@ -3261,12 +3345,14 @@ try{
       .sort((a,b)=> new Date(b.fields.PurchaseDate) - new Date(a.fields.PurchaseDate))[0];
     if (!latest) {
       const msg = await t(`No batch found for ${product}.`, detectedLanguage, 'no-batch');
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
     await updateBatchExpiry(latest.id, iso);
     const ok = await t(`✅ ${product} expiry set to ${formatDateForDisplay(iso)}`, detectedLanguage, 'expiry-set');
-    await sendMessageViaAPI(From, ok);
+    await sendMessageQueued(From, ok);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -3279,7 +3365,8 @@ try{
     const inv = await getProductInventory(shopId, product);
     if (!inv.success) {
       const msg = await t(`Error fetching stock for ${product}: ${inv.error}`, detectedLanguage, requestId);
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
     // Compute simple advice from last 14 days velocity
@@ -3298,7 +3385,8 @@ try{
     if (dailyRate > 0) message += `Avg sale: ${dailyRate.toFixed(2)} /day\n`;
     message += `💡 ${advise}`;
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -3329,7 +3417,8 @@ try{
       message += `\n\n💡 Advice: Prioritize ordering low-stock items first; consider substitutable SKUs to avoid lost sales.`;
     }
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -3341,7 +3430,8 @@ try{
     const batches = await getBatchesForProductWithRemaining(shopId, product);
     if (batches.length === 0) {
       const msg = await t(`No active batches found for ${product}.`, detectedLanguage, requestId);
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
     let message = `📦 Batches — ${product}:\n`;
@@ -3355,7 +3445,8 @@ try{
       message += `\n💡 Advice: ${soon.length} batch(es) expiring within 7 days — use FIFO & run a small discount to clear.`;
     }
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -3377,7 +3468,8 @@ try{
           : `\n\n💡 Mark-down nearing expiry items (5–15%), move to eye-level shelves, and bundle if possible.`;
       }
       const msg = await t(message, detectedLanguage, requestId);
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
 
@@ -3394,7 +3486,8 @@ try{
         .map(p => `• ${p.name}: ${p.quantity} ${p.unit}`).join('\n');
     }
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -3410,7 +3503,8 @@ try{
       message += data.top.map((p, i) => `${i + 1}. ${p.name}: ${p.quantity} ${p.unit}`).join('\n');
     }
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -3420,7 +3514,8 @@ try{
       await getReorderSuggestions(shopId, { days: 30, leadTimeDays: 3, safetyDays: 2 });
     if (!success) {
       const msg = await t(`Error creating suggestions: ${error}`, detectedLanguage, requestId);
-      await sendMessageViaAPI(From, msg);
+      await sendMessageQueued(From, msg);
+      await scheduleUpsell(gate?.upsellReason);
       return true;
     }
     let message = `📋 Reorder Suggestions (based on ${days}d sales, lead ${leadTimeDays}d, safety ${safetyDays}d):\n`;
@@ -3433,7 +3528,8 @@ try{
       message += `\n\n💡 Advice: Confirm supplier lead-times. Increase safety days for volatile items.`;
     }
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
@@ -3452,7 +3548,8 @@ try{
         `${i + 1}. ${c.name}: ₹${c.value.toFixed(2)} (${c.productCount} items)`).join('\n');
     }
     const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+    await sendMessageQueued(From, msg);
+    await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 } finally {
@@ -4068,7 +4165,8 @@ async function parseMultipleUpdates(req) {
     
   // Fallback prompt if no action and no state
     if (!userState) {
-      await sendMessageViaAPI(from, 'Did you mean to record a purchase, sale, or return?');
+      await sendMessageQueued(from, 'Did you mean to record a purchase, sale, or return?');
+      await scheduleUpsell(gate?.upsellReason);
       return [];
     }
   
