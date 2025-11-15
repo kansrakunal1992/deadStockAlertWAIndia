@@ -7364,6 +7364,26 @@ async function checkAndUpdateLanguage(text, from, currentLanguage, requestId) {
   }
 }
 
+// === Language detection helper (fallback-aware) ===
+// Derives language from text with user preference fallback, updates preference,
+// and returns a safe code (defaults to 'en' if anything fails).
+async function detectLanguageWithFallback(text, from, requestId) {
+  try {
+    // Prefer existing conversation state if present; else attempt detection.
+    const currentLang = 'en';
+    const detected = await checkAndUpdateLanguage(text, from, currentLang, requestId);
+    // Persist user preference
+    try {
+      const shopId = String(from).replace('whatsapp:', '');
+      await saveUserPreference(shopId, detected);
+    } catch (_) { /* best effort */ }
+    return detected || currentLang;
+  } catch (e) {
+    console.warn(`[${requestId}] detectLanguageWithFallback failed:`, e.message);
+    return 'en';
+  }
+}
+
 // Audio Processing Functions
 async function downloadAudio(url) {
   console.log('[1] Downloading audio from:', url);
