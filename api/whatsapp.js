@@ -567,27 +567,6 @@ const NL_LABELS = {
 const { sendContentTemplate } = require('./whatsappButtons');
 const { ensureLangTemplates, getLangSids } = require('./contentCache');
 
-// ===== NEW: Serialize outbound sends per shop to avoid jumbled sequences =====
-const _sendQueues = new Map(); // shopId -> Promise
-async function sendMessageQueued(toWhatsApp, body) {
-  try {
-    const shopId = String(toWhatsApp).replace('whatsapp:', '');
-    const prev = _sendQueues.get(shopId) || Promise.resolve();
-    const next = prev
-      .catch(() => {}) // swallow previous errors to keep queue alive
-      .then(async () => {
-        // single place to send; preserve your existing send function
-        return await sendMessageViaAPI(toWhatsApp, body);
-      });
-    _sendQueues.set(shopId, next);
-    return await next;
-  } catch (e) {
-    console.warn('[sendMessageQueued] failed:', e?.message);
-    // fall back to direct send to avoid drop
-    return await sendMessageViaAPI(toWhatsApp, body);
-  }
-}
-
 async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
   const toNumber = From.replace('whatsapp:', '');
   // 1) Instant text-only ack (non-blocking visual confirmation)
@@ -7714,6 +7693,27 @@ async function sendMessageViaAPI(to, body) {
   } catch (error) {
     console.error('Error sending WhatsApp message via API:', error);
     throw error;
+  }
+}
+
+// ===== NEW: Serialize outbound sends per shop to avoid jumbled sequences =====
+const _sendQueues = new Map(); // shopId -> Promise
+async function sendMessageQueued(toWhatsApp, body) {
+  try {
+    const shopId = String(toWhatsApp).replace('whatsapp:', '');
+    const prev = _sendQueues.get(shopId) || Promise.resolve();
+    const next = prev
+      .catch(() => {}) // swallow previous errors to keep queue alive
+      .then(async () => {
+        // single place to send; preserve your existing send function
+        return await sendMessageViaAPI(toWhatsApp, body);
+      });
+    _sendQueues.set(shopId, next);
+    return await next;
+  } catch (e) {
+    console.warn('[sendMessageQueued] failed:', e?.message);
+    // fall back to direct send to avoid drop
+    return await sendMessageViaAPI(toWhatsApp, body);
   }
 }
 
