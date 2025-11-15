@@ -8493,39 +8493,32 @@ async function handleRequest(req, res, response, requestId, requestStart) {
       res.send('<Response></Response>');
       return;
     }
-      
-    // NEW USER: show welcome + trial CTA immediately
+
+    
+    // NEW USER: send welcome + trial CTA immediately, then end
         if (authCheck.upsellReason === 'new_user') {
-          // Language from preference (fallback en)
-          let userLanguage = 'en';
-          try {
-            const userPref = await getUserPreference(shopId);
-            if (userPref.success) userLanguage = userPref.language;
-          } catch (_) {}
-          await sendWelcomeFlowLocalized(From, userLanguage);
-          const onboarding = await t(await composeAIOnboarding(userLanguage), userLanguage, `${requestId}::onboard`);
+          const detectedLanguage = await detectLanguageWithFallback(Body || 'hello', From, requestId);
+          await sendWelcomeFlowLocalized(From, detectedLanguage);
+          const onboarding = await t(await composeAIOnboarding(detectedLanguage), detectedLanguage, `${requestId}::onboard`);
           await sendMessageViaAPI(From, onboarding);
           res.send('<Response></Response>');
           return;
         }
     
-        // TRIAL ENDED: gentle paywall nudge
+        // TRIAL ENDED: gentle paywall prompt and end
         if (authCheck.upsellReason === 'trial_ended') {
-          let userLanguage = 'en';
-          try {
-            const userPref = await getUserPreference(shopId);
-            if (userPref.success) userLanguage = userPref.language;
-          } catch (_) {}
+          let lang = 'en';
+          try { const p = await getUserPreference(shopId); if (p?.success && p.language) lang = p.language; } catch {}
           const payMsg = await t(
             `⚠️ Your Saamagrii.AI trial has ended.\nPay ₹11 at: ${PAYMENT_LINK}\nOr Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nReply "paid" to activate ✅`,
-            userLanguage,
+            lang,
             `${requestId}::paywall`
           );
           await sendMessageViaAPI(From, payMsg);
           res.send('<Response></Response>');
           return;
         }
-        
+   
     console.log(`[${requestId}] User ${shopId} is authorized, proceeding with request`);
     if (authCache.has(shopId) && Date.now() - authCache.get(shopId) < 5000) {
       console.log(`[${requestId}] Skipping duplicate processing for ${shopId}`);
