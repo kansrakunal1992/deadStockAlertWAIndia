@@ -1149,7 +1149,7 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
   }
 
   // Existing user — gate by status/plan
-  const status = rec?.fields ? String(rec.fields.StatusUser ?? '').toLowerCase() : '';
+  const status = String(rec.fields?.StatusUser ?? '').toLowerCase();
   const pref = await getUserPreference(shopId); // to read plan & trial end
   const plan = String(pref?.plan ?? '').toLowerCase();
   const trialEnd = pref?.trialEndDate ? new Date(pref.trialEndDate) : null;
@@ -8378,35 +8378,42 @@ module.exports = async (req, res) => {
       console.warn(`[${requestId}] gate error:`, e.message);
       // If the gate fails for any reason, fall through to normal flow gracefully.
     }
-  
-// --- Direct flow without runWithTips ---
- try {
-   const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
-   if (handledCombined) {
-     const twiml = new twilio.twiml.MessagingResponse();
-     twiml.message('');
-     res.type('text/xml').send(twiml.toString());
-     trackResponseTime(requestStart, requestId);
-     return;
-   }
- } catch (e) {
-   console.warn(`[${requestId}] awaitingPriceExpiry handler error:`, e.message);
- }
 
- await handleRequest(req, res, response, requestId, requestStart);
+  // === Centralized engagement tips: wrap the entire request handling ===
+  await runWithTips({ From, language: detectedLanguage, requestId }, async () => {
+    // --- NEW: resolve pending price+expiry correction BEFORE deeper routing ---
+    try {
+      const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
+      if (handledCombined) {
+        // Minimal TwiML ack since we've already replied via the API
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message('');
+        res.type('text/xml').send(twiml.toString());
+        trackResponseTime(requestStart, requestId);
+        return; // exit early; wrapper 'finally' will stop tips
+      }
+    } catch (e) {
+      console.warn(`[${requestId}] awaitingPriceExpiry handler error:`, e.message);
+      // continue normal routing
+    }
 
- if (!res.headersSent) {
-   await sendParseErrorWithExamples(From, detectedLanguage, requestId);
-   try {
-     const twiml = new twilio.twiml.MessagingResponse();
-     twiml.message('');
-     res.type('text/xml').send(twiml.toString());
-   } catch (_) {
-     res.status(200).end();
-   }
-   trackResponseTime(requestStart, requestId);
-   return;
- }
+    // --- Delegate to main request handler ---
+    await handleRequest(req, res, response, requestId, requestStart);
+
+    // --- FINAL CATCH-ALL: If nothing above handled the message, send examples ---
+    if (!res.headersSent) {
+      await sendParseErrorWithExamples(From, detectedLanguage, requestId);
+      try {
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message(''); // minimal ack
+        res.type('text/xml').send(twiml.toString());
+      } catch (_) {
+        res.status(200).end();
+      }
+      trackResponseTime(requestStart, requestId);
+      return;
+    }
+  }); // <- tips auto-stop here even on early returns
 };
 
 
