@@ -1,11 +1,11 @@
- const axios = require('axios');
+const axios = require('axios');
+// Accept either ACCOUNT_SID/AUTH_TOKEN or TWILIO_* to fit different envs
+const ACCOUNT_SID = process.env.ACCOUNT_SID || process.env.TWILIO_ACCOUNT_SID;
+const AUTH_TOKEN  = process.env.AUTH_TOKEN  || process.env.TWILIO_AUTH_TOKEN;
+const CONTENT_API_URL = 'https://content.twilio.com/v1/Content';
+const TTL_MS = 24 * 60 * 60 * 1000; // refresh daily
 
- const ACCOUNT_SID = process.env.ACCOUNT_SID;
- const AUTH_TOKEN  = process.env.AUTH_TOKEN;
- const CONTENT_API_URL = 'https://content.twilio.com/v1/Content';
- const TTL_MS = 24 * 60 * 60 * 1000; // refresh daily
-
- if (!ACCOUNT_SID || !AUTH_TOKEN) {
+if (!ACCOUNT_SID || !AUTH_TOKEN) {
    throw new Error('Missing ACCOUNT_SID or AUTH_TOKEN');
  }
 
@@ -152,9 +152,6 @@ const LIST_LABELS = {
     }
   }
 };
-
-
- const cache = new Map(); // lang -> { quickReplySid, listPickerSid, ts }
   
  // --- NEW: CTA labels ---
  const ACTIVATE_TRIAL_LABELS = {
@@ -278,48 +275,60 @@ async function createActivatePaidCTAForLang(lang) {
   return data.sid;
 }
 
-const sidsByLang = new Map(); // lang -> { quickReplySid, listPickerSid }
+// lang -> { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, ts }
+const sidsByLang = new Map();
 
 async function ensureLangTemplates(lang) {
-  const language = String(lang || 'en').toLowerCase();
-
-  // Fast path: already cached
-  if (sidsByLang.has(language)) {
-    return sidsByLang.get(language);
+const language = String(lang || 'en').toLowerCase();
+  // Fast path with TTL
+  const cached = sidsByLang.get(language);
+  if (cached && (Date.now() - (cached.ts || 0) < TTL_MS)) {
+    return cached;
   }
-
-  // Otherwise: create or fetch once
+  // (Re)create or fetch once
   const created = await actuallyCreateOrFetchTemplates(language);
-  // ^ keep your current logic that produces { quickReplySid, listPickerSid }
-
-  // Defensive shape check
   const bundle = {
     quickReplySid : created?.quickReplySid || null,
-    listPickerSid : created?.listPickerSid || null
+    listPickerSid : created?.listPickerSid || null,
+    trialCtaSid   : created?.trialCtaSid   || null,
+    paidCtaSid    : created?.paidCtaSid    || null,
+    ts            : Date.now()
   };
-
   sidsByLang.set(language, bundle);
   return bundle;
 }
 
-function getLangSids(lang) {
-  const language = String(lang || 'en').toLowerCase();
-  // Prefer cache; if not present, return nulls rather than force creation here.
-  // The caller should have invoked ensureLangTemplates(language) first.
-  return sidsByLang.get(language) || { quickReplySid: null, listPickerSid: null };
+function getLangSids(lang) {  
+ const language = String(lang || 'en').toLowerCase();
+   // Prefer cache; if not present, return nulls rather than force creation here.
+   // The caller should have invoked ensureLangTemplates(language) first.
+   return sidsByLang.get(language) || {
+     quickReplySid : null,
+     listPickerSid : null,
+     trialCtaSid   : null,
+     paidCtaSid    : null
+   };
 }
 
 // =========================
 // Helper (rename your existing builder to this, or inline your current logic)
 // =========================
 async function actuallyCreateOrFetchTemplates(language) {
-  // Move existing creation logic here:
-  // - Build Quick-Reply content for `language`
-  // - Build List-Picker content for `language`
-  // - Return { quickReplySid, listPickerSid }
-  // Ensure both are locale-consistent and approved in Twilio Console.
-  // If you already had helper functions, call them from here.
-  // (implementation retained from your codebase)
+// Create all four pieces of content programmatically; no approval needed
+  // for session (inbound) use within 24h window.
+  const [quickReplySid, listPickerSid] = await Promise.all([
+    createQuickReplyForLang(language),
+    createListPickerForLang(language)
+  ]);
+  // Trial/Paid CTAs are independent and optional; errors shouldn't block menus
+  let trialCtaSid = null, paidCtaSid = null;
+  try { trialCtaSid = await createActivateTrialCTAForLang(language); } catch (e) {
+    console.warn('[contentCache] Trial CTA create failed:', e?.response?.data || e?.message);
+  }
+  try { paidCtaSid = await createActivatePaidCTAForLang(language); } catch (e) {
+    console.warn('[contentCache] Paid CTA create failed:', e?.response?.data || e?.message);
+  }
+  return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid };
 }
 
 module.exports = { ensureLangTemplates, getLangSids };
