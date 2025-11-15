@@ -81,6 +81,28 @@ const SWITCH_FALLBACKS = [
   'મોડ', 'બદલો'
 ];
 
+// ===== Language detection re-entry guard + explicit tokens =====
+const _langDetectInFlight = new Set(); // from (whatsapp:+91...) -> boolean
+const LANGUAGE_TOKENS = {
+  // two-way synonyms for quick, explicit language switches
+  en: new Set(['en','eng','english']),
+  hi: new Set(['hi','hin','hindi','हिंदी','हिन्दी']),
+  bn: new Set(['bn','ben','bengali','বাংলা']),
+  ta: new Set(['ta','tam','tamil','தமிழ்']),
+  te: new Set(['te','tel','telugu','తెలుగు']),
+  kn: new Set(['kn','kan','kannada',' ಕನ್ನಡ','ಕನ್ನಡ']),
+  mr: new Set(['mr','mar','marathi','मराठी']),
+  gu: new Set(['gu','guj','gujarati','ગુજરાતી'])
+};
+function _matchLanguageToken(text) {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return null;
+  for (const [code, set] of Object.entries(LANGUAGE_TOKENS)) {
+    if (set.has(t)) return code;
+  }
+  return null;
+}
+
 // Helper: which one-word switch label to show for a given language
 function getSwitchWordFor(lang) {
   const lc = String(lang || 'en').toLowerCase();
@@ -7367,61 +7389,34 @@ function detectGreetingLanguage(text) {
 }
 
 // Add this function to check and update language preference
-async function checkAndUpdateLanguage(text, from, currentLanguage, requestId) {
-  // Skip language detection for simple selection responses
-  const lowerText = text.toLowerCase();
-  if (['1', '2', 'voice', 'text', 'yes', 'no'].includes(lowerText)) {
-    console.log(`[${requestId}] Skipping language detection for simple response: "${text}"`);
-    return currentLanguage || 'en';
-  }
-  try {
-    // Use improved greeting detection for greetings
-    if (detectGreetingLanguage(text)) {
-      const detectedLanguage = detectGreetingLanguage(text);
-      console.log(`[${requestId}] Detected greeting language: ${detectedLanguage}`);
-      return detectedLanguage;
-    }
-    // Fall back to AI detection for non-greetings
-    const detectedLanguage = await detectLanguageWithFallback(text, from, requestId);
-    // If the detected language is different from the current language, update the conversation state
-    if (currentLanguage && detectedLanguage !== currentLanguage) {
-      console.log(`[${requestId}] Language changed from ${currentLanguage} to ${detectedLanguage}`);
-      if (!globalState.conversationState) {
-        globalState.conversationState = {};
-      }
-      globalState.conversationState[from] = {
-        state: globalState.conversationState[from]?.state || null,
-        language: detectedLanguage,
-        timestamp: Date.now()
-      };
-      // Also update the user preference
-      const shopId = from.replace('whatsapp:', '');
-      await saveUserPreference(shopId, detectedLanguage);
-    }
-    return detectedLanguage;
-  } catch (error) {
-    console.warn(`[${requestId}] Language detection failed, using current language:`, error.message);
-    return currentLanguage || 'en';
-  }
-}
 
-// === Language detection helper (fallback-aware) ===
-// Derives language from text with user preference fallback, updates preference,
-// and returns a safe code (defaults to 'en' if anything fails).
-async function detectLanguageWithFallback(text, from, requestId) {
-  try {
-    // Prefer existing conversation state if present; else attempt detection.
-    const currentLang = 'en';
-    const detected = await checkAndUpdateLanguage(text, from, currentLang, requestId);
-    // Persist user preference
-    try {
-      const shopId = String(from).replace('whatsapp:', '');
-      await saveUserPreference(shopId, detected);
-    } catch (_) { /* best effort */ }
-    return detected || currentLang;
+async function checkAndUpdateLanguage(text, from, currentLang, requestId) {  
+try {
+    const t = String(text || '').trim().toLowerCase();
+    const shopId = String(from || '').replace('whatsapp:', '');
+    // Explicit one-word language commands
+    const TOKENS = {
+      en: ['en','eng','english'],
+      hi: ['hi','hin','hindi','हिंदी','हिन्दी'],
+      bn: ['bn','ben','bengali','বাংলা'],
+      ta: ['ta','tam','tamil','தமிழ்'],
+      te: ['te','tel','telugu','తెలుగు'],
+      kn: ['kn','kan','kannada','ಕನ್ನಡ'],
+      mr: ['mr','mar','marathi','मराठी'],
+      gu: ['gu','guj','gujarati','ગુજરાતી']
+    };
+    let wanted = null;
+    for (const [code, words] of Object.entries(TOKENS)) {
+      if (words.includes(t)) { wanted = code; break; }
+    }
+    if (wanted && wanted !== currentLang) {
+      await saveUserPreference(shopId, wanted);
+      return wanted;
+    }
+    return currentLang || 'en';
   } catch (e) {
-    console.warn(`[${requestId}] detectLanguageWithFallback failed:`, e.message);
-    return 'en';
+    console.warn(`[${requestId}] checkAndUpdateLanguage failed: ${e.message}`);
+    return currentLang || 'en';
   }
 }
 
