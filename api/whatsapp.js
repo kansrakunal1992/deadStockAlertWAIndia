@@ -2742,6 +2742,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
     await sendWelcomeFlowLocalized(From, detectedLanguage || 'en');
+    try { await scheduleUpsell(gate?.upsellReason); } catch (_) {}
     return true;
    }
   
@@ -3305,6 +3306,7 @@ try{
     
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
     await sendWelcomeFlowLocalized(From, detectedLanguage || 'en');
+    try { await scheduleUpsell(gate?.upsellReason); } catch (_) {}
     return true;
    }
   
@@ -8475,17 +8477,19 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
     const shopId = From.replace('whatsapp:', '');
-    // AUTHENTICATION CHECK FIRST
-    // =========================
-    console.log(`[${requestId}] Checking authentication for ${shopId}`);
-    const authCheck = await checkUserAuthorization(From, Body, requestId);
-    
-    if (!authCheck.authorized) {
-      console.log(`[${requestId}] User ${shopId} is not authorized`);
-      await sendUnauthorizedResponse(From, requestId);
-      res.send('<Response></Response>');
-      return;
-    }
+        
+    // AUTHENTICATION / SOFT GATE
+        // ==========================
+        console.log(`[${requestId}] Checking authentication for ${shopId}`);
+        const authCheck = await checkUserAuthorization(From, Body, requestId);
+        
+        // Only block truly restricted states (deactivated/blacklisted/blocked)
+        if (!authCheck.authorized) {
+          console.log(`[${requestId}] User ${shopId} is restricted`);
+          await sendUnauthorizedResponse(From, requestId);
+          res.send('<Response></Response>');
+          return;
+        }
     
     // If user just authenticated, send success message
     if (authCheck.justAuthenticated) {
@@ -8494,7 +8498,39 @@ async function handleRequest(req, res, response, requestId, requestStart) {
       res.send('<Response></Response>');
       return;
     }
+      
+    // NEW USER: show welcome + trial CTA immediately
+        if (authCheck.upsellReason === 'new_user') {
+          // Language from preference (fallback en)
+          let userLanguage = 'en';
+          try {
+            const userPref = await getUserPreference(shopId);
+            if (userPref.success) userLanguage = userPref.language;
+          } catch (_) {}
+          await sendWelcomeFlowLocalized(From, userLanguage);
+          const onboarding = await t(await composeAIOnboarding(userLanguage), userLanguage, `${requestId}::onboard`);
+          await sendMessageViaAPI(From, onboarding);
+          res.send('<Response></Response>');
+          return;
+        }
     
+        // TRIAL ENDED: gentle paywall nudge
+        if (authCheck.upsellReason === 'trial_ended') {
+          let userLanguage = 'en';
+          try {
+            const userPref = await getUserPreference(shopId);
+            if (userPref.success) userLanguage = userPref.language;
+          } catch (_) {}
+          const payMsg = await t(
+            `⚠️ Your Saamagrii.AI trial has ended.\nPay ₹11 at: ${PAYMENT_LINK}\nOr Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nReply "paid" to activate ✅`,
+            userLanguage,
+            `${requestId}::paywall`
+          );
+          await sendMessageViaAPI(From, payMsg);
+          res.send('<Response></Response>');
+          return;
+        }
+        
     console.log(`[${requestId}] User ${shopId} is authorized, proceeding with request`);
     if (authCache.has(shopId) && Date.now() - authCache.get(shopId) < 5000) {
       console.log(`[${requestId}] Skipping duplicate processing for ${shopId}`);
@@ -10264,30 +10300,42 @@ async function verifyStatePersistence(from, expectedMode) {
 
 // Check user authentication
 async function checkUserAuthorization(From, Body, requestId) {
-  const shopId = From.replace('whatsapp:', '');
-  console.log(`[${requestId}] Checking authorization for shopId: "${shopId}"`);
-  
-  // First check if user is already authorized
-  const authResult = await isUserAuthorized(shopId);
-  console.log(`[${requestId}] Auth result:`, authResult);
-  
-  if (authResult.success) {
-    return { authorized: true, user: authResult.user };
-  }
-  
-  // If not authorized, check if they're sending an auth code
-  if (Body && Body.length >= 6 && Body.length <= 8) {
-    const authCode = Body.trim().toUpperCase();
-    console.log(`[${requestId}] Checking auth code: "${authCode}"`);
-    const authCheck = await isUserAuthorized(shopId, authCode);
-    console.log(`[${requestId}] Auth check result:`, authCheck);
-    
-    if (authCheck.success) {
-      return { authorized: true, user: authCheck.user, justAuthenticated: true };
+  const shopId = String(From).replace('whatsapp:', ''); // keep leading + intact
+  console.log(`[${requestId}] Checking authorization (soft) for shopId: "${shopId}"`);
+
+  try {
+    // Soft-gate lookup in AuthUsers (no hard block for new users)
+    const rec = await getAuthUserRecord(shopId);
+    if (!rec) {
+      // Brand-new user → allow. If they typed “1/yes/start/trial/ok”, start trial now.
+      const wantTrial = /^(1|yes|haan|start|trial|ok)$/i.test(String(Body || '').trim());
+      if (wantTrial) {
+        const s = await startTrialForAuthUser(shopId, Number(process.env.TRIAL_DAYS ?? 3));
+        if (s?.success) {
+          return { authorized: true, upsellReason: 'trial_started', justAuthenticated: true };
+        }
+      }
+      return { authorized: true, upsellReason: 'new_user' };
     }
+    // Existing record: check explicit restricted states only
+    const status = String(rec.fields?.StatusUser ?? '').toLowerCase();
+    if (['deactivated','blacklisted','blocked'].includes(status)) {
+      return { authorized: false, upsellReason: 'blocked' };
+    }
+    // Trial-ended hinting (allow, but show paywall later)
+    const pref = await getUserPreference(shopId);
+    const plan = String(pref?.plan ?? '').toLowerCase();
+    const trialEnd = pref?.trialEndDate ? new Date(pref.trialEndDate) : null;
+    if (plan === 'trial' && trialEnd && Date.now() > trialEnd.getTime()) {
+      return { authorized: true, upsellReason: 'trial_ended' };
+    }
+    // All good
+    return { authorized: true, upsellReason: 'none' };
+  } catch (e) {
+    console.warn(`[${requestId}] Soft auth error: ${e.message}`);
+    // Fail-open for new users to enable onboarding
+    return { authorized: true, upsellReason: 'new_user' };
   }
-  
-  return { authorized: false };
 }
 
 // Send unauthorized response
