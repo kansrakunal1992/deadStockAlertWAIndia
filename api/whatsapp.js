@@ -631,16 +631,25 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
        if (pref?.success && pref.plan) plan = String(pref.plan).toLowerCase();
      } catch { /* ignore plan read */ }
      const isActivated = (plan === 'trial' || plan === 'paid');
-     if (!isActivated) {
-       try {
-         const cta = await t(
-           `Reply 1 to start FREE ${TRIAL_DAYS}-day trial • 2 demo • 3 help`,
-           detectedLanguage ?? 'en',
-           'welcome-gate'
-         );
-         await sendMessageQueued(From, cta);
-       } catch { /* best effort */ }
-       return; // Do NOT send quick-reply/list-picker before activation
+     if (!isActivated) {             
+      // NEW: Send dedicated Quick-Reply CTA template if configured
+          if (TRIAL_CTA_SID) {
+            try {
+              await sendContentTemplate({ toWhatsApp: toNumber, contentSid: TRIAL_CTA_SID });
+            } catch (e) {
+              const status = e?.response?.status;
+              const data   = e?.response?.data;
+              console.warn('[trial-cta] template send failed', { status, data, sid: TRIAL_CTA_SID });
+              // Fallback to localized text CTA
+              const ctaText = getTrialCtaText(detectedLanguage ?? 'en');
+              await sendMessageQueued(From, await t(ctaText, detectedLanguage ?? 'en', 'welcome-gate-fallback'));
+            }
+          } else {
+            // If no ContentSid configured, send localized text CTA
+            const ctaText = getTrialCtaText(detectedLanguage ?? 'en');
+            await sendMessageQueued(From, await t(ctaText, detectedLanguage ?? 'en', 'welcome-gate'));
+          }
+          return; // still skip menus until activation
      }       
          
     // 3) Guarded template sends (only if SIDs exist), with plan-aware hint
@@ -676,7 +685,7 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
         const hint = plan === 'trial'
           ? 'Tip: Try quick replies or type “mode” to switch.'
           : 'Tip: Use quick replies and type “mode” to switch.';
-        await sendMessageQueued(From, await t(hint, detectedLanguage ?? 'en', 'welcome-hint'));
+        await sendMessageQueued(From, await t(getStaticLabel('fallbackHint', detectedLanguage), detectedLanguage ?? 'en', 'welcome-hint'));
     
       } catch (e) {
         // 4) Plain-text fallback if template orchestration failed before we could try any send
@@ -684,10 +693,10 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
         const status = e?.response?.status;
         const data   = e?.response?.data;
         console.warn('[welcome] template orchestration failed', { status, data, message: e?.message });                
-        // Localized fallback hint
-            const fhLabel = getStaticLabel('fallbackHint', detectedLanguage);
-            const fhText  = await t(fhLabel, detectedLanguage ?? 'en', 'welcome-fallback');
-            await sendMessageQueued(From, fhText);
+        // Localized fallback hint                    
+        const fhLabel = getStaticLabel('fallbackHint', detectedLanguage);
+        const fhText  = await t(fhLabel, detectedLanguage ?? 'en', 'welcome-fallback');
+        await sendMessageQueued(From, fhText);
       }
 }
 
@@ -822,7 +831,32 @@ function _normLite(s) {
     }
     return true;
   }
-
+  
+  // --- NEW: Demo button ---
+  if (payload === 'show_demo') {
+    const shopId = String(from).replace('whatsapp:', '');
+    let lang = 'en';
+    try { const prefLP = await getUserPreference(shopId); if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase(); } catch (_) {}
+    const demo = await t(
+      `Demo:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m\n• short summary`,
+      lang, `cta-demo-${shopId}`
+    );
+    await sendMessageViaAPI(from, demo);
+    return true;
+  }
+  // --- NEW: Help button ---
+  if (payload === 'show_help') {
+    const shopId = String(from).replace('whatsapp:', '');
+    let lang = 'en';
+    try { const prefLP = await getUserPreference(shopId); if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase(); } catch (_) {}
+    const help = await t(
+      `Help:\nType “mode” to switch Purchase/Sale/Return.\nTry: short summary • expiring 30 • low stock`,
+      lang, `cta-help-${shopId}`
+    );
+    await sendMessageViaAPI(from, help);
+    return true;
+  }
+   
   // --- NEW: Activate Paid Plan ---
   if (payload === 'activate_paid') {
     const shopId = String(from).replace('whatsapp:', '');
@@ -1124,6 +1158,32 @@ const TRIAL_DAYS   = Number(process.env.TRIAL_DAYS   ?? 3);
 const WHATSAPP_LINK = String(process.env.WHATSAPP_LINK ?? '<whatsapp_link>');
 const PAYMENT_LINK  = String(process.env.PAYMENT_LINK  ?? '<payment_link>');
 
+// NEW: Trial CTA ContentSid (Quick-Reply template)
+const TRIAL_CTA_SID = String(process.env.TRIAL_CTA_SID ?? '').trim();
+
+// Localized trial CTA text fallback (used only if Content send fails)
+function getTrialCtaText(lang) {
+  const lc = String(lang || 'en').toLowerCase();
+  switch (lc) {
+    case 'hi':
+      return '✅ ट्रायल शुरू करने के लिए 1 रिप्लाई करें • 📖 डेमो के लिए 2 • ❓ मदद के लिए 3';
+    case 'bn':
+      return '✅ ট্রায়াল শুরু করতে 1 রিপ্লাই করুন • 📖 ডেমো 2 • ❓ সাহায্য 3';
+    case 'ta':
+      return '✅ ட்ரயல் தொடங்க 1 • 📖 டெமோ 2 • ❓ உதவி 3';
+    case 'te':
+      return '✅ ట్రయల్ ప్రారంభించడానికి 1 • 📖 డెమో 2 • ❓ సహాయం 3';
+    case 'kn':
+      return '✅ ಟ್ರಯಲ್ ಪ್ರಾರಂಭ 1 • 📖 ಡೆಮೊ 2 • ❓ ಸಹಾಯ 3';
+    case 'mr':
+      return '✅ ट्रायल सुरू करण्यासाठी 1 • 📖 डेमो 2 • ❓ मदत 3';
+    case 'gu':
+      return '✅ ટ્રાયલ શરૂ કરવા 1 • 📖 ડેમો 2 • ❓ મદદ 3';
+    default:
+      return `Reply 1 to start FREE ${TRIAL_DAYS}-day trial • 2 demo • 3 help`;
+  }
+}
+
 // Single-script sanitizer: if lang != 'en', drop Latin-only transliteration blocks;
 // if lang == 'en', drop non-Latin blocks. Heuristic keeps ₹ and punctuation.
 function enforceSingleScript(out, lang) {
@@ -1263,20 +1323,51 @@ const SALES_AI_MANIFEST = Object.freeze({
   ]
 });
 
+// Helper: if target lang is non-English but output is mostly ASCII/English, replace with localized deterministic copy
+function ensureLanguageOrFallback(out, language = 'en') {
+  try {
+    const lang = String(language || 'en').toLowerCase();
+    const text = String(out || '').trim();
+    if (!text) return getLocalizedOnboarding(lang);
+    const nonAsciiLen = (text.match(/[^\x00-\x7F]/g) || []).length;
+    const asciiRatio = text.length ? (text.length - nonAsciiLen) / text.length : 1;
+    if (lang !== 'en' && asciiRatio > 0.85) {
+      return getLocalizedOnboarding(lang);
+    }
+    return text;
+  } catch { return out; }
+}
+function getLocalizedOnboarding(lang = 'en') {
+  switch (String(lang).toLowerCase()) {
+    case 'hi':
+      return `नमस्ते! WhatsApp पर स्टॉक अपडेट और एक्सपायरी ट्रैकिंग आसान बनाएं।\nकम स्टॉक अलर्ट और रीऑर्डर सुझाव से बिक्री बढ़ाएं。\nट्रायल शुरू करने के लिए “Start Trial” दबाएं。`;
+    // add other languages as needed…
+    default:
+      return `Hey! Manage stock & expiry on WhatsApp.\nGet low‑stock alerts & smart reorder tips.\nPress “Start Trial” to begin.`;
+  }
+}
+function getLocalizedQAFallback(lang = 'en') {
+  switch (String(lang).toLowerCase()) {
+    case 'hi':
+      return `ठीक है! WhatsApp पर स्टॉक/एक्सपायरी ऑटोमेट करें; लो‑स्टॉक अलर्ट भी मिलेंगे。\nउदाहरण: sold milk 2 ltr • purchase Parle‑G 12 packets ₹10 exp +6m • short summary`;
+    default:
+      return `Automate stock & expiry on WhatsApp; get low‑stock alerts.\nTry: sold milk 2 ltr • purchase Parle‑G 12 packets ₹10 exp +6m • short summary`;
+  }
+}
+
 async function composeAIOnboarding(language = 'en') {
-  const lang = (language || 'en').toLowerCase();   
+  const lang = (language || 'en').toLowerCase();       
   const sys =
-     'You are a friendly, professional WhatsApp assistant for a small retail inventory tool. ' +
-     'Tone: conversational, helpful, and approachable (like chatting with a store helper). ' +
-     'Start with a short greeting or acknowledgment (e.g., "Sure!" or "Great question!"). ' +
-     'Keep answers clear and under 3 to 4 short sentences, use emojis sparingly for warmth. ' +
-     'Never invent features; stick to MANIFEST facts. End with a CTA line.';
+      'You are a friendly, professional WhatsApp assistant for a small retail inventory tool. ' +
+      'Always respond ONLY in the user language/script: ' + lang + ' (e.g., Hindi → Devanagari). Do not mix English unless a brand name. ' +
+      'Tone: conversational, helpful, approachable. Keep it concise. Use emojis sparingly. ' +
+      'Never invent features; stick to MANIFEST facts. End with a CTA line.';
   const manifest = JSON.stringify(SALES_AI_MANIFEST);
   const user =
     `Language: ${lang}\n` +
-    `MANIFEST: ${manifest}\n` +
-    `Task: Write ONLY in ${lang}. Produce exactly 2 short lines of benefits for a kirana/grocery owner, strictly from MANIFEST.capabilities. ` +
-    `Then a third line with CTA: "Reply 1 to start FREE ${SALES_AI_MANIFEST.plans.trialDays}-day trial • 2 demo • 3 help". ` +
+    `MANIFEST: ${manifest}\n` +      
+    `Task: Write ONLY in ${lang} script. Produce 2 short lines of benefits from MANIFEST.capabilities, in natural ${lang}. ` +
+    `Then a third line CTA: say how to start trial via the “Start Trial” button. ` +
     `If later asked product questions, answer only using MANIFEST.quickCommands; otherwise say "I'm not sure yet" and show 3 example commands.`;
   try {
     console.log('AI_AGENT_PRE_CALL', { kind: 'onboarding', language: lang });
@@ -1285,23 +1376,21 @@ async function composeAIOnboarding(language = 'en') {
       {
         model: 'deepseek-chat',
         messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
-        temperature: 0.2,
-        max_tokens: 160
+        temperature: 0.5,
+        max_tokens: 220
       },
       {
         headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
         timeout: 10000
       }
-    );        
-    const body = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
+    );                
+    let body = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
+    body = ensureLanguageOrFallback(body, lang);
     console.log('AI_AGENT_POST_CALL', { kind: 'onboarding', ok: !!body, length: body?.length || 0 });
     return body;
   } catch {
     // Deterministic, grounded fallback (no AI, no hallucination)        
-    const b1 = 'Hey! I can help you manage stock and expiry right here on WhatsApp 😊.';
-    const b2 = 'You’ll also get low-stock alerts and smart reorder tips to keep shelves full.';
-    const cta = `Reply 1 to start FREE ${SALES_AI_MANIFEST.plans.trialDays}-day trial • 2 demo • 3 help`;        
-    const fallback = `${b1}\n${b2}\n${cta}`;
+    const fallback = getLocalizedOnboarding(lang);f
     console.warn('AI_AGENT_FALLBACK_USED', { kind: 'onboarding' });
     return fallback;
   }
@@ -1310,16 +1399,16 @@ async function composeAIOnboarding(language = 'en') {
 // NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
 async function composeAISalesAnswer(question, language = 'en') {
   const lang = (language || 'en').toLowerCase();    
-  const sys =
-     'Answer like a friendly WhatsApp assistant. Start with a short acknowledgment (e.g., "Got it!" or "Let me help you"). ' +
-     'Use natural phrasing, keep it professional but warm. Limit to 3 to 4 short sentences. ' +
-     'If question is out of scope, politely say "Hmm, that’s outside my scope" and share benefits of this tool instead.';
+  const sys =        
+    `Answer like a friendly WhatsApp assistant. Always respond ONLY in ${lang} script (e.g., Hindi → Devanagari). ` +
+    'Use natural phrasing, professional but warm. Limit to 3–4 short sentences. ' +
+    'If out of scope, say "I’m not sure yet" and share benefits of this tool instead.';
   const manifest = JSON.stringify(SALES_AI_MANIFEST);
   const user =
     `Language: ${lang}\n` +
     `MANIFEST: ${manifest}\n` +
     `UserQuestion: ${question}\n` +
-    `Rules: Use only capabilities listed. If out of scope, respond: "I'm not sure yet" + three items from MANIFEST.quickCommands.`;
+    `Rules: Use only capabilities listed. If out of scope, respond: "I'm not sure yet" + three items from MANIFEST.quickCommands. Always use ${lang} script.`;
   try {
     console.log('AI_AGENT_PRE_CALL', { kind: 'sales-qa', language: lang, promptHash: Buffer.from(String(question).toLowerCase()).toString('base64').slice(0,12) });
     const resp = await axios.post(
@@ -1327,22 +1416,23 @@ async function composeAISalesAnswer(question, language = 'en') {
       {
         model: 'deepseek-chat',
         messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
-        temperature: 0.2,
-        max_tokens: 120
+        temperature: 0.5,
+        max_tokens: 220
       },
       {
         headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
         timeout: 10000
       }
-    );       
-    const out = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
+    );               
+    let out = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
+    out = ensureLanguageOrFallback(out, lang);
     console.log('AI_AGENT_POST_CALL', { kind: 'sales-qa', ok: !!out, length: out?.length || 0 });
     return out;
   } catch {
-   // Grounded fallback: show benefit or safe “not sure” with known commands
-    const cmds = SALES_AI_MANIFEST.quickCommands.slice(0, 3).join(' • ');        
+   // Grounded fallback: show benefit or safe “not sure” with known commands        
+    const cmds = SALES_AI_MANIFEST.quickCommands.slice(0, 3).join(' • ');
     console.warn('AI_AGENT_FALLBACK_USED', { kind: 'sales-qa' });
-    return `Automate stock & expiry on WhatsApp; get low‑stock alerts.\nTry: ${cmds}`;
+    return getLocalizedQAFallback(lang).replace('short summary', cmds.split(' • ')[2] || 'short summary');
   }
 }
 
