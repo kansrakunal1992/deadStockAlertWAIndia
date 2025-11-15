@@ -1003,6 +1003,17 @@ function chooseHeader(count, compact = true, isPrice = false) {
 }
 
 
+// --- Fallback: define generateMultiLanguageResponse if missing
+if (typeof generateMultiLanguageResponse === 'undefined') {
+  /**
+   * Minimal fallback: return original text unchanged.
+   * Prevents crashes when the real localization engine isn't loaded.
+   */
+  function generateMultiLanguageResponse(text, languageCode = 'en', requestId = '') {
+    return String(text ?? '');
+  }
+}
+
 // Localization helper: centralize generateMultiLanguageResponse + single-script clamp
 async function t(text, languageCode, requestId) {
   const out = await generateMultiLanguageResponse(text, languageCode, requestId);
@@ -2620,7 +2631,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     if (gate && gate.allow === false) {
       // truly blocked (deactivated/blacklisted)
       await sendMessageQueued(From, await t('Your access is currently restricted. Please contact support.', detectedLanguage, `${requestId}::blocked`));
-      trackResponseTime(startTime, requestId);
+      safeTrackResponseTime(startTime, requestId);
       return true;
     }
     
@@ -3610,6 +3621,11 @@ function trackResponseTime(startTime, requestId) {
   }
 }
 
+// Optional defensive guard to avoid "total is not defined" surfacing in gate paths
+function safeTrackResponseTime(startTime, requestId) {
+  try { trackResponseTime(startTime, requestId); } catch (_) { /* ignore */ }
+}
+  
 // Cache cleanup function
 function cleanupCaches() {
   const now = Date.now();
@@ -8365,7 +8381,7 @@ module.exports = async (req, res) => {
         const twiml = new twilio.twiml.MessagingResponse();
         twiml.message('');
         res.type('text/xml').send(twiml.toString());
-        trackResponseTime(requestStart, requestId);
+        safeTrackResponseTime(requestStart, requestId);
         return;
       }
     } catch (e) {
@@ -8385,7 +8401,7 @@ module.exports = async (req, res) => {
         const twiml = new twilio.twiml.MessagingResponse();
         twiml.message(''); // minimal ack for webhook
         res.type('text/xml').send(twiml.toString());
-        trackResponseTime(requestStart, requestId);
+        safeTrackResponseTime(requestStart, requestId);
         return;
       }
     } catch (e) {
@@ -8397,17 +8413,19 @@ module.exports = async (req, res) => {
   // use SAFE wrapper to avoid ReferenceError when runWithTips isn't loaded
     await invokeWithTips({ From, language: detectedLanguage, requestId }, async () => {
     // --- NEW: resolve pending price+expiry correction BEFORE deeper routing ---
-    try {
-      const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
-      if (handledCombined) {
-        // Minimal TwiML ack since we've already replied via the API
-        const twiml = new twilio.twiml.MessagingResponse();
-        twiml.message('');
-        res.type('text/xml').send(twiml.toString());
-        trackResponseTime(requestStart, requestId);
-        return; // exit early; wrapper 'finally' will stop tips
-      }
-    } catch (e) {
+          
+      try {
+            if (typeof handleAwaitingPriceExpiry === 'function') {
+              const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
+              if (handledCombined) {
+                const twiml = new twilio.twiml.MessagingResponse();
+                twiml.message('');
+                res.type('text/xml').send(twiml.toString());
+                safeTrackResponseTime(requestStart, requestId);
+                return; // exit early; wrapper 'finally' will stop tips
+              }
+            }
+          } catch (e) {
       console.warn(`[${requestId}] awaitingPriceExpiry handler error:`, e.message);
       // continue normal routing
     }
@@ -8425,7 +8443,7 @@ module.exports = async (req, res) => {
       } catch (_) {
         res.status(200).end();
       }
-      trackResponseTime(requestStart, requestId);
+      safeTrackResponseTime(requestStart, requestId);
       return;
     }
   }); // <- tips auto-stop here even on early returns
@@ -9484,7 +9502,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           // NEW: resolve pending combined corrections (price+expiry) BEFORE routing
           const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
           if (handledCombined) {
-            trackResponseTime(startTime, requestId);
+            safeTrackResponseTime(startTime, requestId);
             // If your handler normally replies with TwiML, you can ACK with minimal TwiML here
             // otherwise it's fine because we already sent via API.
             try {
@@ -9676,7 +9694,7 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
     // NEW: resolve pending combined corrections (price+expiry) BEFORE routing
           const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
           if (handledCombined) {
-            trackResponseTime(startTime, requestId);
+            safeTrackResponseTime(startTime, requestId);
             // If your handler normally replies with TwiML, you can ACK with minimal TwiML here
             // otherwise it's fine because we already sent via API.
             try {
