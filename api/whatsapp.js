@@ -895,6 +895,11 @@ const {
   reattributeSaleToBatch
 } = require('../database');
 
+// --- No-op fallback for builds where cleanupCaches isn't bundled
+if (typeof cleanupCaches === 'undefined') {
+  function cleanupCaches() { /* noop */ }
+}
+
 /**
  * SAFE TIP WRAPPER
  * Only invoke runWithTips if it exists and is a function; otherwise, run the handler directly.
