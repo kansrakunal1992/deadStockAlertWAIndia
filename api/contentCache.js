@@ -1,4 +1,16 @@
 const axios = require('axios');
+
+// WhatsApp UI constraints (see Twilio docs: quick-reply title <= 20 chars) 
+// Ref: https://www.twilio.com/docs/content/twilio-quick-reply
+const MAX_QR_TITLE = 20;
+const clampTitle = (s) => {
+  // Code-point safe clamping (handles Devanagari and other non-Latin scripts)
+  const arr = [...String(s || '').trim()];
+  return arr.slice(0, MAX_QR_TITLE).join('');
+};
+// Reuse for list item labels (common UX convention ~20 chars)
+const clampItem = clampTitle;
+
 // Accept either ACCOUNT_SID/AUTH_TOKEN or TWILIO_* to fit different envs
 const ACCOUNT_SID = process.env.ACCOUNT_SID || process.env.TWILIO_ACCOUNT_SID;
 const AUTH_TOKEN  = process.env.AUTH_TOKEN  || process.env.TWILIO_AUTH_TOKEN;
@@ -205,13 +217,14 @@ const l  = LIST_LABELS[lang] ?? LIST_LABELS.en;
     friendly_name: `saamagrii_query_list_${lang}_${Date.now()}`, // force NEW ContentSid
     language: 'en',
     types: {
-      'twilio/list-picker': {
-        body: l.body,
-        button: l.button,
+      'twilio/list-picker': {              
+      body: l.body,
+      button: clampTitle(l.button),   // clamp expand button text as well
         items: [
-          { item: it.short[0],   id: 'list_short_summary',    description: it.short[1]   },
-          { item: it.full[0],    id: 'list_full_summary',     description: it.full[1]    },
-          { item: it.low[0],     id: 'list_low',              description: it.low[1]     },
+                   
+         { item: clampItem(it.short[0]), id: 'list_short_summary', description: it.short[1] },
+         { item: clampItem(it.full[0]),  id: 'list_full_summary',  description: it.full[1]  },
+         { item: clampItem(it.low[0]),   id: 'list_low',           description: it.low[1]   },
           { item: it.reorder[0], id: 'list_reorder_suggest',  description: it.reorder[1] },
           { item: it.exp0[0],    id: 'list_expiring',         description: it.exp0[1]    },
           { item: it.exp30[0],   id: 'list_expiring_30',      description: it.exp30[1]   },
@@ -238,11 +251,9 @@ async function createActivateTrialCTAForLang(lang) {
     friendly_name: `saamagrii_activate_trial_${lang}_${Date.now()}`,
     language: 'en',
     types: {
-      'twilio/quick-reply': {
-        body: l.body,
-        actions: [
-          { type: 'QUICK_REPLY', title: l.button, id: 'activate_trial' }
-        ]
+      'twilio/quick-reply': {              
+      body: l.body,
+      actions: [ { type: 'QUICK_REPLY', title: clampTitle(l.button), id: 'activate_trial' } ]
       }
     }
   };
@@ -260,11 +271,9 @@ async function createActivatePaidCTAForLang(lang) {
     friendly_name: `saamagrii_activate_paid_${lang}_${Date.now()}`,
     language: 'en',
     types: {
-      'twilio/quick-reply': {
-        body: l.body,
-        actions: [
-          { type: 'QUICK_REPLY', title: l.button, id: 'activate_paid' }
-        ]
+      'twilio/quick-reply': {              
+      body: l.body,
+      actions: [ { type: 'QUICK_REPLY', title: clampTitle(l.button), id: 'activate_paid' } ]
       }
     }
   };
