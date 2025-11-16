@@ -1203,6 +1203,7 @@ const SINGLE_SCRIPT_MODE = String(process.env.SINGLE_SCRIPT_MODE ?? 'true').toLo
 const PAYTM_NUMBER = String(process.env.PAYTM_NUMBER ?? '9013283687');
 const PAYTM_NAME   = String(process.env.PAYTM_NAME   ?? 'Kunal Kansra');
 const TRIAL_DAYS   = Number(process.env.TRIAL_DAYS   ?? 3);
+const PAID_PRICE_INR = Number(process.env.PAID_PRICE_INR ?? 11);
 const WHATSAPP_LINK = String(process.env.WHATSAPP_LINK ?? '<whatsapp_link>');
 const PAYMENT_LINK  = String(process.env.PAYMENT_LINK  ?? '<payment_link>');
 
@@ -1446,13 +1447,12 @@ async function composeAIOnboarding(language = 'en') {
 
 // NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
 async function composeAISalesAnswer(shopId, question, language = 'en') {
-  const lang = (language || 'en').toLowerCase();    
-  const sys =              
-    `You are a helpful WhatsApp assistant. Always respond ONLY in ${lang} script (e.g., Hindi → Devanagari). `
-         + 'Be conversational, concise (3–5 short sentences), and avoid repeating earlier messages verbatim. '
-         + 'If user asks pricing/cost, clearly state: free trial for '
-         + `${SALES_AI_MANIFEST.pricing.trialDays} days, then ₹${SALES_AI_MANIFEST.pricing.paidPriceINR}/month. `
-         + 'If out of scope, say "I’m not sure yet" and share 2–3 relevant quick commands.';
+  const lang = (language || 'en').toLowerCase();        
+  const sys =
+      `You are a helpful WhatsApp assistant. Always respond ONLY in ${lang} script (e.g., Hindi → Devanagari). `
+      + 'Be conversational, concise (3–5 short sentences), and avoid repeating earlier messages verbatim. '
+      + `If user asks pricing/cost, clearly state: free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month. `
+      + 'If out of scope, say "I’m not sure yet" and share 2–3 relevant quick commands.';
   const manifest = JSON.stringify(SALES_AI_MANIFEST);    
   // Pull last 2–3 turns for better continuity (from DB)
     let convoHint = '';
@@ -1467,7 +1467,7 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
     `MANIFEST: ${manifest}\n` +
     `convoHint` +
     `UserQuestion: ${question}\n` +
-    `Rules: Use only capabilities listed. If pricing/cost asked, include trial days and ₹${SALES_AI_MANIFEST.pricing.paidPriceINR}/month. Always use ${lang} script.`;
+    `Rules: Use only capabilities listed. If pricing/cost asked, include trial days (${TRIAL_DAYS}) and ₹${PAID_PRICE_INR}/month. Always use ${lang} script.`;
   try {
     console.log('AI_AGENT_PRE_CALL', { kind: 'sales-qa', language: lang, promptHash: Buffer.from(String(question).toLowerCase()).toString('base64').slice(0,12) });
     const resp = await axios.post(
@@ -1551,8 +1551,8 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
 // Add this at the top of the file after the imports
 const path = require('path');
 
-// DB-backed memory helpers
-const { appendTurn, getRecentTurns, inferTopic } = require('./db.memory');
+// DB-backed memory helpers (Airtable via database.js)
+const { appendTurn, getRecentTurns, inferTopic } = require('../database');
 
 const {
   BUSINESS_TIPS_EN,
