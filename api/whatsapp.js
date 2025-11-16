@@ -1445,18 +1445,29 @@ async function composeAIOnboarding(language = 'en') {
 }
 
 // NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
-async function composeAISalesAnswer(question, language = 'en') {
+async function composeAISalesAnswer(shopId, question, language = 'en') {
   const lang = (language || 'en').toLowerCase();    
-  const sys =        
-    `Answer like a friendly WhatsApp assistant. Always respond ONLY in ${lang} script (e.g., Hindi → Devanagari). ` +
-    'Use natural phrasing, professional but warm. Limit to 3–4 short sentences. ' +
-    'If out of scope, say "I’m not sure yet" and share benefits of this tool instead.';
-  const manifest = JSON.stringify(SALES_AI_MANIFEST);
+  const sys =              
+    `You are a helpful WhatsApp assistant. Always respond ONLY in ${lang} script (e.g., Hindi → Devanagari). `
+         + 'Be conversational, concise (3–5 short sentences), and avoid repeating earlier messages verbatim. '
+         + 'If user asks pricing/cost, clearly state: free trial for '
+         + `${SALES_AI_MANIFEST.pricing.trialDays} days, then ₹${SALES_AI_MANIFEST.pricing.paidPriceINR}/month. `
+         + 'If out of scope, say "I’m not sure yet" and share 2–3 relevant quick commands.';
+  const manifest = JSON.stringify(SALES_AI_MANIFEST);    
+  // Pull last 2–3 turns for better continuity (from DB)
+    let convoHint = '';
+    try {
+      const turns = await getRecentTurns(shopId, 3);
+      if (Array.isArray(turns) && turns.length) {
+        convoHint = 'Conversation so far:\n' + turns.map(t => `User: ${t.user_text}\nAssistant: ${t.ai_text}`).join('\n') + '\n';
+      }
+    } catch (_) {}
   const user =
     `Language: ${lang}\n` +
     `MANIFEST: ${manifest}\n` +
+    `convoHint` +
     `UserQuestion: ${question}\n` +
-    `Rules: Use only capabilities listed. If out of scope, respond: "I'm not sure yet" + three items from MANIFEST.quickCommands. Always use ${lang} script.`;
+    `Rules: Use only capabilities listed. If pricing/cost asked, include trial days and ₹${SALES_AI_MANIFEST.pricing.paidPriceINR}/month. Always use ${lang} script.`;
   try {
     console.log('AI_AGENT_PRE_CALL', { kind: 'sales-qa', language: lang, promptHash: Buffer.from(String(question).toLowerCase()).toString('base64').slice(0,12) });
     const resp = await axios.post(
@@ -1539,6 +1550,10 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
 
 // Add this at the top of the file after the imports
 const path = require('path');
+
+// DB-backed memory helpers
+const { appendTurn, getRecentTurns, inferTopic } = require('./db.memory');
+
 const {
   BUSINESS_TIPS_EN,
   startEngagementTips,
@@ -1998,10 +2013,13 @@ function scheduleAiAnswer(shopId, From, text, lang, requestId) {
   aiDebounce.set(key, {
     lastText: text, lastLang: lang, lastReqId: requestId,
     timer: setTimeout(async () => {
-      try {
-        const ans = await composeAISalesAnswer(aiDebounce.get(key).lastText, aiDebounce.get(key).lastLang);
-        const msg = await t(ans, aiDebounce.get(key).lastLang, `${aiDebounce.get(key).lastReqId}::sales-qa-debounced`);
-        await sendMessageQueued(From, msg);
+      try {                
+        const last = aiDebounce.get(key);
+        const ans  = await composeAISalesAnswer(shopId, last.lastText, last.lastLang);
+        const msg  = await t(ans, last.lastLang, `${last.lastReqId}::sales-qa-debounced`);
+        await sendMessageQueued(From, msg);                
+        // Store the turn in DB
+        try { await appendTurn(shopId, last.lastText, msg, inferTopic(last.lastText)); } catch (_) {}
       } finally { aiDebounce.delete(key); }
     }, AI_DEBOUNCE_MS)
   });
