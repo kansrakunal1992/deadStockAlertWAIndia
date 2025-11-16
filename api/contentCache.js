@@ -186,7 +186,79 @@ const LIST_LABELS = {
    mr: { body: 'सतत सेवेसाठी पेड प्लॅन सक्रिय करा', button: 'पेड प्लॅन सक्रिय करा' },
    bn: { body: 'অবিচ্ছিন্ন সেবার জন্য Paid Plan সক্রিয় করুন', button: 'Paid Plan সক্রিয় করুন' }
  };
- 
+
+// ——— NEW: 3-button Onboarding Quick-Reply (Start Trial • Demo • Help) ———
+// Keep titles short (≤ 20) in every language.
+const ONBOARDING_QR_LABELS = {
+  en: { body: 'Get started on WhatsApp', start: 'Start Trial', demo: 'Demo', help: 'Help' },
+  hi: { body: 'WhatsApp पर शुरुआत करें', start: 'ट्रायल शुरू करें', demo: 'डेमो', help: 'मदद' },
+  gu: { body: 'WhatsApp પર શરૂઆત કરો',   start: 'ટ્રાયલ શરૂ કરો',  demo: 'ડેમો', help: 'મદદ' },
+  ta: { body: 'WhatsAppல் தொடங்கவும்',    start: 'ட்ரயல் தொடங்க',   demo: 'டெமோ', help: 'உதவி' },
+  te: { body: 'WhatsAppలో ప్రారంభించండి',  start: 'ట్రయల్ ప్రారంభించండి', demo: 'డెమో', help: 'సహాయం' }, // clamp will enforce length
+  kn: { body: 'WhatsApp ನಲ್ಲಿ ಆರಂಭಿಸಿ',     start: 'ಟ್ರಯಲ್ ಆರಂಭಿಸಿ',  demo: 'ಡೆಮೋ', help: 'ಸಹಾಯ' },
+  mr: { body: 'WhatsApp वर सुरुवात करा',    start: 'ट्रायल सुरू करा', demo: 'डेमो', help: 'मदत' },
+  bn: { body: 'WhatsApp-এ শুরু করুন',       start: 'ট্রায়াল শুরু',    demo: 'ডেমো', help: 'সাহায্য' }
+};
+
+async function createOnboardingQuickReplyForLang(lang) {
+  const l = ONBOARDING_QR_LABELS[lang] ?? ONBOARDING_QR_LABELS.en;
+  const payload = {
+    friendly_name: `saamagrii_onboard_qr_${lang}_${Date.now()}`,
+    language: 'en',
+    types: {
+      'twilio/quick-reply': {
+        body: l.body,
+        actions: [
+          { type: 'QUICK_REPLY', title: clampTitle(l.start), id: 'activate_trial' },
+          { type: 'QUICK_REPLY', title: clampTitle(l.demo),  id: 'show_demo' },
+          { type: 'QUICK_REPLY', title: clampTitle(l.help),  id: 'show_help' }
+        ]
+      }
+    }
+  };
+  const { data } = await axios.post(CONTENT_API_URL, payload, {
+    auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
+  });
+  console.log(`[contentCache] Created Onboarding QR for ${lang}: ContentSid=${data.sid}`);
+  return data.sid;
+}
+
+// ——— NEW: 3-button Onboarding Quick-Reply (Start Trial • Demo • Help) ———
+// Keep titles short (≤ 20) in every language.
+const ONBOARDING_QR_LABELS = {
+  en: { body: 'Get started on WhatsApp', start: 'Start Trial', demo: 'Demo', help: 'Help' },
+  hi: { body: 'WhatsApp पर शुरुआत करें', start: 'ट्रायल शुरू करें', demo: 'डेमो', help: 'मदद' },
+  gu: { body: 'WhatsApp પર શરૂઆત કરો',   start: 'ટ્રાયલ શરૂ કરો',  demo: 'ડેમો', help: 'મદદ' },
+  ta: { body: 'WhatsAppல் தொடங்கவும்',    start: 'ட்ரயல் தொடங்க',   demo: 'டெமோ', help: 'உதவி' },
+  te: { body: 'WhatsAppలో ప్రారంభించండి',  start: 'ట్రయల్ ప్రారంభించండి', demo: 'డెమో', help: 'సహాయం' }, // clamp will enforce length
+  kn: { body: 'WhatsApp ನಲ್ಲಿ ಆರಂಭಿಸಿ',     start: 'ಟ್ರಯಲ್ ಆರಂಭಿಸಿ',  demo: 'ಡೆಮೋ', help: 'ಸಹಾಯ' },
+  mr: { body: 'WhatsApp वर सुरुवात करा',    start: 'ट्रायल सुरू करा', demo: 'डेमो', help: 'मदत' },
+  bn: { body: 'WhatsApp-এ শুরু করুন',       start: 'ট্রায়াল শুরু',    demo: 'ডেমো', help: 'সাহায্য' }
+};
+
+async function createOnboardingQuickReplyForLang(lang) {
+  const l = ONBOARDING_QR_LABELS[lang] ?? ONBOARDING_QR_LABELS.en;
+  const payload = {
+    friendly_name: `saamagrii_onboard_qr_${lang}_${Date.now()}`,
+    language: 'en',
+    types: {
+      'twilio/quick-reply': {
+        body: l.body,
+        actions: [
+          { type: 'QUICK_REPLY', title: clampTitle(l.start), id: 'activate_trial' },
+          { type: 'QUICK_REPLY', title: clampTitle(l.demo),  id: 'show_demo' },
+          { type: 'QUICK_REPLY', title: clampTitle(l.help),  id: 'show_help' }
+        ]
+      }
+    }
+  };
+  const { data } = await axios.post(CONTENT_API_URL, payload, {
+    auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
+  });
+  console.log(`[contentCache] Created Onboarding QR for ${lang}: ContentSid=${data.sid}`);
+  return data.sid;
+}
+
  async function createQuickReplyForLang(lang) {
    const l = QR_LABELS[lang] || QR_LABELS.en;
    const payload = {
@@ -209,7 +281,7 @@ const LIST_LABELS = {
    return data.sid; // HX… ContentSid
  }
 
- async function createListPickerForLang(lang) {
+async function createListPickerForLang(lang) {
    
 const l  = LIST_LABELS[lang] ?? LIST_LABELS.en;
   const it = l.items;
@@ -301,6 +373,7 @@ const language = String(lang || 'en').toLowerCase();
     listPickerSid : created?.listPickerSid || null,
     trialCtaSid   : created?.trialCtaSid   || null,
     paidCtaSid    : created?.paidCtaSid    || null,
+    onboardingQrSid: created?.onboardingQrSid ?? null,
     ts            : Date.now()
   };
   sidsByLang.set(language, bundle);
@@ -315,7 +388,8 @@ function getLangSids(lang) {
      quickReplySid : null,
      listPickerSid : null,
      trialCtaSid   : null,
-     paidCtaSid    : null
+     paidCtaSid    : null,
+     onboardingQrSid: null
    };
 }
 
@@ -329,15 +403,19 @@ async function actuallyCreateOrFetchTemplates(language) {
     createQuickReplyForLang(language),
     createListPickerForLang(language)
   ]);
-  // Trial/Paid CTAs are independent and optional; errors shouldn't block menus
+  // Trial/Paid CTAs and Onboarding QR are independent; errors shouldn't block menus
   let trialCtaSid = null, paidCtaSid = null;
+  let onboardingQrSid = null;
   try { trialCtaSid = await createActivateTrialCTAForLang(language); } catch (e) {
     console.warn('[contentCache] Trial CTA create failed:', e?.response?.data || e?.message);
   }
   try { paidCtaSid = await createActivatePaidCTAForLang(language); } catch (e) {
     console.warn('[contentCache] Paid CTA create failed:', e?.response?.data || e?.message);
-  }
-  return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid };
+  }    
+  try { onboardingQrSid = await createOnboardingQuickReplyForLang(language); } catch (e) {
+      console.warn('[contentCache] Onboarding QR create failed:', e?.response?.data ?? e?.message);
+    }
+  return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, onboardingQrSid };
 }
 
 module.exports = { ensureLangTemplates, getLangSids };
