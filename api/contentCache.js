@@ -223,42 +223,6 @@ async function createOnboardingQuickReplyForLang(lang) {
   return data.sid;
 }
 
-// ——— NEW: 3-button Onboarding Quick-Reply (Start Trial • Demo • Help) ———
-// Keep titles short (≤ 20) in every language.
-const ONBOARDING_QR_LABELS = {
-  en: { body: 'Get started on WhatsApp', start: 'Start Trial', demo: 'Demo', help: 'Help' },
-  hi: { body: 'WhatsApp पर शुरुआत करें', start: 'ट्रायल शुरू करें', demo: 'डेमो', help: 'मदद' },
-  gu: { body: 'WhatsApp પર શરૂઆત કરો',   start: 'ટ્રાયલ શરૂ કરો',  demo: 'ડેમો', help: 'મદદ' },
-  ta: { body: 'WhatsAppல் தொடங்கவும்',    start: 'ட்ரயல் தொடங்க',   demo: 'டெமோ', help: 'உதவி' },
-  te: { body: 'WhatsAppలో ప్రారంభించండి',  start: 'ట్రయల్ ప్రారంభించండి', demo: 'డెమో', help: 'సహాయం' }, // clamp will enforce length
-  kn: { body: 'WhatsApp ನಲ್ಲಿ ಆರಂಭಿಸಿ',     start: 'ಟ್ರಯಲ್ ಆರಂಭಿಸಿ',  demo: 'ಡೆಮೋ', help: 'ಸಹಾಯ' },
-  mr: { body: 'WhatsApp वर सुरुवात करा',    start: 'ट्रायल सुरू करा', demo: 'डेमो', help: 'मदत' },
-  bn: { body: 'WhatsApp-এ শুরু করুন',       start: 'ট্রায়াল শুরু',    demo: 'ডেমো', help: 'সাহায্য' }
-};
-
-async function createOnboardingQuickReplyForLang(lang) {
-  const l = ONBOARDING_QR_LABELS[lang] ?? ONBOARDING_QR_LABELS.en;
-  const payload = {
-    friendly_name: `saamagrii_onboard_qr_${lang}_${Date.now()}`,
-    language: 'en',
-    types: {
-      'twilio/quick-reply': {
-        body: l.body,
-        actions: [
-          { type: 'QUICK_REPLY', title: clampTitle(l.start), id: 'activate_trial' },
-          { type: 'QUICK_REPLY', title: clampTitle(l.demo),  id: 'show_demo' },
-          { type: 'QUICK_REPLY', title: clampTitle(l.help),  id: 'show_help' }
-        ]
-      }
-    }
-  };
-  const { data } = await axios.post(CONTENT_API_URL, payload, {
-    auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
-  });
-  console.log(`[contentCache] Created Onboarding QR for ${lang}: ContentSid=${data.sid}`);
-  return data.sid;
-}
-
  async function createQuickReplyForLang(lang) {
    const l = QR_LABELS[lang] || QR_LABELS.en;
    const payload = {
