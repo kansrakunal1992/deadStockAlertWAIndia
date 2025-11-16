@@ -20,6 +20,8 @@ const BATCH_TABLE_NAME = process.env.AIRTABLE_BATCH_TABLE_NAME || 'InventoryBatc
 const USER_PREFERENCES_TABLE_NAME = process.env.USER_PREFERENCES_TABLE_NAME || 'UserPreferences';
 const SALES_TABLE_NAME = process.env.AIRTABLE_SALES_TABLE_NAME || 'Sales';
 const PRODUCTS_TABLE_NAME = process.env.AIRTABLE_PRODUCTS_TABLE_NAME || 'Products';
+// NEW: Conversation memory table
+const CONVERSATION_TURNS_TABLE_NAME = process.env.AIRTABLE_CONVERSATION_TURNS_TABLE_NAME || 'conversation_turns';
 
 // URL construction
 const airtableBaseURL = 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME;
@@ -2825,6 +2827,63 @@ function toAirtableDateTimeUTC(dateLike) {
   return d.toISOString(); // e.g. 2025-09-20T00:00:00.000Z
 }
 
+// ========== Conversation Memory (Airtable) ==========
+// Append a conversation turn
+async function appendTurn(shopId, userText, aiText, topicTag = null) {
+  const context = `Append Conversation Turn ${shopId}`;
+  try {
+    const fields = {
+      ShopID: String(shopId),
+      UserText: String(userText || ''),
+      AiText: String(aiText || ''),
+      TopicTag: topicTag || null,
+      Timestamp: new Date().toISOString(),
+    };
+    const result = await airtableRequest({
+      method: 'post',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${CONVERSATION_TURNS_TABLE_NAME}`,
+      data: { fields }
+    }, context);
+    return { success: true, id: result.id };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// Fetch last N conversation turns (most recent first)
+async function getRecentTurns(shopId, n = 3) {
+  const context = `Get Conversation Turns ${shopId}`;
+  try {
+    const filterByFormula = `{ShopID}='${String(shopId).replace(/'/g, "''")}'`;
+    const result = await airtableRequest({
+      method: 'get',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${CONVERSATION_TURNS_TABLE_NAME}`,
+      params: {
+        filterByFormula,
+        sort: [{ field: 'Timestamp', direction: 'desc' }],
+        maxRecords: n
+      }
+    }, context);
+    return (result.records || []).map(r => ({
+      user_text: r.fields.UserText || '',
+      ai_text: r.fields.AiText || ''
+    }));
+  } catch (error) {
+    logError(context, error);
+    return [];
+  }
+}
+
+// Lightweight topic classifier (pricing, trial, benefits, how-it-works, other)
+function inferTopic(userText = '') {
+  const t = String(userText || '').toLowerCase();
+  if (/[₹]|price|pricing|cost|rate|मूल्य|कीमत/.test(t)) return 'pricing';
+  if (/trial|free|मुफ़्त|फ्री/.test(t)) return 'trial';
+  if (/benefit|help|क्यों|फायदा|मदद/.test(t)) return 'benefits';
+  if (/how|कैसे|किस तरह/.test(t)) return 'how-it-works';
+  return 'other';
+}
 
 module.exports = {
   updateInventory,
@@ -2887,7 +2946,10 @@ module.exports = {
   getReorderSuggestions,
   applySaleWithReconciliation,
   updateBatchPurchasePrice,
-  reattributeSaleToBatch,
+  reattributeSaleToBatch,    
+  appendTurn,
+  getRecentTurns,
+  inferTopic,
   saveUserPlan, 
   getUserPlan, 
   isFirst50Shops, 
