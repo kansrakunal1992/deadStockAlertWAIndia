@@ -615,13 +615,13 @@ const { ensureLangTemplates, getLangSids } = require('./contentCache');
 
 async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
   const toNumber = From.replace('whatsapp:', '');
-  // 1) Instant text-only ack (non-blocking visual confirmation)
-  try {      
-    // Use localized static label and still pass through t() for SINGLE_SCRIPT_MODE handling
+  // 1) Instant text-only ack (non-blocking visual confirmation)      
+    try {
+        // Use localized static label and still pass through t() for SINGLE_SCRIPT_MODE handling
         const ackLabel = getStaticLabel('ack', detectedLanguage);
         const ack = await t(ackLabel, detectedLanguage ?? 'en', 'ack');
-    await sendMessageQueued(From, ack);
-  } catch { /* best effort */ }
+        await sendMessageQueued(From, ack);
+      } catch { /* best effort */ }
   
   // 2) Plan gating: only show menus for activated users (trial/paid).
      //    Unactivated users receive a concise CTA to start the trial/paid plan.
@@ -631,44 +631,51 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
        if (pref?.success && pref.plan) plan = String(pref.plan).toLowerCase();
      } catch { /* ignore plan read */ }
      const isActivated = (plan === 'trial' || plan === 'paid');
-     if (!isActivated) {             
-      // NEW: Send dedicated Quick-Reply CTA template if configured                
-      let sent = false;
-          // 1) Prefer explicit env ContentSid if present
-          if (TRIAL_CTA_SID) {
-            try {            
-              const resp = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: TRIAL_CTA_SID });
-              console.log('[trial-cta] env ContentSid send OK', { sid: resp?.sid, to: toNumber, contentSid: TRIAL_CTA_SID });
-              sent = true;
-            } catch (e) {
-              const status = e?.response?.status;
-              const data   = e?.response?.data;
-              console.warn('[trial-cta] env ContentSid send FAILED', { status, data, sid: TRIAL_CTA_SID, to: toNumber });
-            }
-          }
-          // 2) If env send failed or wasn't set, try per-language ContentSid from contentCache
-          if (!sent) {
-            try {
-              await ensureLangTemplates(detectedLanguage);
-              const sids = getLangSids(detectedLanguage);
-              if (sids?.trialCtaSid) {                            
-              const resp2 = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.trialCtaSid });
-              console.log('[trial-cta] per-language send OK', { sid: resp2?.sid, to: toNumber, contentSid: sids.trialCtaSid });
-              sent = true;
-              }
-            } catch (e) {
-              const status = e?.response?.status;
-              const data   = e?.response?.data;
-              console.warn('[trial-cta] per-language send FAILED', { status, data, lang: detectedLanguage, to: toNumber });
-            }
-          }
-          // 3) Text fallback if neither option worked
-          if (!sent) {
-            const ctaText = getTrialCtaText(detectedLanguage ?? 'en');
-            await sendMessageQueued(From, await t(ctaText, detectedLanguage ?? 'en', 'welcome-gate'));
-          }
-          return; // still skip menus until activation
-     }       
+          
+      if (!isActivated) {
+             // NEW: Send 3‑button Onboarding Quick‑Reply (Start Trial • Demo • Help)
+             let sent = false;
+             const ONBOARDING_QR_SID = String(process.env.ONBOARDING_QR_SID || '').trim();
+      
+             // 1) Prefer explicit env ContentSid if present
+             if (ONBOARDING_QR_SID) {
+               try {
+                 const resp = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: ONBOARDING_QR_SID });
+                 console.log('[onboard-qr] env ContentSid send OK', { sid: resp?.sid, to: toNumber, contentSid: ONBOARDING_QR_SID });
+                 sent = true;
+               } catch (e) {
+                 const status = e?.response?.status;
+                 const data   = e?.response?.data;
+                 console.warn('[onboard-qr] env ContentSid send FAILED', { status, data, sid: ONBOARDING_QR_SID, to: toNumber });
+               }
+             }
+      
+             // 2) If env send failed or wasn't set, try per-language ContentSid from contentCache
+             if (!sent) {
+               try {
+                 await ensureLangTemplates(detectedLanguage);
+                 const sids = getLangSids(detectedLanguage);
+                 if (sids?.onboardingQrSid) {
+                   const resp2 = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.onboardingQrSid });
+                   console.log('[onboard-qr] per-language send OK', { sid: resp2?.sid, to: toNumber, contentSid: sids.onboardingQrSid });
+                   sent = true;
+                 } else {
+                   console.warn('[onboard-qr] missing per-language onboardingQrSid after ensureLangTemplates', { lang: detectedLanguage });
+                 }
+               } catch (e) {
+                 const status = e?.response?.status;
+                 const data   = e?.response?.data;
+                 console.warn('[onboard-qr] per-language send FAILED', { status, data, lang: detectedLanguage, to: toNumber });
+               }
+             }
+      
+             // 3) Text fallback if neither option worked
+             if (!sent) {
+               const ctaText = getTrialCtaText(detectedLanguage ?? 'en');
+               await sendMessageQueued(From, await t(ctaText, detectedLanguage ?? 'en', 'welcome-gate'));
+             }
+             return; // still skip menus until activation
+           }
          
     // 3) Guarded template sends (only if SIDs exist), with plan-aware hint
       try {
@@ -697,13 +704,10 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
             console.warn('[welcome] listPicker send failed', { status, data, sid: sids?.listPickerSid });
             // Do not throw; continue to text hint
           }
-        }
-    
+        }           
+                
         // 3) Light plan-aware text nudge (kept compact)
-        const hint = plan === 'trial'
-          ? 'Tip: Try quick replies or type “mode” to switch.'
-          : 'Tip: Use quick replies and type “mode” to switch.';
-        await sendMessageQueued(From, await t(getStaticLabel('fallbackHint', detectedLanguage), detectedLanguage ?? 'en', 'welcome-hint'));
+                await sendMessageQueued(From, await t(getStaticLabel('fallbackHint', detectedLanguage), detectedLanguage ?? 'en', 'welcome-hint'));
     
       } catch (e) {
         // 4) Plain-text fallback if template orchestration failed before we could try any send
