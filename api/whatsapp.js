@@ -636,13 +636,14 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
       let sent = false;
           // 1) Prefer explicit env ContentSid if present
           if (TRIAL_CTA_SID) {
-            try {
-              await sendContentTemplate({ toWhatsApp: toNumber, contentSid: TRIAL_CTA_SID });
+            try {            
+              const resp = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: TRIAL_CTA_SID });
+              console.log('[trial-cta] env ContentSid send OK', { sid: resp?.sid, to: toNumber, contentSid: TRIAL_CTA_SID });
               sent = true;
             } catch (e) {
               const status = e?.response?.status;
               const data   = e?.response?.data;
-              console.warn('[trial-cta] env ContentSid send failed', { status, data, sid: TRIAL_CTA_SID });
+              console.warn('[trial-cta] env ContentSid send FAILED', { status, data, sid: TRIAL_CTA_SID, to: toNumber });
             }
           }
           // 2) If env send failed or wasn't set, try per-language ContentSid from contentCache
@@ -650,14 +651,15 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
             try {
               await ensureLangTemplates(detectedLanguage);
               const sids = getLangSids(detectedLanguage);
-              if (sids?.trialCtaSid) {
-                await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.trialCtaSid });
-                sent = true;
+              if (sids?.trialCtaSid) {                            
+              const resp2 = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.trialCtaSid });
+              console.log('[trial-cta] per-language send OK', { sid: resp2?.sid, to: toNumber, contentSid: sids.trialCtaSid });
+              sent = true;
               }
             } catch (e) {
               const status = e?.response?.status;
               const data   = e?.response?.data;
-              console.warn('[trial-cta] per-language send failed', { status, data });
+              console.warn('[trial-cta] per-language send FAILED', { status, data, lang: detectedLanguage, to: toNumber });
             }
           }
           // 3) Text fallback if neither option worked
