@@ -168,8 +168,8 @@ const LIST_LABELS = {
  // --- NEW: CTA labels ---
  const ACTIVATE_TRIAL_LABELS = {
    en: { body: 'Try Saamagrii.AI free for 3 days', button: 'Activate Trial Plan' },
-   hi: { body: 'Saamagrii.AI को 3 दिन मुफ़्त में आज़माएँ', button: 'ट्रायल प्लान एक्टिवेट करें' },
-   gu: { body: 'Saamagrii.AI ને 3 દિવસ મફત અજમાવો', button: 'ટ્રાયલ પ્લાન સક્રિય કરો' },
+   hi: { body: 'Saamagrii.AI को 3 दिन मुफ़्त में आज़माएँ', button: 'ट्रायल शुरू करें' },
+   gu: { body: 'Saamagrii.AI ને 3 દિવસ મફત અજમાવો', button: 'ટ્રાયલ શરૂ કરો' },
    ta: { body: 'Saamagrii.AI ஐ 3 நாட்கள் இலவசமாக முயற்சி செய்யுங்கள்', button: 'ட்ரயல் பிளான் செயல்படுத்தவும்' },
    te: { body: 'Saamagrii.AI ను 3 రోజులు ఉచితంగా ప్రయత్నించండి', button: 'ట్రయల్ ప్లాన్ యాక్టివేట్ చేయండి' },
    kn: { body: 'Saamagrii.AI ಅನ್ನು 3 ದಿನ ಉಚಿತವಾಗಿ ಪ್ರಯತ್ನಿಸಿ', button: 'ಟ್ರಯಲ್ ಪ್ಲಾನ್ ಸಕ್ರಿಯಗೊಳಿಸಿ' },
@@ -178,7 +178,7 @@ const LIST_LABELS = {
  };
  const ACTIVATE_PAID_LABELS = {
    en: { body: 'Upgrade to paid for uninterrupted access', button: 'Activate Paid Plan' },
-   hi: { body: 'निरंतर सेवा के लिए पेड प्लान एक्टिवेट करें', button: 'पेड प्लान एक्टिवेट करें' },
+   hi: { body: 'निरंतर सेवा हेतु पेड प्लान सक्रिय करें', button: 'पेड प्लान सक्रिय करें' },
    gu: { body: 'નિરંતર સેવા માટે પેઈડ પ્લાન સક્રિય કરો', button: 'પેઈડ પ્લાન સક્રિય કરો' },
    ta: { body: 'தொடர்ச்சி சேவைக்கு Paid Plan செயல்படுத்தவும்', button: 'Paid Plan செயல்படுத்து' },
    te: { body: 'నిరంతర సేవ కోసం Paid ప్లాన్ యాక్టివేట్ చేయండి', button: 'Paid ప్లాన్ యాక్టివేట్' },
