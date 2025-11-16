@@ -844,6 +844,32 @@ function _normLite(s) {
         lang, `cta-trial-ok-${shopId}`
       );
       await sendMessageViaAPI(from, msg);
+            
+      // NEW: Immediately send activated menus (Quick-Reply + List-Picker)
+          try {
+            await ensureLangTemplates(lang);
+            const sids = getLangSids(lang);
+            // Purchase/Sale/Return Quick-Reply
+            if (sids?.quickReplySid) {
+              try {
+                const r1 = await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
+                console.log('[trial-activated] quickReply OK', { sid: r1?.sid, to: shopId });
+              } catch (e) {
+                console.warn('[trial-activated] quickReply FAIL', { status: e?.response?.status, data: e?.response?.data, to: shopId });
+              }
+            }
+            // Inventory List-Picker
+            if (sids?.listPickerSid) {
+              try {
+                const r2 = await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.listPickerSid });
+                console.log('[trial-activated] listPicker OK', { sid: r2?.sid, to: shopId });
+              } catch (e) {
+                console.warn('[trial-activated] listPicker FAIL', { status: e?.response?.status, data: e?.response?.data, to: shopId });
+              }
+            }
+          } catch (e) {
+            console.warn('[trial-activated] menu orchestration failed', { status: e?.response?.status, data: e?.response?.data });
+          }      
     } else {
       const msg = await t(
         `Sorry, we couldn't start your trial right now. Please try again.`,
@@ -1961,6 +1987,26 @@ const LANGUAGE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 const INVENTORY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const PRODUCT_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// ===== AI Debounce (per shop) =====
+const aiDebounce = new Map(); // shopId -> { timer, lastText, lastLang, lastReqId }
+const AI_DEBOUNCE_MS = Number(process.env.AI_DEBOUNCE_MS || 1800);
+function scheduleAiAnswer(shopId, From, text, lang, requestId) {
+  const key = shopId;
+  const prev = aiDebounce.get(key);
+  if (prev?.timer) clearTimeout(prev.timer);
+  aiDebounce.set(key, {
+    lastText: text, lastLang: lang, lastReqId: requestId,
+    timer: setTimeout(async () => {
+      try {
+        const ans = await composeAISalesAnswer(aiDebounce.get(key).lastText, aiDebounce.get(key).lastLang);
+        const msg = await t(ans, aiDebounce.get(key).lastLang, `${aiDebounce.get(key).lastReqId}::sales-qa-debounced`);
+        await sendMessageQueued(From, msg);
+      } finally { aiDebounce.delete(key); }
+    }, AI_DEBOUNCE_MS)
+  });
+}
+
 // Cache key prefix for command normalization (any-language -> English)
 const COMMAND_NORM_PREFIX = 'cmdnorm:';
 
@@ -3014,14 +3060,13 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     }
   
     try {     
-      // NEW: Smart sales Q&A for non-transaction, question-like prompts (benefits/clarifications)
-      if (!looksLikeTransaction(text) && /\?\s*$/.test(text)) {             
-      const ans = await composeAISalesAnswer(text, detectedLanguage);
-      const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa`);
-      await sendMessageQueued(From, msg);
-      await scheduleUpsell(gate?.upsellReason);
-      return true;
-      }
+      // NEW: Smart sales Q&A for non-transaction, question-like prompts (benefits/clarifications)            
+      if (!looksLikeTransaction(text) && /\?\s*$/.test(text)) {
+          const shopId = String(From).replace('whatsapp:', '');
+          scheduleAiAnswer(shopId, From, text, detectedLanguage, requestId);
+          await scheduleUpsell(gate?.upsellReason);
+          return true;
+        }
 
 // NEW: Intercept post‑purchase expiry override first
     if (await handleAwaitingPurchaseExpiryOverride(From, text, detectedLanguage, requestId)) return true;
