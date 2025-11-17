@@ -6,6 +6,57 @@ const crypto = require('crypto');
 const path = require('path');
 const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+
+// ------------------------------------------------------------
+// Global RESET commands + detector (shared)
+// ------------------------------------------------------------
+// Keep both English & common Hindi/Indic synonyms so users can bail out of any flow.
+// IMPORTANT: Define this ONCE, near the top, before any handlers use it.
+const RESET_COMMANDS = [
+  // English
+  'reset', 'start over', 'restart', 'cancel', 'exit', 'stop',
+  // Hindi / Marathi (Devanagari)
+  'रीसेट','रिसेट','रद्द','बंद','बाहर','दोबारा शुरू','रिस्टार्ट','नया शुरू','नया सत्र',
+  // Bengali
+  'রিসেট','বাতিল','বন্ধ',
+  // Tamil
+  'ரீசெட்','ரத்து','நிறுத்து',
+  // Telugu
+  'రీసెట్','రద్దు','ఆపు',
+  // Kannada
+  'ರಿಸೆಟ್','ರದ್ದು','ನಿಲ್ಲಿಸಿ',
+  // Gujarati
+  'રીસેટ','રદ','બંધ'
+];
+
+// ------------------------------------------------------------
+// Cross-language greeting detection (exact-match tokens)
+// ------------------------------------------------------------
+const GREETING_TOKENS = new Set([
+  // English / Latin
+  'hello', 'hi', 'hey', 'namaste',
+  // Hindi / Marathi (Devanagari)
+  'नमस्ते', 'नमस्कार',
+  // Bengali
+  'নমস্কার',
+  // Tamil
+  'வணக்கம்',
+  // Telugu
+  'నమస్కారం',
+  // Kannada
+  'ನಮಸ್ಕಾರ',
+  // Gujarati
+  'નમસ્તે',
+  // (Optionally keep a few common foreign forms seen in India)
+  'hola', 'hallo'
+]);
+
+function _isGreeting(text) {
+  const t = String(text ?? '').trim().toLowerCase();
+  if (!t) return false;
+  return GREETING_TOKENS.has(t);
+}
+
 // Defensive guard: ensure safeTrackResponseTime exists before any usage
 // even if bundling or conditional blocks load differently.
 let __safeTrackDefined = false;
@@ -8967,10 +9018,10 @@ async function handleRequest(req, res, response, requestId, requestStart) {
           const isQuestion =
             /\?\s*$/.test(text) ||
             /\b(price|cost|charges?)\b/i.test(text) ||
-            /(\bक़ीमत\b|\bमूल्य\b|\bलागत\b|\bकितना\b|\bक्यों\b|\bकैसे\b)/i.test(text);
-          const isGreetingOrLang =
-            /^(\s*hello|\s*hi|\s*hey|\s*namaste|\s*vanakkam|\s*namaskar|\s*hola|\s*hallo)\s*$/i.test(text) ||
-            (typeof _isLanguageChoice === 'function' ? _isLanguageChoice(text) : false);
+            /(\bक़ीमत\b|\bमूल्य\b|\bलागत\b|\bकितना\b|\bक्यों\b|\bकैसे\b)/i.test(text);                
+            const isGreetingOrLang =
+              (typeof _isGreeting === 'function' ? _isGreeting(text) : false) ||
+              (typeof _isLanguageChoice === 'function' ? _isLanguageChoice(text) : false);
     
           if (isQuestion) {
             // Answer first via sales‑QA (qa‑sales mode)
@@ -9099,7 +9150,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     // ============================
     
     // 1. Handle explicit reset commands FIRST (highest priority)
-    if (Body && RESET_COMMANDS.some(cmd => Body.toLowerCase().includes(cmd))) {
+    if (isResetMessage(Body)) {
       console.log(`[${requestId}] Explicit reset command detected: "${Body}"`);
       
       // Clear ALL states
