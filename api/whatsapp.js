@@ -8770,7 +8770,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     
     // NEW USER: send welcome (intro + buttons) once, then end
         if (authCheck.upsellReason === 'new_user') {          
-        const detectedLanguage = await detectLanguageWithFallback(Body /* or */ 'hello', From, requestId);
+        const detectedLanguage = await detectLanguageWithFallback(Body || 'hello', From, requestId);
             // Send the welcome flow ONCE (intro first, then interactive buttons)
             await sendWelcomeFlowLocalized(From, detectedLanguage, requestId);
             // Mark this request handled so no generic parse-error or duplicate onboarding is sent
