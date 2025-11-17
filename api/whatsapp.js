@@ -1,12 +1,11 @@
 const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
-const { execSync } = require('child_process');
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const fs = require('fs');
 const crypto = require('crypto');
-// Add this at the top of the file after the imports
 const path = require('path');
+const { execSync } = require('child_process');
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 // Defensive guard: ensure safeTrackResponseTime exists before any usage
 // even if bundling or conditional blocks load differently.
 let __safeTrackDefined = false;
@@ -1306,19 +1305,28 @@ function getTrialCtaText(lang) {
 // ===== Welcome/Onboarding session controls (new) =====
 const WELCOME_SESSION_MINUTES = Number(process.env.WELCOME_SESSION_MINUTES ?? 15);
 const WELCOME_ONCE_PER_SESSION = String(process.env.WELCOME_ONCE_PER_SESSION ?? 'true').toLowerCase() === 'true';
-const WELCOME_TRACK_FILE = path.join(__dirname, 'welcome_session_tracker.json');
+const STATE_DIR = process.env.STATE_DIR || '/tmp';
+try {
+  if (!fs.existsSync(STATE_DIR)) fs.mkdirSync(STATE_DIR, { recursive: true });
+  console.log('[state-dir] using:', STATE_DIR);
+} catch (e) { console.warn('[state-dir] mkdir failed:', e?.message); }
+// Write tracker into a writable directory (A)
+const WELCOME_TRACK_FILE = path.join(STATE_DIR, 'welcome_session_tracker.json');
 
 function readWelcomeTracker() {
-  try {
-    if (!fs.existsSync(WELCOME_TRACK_FILE)) return {};
-    return JSON.parse(fs.readFileSync(WELCOME_TRACK_FILE, 'utf8'));
+  try {        
+    if (!fs.existsSync(WELCOME_TRACK_FILE)) { console.log('[welcome] tracker missing:', WELCOME_TRACK_FILE); return {}; }
+    const data = fs.readFileSync(WELCOME_TRACK_FILE, 'utf8'); return JSON.parse(data);
   } catch { return {}; }
 }
 function writeWelcomeTracker(state) {
-  try {
+  try {        
     fs.writeFileSync(WELCOME_TRACK_FILE, JSON.stringify(state, null, 2));
+    console.log('[welcome] tracker write OK:', WELCOME_TRACK_FILE);
     return true;
-  } catch { return false; }
+  } catch (e) {
+    console.warn('[welcome] tracker write FAIL:', { file: WELCOME_TRACK_FILE, err: e?.message });
+    return false; }
 }
 function getLastWelcomedISO(shopId) {
   const state = readWelcomeTracker();
@@ -1342,18 +1350,27 @@ function _isLanguageChoice(text) {
     return (/^\s*(english|hindi|marathi|gujarati|bengali|tamil|telugu|kannada)\s*$/i).test(t);
   } catch { return false; }
 }
+
 async function shouldWelcomeNow(shopId, text) {
-  // Rule 1: first-ever message → welcome
   const last = getLastWelcomedISO(shopId);
-  if (!last) return true;
-  // Rule 2: only on greeting/language taps after session window
+  const greetingOrLang = _isGreeting(text) || _isLanguageChoice(text);
+  // FIRST-EVER: show welcome only for greeting/language selection; questions should go to Q&A
+  if (!last) {
+    if (greetingOrLang) { console.log('[welcome] reason=first-ever + greeting/lang'); return true; }
+    console.log('[welcome] first-ever but not greeting/lang → skip');
+    return false;
+  }
   if (!WELCOME_ONCE_PER_SESSION) {
-    return _isGreeting(text) || _isLanguageChoice(text);
+    const yes = greetingOrLang;
+    console.log('[welcome] oncePerSession=false, greeting/lang=', yes);
+    return yes;
   }
   const diffMs = Date.now() - new Date(last).getTime();
   const withinSession = diffMs < (WELCOME_SESSION_MINUTES * 60 * 1000);
-  if (withinSession) return false;
-  return _isGreeting(text) || _isLanguageChoice(text);
+  if (withinSession) { console.log('[welcome] within-session → skip'); return false; }
+  const yes = greetingOrLang;
+  console.log('[welcome] session expired, greeting/lang=', yes);
+  return yes;
 }
 
 // Single-script sanitizer: if lang != 'en', drop Latin-only transliteration blocks;
@@ -1700,17 +1717,18 @@ const NUDGE_OFF = String(process.env.NUDGE_OFF ?? '0').toLowerCase() === '1';
 const NUDGE_HOURS = Number(process.env.NUDGE_HOURS ?? 12);              // threshold before nudge
 const NUDGE_COOLDOWN_HOURS = Number(process.env.NUDGE_COOLDOWN_HOURS ?? 24);
 const NUDGE_INTERVAL_MS = Number(process.env.NUDGE_INTERVAL_MS ?? (60 * 60 * 1000)); // run each hour
-const INACTIVITY_TRACK_FILE = path.join(__dirname, 'inactivity_nudge_tracker.json');
+// Write tracker into writable dir (A)
+const INACTIVITY_TRACK_FILE = path.join(STATE_DIR, 'inactivity_nudge_tracker.json');
 
 function readNudgeTracker() {
-  try {
-    if (!fs.existsSync(INACTIVITY_TRACK_FILE)) return {};
-    return JSON.parse(fs.readFileSync(INACTIVITY_TRACK_FILE, 'utf8'));
+  try {          
+      if (!fs.existsSync(INACTIVITY_TRACK_FILE)) { console.log('[nudge] tracker missing:', INACTIVITY_TRACK_FILE); return {}; }
+      const data = fs.readFileSync(INACTIVITY_TRACK_FILE, 'utf8'); return JSON.parse(data);
   } catch { return {}; }
 }
 function writeNudgeTracker(state) {
   try { fs.writeFileSync(INACTIVITY_TRACK_FILE, JSON.stringify(state, null, 2)); return true; }
-  catch { return false; }
+  catch (e) { console.warn('[nudge] tracker write FAIL:', { file: INACTIVITY_TRACK_FILE, err: e?.message }); return false; }
 }
 function wasNudgedRecently(shopId, cooldownHours) {
   const state = readNudgeTracker();
@@ -1766,7 +1784,7 @@ function scheduleInactivityNudges() {
     console.log('[nudge] OFF');
     return;
   }
-  console.log(`[nudge] scheduler every ${Math.round(NUDGE_INTERVAL_MS/60000)} min; threshold ${NUDGE_HOURS}h; cooldown ${NUDGE_COOLDOWN_HOURS}h`);
+  console.log(`[nudge] scheduler every ${Math.round(NUDGE_INTERVAL_MS/60000)} min; threshold ${NUDGE_HOURS}h; cooldown ${NUDGE_COOLDOWN_HOURS}h; tracker=${INACTIVITY_TRACK_FILE}`);
   // first kick after ~5 minutes, then at set interval
   setTimeout(() => {
     sendInactivityNudges();
@@ -1805,12 +1823,13 @@ function scheduleTrialExpiryReminders() {
 }
 
 // --- Gamification tracker (JSON file; same pattern as summary_tracker.json) ---
-const GAMIFY_TRACK_FILE = path.join(__dirname, 'gamify_tracker.json');
+// Write tracker into writable dir (A)
+const GAMIFY_TRACK_FILE = path.join(STATE_DIR, 'gamify_tracker.json');
 
 function readGamify() {
-  try {
-    if (!fs.existsSync(GAMIFY_TRACK_FILE)) return {};
-    return JSON.parse(fs.readFileSync(GAMIFY_TRACK_FILE, 'utf8'));
+  try {          
+      if (!fs.existsSync(GAMIFY_TRACK_FILE)) { console.log('[gamify] tracker missing:', GAMIFY_TRACK_FILE); return {}; }
+      const data = fs.readFileSync(GAMIFY_TRACK_FILE, 'utf8'); return JSON.parse(data);
   } catch (e) {
     console.warn('[gamify] read failed:', e.message);
     return {};
@@ -1819,6 +1838,7 @@ function readGamify() {
 function writeGamify(state) {
   try {
     fs.writeFileSync(GAMIFY_TRACK_FILE, JSON.stringify(state, null, 2));
+    console.log('[gamify] tracker write OK:', GAMIFY_TRACK_FILE);
     return true;
   } catch (e) {
     console.warn('[gamify] write failed:', e.message);
@@ -1913,25 +1933,25 @@ async function runWithTips({ From, language, requestId }, fn) {
   );
 }
 
-const SUMMARY_TRACK_FILE = path.join(__dirname, 'summary_tracker.json');
+const SUMMARY_TRACK_FILE_WRITABLE = path.join(STATE_DIR, 'summary_tracker.json');
 
 // Add this function to track daily summaries
 function updateSummaryTracker(shopId, date) {
   try {
     let tracker = {};
-    
+          
     // Read existing tracker if it exists
-    if (fs.existsSync(SUMMARY_TRACK_FILE)) {
-      const data = fs.readFileSync(SUMMARY_TRACK_FILE, 'utf8');
+        if (fs.existsSync(SUMMARY_TRACK_FILE_WRITABLE)) {
+          const data = fs.readFileSync(SUMMARY_TRACK_FILE_WRITABLE, 'utf8');
       tracker = JSON.parse(data);
     }
     
     // Update tracker
     tracker[shopId] = date;
     
-    // Write back to file
-    fs.writeFileSync(SUMMARY_TRACK_FILE, JSON.stringify(tracker, null, 2));
-    
+    // Write back to file        
+    fs.writeFileSync(SUMMARY_TRACK_FILE_WRITABLE, JSON.stringify(tracker, null, 2));
+    console.log('[summary] tracker write OK:', SUMMARY_TRACK_FILE_WRITABLE);    
     return true;
   } catch (error) {
     console.error('Error updating summary tracker:', error.message);
@@ -1942,11 +1962,11 @@ function updateSummaryTracker(shopId, date) {
 // Add this function to check if summary was already sent
 function wasSummarySent(shopId, date) {
   try {
-    if (!fs.existsSync(SUMMARY_TRACK_FILE)) {
+    if (!fs.existsSync(SUMMARY_TRACK_FILE_WRITABLE)) {
       return false;
     }
     
-    const data = fs.readFileSync(SUMMARY_TRACK_FILE, 'utf8');
+    const data = fs.readFileSync(SUMMARY_TRACK_FILE_WRITABLE, 'utf8');
     const tracker = JSON.parse(data);
     
     return tracker[shopId] === date;
@@ -2040,7 +2060,7 @@ async function sendDailySummaries() {
     const skippedCount = results.filter(r => r.skipped).length;
     const failureCount = results.filter(r => !r.success).length;
     
-    console.log(`Daily summary job completed: ${successCount} sent, ${skippedCount} skipped, ${failureCount} failed`);
+    console.log(`Daily summary job completed: ${successCount} sent, ${skippedCount} skipped, ${failureCount} failed; tracker=${SUMMARY_TRACK_FILE_WRITABLE}`);
     
     return results;
   } catch (error) {
@@ -3126,16 +3146,32 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
         const isQuestion =
           /\?\s*$/.test(text) ||
           /\b(price|cost|charges?)\b/i.test(text) ||
-          /(\bकीमत\b|\bमूल्य\b|\bलागत\b|\bकितना\b|\bक्यों\b|\bकैसे\b)/i.test(text);      
-        // ====== Welcome/Onboarding FIRST for the very first inbound or explicit language tap/greeting ======
-          // Ensures your ad-landing users see welcome on their first message (language tap or "hi/hello/नमस्ते").
-          try {
-            if (await shouldWelcomeNow(shopId, text)) {
-              await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
-              handledRequests.add(requestId); // avoid duplicate replies on this turn
-              return true;
+          /(\bकीमत\b|\bमूल्य\b|\bलागत\b|\bकितना\b|\bक्यों\b|\bकैसे\b)/i.test(text);            
+          /**
+             * Q&A BEFORE WELCOME:
+             * If the user asks a question (price/benefits/how), answer via AI sales Q&A first,
+             * even for new/unactivated users. This enables qa-sales mode reliably.
+             */
+            if (isQuestion) {
+              try {
+                const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
+                const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa-first`);
+                await sendMessageQueued(From, msg);
+                handledRequests.add(requestId);
+                return true;
+              } catch (e) {
+                console.warn('[sales-qa] first-answer failed:', e?.message);
+              }
             }
-          } catch { /* best-effort */ }
+          
+            // ====== Welcome/Onboarding WHEN appropriate (first-ever greeting/language, or session-expired greeting) ======
+            try {
+              if (await shouldWelcomeNow(shopId, text)) {
+                await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+                handledRequests.add(requestId);
+                return true;
+              }
+            } catch { /* best-effort */ }
         
           if (!isQuestion) {
         try { await sendMessageQueued(From, await t('Processing your message…', detectedLanguage, `${requestId}::ack`)); } catch {}
