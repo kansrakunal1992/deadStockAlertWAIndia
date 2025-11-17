@@ -7,20 +7,20 @@ const path = require('path');
 const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
-// ---------- State helper shim (global & hoisted) ----------
-// Some branches still call getUserState(...). Provide a safe delegate so
-// those paths never crash. If your DB helper exists, we delegate to it.
-// (typeof on an undeclared identifier is safe in Node.)
-if (typeof getUserState === 'undefined') {
-  async function getUserState(from) {
+
+// --- GLOBAL shim: always available across the module and any early call sites
+if (typeof globalThis.getUserState !== 'function') {
+  globalThis.getUserState = async function getUserState(from) {
     try {
+      const shopId = String(from || '').replace('whatsapp:', '');
       if (typeof getUserStateFromDB === 'function') {
-        return await getUserStateFromDB(from);
+        return await getUserStateFromDB(shopId);
       }
     } catch (_) {}
     return null; // default: no state
-  }
+  };
 }
+
 
 // ------------------------------------------------------------
 // Bootstrap guard: guarantee a reset detector exists even if
@@ -2381,16 +2381,6 @@ const products = [
   'ice cream', 'आइसक्रीम', 'chocolate', 'चॉकलेट', 'candy', 'कैंडी', 'mint', 'मिंट', 'mouth freshener', 'माउथ फ्रेशनर'  
 ];
 
-// --- Small helper: detect a reset message (case-insensitive, single-word phrases) ---
-function isResetMessage(text) {
-  if (!text) return false;
-  const t = String(text).trim().toLowerCase();
-  return RESET_COMMANDS.some(cmd => {
-    const re = new RegExp(`^\\s*${cmd}\\s*$`, 'i');
-    return re.test(t);
-  });
-}
-
 // Number words mapping
 const numberWords = {
   // English
@@ -2465,7 +2455,6 @@ const greetings = {
 
 // State management constants and functions
 const STATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-const RESET_COMMANDS = ['reset', 'start over', 'restart', 'cancel', 'exit', 'stop'];
 
 async function getUserState(from) {
   const shopId = from.replace('whatsapp:', '');
@@ -8973,6 +8962,31 @@ module.exports = async (req, res) => {
   // Language detection (also persists preference)
   const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);  
     
+  // --- C) Welcome first for new users with greeting/language ---
+    try {
+      const shopId = String(From).replace('whatsapp:', '');
+      // Use your existing helpers to classify greeting or explicit language selection
+      const isGreetingOrLang =
+        (typeof _isGreeting === 'function' && _isGreeting(Body)) ||
+        (typeof _isLanguageChoice === 'function' && _isLanguageChoice(Body));
+  
+      // Show AI onboarding + interactive buttons only when shouldWelcomeNow says so
+      if (isGreetingOrLang && await shouldWelcomeNow(shopId, Body)) {
+        await sendWelcomeFlowLocalized(From, detectedLanguage || 'en');
+        // Suppress late apologies / duplicate upsell for this request
+        handledRequests.add(requestId);
+        // Minimal TwiML ack for webhook (your Content API has already sent messages)
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message('');
+        res.type('text/xml').send(twiml.toString());
+        safeTrackResponseTime(requestStart, requestId);
+        return;
+      }
+    } catch (e) {
+      console.warn(`[${requestId}] welcome short-circuit error:`, e?.message);
+      // Fall through to normal flow if anything goes wrong
+    }
+    
   // >>> GATE FIRST: onboarding/paywall/trial/paid
     // This MUST run before any legacy authorization checks or routing.
     try {
@@ -8989,6 +9003,43 @@ module.exports = async (req, res) => {
       console.warn(`[${requestId}] gate error:`, e.message);
       // If the gate fails for any reason, fall through to normal flow gracefully.
     }
+  
+    // --- D) Sales Q&A first for non-greeting questions ---
+      try {
+        const shopId = String(From).replace('whatsapp:', '');
+        const lower = Body.toLowerCase();
+    
+        // Your stronger question detector (kept local to webhook)
+        const isQuestionPunc = /\?\s*$/.test(Body);
+        const isPriceAskEn   = /\b(price|cost|charge|charges?)\b/i.test(lower);
+        const isPriceAskHi   = /\b(कीमत|मूल्य|लागत|कितना|दाम)\b/i.test(lower);
+        const isWhyHowHi     = /\b(क्यों|कैसे)\b/i.test(lower);
+        const isBenefitsEn   = /\b(benefits?|advantage|how does it help)\b/i.test(lower);
+        const isQuestion     = isQuestionPunc || isPriceAskEn || isPriceAskHi || isWhyHowHi || isBenefitsEn;
+    
+        // Do NOT trigger Q&A on greeting/language messages (those are handled by Patch C)
+        const isGreetingOrLang =
+          (typeof _isGreeting === 'function' && _isGreeting(Body)) ||
+          (typeof _isLanguageChoice === 'function' && _isLanguageChoice(Body));
+    
+        if (!isGreetingOrLang && isQuestion) {
+          // Compose a concise, localized answer (uses your manifest + pricing rules)
+          const ans = await composeAISalesAnswer(shopId, Body, detectedLanguage || 'en');
+          const msg = await t(ans, detectedLanguage || 'en', `${requestId}::sales-qa-first`);
+          // Send via your queued API (safer for rate limiting)
+          await sendMessageQueued(From, msg);
+          handledRequests.add(requestId);
+          // Minimal TwiML ack for webhook
+          const twiml = new twilio.twiml.MessagingResponse();
+          twiml.message('');
+          res.type('text/xml').send(twiml.toString());
+          safeTrackResponseTime(requestStart, requestId);
+          return;
+        }
+      } catch (e) {
+        console.warn(`[${requestId}] sales-qa short-circuit error:`, e?.message);
+        // Continue to normal handlers if anything goes wrong
+      }
 
   // === Centralized engagement tips: wrap the entire request handling ===    
   // use SAFE wrapper to avoid ReferenceError when runWithTips isn't loaded
