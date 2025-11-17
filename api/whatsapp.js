@@ -636,19 +636,26 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
              // NEW: Send 3‑button Onboarding Quick‑Reply (Start Trial • Demo • Help)
              let sent = false;
              const ONBOARDING_QR_SID = String(process.env.ONBOARDING_QR_SID || '').trim();
-      
-             // 1) Prefer explicit env ContentSid if present
-             if (ONBOARDING_QR_SID) {
-               try {
-                 const resp = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: ONBOARDING_QR_SID });
-                 console.log('[onboard-qr] env ContentSid send OK', { sid: resp?.sid, to: toNumber, contentSid: ONBOARDING_QR_SID });
-                 sent = true;
-               } catch (e) {
-                 const status = e?.response?.status;
-                 const data   = e?.response?.data;
-                 console.warn('[onboard-qr] env ContentSid send FAILED', { status, data, sid: ONBOARDING_QR_SID, to: toNumber });
-               }
-             }
+                                          
+            // 0) INTRO (AI onboarding benefits) — FIRST
+                try {
+                  const introText = await t(await composeAIOnboarding(detectedLanguage), detectedLanguage ?? 'en', 'welcome-intro');
+                  await sendMessageQueued(From, introText);
+                } catch (e) {
+                  console.warn('[welcome] intro send failed', { message: e?.message });
+                }
+                // 1) Prefer explicit env ContentSid if present — BUTTONS AFTER INTRO
+                if (ONBOARDING_QR_SID) {
+                  try {
+                    const resp = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: ONBOARDING_QR_SID });
+                    console.log('[onboard-qr] env ContentSid send OK', { sid: resp?.sid, to: toNumber, contentSid: ONBOARDING_QR_SID });
+                    sent = true;
+                  } catch (e) {
+                    const status = e?.response?.status;
+                    const data = e?.response?.data;
+                    console.warn('[onboard-qr] env ContentSid send FAILED', { status, data, sid: ONBOARDING_QR_SID, to: toNumber });
+                  }
+                }
       
              // 2) If env send failed or wasn't set, try per-language ContentSid from contentCache
              if (!sent) {
@@ -670,45 +677,39 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
              }
       
              // 3) Text fallback if neither option worked
-             if (!sent) {
-               const ctaText = getTrialCtaText(detectedLanguage ?? 'en');
-               await sendMessageQueued(From, await t(ctaText, detectedLanguage ?? 'en', 'welcome-gate'));
+             if (!sent) {                               
+                // If buttons couldn't be sent, still send a compact CTA AFTER intro
+                      const ctaText = getTrialCtaText(detectedLanguage ?? 'en');
+                      await sendMessageQueued(From, await t(ctaText, detectedLanguage ?? 'en', 'welcome-gate'));
              }
              return; // still skip menus until activation
            }
          
     // 3) Guarded template sends (only if SIDs exist), with plan-aware hint
-      try {
-        await ensureLangTemplates(detectedLanguage); // creates once per lang, then reuses
-        const sids = getLangSids(detectedLanguage);
-    
-        // Send Quick-Reply (log enriched Twilio errors)
-        if (sids?.quickReplySid) {
-          try {
-            await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.quickReplySid });
-          } catch (e) {
-            const status = e?.response?.status;
-            const data   = e?.response?.data;
-            console.warn('[welcome] quickReply send failed', { status, data, sid: sids?.quickReplySid });
-            // Do not throw; continue to try list-picker and text hint
-          }
-        }
-    
-        // Send List-Picker (log enriched Twilio errors)
-        if (sids?.listPickerSid) {
-          try {
-            await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid });
-          } catch (e) {
-            const status = e?.response?.status;
-            const data   = e?.response?.data;
-            console.warn('[welcome] listPicker send failed', { status, data, sid: sids?.listPickerSid });
-            // Do not throw; continue to text hint
-          }
-        }           
-                
-        // 3) Light plan-aware text nudge (kept compact)
-                await sendMessageQueued(From, await t(getStaticLabel('fallbackHint', detectedLanguage), detectedLanguage ?? 'en', 'welcome-hint'));
-    
+      try {                  
+          await ensureLangTemplates(detectedLanguage); // creates once per lang, then reuses
+              const sids = getLangSids(detectedLanguage);
+              // (Re-ordered) First send the light plan-aware hint / welcome line
+              await sendMessageQueued(From, await t(getStaticLabel('fallbackHint', detectedLanguage), detectedLanguage ?? 'en', 'welcome-hint'));
+              // Then send buttons (Quick-Reply followed by List-Picker)
+              if (sids?.quickReplySid) {
+                try {
+                  await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.quickReplySid });
+                } catch (e) {
+                  const status = e?.response?.status;
+                  const data = e?.response?.data;
+                  console.warn('[welcome] quickReply send failed', { status, data, sid: sids?.quickReplySid });
+                }
+              }
+              if (sids?.listPickerSid) {
+                try {
+                  await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid });
+                } catch (e) {
+                  const status = e?.response?.status;
+                  const data = e?.response?.data;
+                  console.warn('[welcome] listPicker send failed', { status, data, sid: sids?.listPickerSid });
+                }
+              }
       } catch (e) {
         // 4) Plain-text fallback if template orchestration failed before we could try any send
         // Enriched logging: show Twilio status/body when available
