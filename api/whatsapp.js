@@ -7,6 +7,21 @@ const path = require('path');
 const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
+// ---------- State helper shim (global & hoisted) ----------
+// Some branches still call getUserState(...). Provide a safe delegate so
+// those paths never crash. If your DB helper exists, we delegate to it.
+// (typeof on an undeclared identifier is safe in Node.)
+if (typeof getUserState === 'undefined') {
+  async function getUserState(from) {
+    try {
+      if (typeof getUserStateFromDB === 'function') {
+        return await getUserStateFromDB(from);
+      }
+    } catch (_) {}
+    return null; // default: no state
+  }
+}
+
 // ------------------------------------------------------------
 // Bootstrap guard: guarantee a reset detector exists even if
 // later edits move/rename the canonical function.
@@ -63,9 +78,10 @@ function isResetMessage(text) {
 }
 
 
+
 // ------------------------------------------------------------
 // Cross-language greeting detection (exact-match tokens)
-// + normalization so messages like “नमस्ते​” (with zero-width char) still match
+// (Set already present below; we add normalization + guarded matcher)
 // ------------------------------------------------------------
 const GREETING_TOKENS = new Set([
   // English / Latin
@@ -95,10 +111,12 @@ function _normalizeForGreeting(text) {
     .trim()
     .toLowerCase();
 }
-function _isGreeting(text) {
-  const t = _normalizeForGreeting(text);
-  if (!t) return false;
-  return GREETING_TOKENS.has(t);
+
+if (typeof _isGreeting !== 'function') {
+  function _isGreeting(text) {
+    const t = _normalizeForGreeting(text);
+    return t ? GREETING_TOKENS.has(t) : false;
+  }
 }
 
 // Defensive guard: ensure safeTrackResponseTime exists before any usage
@@ -9232,10 +9250,10 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     
     // 2. Get current user state        
     console.log(`[${requestId}] Checking state for ${From} in database...`);
-      // Use the DB-backed helper; avoids ReferenceError and aligns with other state calls
+      // Use the DB-backed helper; avoids ReferenceError and aligns with other state calls            
       const currentState = (typeof getUserStateFromDB === 'function')
-        ? await getUserStateFromDB(From)
-        : null;
+          ? await getUserStateFromDB(From)
+          : await getUserState(From); // fallback to shim if needed
     console.log(`[${requestId}] Current state for ${From}:`, currentState ? currentState.mode : 'none');
     
     // 3. Handle based on current state
