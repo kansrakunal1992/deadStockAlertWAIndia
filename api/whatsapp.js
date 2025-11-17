@@ -38,7 +38,8 @@ const languageNames = {
   'en': 'English'
 };
 
-// ---- Static UX labels for critical fallbacks (Option A) ---------------------
+
+// ---- Static UX labels for critical fallbacks (Option A) --------------------
 // Keep these strings ultra-concise and language-native. Extend per language as needed.
 const STATIC_LABELS = {
   ack: {
@@ -60,7 +61,38 @@ const STATIC_LABELS = {
     kn: 'ಸಂದರ್ಬ ಬದಲಿಸಲು ಅಥವಾ ಸಾರಾಂಶಕ್ಕಾಗಿ “mode” ಎಂದು ಟೈಪ್ ಮಾಡಿ.',
     mr: 'संदर्भ बदलण्यासाठी किंवा सारांश विचारण्यासाठी “mode” टाइप करा.',
     gu: 'સંદર્ભ બદલવા અથવા સારાંશ માગવા “mode” ટાઈપ કરો.'
-  }
+  },   
+  // --- Localized captions for interactive buttons (used in onboarding text too)
+    startTrialBtn: {
+      en: 'Start Trial',
+      hi: 'ट्रायल शुरू करें',
+      bn: 'ট্রায়াল শুরু করুন',
+      ta: 'ட்ரயல் தொடங்கவும்',
+      te: 'ట్రయల్ ప్రారంభించండి',
+      kn: 'ಟ್ರಯಲ್ ಪ್ರಾರಂಭಿಸಿ',
+      mr: 'ट्रायल सुरू करा',
+      gu: 'ટ્રાયલ શરૂ કરો'
+    },
+    demoBtn: {
+      en: 'Demo',
+      hi: 'डेमो',
+      bn: 'ডেমো',
+      ta: 'டெமோ',
+      te: 'డెమో',
+      kn: 'ಡೆಮೊ',
+      mr: 'डेमो',
+      gu: 'ડેમો'
+    },
+    helpBtn: {
+      en: 'Help',
+      hi: 'मदद',
+      bn: 'সহায়তা',
+      ta: 'உதவி',
+      te: 'సహాయం',
+      kn: 'ಸಹಾಯ',
+      mr: 'मदत',
+      gu: 'મદદ'
+    }
 };
 function getStaticLabel(key, lang) {
   const lc = String(lang || 'en').toLowerCase();
@@ -649,9 +681,18 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
              const ONBOARDING_QR_SID = String(process.env.ONBOARDING_QR_SID || '').trim();
                                           
             // 0) INTRO (AI onboarding benefits) — FIRST
-                try {
-                  const introText = await t(await composeAIOnboarding(detectedLanguage), detectedLanguage ?? 'en', 'welcome-intro');
-                  await sendMessageQueued(From, introText);
+                try {                                  
+                  // Compose then translate intro
+                        let introText = await t(
+                          await composeAIOnboarding(detectedLanguage),
+                          detectedLanguage ?? 'en',
+                          'welcome-intro'
+                        );
+                        // Replace hardcoded "Start Trial" with the actual localized button label
+                        // so the onboarding copy matches the buttons the user sees.
+                        const startTrialLabel = getStaticLabel('startTrialBtn', detectedLanguage);
+                        introText = introText.replace(/"Start Trial"/g, `"${startTrialLabel}"`);
+                        await sendMessageQueued(From, introText);
                   await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
                 } catch (e) {
                   console.warn('[welcome] intro send failed', { message: e?.message });
