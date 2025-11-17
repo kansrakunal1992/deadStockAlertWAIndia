@@ -5,6 +5,8 @@ const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const fs = require('fs');
 const crypto = require('crypto');
+// Add this at the top of the file after the imports
+const path = require('path');
 // Defensive guard: ensure safeTrackResponseTime exists before any usage
 // even if bundling or conditional blocks load differently.
 let __safeTrackDefined = false;
@@ -746,6 +748,7 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
                       NO_FOOTER_MARKER + await t(ctaText, detectedLanguage ?? 'en', 'welcome-gate')
                     );
              }
+        try { markWelcomed(toNumber); } catch {}
              return; // still skip menus until activation
            }
          
@@ -785,6 +788,7 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
         const fhText  = await t(fhLabel, detectedLanguage ?? 'en', 'welcome-fallback');
         await sendMessageQueued(From, fhText);
       }
+  try { markWelcomed(toNumber); } catch {}
 }
 
 // Replace English labels with "native (English)" anywhere they appear
@@ -1299,6 +1303,59 @@ function getTrialCtaText(lang) {
   }
 }
 
+// ===== Welcome/Onboarding session controls (new) =====
+const WELCOME_SESSION_MINUTES = Number(process.env.WELCOME_SESSION_MINUTES ?? 15);
+const WELCOME_ONCE_PER_SESSION = String(process.env.WELCOME_ONCE_PER_SESSION ?? 'true').toLowerCase() === 'true';
+const WELCOME_TRACK_FILE = path.join(__dirname, 'welcome_session_tracker.json');
+
+function readWelcomeTracker() {
+  try {
+    if (!fs.existsSync(WELCOME_TRACK_FILE)) return {};
+    return JSON.parse(fs.readFileSync(WELCOME_TRACK_FILE, 'utf8'));
+  } catch { return {}; }
+}
+function writeWelcomeTracker(state) {
+  try {
+    fs.writeFileSync(WELCOME_TRACK_FILE, JSON.stringify(state, null, 2));
+    return true;
+  } catch { return false; }
+}
+function getLastWelcomedISO(shopId) {
+  const state = readWelcomeTracker();
+  return state[shopId] ?? null;
+}
+function markWelcomed(shopId, whenISO = new Date().toISOString()) {
+  const state = readWelcomeTracker();
+  state[shopId] = whenISO;
+  writeWelcomeTracker(state);
+}
+function _isGreeting(text) {
+  return (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i).test(String(text ?? ''));
+}
+function _isLanguageChoice(text) {
+  try {
+    const t = String(text ?? '').trim();
+    if (!t) return false;
+    // use existing token matcher if available
+    if (typeof _matchLanguageToken === 'function') return !!_matchLanguageToken(t);
+    // fallback: common words
+    return (/^\s*(english|hindi|marathi|gujarati|bengali|tamil|telugu|kannada)\s*$/i).test(t);
+  } catch { return false; }
+}
+async function shouldWelcomeNow(shopId, text) {
+  // Rule 1: first-ever message → welcome
+  const last = getLastWelcomedISO(shopId);
+  if (!last) return true;
+  // Rule 2: only on greeting/language taps after session window
+  if (!WELCOME_ONCE_PER_SESSION) {
+    return _isGreeting(text) || _isLanguageChoice(text);
+  }
+  const diffMs = Date.now() - new Date(last).getTime();
+  const withinSession = diffMs < (WELCOME_SESSION_MINUTES * 60 * 1000);
+  if (withinSession) return false;
+  return _isGreeting(text) || _isLanguageChoice(text);
+}
+
 // Single-script sanitizer: if lang != 'en', drop Latin-only transliteration blocks;
 // if lang == 'en', drop non-Latin blocks. Heuristic keeps ₹ and punctuation.
 function enforceSingleScript(out, lang) {
@@ -1626,8 +1683,7 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
   return { allow: true, language: lang, upsellReason: 'none' };
 }
 
-// Add this at the top of the file after the imports
-const path = require('path');
+
 
 // DB-backed memory helpers (Airtable via database.js)
 const { appendTurn, getRecentTurns, inferTopic } = require('../database');
@@ -3060,13 +3116,28 @@ function _norm(s) { return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,''
 async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();    
+  const shopId = String(From).replace('whatsapp:', '');
   // NEW: record activity (touch LastUsed) for every inbound
   try { await touchUserLastUsed(String(From).replace('whatsapp:', '')); } catch {}    
   // NEW: gate for paywall/onboarding    
-  const gate = await ensureAccessOrOnboard(From, rawBody, detectedLanguage);        
-    // Send ack for non-question messages only (see Enhancement D)
-      const isQuestion = /\?\s*$/.test(text);
-      if (!isQuestion) {
+  const gate = await ensureAccessOrOnboard(From, rawBody, detectedLanguage);                  
+      // Send ack for non-question messages only (see Enhancement D)
+        // Stronger question detection for Indian-language Qs
+        const isQuestion =
+          /\?\s*$/.test(text) ||
+          /\b(price|cost|charges?)\b/i.test(text) ||
+          /(\bकीमत\b|\bमूल्य\b|\bलागत\b|\bकितना\b|\bक्यों\b|\bकैसे\b)/i.test(text);      
+        // ====== Welcome/Onboarding FIRST for the very first inbound or explicit language tap/greeting ======
+          // Ensures your ad-landing users see welcome on their first message (language tap or "hi/hello/नमस्ते").
+          try {
+            if (await shouldWelcomeNow(shopId, text)) {
+              await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+              handledRequests.add(requestId); // avoid duplicate replies on this turn
+              return true;
+            }
+          } catch { /* best-effort */ }
+        
+          if (!isQuestion) {
         try { await sendMessageQueued(From, await t('Processing your message…', detectedLanguage, `${requestId}::ack`)); } catch {}
       }
     if (gate && gate.allow === false) {
@@ -3075,7 +3146,17 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
       safeTrackResponseTime(startTime, requestId);
       return true;
     }
-    
+      
+    // ====== Q&A FIRST for new/unactivated users (pricing/benefits), post-welcome ======
+      // If user is unactivated and asks a question, answer via AI Sales Q&A instead of re-sending onboarding.
+      if (isQuestion && gate && (gate.upsellReason === 'new_user' || gate.upsellReason === 'trial_ended')) {
+        const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
+        const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa-first`);
+        await sendMessageQueued(From, msg);
+        handledRequests.add(requestId);
+        return true;
+      }
+  
   if (isResetMessage(text)) {
       await clearUserState(From);
       await sendMessageQueued(
@@ -3105,9 +3186,6 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
       await scheduleUpsell(gate?.upsellReason);
       return true;
     }
-  
-  
-  const shopId = From.replace('whatsapp:', '');
   
 // Fallback: if an interactive list id leaked into Body, map it to command
   {
@@ -3192,22 +3270,25 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
 // Greeting -> concise, actionable welcome (single-script friendly)
     
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
-    await sendWelcomeFlowLocalized(From, detectedLanguage || 'en');      
-    // Mark this request as handled to avoid duplicate onboarding & parse-error afterwards
-    handledRequests.add(requestId);
-    try { await scheduleUpsell(gate?.upsellReason); } catch (_) {}
-    return true;
-   }
+    if (await shouldWelcomeNow(shopId, text)) {
+      await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+      handledRequests.add(requestId);
+      return true;
+    }
+    // If we've welcomed recently in this session, fall through to Q&A/other handlers
+  }
   
 
   // ---- Localized one-word switch handler (open options or set directly) ----
   {
     const switchCmd = parseModeSwitchLocalized(text);
     if (switchCmd) {
-      if (switchCmd.ask) {
-        await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
-        await scheduleUpsell(gate?.upsellReason);
-        return true;
+      if (switchCmd.ask) {                
+          if (await shouldWelcomeNow(shopId, text)) {
+                    await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+                    return true;
+                  }
+                  // If welcome was shown recently, do nothing here; fall through to other handlers.
       }
       if (switchCmd.set) {
         await setStickyMode(From, switchCmd.set);
@@ -3216,7 +3297,6 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
           await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`),
           detectedLanguage
         );
-        await scheduleUpsell(gate?.upsellReason);
         return true;
       }
     }
