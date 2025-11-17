@@ -8,6 +8,26 @@ const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
 // ------------------------------------------------------------
+// Bootstrap guard: guarantee a reset detector exists even if
+// later edits move/rename the canonical function.
+// ------------------------------------------------------------
+/* eslint-disable no-inner-declarations */
+if (typeof isResetMessage === 'undefined') {
+  function isResetMessage(text) {
+    const FALLBACK = ['reset','start over','restart','cancel','exit','stop'];
+    const t = String(text ?? '').trim().toLowerCase();
+    return t && FALLBACK.includes(t);
+  }
+}
+/* eslint-enable no-inner-declarations */
+
+// ------------------------------------------------------------
+// Canonical RESET tokens + HOISTED detector
+// ------------------------------------------------------------
+// Keep English + Indic synonyms so users can bail out of any flow.
+// IMPORTANT: hoisted declaration so ALL early call sites are safe.
+
+// ------------------------------------------------------------
 // Global RESET commands + detector (shared)
 // ------------------------------------------------------------
 // Keep both English & common Hindi/Indic synonyms so users can bail out of any flow.
@@ -28,6 +48,19 @@ const RESET_COMMANDS = [
   // Gujarati
   'રીસેટ','રદ','બંધ'
 ];
+
+function isResetMessage(text) {
+  const t = String(text ?? '').trim();
+  if (!t) return false;
+  return RESET_COMMANDS.some(cmd => {
+    try {
+      const re = new RegExp(`^\\s*${cmd}\\s*$`, 'i');
+      return re.test(t);
+    } catch {
+      return t.toLowerCase() === String(cmd).toLowerCase();
+    }
+  });
+}
 
 // ------------------------------------------------------------
 // Cross-language greeting detection (exact-match tokens)
