@@ -8768,14 +8768,22 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     }
 
     
-    // NEW USER: send welcome + trial CTA immediately, then end
-        if (authCheck.upsellReason === 'new_user') {
-          const detectedLanguage = await detectLanguageWithFallback(Body || 'hello', From, requestId);
-          await sendWelcomeFlowLocalized(From, detectedLanguage);
-          const onboarding = await t(await composeAIOnboarding(detectedLanguage), detectedLanguage, `${requestId}::onboard`);
-          await sendMessageViaAPI(From, onboarding);
-          res.send('<Response></Response>');
-          return;
+    // NEW USER: send welcome (intro + buttons) once, then end
+        if (authCheck.upsellReason === 'new_user') {          
+        const detectedLanguage = await detectLanguageWithFallback(Body /* or */ 'hello', From, requestId);
+            // Send the welcome flow ONCE (intro first, then interactive buttons)
+            await sendWelcomeFlowLocalized(From, detectedLanguage, requestId);
+            // Mark this request handled so no generic parse-error or duplicate onboarding is sent
+            try { handledRequests.add(requestId); } catch (_) {}
+            // Minimal TwiML ack to keep Twilio happy; avoid extra visible text here
+            try {
+              const twiml = new twilio.twiml.MessagingResponse();
+              twiml.message('');
+              res.type('text/xml').send(twiml.toString());
+            } catch (_) {
+              res.status(200).end();
+            }
+            return;
         }
     
         // TRIAL ENDED: gentle paywall prompt and end
