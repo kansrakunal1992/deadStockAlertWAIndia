@@ -8958,17 +8958,42 @@ async function handleRequest(req, res, response, requestId, requestStart) {
       await sendAuthSuccessResponse(From, authCheck.user, requestId);
       res.send('<Response></Response>');
       return;
-    }
-
+    }        
+        
+    // NEW USER: route smartly → Q&A for questions; Welcome for greeting/language picks
+        if (authCheck.upsellReason === 'new_user') {
+          const detectedLanguage = await detectLanguageWithFallback(Body ?? 'hello', From, requestId);
+          const text = String(Body ?? '').trim();
+          const isQuestion =
+            /\?\s*$/.test(text) ||
+            /\b(price|cost|charges?)\b/i.test(text) ||
+            /(\bक़ीमत\b|\bमूल्य\b|\bलागत\b|\bकितना\b|\bक्यों\b|\bकैसे\b)/i.test(text);
+          const isGreetingOrLang =
+            /^(\s*hello|\s*hi|\s*hey|\s*namaste|\s*vanakkam|\s*namaskar|\s*hola|\s*hallo)\s*$/i.test(text) ||
+            (typeof _isLanguageChoice === 'function' ? _isLanguageChoice(text) : false);
     
-    // NEW USER: send welcome (intro + buttons) once, then end
-        if (authCheck.upsellReason === 'new_user') {          
-        const detectedLanguage = await detectLanguageWithFallback(Body || 'hello', From, requestId);
-            // Send the welcome flow ONCE (intro first, then interactive buttons)
+          if (isQuestion) {
+            // Answer first via sales‑QA (qa‑sales mode)
+            try {
+              console.log('[route] new_user + question → sales-qa');
+              const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
+              const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa-first`);
+              await sendMessageQueued(From, msg);
+              handledRequests.add(requestId);
+              const twiml = new twilio.twiml.MessagingResponse();
+              twiml.message('');
+              res.type('text/xml').send(twiml.toString());
+              return;
+            } catch (e) {
+              console.warn('[route] sales-qa failed, falling back to welcome:', e?.message);
+              // fall-through to welcome below
+            }
+          }
+          // Show concise onboarding only for greeting/language taps
+          if (isGreetingOrLang) {
+            console.log('[route] new_user + greeting/lang → onboarding');
             await sendWelcomeFlowLocalized(From, detectedLanguage, requestId);
-            // Mark this request handled so no generic parse-error or duplicate onboarding is sent
             try { handledRequests.add(requestId); } catch (_) {}
-            // Minimal TwiML ack to keep Twilio happy; avoid extra visible text here
             try {
               const twiml = new twilio.twiml.MessagingResponse();
               twiml.message('');
@@ -8977,6 +9002,9 @@ async function handleRequest(req, res, response, requestId, requestStart) {
               res.status(200).end();
             }
             return;
+          }
+          // Neither a question nor greeting/lang: let downstream normal routers handle it.
+          console.log('[route] new_user + other text → defer to normal handlers');
         }
     
         // TRIAL ENDED: gentle paywall prompt and end
