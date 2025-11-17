@@ -392,8 +392,12 @@ async function setStickyMode(from, actionOrWord) {
 
 // ===== LOCALIZED FOOTER TAG: append «<MODE_BADGE> • <SWITCH_WORD>» to every message =====
 async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
-  try {
-        
+  try {        
+    // Marker to opt-out of footer for specific messages (onboarding/upsell)
+        const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+        if (String(text).startsWith(NO_FOOTER_MARKER)) {
+          return String(text).slice(NO_FOOTER_MARKER.length);
+        }
     // Guard: if footer already present, do not append again
     if (/«.+\s•\s.+»$/.test(text)) return text;
 
@@ -691,8 +695,10 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
                         // Replace hardcoded "Start Trial" with the actual localized button label
                         // so the onboarding copy matches the buttons the user sees.
                         const startTrialLabel = getStaticLabel('startTrialBtn', detectedLanguage);
-                        introText = introText.replace(/"Start Trial"/g, `"${startTrialLabel}"`);
-                        await sendMessageQueued(From, introText);
+                        introText = introText.replace(/"Start Trial"/g, `"${startTrialLabel}"`);                                                
+                        // Suppress footer for onboarding promo
+                            const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+                            await sendMessageQueued(From, NO_FOOTER_MARKER + introText);
                   await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
                 } catch (e) {
                   console.warn('[welcome] intro send failed', { message: e?.message });
@@ -732,8 +738,13 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
              // 3) Text fallback if neither option worked
              if (!sent) {                               
                 // If buttons couldn't be sent, still send a compact CTA AFTER intro
-                      const ctaText = getTrialCtaText(detectedLanguage ?? 'en');
-                      await sendMessageQueued(From, await t(ctaText, detectedLanguage ?? 'en', 'welcome-gate'));
+                      const ctaText = getTrialCtaText(detectedLanguage ?? 'en');                                     
+                // Suppress footer for trial CTA text fallback
+                    const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+                    await sendMessageQueued(
+                      From,
+                      NO_FOOTER_MARKER + await t(ctaText, detectedLanguage ?? 'en', 'welcome-gate')
+                    );
              }
              return; // still skip menus until activation
            }
@@ -1258,6 +1269,7 @@ const PAYTM_NUMBER = String(process.env.PAYTM_NUMBER ?? '9013283687');
 const PAYTM_NAME   = String(process.env.PAYTM_NAME   ?? 'Kunal Kansra');
 const TRIAL_DAYS   = Number(process.env.TRIAL_DAYS   ?? 3);
 const PAID_PRICE_INR = Number(process.env.PAID_PRICE_INR ?? 11);
+const INLINE_PAYTM_IN_PRICING = String(process.env.INLINE_PAYTM_IN_PRICING ?? 'false').toLowerCase() === 'true';
 const WHATSAPP_LINK = String(process.env.WHATSAPP_LINK ?? '<whatsapp_link>');
 const PAYMENT_LINK  = String(process.env.PAYMENT_LINK  ?? '<payment_link>');
 
@@ -1538,7 +1550,19 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
       }
     );               
     let out = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
-    out = ensureLanguageOrFallback(out, lang);
+    out = ensureLanguageOrFallback(out, lang);        
+    // Optional: add Paytm inline when user explicitly asks price/cost
+        try {
+          const q = String(question || '').toLowerCase();
+          const askedPrice =
+            /(?:price|cost|charges?)/.test(q) ||
+            /(?:कितनी\s*लागत|क़ीमत|मूल्य|कितना|दाम)/.test(q);
+          if (INLINE_PAYTM_IN_PRICING && askedPrice) {
+            // Keep it short and language-neutral (numbers/brand names OK in single-script output)
+            const line = `\nPaytm → ${PAYTM_NUMBER} (${PAYTM_NAME})`;
+            out = out + line;
+          }
+        } catch (_) { /* no-op */ }
     console.log('AI_AGENT_POST_CALL', { kind: 'sales-qa', ok: !!out, length: out?.length || 0 });
     return out;
   } catch {
@@ -2059,7 +2083,7 @@ const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 // ===== AI Debounce (per shop) =====
 const aiDebounce = new Map(); // shopId -> { timer, lastText, lastLang, lastReqId }
-const AI_DEBOUNCE_MS = Number(process.env.AI_DEBOUNCE_MS || 1800);
+const AI_DEBOUNCE_MS = Number(process.env.AI_DEBOUNCE_MS ?? 0);
 function scheduleAiAnswer(shopId, From, text, lang, requestId) {
   const key = shopId;
   const prev = aiDebounce.get(key);
@@ -3039,9 +3063,12 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   // NEW: record activity (touch LastUsed) for every inbound
   try { await touchUserLastUsed(String(From).replace('whatsapp:', '')); } catch {}    
   // NEW: gate for paywall/onboarding    
-  const gate = await ensureAccessOrOnboard(From, rawBody, detectedLanguage);
-    // Text-only ack, serialized, never blocks main flow
-    try { await sendMessageQueued(From, await t('Processing your message…', detectedLanguage, `${requestId}::ack`)); } catch {}
+  const gate = await ensureAccessOrOnboard(From, rawBody, detectedLanguage);        
+    // Send ack for non-question messages only (see Enhancement D)
+      const isQuestion = /\?\s*$/.test(text);
+      if (!isQuestion) {
+        try { await sendMessageQueued(From, await t('Processing your message…', detectedLanguage, `${requestId}::ack`)); } catch {}
+      }
     if (gate && gate.allow === false) {
       // truly blocked (deactivated/blacklisted)
       await sendMessageQueued(From, await t('Your access is currently restricted. Please contact support.', detectedLanguage, `${requestId}::blocked`));
@@ -3111,38 +3138,47 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
             if (requestId && handledRequests.has(requestId)) {
               return;
             }
-        if (!reason || reason === 'none' || gate?.suppressUpsell) return;
+        if (!reason || reason === 'none' || gate?.suppressUpsell) return;                
+        // Footer suppression marker (read by tagWithLocalizedMode)
+        const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
         let body;
-        switch (reason) {
-          case 'new_user':
-            body = await t(await composeAIOnboarding(detectedLanguage), detectedLanguage, `${requestId}::up-new`);                       
-            // We already send the intro in sendWelcomeFlowLocalized; avoid re-sending here
-            return;
-            break;
-          case 'trial_ended':
-          case 'inactive':
-            body = await t(
-              `To continue, pay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nOr pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`,
-              detectedLanguage, `${requestId}::up-pay`
-            );
-            break;
-          case 'paid_verification_failed':
-            body = await t(`We couldn't verify your payment yet. Please try again or contact support.`, detectedLanguage, `${requestId}::up-paid-fail`);
-            break;
-          case 'trial_started':
-          case 'paid_confirmed':
-          default:
-            return; // no upsell needed
-        }
-        await sendMessageQueued(From, body);
+        switch (reason) {                                                  
+            // ENHANCEMENT A: do not compose or send onboarding again for these cases
+                    case 'new_user':
+                    case 'trial_started':
+                    case 'paid_confirmed':
+                      return; // short-circuit: onboarding already handled elsewhere
+            
+                    case 'trial_ended':
+                    case 'inactive':
+                      body = await t(
+                        `To continue, pay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})
+            Or pay at: ${PAYMENT_LINK}
+            Reply "paid" after payment ✅`,
+                        detectedLanguage, `${requestId}::up-pay`
+                      );
+                      break;
+                    case 'paid_verification_failed':
+                      body = await t(
+                        `We couldn't verify your payment yet. Please try again or contact support.`,
+                        detectedLanguage, `${requestId}::up-paid-fail`
+                      );
+                      break;
+                    default:
+                      return; // no upsell needed
+        }              
+      await sendMessageQueued(From, NO_FOOTER_MARKER + body);
       } catch (e) { console.warn('[upsell] failed:', e?.message); }
     }
   
     try {     
-      // NEW: Smart sales Q&A for non-transaction, question-like prompts (benefits/clarifications)            
-      if (!looksLikeTransaction(text) && /\?\s*$/.test(text)) {
+      // NEW: Smart sales Q&A for non-transaction, question-like prompts (benefits/clarifications)                        
+      if (!looksLikeTransaction(text) && isQuestion) {
           const shopId = String(From).replace('whatsapp:', '');
-          scheduleAiAnswer(shopId, From, text, detectedLanguage, requestId);
+          const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
+          const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa`);
+          await sendMessageQueued(From, msg);
+          handledRequests.add(requestId); // avoid any late parse-error or duplicate onboarding
           await scheduleUpsell(gate?.upsellReason);
           return true;
         }
