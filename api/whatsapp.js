@@ -5,6 +5,17 @@ const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const fs = require('fs');
 const crypto = require('crypto');
+// Defensive guard: ensure safeTrackResponseTime exists before any usage
+// even if bundling or conditional blocks load differently.
+let __safeTrackDefined = false;
+try {
+  if (typeof safeTrackResponseTime === 'function') {
+    __safeTrackDefined = true;
+  }
+} catch (_) {}
+if (!__safeTrackDefined) {
+  function safeTrackResponseTime(startTime, requestId) { try { trackResponseTime(startTime, requestId); } catch (_) {} }
+}
 // Performance tracking
 const responseTimes = {
   total: 0,
@@ -641,6 +652,7 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
                 try {
                   const introText = await t(await composeAIOnboarding(detectedLanguage), detectedLanguage ?? 'en', 'welcome-intro');
                   await sendMessageQueued(From, introText);
+                  await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
                 } catch (e) {
                   console.warn('[welcome] intro send failed', { message: e?.message });
                 }
@@ -3052,12 +3064,19 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     
   // —helper: schedule upsell after we send any main message
     async function scheduleUpsell(reason) {
-      try {
+      try {                
+        // If this request has already been handled (e.g., we sent onboarding),
+            // do NOT send another onboarding via upsell.
+            if (requestId && handledRequests.has(requestId)) {
+              return;
+            }
         if (!reason || reason === 'none' || gate?.suppressUpsell) return;
         let body;
         switch (reason) {
           case 'new_user':
-            body = await t(await composeAIOnboarding(detectedLanguage), detectedLanguage, `${requestId}::up-new`);
+            body = await t(await composeAIOnboarding(detectedLanguage), detectedLanguage, `${requestId}::up-new`);                       
+            // We already send the intro in sendWelcomeFlowLocalized; avoid re-sending here
+            return;
             break;
           case 'trial_ended':
           case 'inactive':
@@ -3096,7 +3115,9 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
 // Greeting -> concise, actionable welcome (single-script friendly)
     
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
-    await sendWelcomeFlowLocalized(From, detectedLanguage || 'en');
+    await sendWelcomeFlowLocalized(From, detectedLanguage || 'en');      
+    // Mark this request as handled to avoid duplicate onboarding & parse-error afterwards
+    handledRequests.add(requestId);
     try { await scheduleUpsell(gate?.upsellReason); } catch (_) {}
     return true;
    }
@@ -3660,7 +3681,9 @@ try{
 // NEW (2.g): Greeting -> show purchase examples incl. expiry
     
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
-    await sendWelcomeFlowLocalized(From, detectedLanguage || 'en');
+    await sendWelcomeFlowLocalized(From, detectedLanguage || 'en');        
+    // Mark this request as handled to avoid duplicate onboarding & parse-error afterwards
+    handledRequests.add(requestId);
     try { await scheduleUpsell(gate?.upsellReason); } catch (_) {}
     return true;
    }
