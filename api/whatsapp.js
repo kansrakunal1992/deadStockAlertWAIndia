@@ -62,8 +62,10 @@ function isResetMessage(text) {
   });
 }
 
+
 // ------------------------------------------------------------
 // Cross-language greeting detection (exact-match tokens)
+// + normalization so messages like “नमस्ते​” (with zero-width char) still match
 // ------------------------------------------------------------
 const GREETING_TOKENS = new Set([
   // English / Latin
@@ -84,8 +86,17 @@ const GREETING_TOKENS = new Set([
   'hola', 'hallo'
 ]);
 
+// Normalize away zero-widths/punctuations; keep letters/numbers/spaces
+function _normalizeForGreeting(text) {
+  return String(text ?? '')
+    .normalize('NFC')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')     // zero-width chars
+    .replace(/[^\p{L}\p{N}\s]/gu, '')          // punctuation & symbols
+    .trim()
+    .toLowerCase();
+}
 function _isGreeting(text) {
-  const t = String(text ?? '').trim().toLowerCase();
+  const t = _normalizeForGreeting(text);
   if (!t) return false;
   return GREETING_TOKENS.has(t);
 }
@@ -9219,9 +9230,12 @@ async function handleRequest(req, res, response, requestId, requestStart) {
       return;
     }
     
-    // 2. Get current user state
+    // 2. Get current user state        
     console.log(`[${requestId}] Checking state for ${From} in database...`);
-    const currentState = await getUserState(From);
+      // Use the DB-backed helper; avoids ReferenceError and aligns with other state calls
+      const currentState = (typeof getUserStateFromDB === 'function')
+        ? await getUserStateFromDB(From)
+        : null;
     console.log(`[${requestId}] Current state for ${From}:`, currentState ? currentState.mode : 'none');
     
     // 3. Handle based on current state
