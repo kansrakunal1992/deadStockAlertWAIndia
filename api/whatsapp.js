@@ -132,7 +132,18 @@ function isResetMessage(text) {
   });
 }
 
-
+// --- Question intent detector ---
+function looksLikeQuestion(text, lang = 'en') {
+  const t = String(text || '').trim().toLowerCase();
+  if (!t) return false;
+  // Basic punctuation check
+  if (/\?\s*$/.test(t)) return true;
+  // English keywords
+  if (/\b(price|cost|benefit|advantage|how|why|charges?)\b/.test(t)) return true;
+  // Hindi/Indic keywords
+  if (/\b(कीमत|मूल्य|लागत|कितना|दाम|क्यों|कैसे)\b/.test(t)) return true;
+  return false;
+}
 
 // ------------------------------------------------------------
 // Cross-language greeting detection (exact-match tokens)
@@ -2486,9 +2497,11 @@ function scheduleAiAnswer(shopId, From, text, lang, requestId) {
     lastText: text, lastLang: lang, lastReqId: requestId,
     timer: setTimeout(async () => {
       try {                
-        const last = aiDebounce.get(key);
-        const ans  = await composeAISalesAnswer(shopId, last.lastText, last.lastLang);
-        const msg  = await t(ans, last.lastLang, `${last.lastReqId}::sales-qa-debounced`);
+        const last = aiDebounce.get(key);                
+        const ans = await composeAISalesAnswer(shopId, last.lastText, last.lastLang);
+        // Keep user's script preference and Nativeglish
+        const m0  = await tx(ans, last.lastLang, `whatsapp:${shopId}`, last.lastText, `${last.lastReqId}::sales-qa-debounced`);
+        const msg = nativeglishWrap(m0, last.lastLang);
         await sendMessageQueued(From, msg);                
         // Store the turn in DB
         try { await appendTurn(shopId, last.lastText, msg, inferTopic(last.lastText)); } catch (_) {}
@@ -2553,6 +2566,106 @@ const regexPatterns = {
   lineBreaks: /\r?\n|[•\u2022]/g
  };
 
+// ===== Script, Language & "Nativeglish" helpers =====
+function _hasDevanagari(s) { return /[\u0900-\u097F]/.test(s); }
+function _hasBengali(s)    { return /[\u0980-\u09FF]/.test(s); }
+function _hasTamil(s)      { return /[\u0B80-\u0BFF]/.test(s); }
+function _hasTelugu(s)     { return /[\u0C00-\u0C7F]/.test(s); }
+function _hasKannada(s)    { return /[\u0C80-\u0CFF]/.test(s); }
+function _hasGujarati(s)   { return /[\u0A80-\u0AFF]/.test(s); }
+// Marathi uses Devanagari
+
+// Return true if user's text is romanized for the target language (so reply should be roman)
+function preferRomanFor(lang, sourceText) {
+  const t = String(sourceText || '').trim();
+  if (!t) return false;
+  const lc = String(lang || 'en').toLowerCase();
+  switch (lc) {
+    case 'hi':
+    case 'mr': return !_hasDevanagari(t);
+    case 'bn': return !_hasBengali(t);
+    case 'ta': return !_hasTamil(t);
+    case 'te': return !_hasTelugu(t);
+    case 'kn': return !_hasKannada(t);
+    case 'gu': return !_hasGujarati(t);
+    default:   return false;
+  }
+}
+
+/**
+ * tx: Translation wrapper with script preservation (roman/native).
+ * If the user typed roman for lang, try `${lang}-Latn` first and fall back to `${lang}`.
+ */
+async function tx(message, lang, fromOrShopId, sourceText, cacheKey) {
+  const preferRoman = preferRomanFor(lang, sourceText);
+  try {
+    if (preferRoman) {
+      return await t(message, `${lang}-Latn`, cacheKey);
+    }
+    return await t(message, lang, cacheKey);
+  } catch (_) {
+    try { return await t(message, lang, cacheKey); } catch { return String(message); }
+  }
+}
+
+// "Nativeglish": keep helpful English anchors (units, brand words) in an otherwise localized string.
+function nativeglishWrap(text, lang) {
+  try {
+    const u = ['kg','kgs','g','ltr','l','ml','packet','packets','piece','pieces','₹','Rs','MRP'];
+    // ensure numerals and unit tokens remain Latin where helpful
+    let out = String(text ?? '');
+    u.forEach(tok => {
+      const rx = new RegExp(`\\b${tok}\\b`, 'gi');
+      out = out.replace(rx, tok); // normalize casing
+    });
+    return out;
+  } catch { return String(text ?? ''); }
+}
+
+// Looks-like-question detector (no "?" needed), across EN + common Indian langs (roman + native)
+function looksLikeQuestion(text, lang) {
+  const q = String(text || '').trim().toLowerCase();
+  if (!q) return false;
+  if (/[?？]$/.test(q)) return true;
+  const en = /(what|why|when|how|who|which|price|cost|charges?|benefit|pros|cons|compare|best)\b/;
+  const hi = /(kya|kaise|kyon|kyu|kab|kitna|daam|kimat|fayda|nuksan)\b|[क्या|कैसे|क्यों|कब|कितना|दाम|कीमत|फायदा|नुकसान]/;
+  const bn = /মূল্য|কীভাবে|কেন|কবে|কত|দাম/;
+  const ta = /எப்படி|ஏன்|எப்போது|எவ்வளவு|விலை/;
+  const te = /ఎలా|ఎందుకు|ఎప్పుడు|ఎంత|ధర/;
+  const kn = /ಹೇಗೆ|ಏಕೆ|ಯಾವಾಗ|ಎಷ್ಟು|ಬೆಲೆ/;
+  const gu = /કેમ|શા માટે|ક્યારે|કેટલું|ભાવ/;
+  return en.test(q) || hi.test(q) || bn.test(q) || ta.test(q) || te.test(q) || kn.test(q) || gu.test(q);
+}
+
+// Centralized minimal Help (new copy), localized + tagged with footer
+async function sendHelpMinimal(From, lang, requestId) {
+  const base = [
+    'Help:',
+    '• WhatsApp or call: +91-9013283687',
+    `• WhatsApp link: ="${WHATSAPP_LINK}"`
+  ].join('\n');
+  const msg = await tx(base, lang, From, 'help', `help-min-${requestId}`);
+  try {
+    const withTag = await tagWithLocalizedMode(From, msg, lang);
+    await sendMessageViaAPI(From, withTag);
+  } catch { await sendMessageViaAPI(From, msg); }
+}
+
+// Nativeglish demo: short, clear, localized with helpful English anchors
+async function sendNativeglishDemo(From, lang, requestId) {
+  const demo = [
+    '🎬 Demo (उदाहरण):',
+    '• sold milk 2 ltr — स्टॉक auto-update',
+    '• purchase Parle-G 12 packets ₹10 — exp +6m',
+    '• return 1 packet — instant add-back',
+    'Try: "short summary" / "छोटा सारांश"'
+  ].join('\n');
+  const msg = nativeglishWrap(await tx(demo, lang, From, demo, `demo-ng-${requestId}`), lang);
+  try {
+    const withTag = await tagWithLocalizedMode(From, msg, lang);
+    await sendMessageViaAPI(From, withTag);
+  } catch { await sendMessageViaAPI(From, msg); }
+}
   
 // STEP 11: Robust inbound sanitizer to drop UI badges & interactive echoes
 function sanitizeInbound(body, numMedia, interactive = {}) {
@@ -3513,7 +3626,9 @@ function _norm(s) { return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,''
 async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();    
-  const shopId = String(From).replace('whatsapp:', '');  
+  const shopId = String(From).replace('whatsapp:', '');   
+  // Robust question detection for *all* modes (no "?" required)
+  const isQuestion = looksLikeQuestion(text, detectedLanguage);
   
     // ===== STEP 14: "mode" keyword shows Purchase/Sale/Return buttons =====
     try {
@@ -3534,87 +3649,42 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
         return true;
       }
     } catch (_) {}
+          
+    // ==== UPDATED HELP (minimal) — text commands ====
+      try {
+        const HELP_ALIASES = [/^help$/i, /^मदद$/i, /^सहायता$/i];
+        const wantHelp = HELP_ALIASES.some(rx => rx.test(text));
+        if (wantHelp) {
+          let lang = String(detectedLanguage || 'en').toLowerCase();
+          try {
+            const pref = await getUserPreference(shopId);
+            if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+          } catch (_) {}
+          await sendHelpMinimal(From, lang, requestId);
+          handledRequests.add(requestId);
+          return true;
+        }
+      } catch (_) {}
   
-    // ===== STEP 15: "help" text should behave like Help button =====
-    try {
-      const HELP_ALIASES = [/^help$/i, /^मदद$/i, /^सहायता$/i];
-      const wantHelp = HELP_ALIASES.some(rx => rx.test(text));
-      if (wantHelp) {
-        let lang = String(detectedLanguage || 'en').toLowerCase();
-        try {
-          const pref = await getUserPreference(shopId);
-          if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-        } catch (_) {}
-        const helpEn = [
-          'Help:',
-          `• WhatsApp or call: +91-9013283687`,
-          `• WhatsApp link: ${WHATSAPP_LINK}`
-        ].join('\n');
-        const help = await t(helpEn, lang, `txt-help-${shopId}`);
-        await sendMessageViaAPI(From, help);
-        handledRequests.add(requestId);
-        return true;
-      }
-    } catch (_) {}
-  
-    // ===== STEP 16: "1 / 2 / 3" numeric onboarding actions (non-activated only) =====
-    try {
-      const NUMERIC = text.replace(/\s+/g, '');
-      if (NUMERIC === '1' || NUMERIC === '2' || NUMERIC === '3') {
-        // Only for non-activated users
-        let lang = String(detectedLanguage || 'en').toLowerCase();
-        let activated = false;
-        try {
-          const pref = await getUserPreference(shopId);
-          if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-          const plan = String(pref?.plan ?? '').toLowerCase();
-          activated = (plan === 'trial' || plan === 'paid');
-        } catch (_) {}
-        if (!activated) {
-          if (NUMERIC === '1') {
-            // Activate trial → then show menus
-            try {
-              const s = await startTrialForAuthUser(shopId, Number(process.env.TRIAL_DAYS ?? 3));
-              if (s?.success) {
-                const ok = await t(`🎉 Trial activated for ${process.env.TRIAL_DAYS ?? 3} days!`, lang, `txt-trial-ok-${shopId}`);
-                await sendMessageViaAPI(From, ok);
-                // Show QR + List menus (queued)
-                await ensureLangTemplates(lang);
-                const sids = getLangSids(lang) || {};
-                if (sids.quickReplySid) await sendContentTemplateQueuedOnce({ toWhatsApp: shopId, contentSid: sids.quickReplySid, requestId });
-                if (sids.listPickerSid) await sendContentTemplateQueuedOnce({ toWhatsApp: shopId, contentSid: sids.listPickerSid, requestId });
-              } else {
-                const no = await t('❗ Could not start trial. Please try again.', lang, `txt-trial-fail-${shopId}`);
-                await sendMessageViaAPI(From, no);
-              }
-            } catch (_) {
-              const no = await t('❗ Could not start trial. Please try again.', lang, `txt-trial-err-${shopId}`);
-              await sendMessageViaAPI(From, no);
-            }
-            handledRequests.add(requestId);
-            return true;
-          }
-          if (NUMERIC === '2') {
-            // Demo
-            await sendDemoTranscriptOnce(From, lang, `txt-demo-${shopId}`);
-            handledRequests.add(requestId);
-            return true;
-          }
-          if (NUMERIC === '3') {
-            // Help
-            const helpEn = [
-              'Help:',
-              `• WhatsApp or call: +91-9013283687`,
-              `• WhatsApp link: ${WHATSAPP_LINK}`
-            ].join('\n');
-            const help = await t(helpEn, lang, `txt-help3-${shopId}`);
-           await sendMessageViaAPI(From, help);
+    // ==== NUMERIC ONBOARDING TEXT: "3" → Help (minimal) for non-activated ====
+      try {
+        const NUM = text.replace(/\s+/g, '');
+        if (NUM === '3') {
+          let lang = String(detectedLanguage || 'en').toLowerCase();
+          let activated = false;
+          try {
+            const pref = await getUserPreference(shopId);
+            if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+            const plan = String(pref?.plan ?? '').toLowerCase();
+            activated = (plan === 'trial' || plan === 'paid');
+          } catch (_) {}
+          if (!activated) {
+            await sendHelpMinimal(From, lang, requestId);
             handledRequests.add(requestId);
             return true;
           }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
   
     // ===== STEP 17: Multilingual aliases for "short/full summary" =====
     try {
@@ -3679,15 +3749,17 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
              * even for new/unactivated users. This enables qa-sales mode reliably.
              */
             if (isQuestion) {
-              try {                               
+              try {
+                cancelAiDebounce(shopId); // reset any old pending answer
                 // STEP 5: Debounce Q&A if enabled (prevents duplicate/tail sends)
                       if (Number(process.env.AI_DEBOUNCE_MS ?? 0) > 0) {
                         scheduleAiAnswer(shopId, From, text, detectedLanguage, requestId);
                         handledRequests.add(requestId);
                         return true; // early exit; actual answer will be sent by the debounce timer
-                      }
+                      }                            
                 const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
-                const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa-first`);
+                const m0  = await tx(ans, detectedLanguage, From, text, `${requestId}::sales-qa-first`);
+                const msg = nativeglishWrap(m0, detectedLanguage);
                 await sendMessageQueued(From, msg);                              
                 // STEP 7: Persist turn (for parity with debounced path)
                       try {
@@ -3846,9 +3918,10 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
                 handledRequests.add(requestId);
                 return true; // early exit; debounce will send the answer
               }
-          const shopId = String(From).replace('whatsapp:', '');
+          const shopId = String(From).replace('whatsapp:', '');                   
           const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
-          const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa`);
+          const m0  = await tx(ans, detectedLanguage, From, text, `${requestId}::sales-qa`);
+          const msg = nativeglishWrap(m0, detectedLanguage);
           await sendMessageQueued(From, msg);                  
           // STEP 7: Persist turn (for parity with debounced path)
               try {
@@ -9471,6 +9544,23 @@ module.exports = async (req, res) => {
 
   // Language detection (also persists preference)
   const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);  
+  
+  // ===== Webhook: answer questions *in all modes* before inventory parse =====
+  try {
+    const sanitized = Body; // already sanitized above
+    if (looksLikeQuestion(sanitized, detectedLanguage)) {
+      await handleQuickQueryEN(sanitized, From, detectedLanguage, requestId);
+      const twiml = new twilio.twiml.MessagingResponse();
+      twiml.message('');
+      res.type('text/xml');
+      resp.safeSend(200, twiml.toString());
+      safeTrackResponseTime(requestStart, requestId);
+      return;
+    }
+  } catch (e) {
+    console.warn(`[${requestId}] pre-inventory Q&A handler error:`, e.message);
+    // Fall through to normal flow if anything goes wrong
+  }
     
   // --- C) Welcome first for new users with greeting/language ---
     try {
