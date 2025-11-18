@@ -13,6 +13,28 @@ const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 // ---------------------------------------------------------------------------
 // Handled/apology guard: track per-request success to prevent late apologies
 const handledRequests = new Set();            // <- used by parse-error & upsell schedulers
+// --- Defensive shim: provide a safe setUserState if not present (prevents runtime errors)
+if (typeof globalThis.setUserState !== 'function') {
+  globalThis.setUserState = async function setUserState(from, mode, data = {}) {
+    try {
+      console.warn('[shim] setUserState not available; skipping', { from, mode });
+    } catch (_) {}
+    return { success: false };
+  };
+}
+
+// --- Defensive shim: provide a safe getUserState if not present (used by some handlers)
+if (typeof globalThis.getUserState !== 'function') {
+  globalThis.getUserState = async function getUserState(from) {
+    try {
+      const shopId = String(from ?? '').replace('whatsapp:', '');
+      if (typeof getUserStateFromDB === 'function') {
+        return await getUserStateFromDB(shopId);
+      }
+    } catch (_) {}
+    return null;
+  };
+}
 // Caches
 const languageCache = new Map();
 const productMatchCache = new Map();
@@ -997,7 +1019,7 @@ function _normLite(s) {
   const raw = req.body || {};
   const from = raw.From;
   // Quick‑Reply payloads (Twilio replies / Content API postbacks)
-  const payload = String(
+  let payload = String(
     raw.ButtonPayload ||
     raw.ButtonId ||
     raw.PostbackData ||
@@ -1016,35 +1038,84 @@ function _normLite(s) {
   try {
     console.log(`[interact] payload=${payload || '—'} listId=${listId || '—'} body=${text || '—'}`);
   } catch (_) {}
-
-   // Quick‑Reply buttons (payload IDs are language‑independent)
-   if (payload === 'qr_purchase') {
-     await setUserState(from, 'awaitingTransactionDetails', { action: 'purchase' });
-     const msg = 'Examples (purchase):\n• milk 10 ltr ₹60 exp +7d\n• दूध 10 लीटर ₹60 exp +7d';
-     await sendMessageViaAPI(from, msg);
-     return true;
-   }
-   if (payload === 'qr_sale') {
-     await setUserState(from, 'awaitingTransactionDetails', { action: 'sold' });
-     await sendMessageViaAPI(from, 'Examples (sale):\n• sugar 2 kg\n• doodh 3 ltr');
-     return true;
-   }
-   if (payload === 'qr_return') {
-     await setUserState(from, 'awaitingTransactionDetails', { action: 'returned' });
-     await sendMessageViaAPI(from, 'Examples (return):\n• Parle-G 3 packets\n• milk 1 liter');
-     return true;
-   }
-
-   
-  // --- NEW: Activate Trial Plan ---
-  if (payload === 'activate_trial') {
+    
+  // --- 4B: Map localized ButtonText -> canonical payload IDs (EN + HI)
+    // Covers cases where Twilio doesn't send ButtonPayload but only ButtonText.
+    if (!payload && text) {
+      const BTN_TEXT_MAP = [
+        // Onboarding buttons
+        { rx: /^ट्रायल\s+शुरू\s+करें$/i, payload: 'activate_trial' },
+        { rx: /^ट्रायल$/i,               payload: 'activate_trial' },
+        { rx: /^डेमो(?:\s+देखें)?$/i,    payload: 'show_demo' },
+        { rx: /^(मदद|सहायता)$/i,         payload: 'show_help' },
+        // Transaction quick-reply buttons
+        { rx: /^खरीद\s+दर्ज\s+करें$/i,   payload: 'qr_purchase' },
+        { rx: /^बिक्री\s+दर्ज\s+करें$/i,  payload: 'qr_sale' },
+        { rx: /^रिटर्न\s+दर्ज\s+करें$/i,  payload: 'qr_return' },
+      ];
+      const hit = BTN_TEXT_MAP.find(m => m.rx.test(text));
+      if (hit) payload = hit.payload;
+    }
+  
+    // Shared: shopId + language + activation gate
     const shopId = String(from).replace('whatsapp:', '');
-    // Use saved language preference
     let lang = 'en';
     try {
       const prefLP = await getUserPreference(shopId);
       if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();
     } catch (_) {}
+    let activated = false;
+    try {
+      const pref = await getUserPreference(shopId);
+      const plan = String(pref?.plan ?? '').toLowerCase();
+      activated = (plan === 'trial' || plan === 'paid');
+    } catch (_) {}
+  
+   // Quick‑Reply buttons (payload IDs are language‑independent)
+   if (payload === 'qr_purchase') {         
+    // 4C: If not activated (Q&A/onboarding context), soft-hint instead of entering flow
+         if (!activated) {
+           const hint = await t('ℹ️ To record a transaction, send a message like “purchase sugar 5 kg” or “sold milk 2 ltr”.', lang, 'txn-hint-purchase');
+           await sendMessageViaAPI(from, hint);
+           return true;
+         }
+         await setUserState(from, 'awaitingTransactionDetails', { action: 'purchase' });
+         const msg = await t('Examples (purchase):\n• milk 10 ltr ₹60 exp +7d\n• दूध 10 लीटर ₹60 exp +7d', lang, 'txn-examples-purchase');
+         await sendMessageViaAPI(from, msg);
+         return true;
+   }
+   if (payload === 'qr_sale') {       
+    if (!activated) {
+           const hint = await t('ℹ️ To record a transaction, send a message like “sold milk 2 ltr” or “purchase sugar 5 kg”.', lang, 'txn-hint-sale');
+           await sendMessageViaAPI(from, hint);
+           return true;
+         }
+         await setUserState(from, 'awaitingTransactionDetails', { action: 'sold' });
+         const msg = await t('Examples (sale):\n• sugar 2 kg\n• doodh 3 ltr', lang, 'txn-examples-sale');
+         await sendMessageViaAPI(from, msg);
+         return true;
+   }
+   if (payload === 'qr_return') {        
+    if (!activated) {
+           const hint = await t('ℹ️ To record a transaction, send a message like “return Parle-G 3 packets” or “return milk 1 liter”.', lang, 'txn-hint-return');
+           await sendMessageViaAPI(from, hint);
+           return true;
+         }
+         await setUserState(from, 'awaitingTransactionDetails', { action: 'returned' });
+         const msg = await t('Examples (return):\n• Parle-G 3 packets\n• milk 1 liter', lang, 'txn-examples-return');
+         await sendMessageViaAPI(from, msg);
+         return true;
+   }
+
+   
+  // --- NEW: Activate Trial Plan ---
+  if (payload === 'activate_trial') {       
+    // shopId/lang already prepared above; use activation gate too
+        if (activated) {
+          const msg = await t('✅ You already have access.', lang, `cta-trial-already-${shopId}`);
+          await sendMessageViaAPI(from, msg);
+          return true;
+        }
     // Treat tap as explicit confirmation to start trial
     const start = await startTrialForAuthUser(shopId, TRIAL_DAYS);        
     if (start.success) {
@@ -1091,19 +1162,13 @@ function _normLite(s) {
   }
   
   // --- NEW: Demo button ---
-  if (payload === 'show_demo') {
-    const shopId = String(from).replace('whatsapp:', '');
-    let lang = 'en';
-    try { const prefLP = await getUserPreference(shopId); if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase(); } catch (_) {}        
+  if (payload === 'show_demo') {        
     // STEP 3: Use a richer single-message demo transcript (text-only)
     await sendDemoTranscriptOnce(from, lang, `cta-demo-${shopId}`);
     return true;
   }
   // --- NEW: Help button ---
-  if (payload === 'show_help') {
-    const shopId = String(from).replace('whatsapp:', '');
-    let lang = 'en';
-    try { const prefLP = await getUserPreference(shopId); if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase(); } catch (_) {}        
+  if (payload === 'show_help') {        
     const helpEn = [
           'Help:',
           '• Type “mode” to switch Purchase/Sale/Return',
@@ -1118,12 +1183,6 @@ function _normLite(s) {
    
   // --- NEW: Activate Paid Plan ---
   if (payload === 'activate_paid') {
-    const shopId = String(from).replace('whatsapp:', '');
-    let lang = 'en';
-    try {
-      const prefLP = await getUserPreference(shopId);
-      if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();
-    } catch (_) {}
     // Show paywall; activation only after user replies "paid"
     const msg = await t(
       `To activate the paid plan, pay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\n`
