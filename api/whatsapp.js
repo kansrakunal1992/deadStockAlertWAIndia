@@ -815,7 +815,7 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
   
   // 2) Plan gating: only show menus for activated users (trial/paid).
      //    Unactivated users receive a concise CTA to start the trial/paid plan.
-     let plan = 'free_demo';
+     let plan = 'demo';
      try {
        const pref = await getUserPreference(toNumber);
        if (pref?.success && pref.plan) plan = String(pref.plan).toLowerCase();
@@ -1886,10 +1886,12 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
 async function isUserActivated(shopId) {
   try {
     const pref = await getUserPreference(shopId);
-    const planRaw = String(pref?.plan || '').toLowerCase();
-    const plan = (planRaw === 'free_demo_first_50' || planRaw === '' || planRaw === 'demo') ? 'trial' : planRaw;
-    return (plan === 'trial' || plan === 'paid');
-  } catch { return false; }
+    const plan = String(pref?.plan ?? '').toLowerCase();
+    // Only 'trial' (explicitly activated via activate_trial) or 'paid' are considered activated
+    return plan === 'trial' || plan === 'paid';
+  } catch {
+    return false;
+  }
 }
 
 // ===== Access Gate & Onboarding =====
@@ -9089,7 +9091,7 @@ module.exports = async (req, res) => {
   try { cleanupCaches(); } catch (_) {}
 
   // --- Extract inbound fields early (so helpers can use them) ---
-  const Body =
+  let Body =
     (req.body && (req.body.Body || req.body.body)) || '';
   const From =
     (req.body && (req.body.From || req.body.from)) ||
@@ -9097,7 +9099,32 @@ module.exports = async (req, res) => {
 
   // (optional) quick log to confirm gate path in prod logs
     try { console.log('[webhook]', { From, Body: String(Body).slice(0,120) }); } catch(_) {}
-  
+      
+    /**
+       * NEW: Inbound sanitization to drop footer echoes & interactive noise.
+       * Prevents noisy bodies like «कोई • मोड» (mode badges) and interactive echoes
+       * from falling through to generic error paths.
+       */
+      try {
+        const sanitized = sanitizeInbound(
+          Body,
+          req.body?.NumMedia,
+          {
+            button_reply: req.body?.ButtonPayload || req.body?.ButtonId,
+            list_reply: req.body?.ListResponse || req.body?.List || req.body?.Interactive
+          }
+        );
+        if (!sanitized) {
+          const twiml = new twilio.twiml.MessagingResponse();
+          twiml.message(''); // quiet ack; we intentionally ignore noise
+          res.type('text/xml');
+          resp.safeSend(200, twiml.toString());
+          safeTrackResponseTime(requestStart, requestId);
+          return;
+        }
+        Body = sanitized;
+      } catch (_) { /* best-effort */ }
+
   /**
      * >>> NEW (Option B): Handle WhatsApp interactive events FIRST.
      * Processes Quick‑Reply button taps (ButtonPayload/ButtonText)
@@ -10065,11 +10092,11 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     // Check if this shop qualifies for first 50 plan
     const isFirst50 = await isFirst50Shops(shopId);
     
-    let plan = 'free_demo';
+    let plan = 'demo';
     let trialEndDate = null;
     
     if (isFirst50) {
-      plan = 'free_demo_first_50';
+      plan = 'demo';
       // Set trial end date to 14 days from now
       trialEndDate = new Date();
       trialEndDate.setDate(trialEndDate.getDate() + 14);
