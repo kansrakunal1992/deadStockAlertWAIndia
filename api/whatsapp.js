@@ -4045,18 +4045,26 @@ function parsePeriodKeyword(txt) {
 
 async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   const startTime = Date.now();
-  const text = Body.trim();      
+  const text = Body.trim();          
+  // FAST PATH: pure greeting → welcome and exit early (prevents ack/parse-error later)
+    if (_isGreeting(text)) {
+      await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
+      handledRequests.add(requestId);
+      return true;
+    }
   // NEW: record activity (touch LastUsed) for every inbound
   try { await touchUserLastUsed(String(From).replace('whatsapp:', '')); } catch {}    
   // NEW: gate for paywall/onboarding
-  const gate = await ensureAccessOrOnboard(From, Body, detectedLanguage);    
-  // Text-only pre-ack (non-blocking), serialized per-shop queue
-  try {
-    await sendMessageQueued(
-      From,
-      await t('Processing your message…', detectedLanguage, `${requestId}::ack`)
-    );
-  } catch {}
+  const gate = await ensureAccessOrOnboard(From, Body, detectedLanguage);        
+  // Ack only if this request was not already handled (e.g., by the greeting short-circuit)
+    if (!handledRequests.has(requestId)) {
+      try {
+        await sendMessageQueued(
+          From,
+          await t('Processing your message…', detectedLanguage, `${requestId}::ack`)
+        );
+      } catch {}
+    }
 
   if (!gate.allow) return true; // already responded
   
