@@ -377,7 +377,7 @@ async function safeSendParseError(From, detectedLanguage, requestId, header) {
       await sendParseErrorWithExamples(From, detectedLanguage, requestId, header);
     } else {
       // ultra-compact fallback in user's language
-      const msg = await t('Sorry, I could not understand that. Try: "sold milk 2 ltr" or "short summary".', detectedLanguage, requestId + '::err-fallback');
+      //const msg = await t('Sorry, I could not understand that. Try: "sold milk 2 ltr" or "short summary".', detectedLanguage, requestId + '::err-fallback');
       await sendMessageViaAPI(From, msg);
     }
   } catch (e) {
