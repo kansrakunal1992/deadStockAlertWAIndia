@@ -807,15 +807,10 @@ const NL_LABELS = {
 const { sendContentTemplate } = require('./whatsappButtons');
 const { ensureLangTemplates, getLangSids } = require('./contentCache');
 
-async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en') {
-  const toNumber = From.replace('whatsapp:', '');
-  // 1) Instant text-only ack (non-blocking visual confirmation)      
-    try {
-        // Use localized static label and still pass through t() for SINGLE_SCRIPT_MODE handling
-        const ackLabel = getStaticLabel('ack', detectedLanguage);
-        const ack = await t(ackLabel, detectedLanguage ?? 'en', 'ack');
-        await sendMessageQueued(From, ack);
-      } catch { /* best effort */ }
+async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId = null)
+  const toNumber = From.replace('whatsapp:', '');   
+  // Mark this request as handled (suppresses parse-error apologies later in this cycle)
+  try { if (requestId) handledRequests.add(requestId); } catch {}
   
   // 2) Plan gating: only show menus for activated users (trial/paid).
      //    Unactivated users receive a concise CTA to start the trial/paid plan.
@@ -2757,7 +2752,7 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
       if (switchCmd) {
         try { await deleteUserStateFromDB(state.id); } catch (_) {}
         if (switchCmd.ask) {
-          await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+          await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
           return true;
         }
         if (switchCmd.set) {
@@ -2909,7 +2904,7 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   if (switchCmd) {
     try { await deleteUserStateFromDB(state.id); } catch (_) {}
     if (switchCmd.ask) {
-      await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+      await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
       return true;
     }
     if (switchCmd.set) {
@@ -3295,17 +3290,20 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
             }
           
             // ====== Welcome/Onboarding WHEN appropriate (first-ever greeting/language, or session-expired greeting) ======
-            try {
-              if (await shouldWelcomeNow(shopId, text)) {
-                await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+            try {                            
+                if (await shouldWelcomeNow(shopId, text)) {
+                await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
                 handledRequests.add(requestId);
                 return true;
               }
             } catch { /* best-effort */ }
-        
-          if (!isQuestion) {
+                   
+    // IMPORTANT: Only send the generic ack if we did NOT (and will not) show welcome.
+      // At this point, welcome has already been checked above and returned if sent.
+      if (!isQuestion) {
         try { await sendMessageQueued(From, await t('Processing your message…', detectedLanguage, `${requestId}::ack`)); } catch {}
       }
+
     if (gate && gate.allow === false) {
       // truly blocked (deactivated/blacklisted)
       await sendMessageQueued(From, await t('Your access is currently restricted. Please contact support.', detectedLanguage, `${requestId}::blocked`));
@@ -3435,9 +3433,9 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
 
 // Greeting -> concise, actionable welcome (single-script friendly)
     
-  if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
-    if (await shouldWelcomeNow(shopId, text)) {
-      await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+  if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {          
+      if (await shouldWelcomeNow(shopId, text)) {
+      await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
       handledRequests.add(requestId);
       return true;
     }
@@ -3449,10 +3447,10 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   {
     const switchCmd = parseModeSwitchLocalized(text);
     if (switchCmd) {
-      if (switchCmd.ask) {                
-          if (await shouldWelcomeNow(shopId, text)) {
-                    await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
-                    return true;
+      if (switchCmd.ask) {                                      
+            if (await shouldWelcomeNow(shopId, text)) {
+            await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
+            return true;
                   }
                   // If welcome was shown recently, do nothing here; fall through to other handlers.
       }
@@ -4004,7 +4002,7 @@ try{
 // NEW (2.g): Greeting -> show purchase examples incl. expiry
     
   if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {
-    await sendWelcomeFlowLocalized(From, detectedLanguage || 'en');        
+    await sendWelcomeFlowLocalized(From, detectedLanguage || 'en', requestId);        
     // Mark this request as handled to avoid duplicate onboarding & parse-error afterwards
     handledRequests.add(requestId);
     try { await scheduleUpsell(gate?.upsellReason); } catch (_) {}
@@ -4017,7 +4015,7 @@ try{
     const switchCmd = parseModeSwitchLocalized(text);
     if (switchCmd) {
       if (switchCmd.ask) {
-        await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en');
+        await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
         return true;
       }
       if (switchCmd.set) {
@@ -9001,9 +8999,10 @@ module.exports = async (req, res) => {
         (typeof _isGreeting === 'function' && _isGreeting(Body)) ||
         (typeof _isLanguageChoice === 'function' && _isLanguageChoice(Body));
   
-      // Show AI onboarding + interactive buttons only when shouldWelcomeNow says so
+      // Show AI onboarding + interactive buttons only when shouldWelcomeNow says so           
       if (isGreetingOrLang && await shouldWelcomeNow(shopId, Body)) {
-        await sendWelcomeFlowLocalized(From, detectedLanguage || 'en');
+      await sendWelcomeFlowLocalized(From, detectedLanguage || 'en', requestId);
+
         // Suppress late apologies / duplicate upsell for this request
         handledRequests.add(requestId);
         // Minimal TwiML ack for webhook (your Content API has already sent messages)
