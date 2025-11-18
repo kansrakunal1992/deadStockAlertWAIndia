@@ -1017,7 +1017,18 @@ function _normLite(s) {
  // Robust to multiple Twilio payload shapes + safe fallback
  async function handleInteractiveSelection(req) {
   const raw = req.body || {};
-  const from = raw.From;
+  const from = raw.From;     
+  const shopIdTop = String(from ?? '').replace('whatsapp:', '');
+    // STEP 12: 3s duplicate‑tap guard (per shop + payload)
+    const _recentTaps = (globalThis._recentTaps ||= new Map()); // shopId -> { payload, at }
+    function _isDuplicateTap(shopId, payload, windowMs = 3000) {
+      const prev = _recentTaps.get(shopId);
+      const now = Date.now();
+      if (prev && prev.payload === payload && (now - prev.at) < windowMs) return true;
+      _recentTaps.set(shopId, { payload, at: now });
+      return false;
+    }
+
   // Quick‑Reply payloads (Twilio replies / Content API postbacks)
   let payload = String(
     raw.ButtonPayload ||
@@ -1025,6 +1036,12 @@ function _normLite(s) {
     raw.PostbackData ||
     ''
   );
+   
+  // Duplicate‑tap short‑circuit
+    try {
+      if (payload && _isDuplicateTap(shopIdTop, payload)) return true;
+    } catch (_) {} 
+
   // List‑Picker selections across possible fields/shapes
   const lr = (raw.ListResponse || raw.List || raw.Interactive || {});
   const lrId = (lr.Id || lr.id || lr.ListItemId || lr.SelectedItemId)
@@ -1504,7 +1521,7 @@ async function sendOnboardingQR(shopId, lang) {
   await ensureLangTemplates(lang);
   const sids = getLangSids(lang) || {};
   const contentSid = String(process.env.ONBOARDING_QR_SID ?? '').trim() || sids.onboardingQrSid;
-  if (contentSid) await sendContentTemplateOnce({ toWhatsApp: shopId, contentSid, requestId });
+  if (contentSid) await sendContentTemplateQueuedOnce({ toWhatsApp: shopId, contentSid, requestId });
 }
 
 // Localized trial CTA text fallback (used only if Content send fails)
@@ -2472,6 +2489,7 @@ function scheduleAiAnswer(shopId, From, text, lang, requestId) {
 // STEP 8: Per-request idempotency for Content API template sends
 const _sentTemplatesThisReq = new Set(); // keys: `${requestId}::${contentSid}`
 async function sendContentTemplateOnce({ toWhatsApp, contentSid, requestId }) {
+
   const key = `${requestId}::${contentSid}`;
   if (_sentTemplatesThisReq.has(key)) return;
   try {
@@ -2480,6 +2498,27 @@ async function sendContentTemplateOnce({ toWhatsApp, contentSid, requestId }) {
   } catch (e) {
     console.warn('[contentTemplateOnce] send failed', { status: e?.response?.status, data: e?.response?.data });
   }
+}
+
+// STEP 10: Per-shop QUEUE for template sends + idempotent per request
+const _contentQueues = new Map(); // shopId -> Promise chain
+async function sendContentTemplateQueuedOnce({ toWhatsApp, contentSid, requestId }) {
+  const key = `${requestId}::${contentSid}`;
+  if (_sentTemplatesThisReq.has(key)) return; // idempotent in-request
+  _sentTemplatesThisReq.add(key);
+  const shopId = String(toWhatsApp).replace('whatsapp:', '');
+  const prev = _contentQueues.get(shopId) || Promise.resolve();
+  const next = prev.then(async () => {
+    try {
+      await sendContentTemplate({ toWhatsApp: shopId, contentSid });
+    } catch (e) {
+      console.warn('[contentQueuedOnce] send failed', { status: e?.response?.status, data: e?.response?.data, to: shopId });
+    }
+  }).catch(err => {
+    console.warn('[contentQueuedOnce] chain error', err?.message);
+  });
+  _contentQueues.set(shopId, next.finally(() => {}));
+  return next;
 }
 
 // Cache key prefix for command normalization (any-language -> English)
@@ -2502,7 +2541,41 @@ const regexPatterns = {
   // NEW: split multi-item messages by newlines or bullets
   lineBreaks: /\r?\n|[•\u2022]/g
  };
+  
+// STEP 11: Robust inbound sanitizer to drop UI badges & interactive echoes
+function sanitizeInbound(body, numMedia, interactive = {}) {
+  try {
+    let text = String(body ?? '').trim();
+    // Remove decorative quotes and bullets
+    text = text
+      .replace(/[«»]/g, '')
+      .replace(/\u2022/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
 
+    // Prefer structured interactive IDs/text when body is just noise
+    const lr = interactive?.list_reply || interactive?.ListResponse || interactive?.List
+             || interactive?.Interactive || interactive?.ListPickerSelection
+             || interactive?.SelectedListItem || interactive?.ListId || interactive?.ListReplyId;
+    const btn = interactive?.button_reply || interactive?.ButtonPayload || interactive?.ButtonId || interactive?.PostbackData;
+    const btnText = interactive?.ButtonText;
+    if ((!text || /^mode$/i.test(text)) && (btnText || lr || btn)) {
+      text = String(btnText || lr || btn || '').trim();
+    }
+
+    // Ignore pure “— mode —” echoes
+    if (/^\s*[-–—]\s*mode\s*[-–—]\s*$/i.test(text)) return '';
+
+    // Media-only messages: keep text as-is (media handler consumes)
+    if (Number(numMedia ?? 0) > 0) return text;
+
+    return text;
+  } catch {
+    return String(body ?? '').trim();
+  }
+}
+
+  
 // Global storage with cleanup mechanism
 const globalState = {
   userPreferences: {},
