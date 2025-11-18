@@ -1422,6 +1422,28 @@ const PAYMENT_LINK  = String(process.env.PAYMENT_LINK  ?? '<payment_link>');
 // NEW: Trial CTA ContentSid (Quick-Reply template)
 const TRIAL_CTA_SID = String(process.env.TRIAL_CTA_SID ?? '').trim();
 
+// --- Q&A-only: per-request tip suppression (so no "Reply 'Demo'..." tail after Q&A)
+const suppressTipsFor = new Set(); // requestId strings
+
+// Helper: is user activated (trial/paid)
+async function isActivatedUser(shopId) {
+  try {
+    const pref = await getUserPreference(shopId);
+    const plan = String(pref?.plan ?? '').toLowerCase();
+    return plan === 'trial' || plan === 'paid';
+  } catch {
+    return false;
+  }
+}
+
+// Helper: send Onboarding Quick-Reply (Activate Trial / Demo / Help) in user's language
+async function sendOnboardingQR(shopId, lang) {
+  await ensureLangTemplates(lang);
+  const sids = getLangSids(lang) || {};
+  const contentSid = String(process.env.ONBOARDING_QR_SID ?? '').trim() || sids.onboardingQrSid;
+  if (contentSid) await sendContentTemplate({ toWhatsApp: shopId, contentSid });
+}
+
 // Localized trial CTA text fallback (used only if Content send fails)
 function getTrialCtaText(lang) {
   const lc = String(lang || 'en').toLowerCase();
@@ -2140,7 +2162,9 @@ const SHOW_BATCH_SUGGESTIONS_COUNT = Number(process.env.SHOW_BATCH_SUGGESTIONS_C
 // Central wrapper: run any per-request logic with engagement tips
 const TIPS_OFF = String(process.env.TIPS_OFF ?? '1').toLowerCase() === '1';
 async function runWithTips({ From, language, requestId }, fn) {
-  if (TIPS_OFF) return await fn(); // short-circuit: suppress all engagement tips
+  if (TIPS_OFF) return await fn(); // short-circuit: suppress all engagement tips    
+  // Skip tips for this request if Q&A marked suppression
+  try { if (requestId && suppressTipsFor.has(requestId)) return await fn(); } catch {}
   return await withEngagementTips(
     {
       From,
@@ -3361,8 +3385,21 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
                 const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
                 const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa-first`);
                 await sendMessageQueued(From, msg);
-                handledRequests.add(requestId);
-                return true;
+                handledRequests.add(requestId);                               
+                // Q&A → For non-activated users, show Onboarding QR (Activate Trial / Demo / Help)
+                      try {
+                        const activated = await isActivatedUser(shopId);
+                        if (!activated) {
+                          await sendOnboardingQR(shopId, detectedLanguage ?? 'en');
+                        }
+                      } catch (e) {
+                        console.warn('[sales-qa-first] onboarding send failed', {
+                          status: e?.response?.status, data: e?.response?.data, msg: e?.message
+                        });
+                      }
+                      // IMPORTANT: Do not schedule upsell/tips after Q&A
+                      try { suppressTipsFor.add(requestId); } catch {}
+                      return true;
               } catch (e) {
                 console.warn('[sales-qa] first-answer failed:', e?.message);
               }
@@ -3499,9 +3536,21 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
           const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
           const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa`);
           await sendMessageQueued(From, msg);
-          handledRequests.add(requestId); // avoid any late parse-error or duplicate onboarding
-          await scheduleUpsell(gate?.upsellReason);
-          return true;
+          handledRequests.add(requestId); // avoid any late parse-error or duplicate onboarding                   
+          // Q&A → For non-activated users, show Onboarding QR
+              try {
+                const activated = await isActivatedUser(shopId);
+                if (!activated) {
+                  await sendOnboardingQR(shopId, detectedLanguage ?? 'en');
+                }
+              } catch (e) {
+                console.warn('[sales-qa] onboarding send failed', {
+                  status: e?.response?.status, data: e?.response?.data, msg: e?.message
+                });
+              }
+              // IMPORTANT: Do not schedule upsell/tips after Q&A
+              try { suppressTipsFor.add(requestId); } catch {}
+              return true;
         }
 
 // NEW: Intercept post‑purchase expiry override first
