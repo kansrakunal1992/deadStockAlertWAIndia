@@ -1042,6 +1042,19 @@ function _normLite(s) {
       if (payload && _isDuplicateTap(shopIdTop, payload)) return true;
     } catch (_) {} 
 
+   
+  // STEP 13: Summary buttons → route directly
+    if (payload === 'instant_summary' || payload === 'full_summary') {
+      let btnLang = 'en';
+      try {
+        const prefLP = await getUserPreference(shopIdTop);
+        if (prefLP?.success && prefLP.language) btnLang = String(prefLP.language).toLowerCase();
+      } catch (_) {}
+      const cmd = (payload === 'instant_summary') ? 'short summary' : 'full summary';
+      await handleQuickQueryEN(cmd, from, btnLang, 'btn');
+      return true;
+    }
+
   // List‑Picker selections across possible fields/shapes
   const lr = (raw.ListResponse || raw.List || raw.Interactive || {});
   const lrId = (lr.Id || lr.id || lr.ListItemId || lr.SelectedItemId)
@@ -1188,8 +1201,6 @@ function _normLite(s) {
   if (payload === 'show_help') {        
     const helpEn = [
           'Help:',
-          '• Type “mode” to switch Purchase/Sale/Return',
-          '• Try: short summary • expiring 30 • low stock',
           `• WhatsApp or call: +91-9013283687`,
           `• WhatsApp link: ${WHATSAPP_LINK}`
         ].join('\n');
@@ -2541,6 +2552,7 @@ const regexPatterns = {
   // NEW: split multi-item messages by newlines or bullets
   lineBreaks: /\r?\n|[•\u2022]/g
  };
+
   
 // STEP 11: Robust inbound sanitizer to drop UI badges & interactive echoes
 function sanitizeInbound(body, numMedia, interactive = {}) {
@@ -3502,6 +3514,137 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();    
   const shopId = String(From).replace('whatsapp:', '');  
+  
+    // ===== STEP 14: "mode" keyword shows Purchase/Sale/Return buttons =====
+    try {
+      const MODE_ALIASES = [/^mode$/i, /^मोड$/i];
+      const askMode = MODE_ALIASES.some(rx => rx.test(text));
+      if (askMode) {
+        // Show the quick-reply template in user's saved language (queued + idempotent)
+        let lang = String(detectedLanguage || 'en').toLowerCase();
+        try {
+          const pref = await getUserPreference(shopId);
+          if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+        } catch (_) {}
+        await ensureLangTemplates(lang);
+        const sids = getLangSids(lang) || {};
+        const qrSid = sids.quickReplySid;
+        if (qrSid) await sendContentTemplateQueuedOnce({ toWhatsApp: shopId, contentSid: qrSid, requestId });
+        handledRequests.add(requestId);
+        return true;
+      }
+    } catch (_) {}
+  
+    // ===== STEP 15: "help" text should behave like Help button =====
+    try {
+      const HELP_ALIASES = [/^help$/i, /^मदद$/i, /^सहायता$/i];
+      const wantHelp = HELP_ALIASES.some(rx => rx.test(text));
+      if (wantHelp) {
+        let lang = String(detectedLanguage || 'en').toLowerCase();
+        try {
+          const pref = await getUserPreference(shopId);
+          if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+        } catch (_) {}
+        const helpEn = [
+          'Help:',
+          `• WhatsApp or call: +91-9013283687`,
+          `• WhatsApp link: ${WHATSAPP_LINK}`
+        ].join('\n');
+        const help = await t(helpEn, lang, `txt-help-${shopId}`);
+        await sendMessageViaAPI(From, help);
+        handledRequests.add(requestId);
+        return true;
+      }
+    } catch (_) {}
+  
+    // ===== STEP 16: "1 / 2 / 3" numeric onboarding actions (non-activated only) =====
+    try {
+      const NUMERIC = text.replace(/\s+/g, '');
+      if (NUMERIC === '1' || NUMERIC === '2' || NUMERIC === '3') {
+        // Only for non-activated users
+        let lang = String(detectedLanguage || 'en').toLowerCase();
+        let activated = false;
+        try {
+          const pref = await getUserPreference(shopId);
+          if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+          const plan = String(pref?.plan ?? '').toLowerCase();
+          activated = (plan === 'trial' || plan === 'paid');
+        } catch (_) {}
+        if (!activated) {
+          if (NUMERIC === '1') {
+            // Activate trial → then show menus
+            try {
+              const s = await startTrialForAuthUser(shopId, Number(process.env.TRIAL_DAYS ?? 3));
+              if (s?.success) {
+                const ok = await t(`🎉 Trial activated for ${process.env.TRIAL_DAYS ?? 3} days!`, lang, `txt-trial-ok-${shopId}`);
+                await sendMessageViaAPI(From, ok);
+                // Show QR + List menus (queued)
+                await ensureLangTemplates(lang);
+                const sids = getLangSids(lang) || {};
+                if (sids.quickReplySid) await sendContentTemplateQueuedOnce({ toWhatsApp: shopId, contentSid: sids.quickReplySid, requestId });
+                if (sids.listPickerSid) await sendContentTemplateQueuedOnce({ toWhatsApp: shopId, contentSid: sids.listPickerSid, requestId });
+              } else {
+                const no = await t('❗ Could not start trial. Please try again.', lang, `txt-trial-fail-${shopId}`);
+                await sendMessageViaAPI(From, no);
+              }
+            } catch (_) {
+              const no = await t('❗ Could not start trial. Please try again.', lang, `txt-trial-err-${shopId}`);
+              await sendMessageViaAPI(From, no);
+            }
+            handledRequests.add(requestId);
+            return true;
+          }
+          if (NUMERIC === '2') {
+            // Demo
+            await sendDemoTranscriptOnce(From, lang, `txt-demo-${shopId}`);
+            handledRequests.add(requestId);
+            return true;
+          }
+          if (NUMERIC === '3') {
+            // Help
+            const helpEn = [
+              'Help:',
+              `• WhatsApp or call: +91-9013283687`,
+              `• WhatsApp link: ${WHATSAPP_LINK}`
+            ].join('\n');
+            const help = await t(helpEn, lang, `txt-help3-${shopId}`);
+           await sendMessageViaAPI(From, help);
+            handledRequests.add(requestId);
+            return true;
+          }
+        }
+      }
+    } catch (_) {}
+  
+    // ===== STEP 17: Multilingual aliases for "short/full summary" =====
+    try {
+      // SUMMARY_ALIAS_MAP exists elsewhere in your code; reuse if present
+      // We add an inline guard so this block is safe even if it's moved.
+      const normalized = (() => {
+        const lc = String(detectedLanguage || 'en').toLowerCase();
+        const q = text.toLowerCase();
+        // Known short/full alias arrays are defined in SUMMARY_ALIAS_MAP; fall back to regexes if absent.
+        const SHORT_FALLBACK = [/^short\s+summary$/i, /^छोटा\s+सारांश$/i, /^संक्षिप्त\s+सारांश$/i];
+        const FULL_FALLBACK  = [/^full\s+summary$/i,  /^पूरा\s+सारांश$/i,   /^विस्तृत\s+सारांश$/i];
+        try {
+          if (typeof SUMMARY_ALIAS_MAP === 'object') {
+            const m = SUMMARY_ALIAS_MAP[lc] || {};
+            const hitShort = (m.short || []).some(s => String(s).toLowerCase() === q);
+            const hitFull  = (m.full  || []).some(s => String(s).toLowerCase() === q);
+            if (hitShort) return 'short summary';
+            if (hitFull)  return 'full summary';
+          }
+        } catch (_) {}
+        if (SHORT_FALLBACK.some(rx => rx.test(text))) return 'short summary';
+        if (FULL_FALLBACK.some(rx  => rx.test(text))) return 'full summary';
+        return null;
+      })();
+      if (normalized) {
+        await handleQuickQueryEN(normalized, From, detectedLanguage, `${requestId}:alias`);
+        handledRequests.add(requestId);
+        return true;
+      }
+    } catch (_) {}
     
   // STEP 9: If this input is not a question, cancel any pending debounced Q&A
     // (prevents answering an outdated question after the user changed context)
