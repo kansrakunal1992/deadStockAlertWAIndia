@@ -1422,11 +1422,12 @@ const PAYMENT_LINK  = String(process.env.PAYMENT_LINK  ?? '<payment_link>');
 // NEW: Trial CTA ContentSid (Quick-Reply template)
 const TRIAL_CTA_SID = String(process.env.TRIAL_CTA_SID ?? '').trim();
 
-// --- Q&A-only: per-request tip suppression (so no "Reply 'Demo'..." tail after Q&A)
-const suppressTipsFor = new Set(); // requestId strings
-
-// Helper: is user activated (trial/paid)
-async function isActivatedUser(shopId) {
+/**
+ * Canonical activation gate:
+ * Only 'trial' (explicit user action) or 'paid' are considered activated.
+ * No implicit mapping for 'free_demo_first_50', 'demo', or ''.
+ */
+async function isUserActivated(shopId) {
   try {
     const pref = await getUserPreference(shopId);
     const plan = String(pref?.plan ?? '').toLowerCase();
@@ -1435,6 +1436,9 @@ async function isActivatedUser(shopId) {
     return false;
   }
 }
+
+// --- Q&A-only: per-request tip suppression (so no "Reply 'Demo'..." tail after Q&A)
+const suppressTipsFor = new Set(); // requestId strings
 
 // Helper: send Onboarding Quick-Reply (Activate Trial / Demo / Help) in user's language
 async function sendOnboardingQR(shopId, lang) {
@@ -1879,18 +1883,6 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
    // Grounded fallback: show benefit or safe “not sure” with known commands             
     console.warn('AI_AGENT_FALLBACK_USED', { kind: 'sales-qa' });
     return getLocalizedQAFallback(lang);
-  }
-}
-
-// STEP 3: Helper to check activation status (trial|paid)
-async function isUserActivated(shopId) {
-  try {
-    const pref = await getUserPreference(shopId);
-    const plan = String(pref?.plan ?? '').toLowerCase();
-    // Only 'trial' (explicitly activated via activate_trial) or 'paid' are considered activated
-    return plan === 'trial' || plan === 'paid';
-  } catch {
-    return false;
   }
 }
 
@@ -3390,7 +3382,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
                 handledRequests.add(requestId);                               
                 // Q&A → For non-activated users, show Onboarding QR (Activate Trial / Demo / Help)
                       try {
-                        const activated = await isActivatedUser(shopId);
+                        const activated = await isUserActivated(shopId);
                         if (!activated) {
                           await sendOnboardingQR(shopId, detectedLanguage ?? 'en');
                         }
@@ -3541,7 +3533,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
           handledRequests.add(requestId); // avoid any late parse-error or duplicate onboarding                   
           // Q&A → For non-activated users, show Onboarding QR
               try {
-                const activated = await isActivatedUser(shopId);
+                const activated = await isUserActivated(shopId);
                 if (!activated) {
                   await sendOnboardingQR(shopId, detectedLanguage ?? 'en');
                 }
