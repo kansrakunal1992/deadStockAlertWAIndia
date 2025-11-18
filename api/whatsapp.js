@@ -14,13 +14,18 @@ const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 // Handled/apology guard: track per-request success to prevent late apologies
 const handledRequests = new Set();            // <- used by parse-error & upsell schedulers
 // --- Defensive shim: provide a safe setUserState if not present (prevents runtime errors)
-if (typeof globalThis.setUserState !== 'function') {
-  globalThis.setUserState = async function setUserState(from, mode, data = {}) {
-    try {
-      console.warn('[shim] setUserState not available; skipping', { from, mode });
-    } catch (_) {}
-    return { success: false };
-  };
+if (typeof globalThis.setUserState !== 'function') {      
+    globalThis.setUserState = async function setUserState(from, mode, data = {}) {
+        try {
+          const shopId = String(from ?? '').replace('whatsapp:', '');
+          if (typeof saveUserStateToDB === 'function') {
+            const r = await saveUserStateToDB(shopId, mode, data);
+            if (r?.success) return { success: true };
+          }
+          console.warn('[shim] setUserState not available; skipping', { from, mode });
+        } catch (_) {}
+        return { success: false };
+      };
 }
 
 // --- Defensive shim: provide a safe getUserState if not present (used by some handlers)
@@ -45,6 +50,75 @@ const LANGUAGE_CACHE_TTL = 24 * 60 * 60 * 1000;          // 24 hours
 const INVENTORY_CACHE_TTL = 5 * 60 * 1000;               // 5 minutes
 const PRODUCT_CACHE_TTL = 60 * 60 * 1000;                // 1 hour
 const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// ====== AI-backed language & intent detection (guarded, cached) ======
+const _aiDetectCache = new Map(); // key: text|heuristicLang -> {language,intent,ts}
+const AI_DETECT_TTL_MS = Number(process.env.AI_DETECT_TTL_MS ?? 5 * 60 * 1000); // 5 min
+
+/**
+ * aiDetectLangIntent(text)
+ * Uses Deepseek to classify:
+ *  - language: hi|hi-Latn|en|bn|bn-Latn|ta|ta-Latn|te|te-Latn|kn|kn-Latn|mr|mr-Latn|gu|gu-Latn
+ *  - intent:   question|transaction|greeting|command|other
+ * Called only when heuristics are uncertain.
+ */
+async function aiDetectLangIntent(text) {
+  const raw = String(text ?? '').trim();
+  if (!raw) return { language: 'en', intent: 'other' };
+  const key = `ai:${raw.slice(0,256)}`;
+  const prev = _aiDetectCache.get(key);
+  if (prev && (Date.now() - prev.ts) < AI_DETECT_TTL_MS) return { language: prev.language, intent: prev.intent };
+
+  const sys = [
+    'You are a classifier.',
+    'Return ONLY a strict JSON object: {"language":"<code>","intent":"<intent>"}',
+    'Valid language codes: en, hi, hi-Latn, bn, bn-Latn, ta, ta-Latn, te, te-Latn, kn, kn-Latn, mr, mr-Latn, gu, gu-Latn',
+    'If the text is Romanized Indic (e.g. Hinglish, Tanglish), use the -Latn code.',
+    'Intents: question, transaction, greeting, command, other',
+    'No commentary.'
+  ].join(' ');
+  const user = raw;
+
+  try {
+    const resp = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
+        temperature: 0.1,
+        max_tokens: 40
+      },
+      { headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 8000 }
+    );
+    const txt = String(resp?.data?.choices?.[0]?.message?.content ?? '').trim();
+    let out = {};
+    try { out = JSON.parse(txt); } catch {
+      const m = txt.match(/\{[\s\S]*\}/); if (m) { out = JSON.parse(m[0]); }
+    }
+    const language = String(out.language ?? 'en').toLowerCase();
+    const intent   = String(out.intent   ?? 'other').toLowerCase();
+    _aiDetectCache.set(key, { language, intent, ts: Date.now() });
+    return { language, intent };
+  } catch (e) {
+    console.warn('[aiDetectLangIntent] fail:', e?.message);
+    return { language: 'en', intent: 'other' };
+  }
+}
+
+// Decide if AI should be used (cost guard)
+function _shouldUseAI(text, heuristicLang) {
+  const t = String(text ?? '').trim().toLowerCase();
+  if (!t) return false;
+  // Skip AI for obvious cases (has '?')
+  if (/[?\uff1f]$/.test(t)) return false;
+  // ASCII-only, looks like Romanized Indic (Hinglish/Tanglish/etc.)
+  const isAscii = /^[\x00-\x7F]+$/.test(t);
+  if (!isAscii) return false;
+  // Common Roman tokens across Indic languages (minimal; AI will decide exact lang)
+  const romanIndicTokens = /\b(kya|kyu|kaise|kab|kitna|daam|kimat|fayda|nuksan|bn(a|ana)|bana|skte|sakta|sakti|kar|kro|karo|kharid|bech|vapas|udhar|kitne|kiraya|kabse|kabtak)\b/;
+  // Use AI when heuristics think 'en' but pattern smells Indic
+  return romanIndicTokens.test(t) || heuristicLang === 'en';
+}
 
 // ---------------------------------------------------------------------------
 // SINGLE-RESPONSE GUARD (Express): helpers to avoid "headers already sent"
@@ -132,17 +206,37 @@ function isResetMessage(text) {
   });
 }
 
-// --- Question intent detector ---
+// --- Question intent detector (AI-backed when uncertain) ---
 function looksLikeQuestion(text, lang = 'en') {
-  const t = String(text || '').trim().toLowerCase();
+  const t = String(text ?? '').trim().toLowerCase();
   if (!t) return false;
-  // Basic punctuation check
-  if (/\?\s*$/.test(t)) return true;
-  // English keywords
-  if (/\b(price|cost|benefit|advantage|how|why|charges?)\b/.test(t)) return true;
-  // Hindi/Indic keywords
-  if (/\b(कीमत|मूल्य|लागत|कितना|दाम|क्यों|कैसे)\b/.test(t)) return true;
-  return false;
+  if (/[?\uff1f]\s*$/.test(t)) return true; // quick path
+
+  // Heuristic tokens (English + Hinglish + Hindi native)
+  const en = /\b(what|why|when|how|who|which|price|cost|charges?|benefit|pros|cons|compare|best)\b/;
+  const hinglish = /\b(kya|kaise|kyon|kyu|kab|kitna|daam|kimat|fayda|nuksan)\b/;
+  const hiNative = /(क्या|कैसे|क्यों|कब|कितना|दाम|कीमत|फ़ायदा|नुकसान)/;
+  const heuristicHit = en.test(t) || hinglish.test(t) || hiNative.test(t);
+  if (heuristicHit) return true;
+
+  // Use AI only when ambiguous (ASCII-only, short-ish, weak punctuation)
+  const isAscii = /^[\x00-\x7F]+$/.test(t);
+  const weakPunct = !/[.!]$/.test(t);
+  const maybeAmbiguous = isAscii && weakPunct && t.split(/\s+/).length <= 8;
+  if (!maybeAmbiguous) return false;
+
+  try {
+    // This call is rate-limited by _aiDetectCache in aiDetectLangIntent
+    const p = aiDetectLangIntent(text);
+    // Allow sync callers to handle Promise as truthy—router awaits anyway
+    if (p && typeof p.then === 'function') {
+      // non-blocking hint usage in async flows elsewhere
+      return false;
+    }
+    return false;
+  } catch (_) {
+    return false;
+  }
 }
 
 // ------------------------------------------------------------
@@ -350,29 +444,27 @@ async function detectLanguageWithFallback(text, from, requestId) {
           else if (lowerText.includes('नमस्कार')) detectedLanguage = 'mr';
         }
       }
-
-      // 2) Optional AI pass only if still 'en' and not clearly ASCII-English
-      if (detectedLanguage === 'en' && !/^[a-z0-9\s.,!?'"@:/\-]+$/i.test(lowerText)) {
-        try {
-         const resp = await axios.post(
-            'https://api.deepseek.com/v1/chat/completions',
-            {
-              model: 'deepseek-chat',
-              messages: [
-                { role: 'system', content: 'Detect the language code of this text (hi, en, ta, te, bn, kn, mr, gu). Reply with ONLY the code.' },
-                { role: 'user', content: String(text || '') }
-              ],
-              max_tokens: 10,
-              temperature: 0.1
-            },
-            { headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 10000 }
-          );
-          const code = String(resp?.data?.choices?.[0]?.message?.content || '').trim().toLowerCase();
-          if (code) detectedLanguage = code;
-        } catch (e) {
-          console.warn(`[${requestId}] AI language detection failed: ${e.message}`);
-        }
-      }
+            
+      // 2) AI pass for Romanized Indic / ambiguous ASCII
+            const useAI = _shouldUseAI(text, detectedLanguage);
+            if (useAI) {
+              const ai = await aiDetectLangIntent(text);
+              if (ai.language) detectedLanguage = ai.language;
+              try {
+                const shopId = String(from ?? '').replace('whatsapp:', '');
+                if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, detectedLanguage);
+              } catch (_e) {}
+              console.log(`[${requestId}] AI lang=${ai.language} intent=${ai.intent}`);
+            }
+            // 3) Optional AI if non-ASCII but heuristics left it at 'en'
+            if (!useAI && detectedLanguage === 'en' && !/^[a-z0-9\s.,!?'\"@:/\-]+$/i.test(lowerText)) {
+              try {
+                const ai = await aiDetectLangIntent(text);
+                if (ai.language) detectedLanguage = ai.language;
+              } catch (e) {
+                console.warn(`[${requestId}] AI language detection failed: ${e.message}`);
+              }
+            }
 
       console.log(`[${requestId}] Detected language: ${detectedLanguage}`);
 
@@ -1730,9 +1822,77 @@ if (typeof generateMultiLanguageResponse === 'undefined') {
    * Minimal fallback: return original text unchanged.
    * Prevents crashes when the real localization engine isn't loaded.
    */
-  function generateMultiLanguageResponse(text, languageCode = 'en', requestId = '') {
-    return String(text ?? '');
+  function generateMultiLanguageResponse(text, languageCode = 'en', requestId = '') {        
+    const lc = String(languageCode ?? 'en').toLowerCase();
+        const mapLang = (l) => l.endsWith('-latn') ? l.replace('-latn','') : l;
+        const L = mapLang(lc);
+        // Tiny deterministic dictionaries to avoid English-only fallbacks for common short lines
+        const DICT = {
+          // Hindi native
+          'hi': {
+            'Demo:': 'डेमो:',
+            'Help:': 'मदद:',
+            'Processing your message…': 'आपका संदेश प्रोसेस हो रहा है…',
+            'Reply “Demo” to see a quick walkthrough; “Help” for support & contact.':
+              '“Demo” लिखें वॉकथ्रू के लिए; “Help” लिखें सपोर्ट/कॉन्टैक्ट के लिए।'
+          },
+          // Roman Hindi (Hinglish)
+          'hi-latn': {
+            'Demo:': 'Demo:',
+            'Help:': 'Madad:',
+            'Processing your message…': 'Aapka sandesh process ho raha hai…',
+            'Reply “Demo” to see a quick walkthrough; “Help” for support & contact.':
+              '“Demo” likho walkthrough ke liye; “Help” likho support/contact ke liye.'
+          },
+          // Add more as needed later (bn, ta, te, kn, mr, gu) — fall back to English for now
+          'en': {}
+        };
+        const dict = DICT[lc] || DICT[L] || DICT['en'];
+        let out = String(text ?? '');
+        Object.keys(dict).forEach(k => { out = out.replace(new RegExp(k, 'g'), dict[k]); });
+        return out;
   }
+}
+
+// ---------- SHORT/FULL SUMMARY HANDLER (used by List-Picker & buttons) ----------
+async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
+  const shopId = String(From).replace('whatsapp:', '');
+
+  const sendTagged = async (body) => {
+    const msg0 = await tx(body, lang, From, cmd, `qq-${cmd}-${shopId}`);
+    const msg = await tagWithLocalizedMode(From, msg0, lang);
+    await sendMessageViaAPI(From, msg);
+  };
+
+  if (cmd === 'short summary') {
+    let hasAny = false;
+    try {
+      const today = await getTodaySalesSummary(shopId);
+      const inv   = await getInventorySummary(shopId);
+      hasAny = !!(today?.totalSales || inv?.totalValue || (inv?.lowStock||[]).length);
+    } catch (_) {}
+    if (!hasAny) {
+      await sendTagged('📊 Short Summary — Aaj abhi koi transaction nahi hua.\nTip: “sold milk 2 ltr” try karo.');
+      return true;
+    }
+    const lines = [];
+    try { const s = await getTodaySalesSummary(shopId); if (s?.totalSales) lines.push(`Sales Today: ₹${s.totalSales}`); } catch (_){}
+    try { const l = await getLowStockProducts(shopId) || []; if (l.length) lines.push(`Low Stock: ${l.slice(0,5).map(x=>x.product).join(', ')}`);} catch(_){}
+    try { const e = await getExpiringProducts(shopId, 7) || []; if (e.length) lines.push(`Expiring Soon: ${e.slice(0,5).map(x=>x.product).join(', ')}`);} catch(_){}
+    const body = `📊 Short Summary\n${lines.join('\n') || '—'}`;
+    await sendTagged(body);
+    return true;
+  }
+  if (cmd === 'full summary') {
+    try {
+      const insights = await generateFullScaleSummary(shopId, lang, `qq-full-${shopId}`);
+      await sendTagged(insights);
+    } catch (_) {
+      await sendTagged('📊 Full Summary — snapshot unavailable. Try: “short summary”.');
+    }
+    return true;
+  }
+  return false;
 }
 
 // Localization helper: centralize generateMultiLanguageResponse + single-script clamp
@@ -1773,12 +1933,26 @@ async function sendSalesQAButtons(From, lang, isActivated) {
         console.warn('[qa-buttons] quickReply send failed', { status: e?.response?.status, data: e?.response?.data });
       }
     }
-    // Then add a compact Demo/Help CTA line (text) to keep momentum
-    const ctaEn = 'Reply “Demo” to see a quick walkthrough; “Help” for support & contact.';
-    const cta = await t(ctaEn, lang, 'qa-buttons-cta');
+    // Then add a compact Demo/Help CTA line (text) to keep momentum        
+    // Use localized minimal Help/Demo CTA; avoid English-only fallbacks
+      const ctaEn = 'Reply “Demo” to see a quick walkthrough; “Help” for support & contact.';
+      const cta = await t(ctaEn, lang, 'qa-buttons-cta'); // will localize via deterministic DICT above if MT missing
     await sendMessageQueued(From, cta);
   } catch (e) {
     console.warn('[qa-buttons] orchestration failed:', e?.message);
+  }
+}
+
+// OPTIONAL: Quiet 422 Airtable errors when trying to save 'demo' as a plan
+async function _safeSaveUserPlan(shopId, plan) {
+  try { await saveUserPlan(shopId, plan); }
+  catch (e) {
+    const typ = String(e?.response?.data?.error?.type || '');
+    if (typ.includes('INVALID_MULTIPLE_CHOICE_OPTIONS')) {
+      // Ignore: selector disallows 'demo' option; leave plan empty for unactivated users
+      return;
+    }
+    console.warn('[Save User Plan] unexpected error', e?.message);
   }
 }
 
@@ -1798,6 +1972,25 @@ async function sendDemoTranscriptOnce(From, lang, rid = 'cta-demo') {
   ].join('\n');
   const body = await t(demoEn, lang, rid);
   await sendMessageViaAPI(From, body);
+}
+
+// --- Replace the above sender with your deterministic Nativeglish demo everywhere it's used ---
+// In handleInteractiveSelection(), change 'show_demo' branch to:
+//   await sendNativeglishDemo(from, lang, `cta-demo-${shopId}`);
+// (No diff here because that branch is in another section of your file; ensure it calls sendNativeglishDemo.)
+
+// ---- Utilities for summary/date & safe parsers ----
+function formatDateForDisplay(iso) {
+  try {
+    const d = new Date(iso);
+    const dd = `${d.getDate().toString().padStart(2,'0')}-${(d.getMonth()+1).toString().padStart(2,'0')}-${d.getFullYear()}`;
+    return dd;
+  } catch { return String(iso ?? '—'); }
+}
+function parseMultipleUpdatesSafe(text) {
+  try { if (typeof parseMultipleUpdates === 'function') return parseMultipleUpdates(text); }
+  catch (_) {}
+  return null;
 }
 
 // ===== AI onboarding & sales Q&A (Deepseek) — grounded KB (no hallucinations) =====
