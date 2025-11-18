@@ -1094,24 +1094,25 @@ function _normLite(s) {
   if (payload === 'show_demo') {
     const shopId = String(from).replace('whatsapp:', '');
     let lang = 'en';
-    try { const prefLP = await getUserPreference(shopId); if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase(); } catch (_) {}
-    const demo = await t(
-      `Demo:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m\n• short summary`,
-      lang, `cta-demo-${shopId}`
-    );
-    await sendMessageViaAPI(from, demo);
+    try { const prefLP = await getUserPreference(shopId); if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase(); } catch (_) {}        
+    // STEP 3: Use a richer single-message demo transcript (text-only)
+    await sendDemoTranscriptOnce(from, lang, `cta-demo-${shopId}`);
     return true;
   }
   // --- NEW: Help button ---
   if (payload === 'show_help') {
     const shopId = String(from).replace('whatsapp:', '');
     let lang = 'en';
-    try { const prefLP = await getUserPreference(shopId); if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase(); } catch (_) {}
-    const help = await t(
-      `Help:\nType “mode” to switch Purchase/Sale/Return.\nTry: short summary • expiring 30 • low stock`,
-      lang, `cta-help-${shopId}`
-    );
-    await sendMessageViaAPI(from, help);
+    try { const prefLP = await getUserPreference(shopId); if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase(); } catch (_) {}        
+    const helpEn = [
+          'Help:',
+          '• Type “mode” to switch Purchase/Sale/Return',
+          '• Try: short summary • expiring 30 • low stock',
+          `• WhatsApp or call: +91-9013283687`,
+          `• WhatsApp link: ${WHATSAPP_LINK}`
+        ].join('\n');
+        const help = await t(helpEn, lang, `cta-help-${shopId}`);
+        await sendMessageViaAPI(from, help);
     return true;
   }
    
@@ -1616,6 +1617,65 @@ async function t(text, languageCode, requestId) {
   return enforceSingleScript(out, languageCode);
 }
 
+// ---------------------------------------------------------------------------
+// STEP 3: After any AI Sales Q&A answer, send appropriate buttons.
+// - Unactivated (no plan / demo): Onboarding QR (Start Trial / Demo / Help)
+// - Activated (trial|paid): Purchase/Sale/Return Quick-Reply + Demo/Help CTA text
+// ---------------------------------------------------------------------------
+async function sendSalesQAButtons(From, lang, isActivated) {
+  const toNumber = String(From).replace('whatsapp:', '');
+  try {
+    await ensureLangTemplates(lang);         // builds per-language templates if missing
+    const sids = getLangSids(lang);
+
+    if (!isActivated) {
+      // Show onboarding quick-replies (Start Trial / Demo / Help)
+      if (sids?.onboardingQrSid) {
+        await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.onboardingQrSid });
+        return;
+      }
+      // Fallback text CTA when template missing:
+      const txt = getTrialCtaText(lang);
+      const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+      await sendMessageQueued(From, NO_FOOTER_MARKER + await t(txt, lang, 'qa-buttons-onboard-fallback'));
+      return;
+    }
+
+    // Activated users: show Purchase/Sale/Return Quick-Reply first
+    if (sids?.quickReplySid) {
+      try {
+        await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.quickReplySid });
+      } catch (e) {
+        console.warn('[qa-buttons] quickReply send failed', { status: e?.response?.status, data: e?.response?.data });
+      }
+    }
+    // Then add a compact Demo/Help CTA line (text) to keep momentum
+    const ctaEn = 'Reply “Demo” to see a quick walkthrough; “Help” for support & contact.';
+    const cta = await t(ctaEn, lang, 'qa-buttons-cta');
+    await sendMessageQueued(From, cta);
+  } catch (e) {
+    console.warn('[qa-buttons] orchestration failed:', e?.message);
+  }
+}
+
+// STEP 3: Single-message DEMO transcript (text-only; video comes in Step 17)
+async function sendDemoTranscriptOnce(From, lang, rid = 'cta-demo') {
+  const demoEn = [
+    'Demo:',
+    'User: sold milk 2 ltr',
+    'Bot: ✅ Sold 2 ltr milk @ ₹? each — Stock: (updated)',
+    'User: purchase Parle-G 12 packets ₹10 exp +6m',
+    'Bot: ✅ Purchased 12 packets Parle-G — Price: ₹10',
+    '      Expiry: set to +6 months',
+    'User: short summary',
+    'Bot: 📊 Short Summary — Sales Today, Low Stock, Expiring Soon…',
+    '',
+    'Tip: type “mode” to switch Purchase/Sale/Return'
+  ].join('\n');
+  const body = await t(demoEn, lang, rid);
+  await sendMessageViaAPI(From, body);
+}
+
 // ===== AI onboarding & sales Q&A (Deepseek) — grounded KB (no hallucinations) =====
 // Trial and Paid plans have identical features; trial is time-limited only.
 const SALES_AI_MANIFEST = Object.freeze({
@@ -1798,6 +1858,16 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
     console.warn('AI_AGENT_FALLBACK_USED', { kind: 'sales-qa' });
     return getLocalizedQAFallback(lang);
   }
+}
+
+// STEP 3: Helper to check activation status (trial|paid)
+async function isUserActivated(shopId) {
+  try {
+    const pref = await getUserPreference(shopId);
+    const planRaw = String(pref?.plan || '').toLowerCase();
+    const plan = (planRaw === 'free_demo_first_50' || planRaw === '' || planRaw === 'demo') ? 'trial' : planRaw;
+    return (plan === 'trial' || plan === 'paid');
+  } catch { return false; }
 }
 
 // ===== Access Gate & Onboarding =====
@@ -3263,6 +3333,14 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();    
   const shopId = String(From).replace('whatsapp:', '');
+
+  // FAST PATH: pure greeting → welcome and exit early (prevents ack/parse-error later)
+  if (_isGreeting(text)) {
+   await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
+   handledRequests.add(requestId);
+   return true;
+ }
+  
   // NEW: record activity (touch LastUsed) for every inbound
   try { await touchUserLastUsed(String(From).replace('whatsapp:', '')); } catch {}    
   // NEW: gate for paywall/onboarding    
@@ -3300,10 +3378,10 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
             } catch { /* best-effort */ }
                    
     // IMPORTANT: Only send the generic ack if we did NOT (and will not) show welcome.
-      // At this point, welcome has already been checked above and returned if sent.
-      if (!isQuestion) {
-        try { await sendMessageQueued(From, await t('Processing your message…', detectedLanguage, `${requestId}::ack`)); } catch {}
-      }
+      // At this point, welcome has already been checked above and returned if sent.           
+      if (!isQuestion && !handledRequests.has(requestId)) {
+         try { await sendMessageQueued(From, await t('Processing your message…', detectedLanguage, `${requestId}::ack`)); } catch {}
+       }
 
     if (gate && gate.allow === false) {
       // truly blocked (deactivated/blacklisted)
@@ -9061,7 +9139,14 @@ module.exports = async (req, res) => {
           const msg = await t(ans, detectedLanguage || 'en', `${requestId}::sales-qa-first`);
           // Send via your queued API (safer for rate limiting)
           await sendMessageQueued(From, msg);
-          handledRequests.add(requestId);
+          handledRequests.add(requestId);                   
+          // STEP 3: Immediately send Q&A buttons
+              try {
+                const isActivated = await isUserActivated(shopId);
+                await sendSalesQAButtons(From, detectedLanguage || 'en', isActivated);
+              } catch (e) {
+                console.warn('[qa-buttons] post-qa send failed:', e?.message);
+              }
           // Minimal TwiML ack for webhook
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message('');                    
