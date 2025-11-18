@@ -7,6 +7,39 @@ const path = require('path');
 const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
+// ---------------------------------------------------------------------------
+// STEP 2: HOISTED GLOBALS (fix early references like "handledRequests is not defined")
+// Place all global Sets/Maps and TTLs at the very top, right after imports.
+// ---------------------------------------------------------------------------
+// Handled/apology guard: track per-request success to prevent late apologies
+const handledRequests = new Set();            // <- used by parse-error & upsell schedulers
+// Caches
+const languageCache = new Map();
+const productMatchCache = new Map();
+const inventoryCache = new Map();
+const productTranslationCache = new Map();
+// TTLs
+const LANGUAGE_CACHE_TTL = 24 * 60 * 60 * 1000;          // 24 hours
+const INVENTORY_CACHE_TTL = 5 * 60 * 1000;               // 5 minutes
+const PRODUCT_CACHE_TTL = 60 * 60 * 1000;                // 1 hour
+const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// ---------------------------------------------------------------------------
+// SINGLE-RESPONSE GUARD (Express): helpers to avoid "headers already sent"
+// We wrap res.send/status to ensure we only respond once per request.
+// ---------------------------------------------------------------------------
+function makeSafeResponder(res) {
+  let responded = false;
+  return {
+    safeSend: (status, body) => {
+      if (responded || res.headersSent) return;
+      responded = true;
+      res.status(status).send(body);
+    },
+    markResponded: () => { responded = true; },
+    alreadySent: () => responded || res.headersSent
+  };
+}
 
 // --- GLOBAL shim: always available across the module and any early call sites
 if (typeof globalThis.getUserState !== 'function') {
@@ -1587,24 +1620,27 @@ async function t(text, languageCode, requestId) {
   return enforceSingleScript(out, languageCode);
 }
 
-
-// ===== AI onboarding & sales Q&A (Deepseek) — grounded, no hallucinations =====
-// Manifest is built from the real capabilities your code already supports.
+// ===== AI onboarding & sales Q&A (Deepseek) — grounded KB (no hallucinations) =====
+// Trial and Paid plans have identical features; trial is time-limited only.
 const SALES_AI_MANIFEST = Object.freeze({
   product: 'Saamagrii.AI',
   capabilities: [
+    // Core inventory ops
     'stock updates (purchase/sale/return)',
-    'batch & expiry tracking',
+    'batch & expiry tracking (+2-minute override windows)',
     'sales entries & confirmations',
+    // Insights & alerts
     'summaries: short / full',
-    'low‑stock alerts & stockout',
-    'expiring items (0/7/30 days)',
-    'reorder suggestions',
-    'inventory value summary'
+    'low-stock alerts & stockout list',
+    'expiring items (0 / 7 / 30 days)',
+    'reorder suggestions (30-day velocity; lead + safety)',
+    'inventory value summary',
+    // Billing & docs
+    'invoice PDF generation upon sale (trial & paid)'
   ],
   quickCommands: [
     'sold <product> <qty> <unit>',
-    'purchase <product> <qty> <unit> ₹<rate> exp <dd-mm|+7d>',
+    'purchase <product> <qty> <unit> ₹<rate> exp <dd-mm/+7d>',
     'return <product> <qty> <unit>',
     'short summary',
     'full summary',
@@ -1612,16 +1648,22 @@ const SALES_AI_MANIFEST = Object.freeze({
     'expiring 0|7|30',
     'sales today|week|month',
     'top 5 products month',
-    'value summary'
+    'value summary',
+    'batches <product>',
+    'stock <product>'
   ],
   plans: {
     trialDays: TRIAL_DAYS,
-    paidCTA: `Pay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME}) or ${PAYMENT_LINK}`
+    pricePerMonthINR: PAID_PRICE_INR,
+    equalFeaturesNote: 'Trial has all features of the paid plan; trial is time-limited.',
+    paidCTA: `Pay ₹${PAID_PRICE_INR} via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME}) or ${PAYMENT_LINK}`
   },
   guardrails: [
-    'Do NOT invent features beyond the capabilities list.',
-    'If question is out of scope, say you are not sure and show quick commands.',
-    'No claims about external apps/hardware/on‑site setup.'
+    'Do NOT invent features beyond this list.',
+    'If out of scope, say “I’m not sure yet” and show 2–3 quick commands.',
+    'Always answer in the user’s language/script (single script).',
+    'Keep replies concise (3–5 short sentences).',
+    'Only mention payment details when pricing is asked.'
   ]
 });
 
@@ -1700,13 +1742,16 @@ async function composeAIOnboarding(language = 'en') {
 
 // NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
 async function composeAISalesAnswer(shopId, question, language = 'en') {
-  const lang = (language || 'en').toLowerCase();        
-  const sys =
-      `You are a helpful WhatsApp assistant. Always respond ONLY in ${lang} script (e.g., Hindi → Devanagari). `
-      + 'Be conversational, concise (3–5 short sentences), and avoid repeating earlier messages verbatim. '
-      + `If user asks pricing/cost, clearly state: free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month. `
-      + 'If out of scope, say "I’m not sure yet" and share 2–3 relevant quick commands.';
-  const manifest = JSON.stringify(SALES_AI_MANIFEST);    
+  const lang = (language ?? 'en').toLowerCase();
+    // If user asks about invoice, force an explicit line in the reply about PDFs
+    const mustMentionInvoice = /\b(invoice|बिल|चालान)\b/i.test(String(question || ''));
+    const sys =
+      (`You are a helpful WhatsApp assistant. Always respond ONLY in ${lang} script (e.g., Hindi → Devanagari).
+  Be conversational, concise (3–5 short sentences), and avoid repeating earlier messages verbatim. Use ONLY MANIFEST facts; never invent features.
+  If pricing/cost is asked, include: free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month. If out of scope, say "I’m not sure yet" and share 2–3 relevant benefits of the product.
+  ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''}`).trim();
+  const manifest = JSON.stringify(SALES_AI_MANIFEST);
+
   // Pull last 2–3 turns for better continuity (from DB)
     let convoHint = '';
     try {
@@ -1715,12 +1760,12 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
         convoHint = 'Conversation so far:\n' + turns.map(t => `User: ${t.user_text}\nAssistant: ${t.ai_text}`).join('\n') + '\n';
       }
     } catch (_) {}
-  const user =
-    `Language: ${lang}\n` +
-    `MANIFEST: ${manifest}\n` +
-    `convoHint` +
-    `UserQuestion: ${question}\n` +
-    `Rules: Use only capabilities listed. If pricing/cost asked, include trial days (${TRIAL_DAYS}) and ₹${PAID_PRICE_INR}/month. Always use ${lang} script.`;
+  
+    const user = (`Language: ${lang}
+    MANIFEST: ${manifest}
+    ${convoHint}UserQuestion: ${question}
+    Rules: Use only capabilities listed. If pricing/cost asked, include trial days (${TRIAL_DAYS}) and ₹${PAID_PRICE_INR}/month. Always answer in ${lang} script. Keep it short.`).trim();
+
   try {
     console.log('AI_AGENT_PRE_CALL', { kind: 'sales-qa', language: lang, promptHash: Buffer.from(String(question).toLowerCase()).toString('base64').slice(0,12) });
     const resp = await axios.post(
@@ -1743,7 +1788,7 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
           const q = String(question || '').toLowerCase();
           const askedPrice =
             /(?:price|cost|charges?)/.test(q) ||
-            /(?:कितनी\s*लागत|क़ीमत|मूल्य|कितना|दाम)/.test(q);
+            /(\bकितनी\s*लागत\b|\bकीमत\b|\bमूल्य\b|\bकितना\b|\bदाम\b)/i.test(q);
           if (INLINE_PAYTM_IN_PRICING && askedPrice) {
             // Keep it short and language-neutral (numbers/brand names OK in single-script output)
             const line = `\nPaytm → ${PAYTM_NUMBER} (${PAYTM_NAME})`;
@@ -1753,10 +1798,9 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
     console.log('AI_AGENT_POST_CALL', { kind: 'sales-qa', ok: !!out, length: out?.length || 0 });
     return out;
   } catch {
-   // Grounded fallback: show benefit or safe “not sure” with known commands        
-    const cmds = SALES_AI_MANIFEST.quickCommands.slice(0, 3).join(' • ');
+   // Grounded fallback: show benefit or safe “not sure” with known commands             
     console.warn('AI_AGENT_FALLBACK_USED', { kind: 'sales-qa' });
-    return getLocalizedQAFallback(lang).replace('short summary', cmds.split(' • ')[2] || 'short summary');
+    return getLocalizedQAFallback(lang);
   }
 }
 
@@ -2253,22 +2297,6 @@ scheduleInactivityNudges();
 // Start trial expiry reminders (hourly)
 scheduleTrialExpiryReminders();
 
-// --- Handled/apology guard: track per-request success to prevent late apologies ---
-// If a requestId is added here, any later call to sendParseErrorWithExamples() with the
-// same requestId will be suppressed (no apology will be sent).
-const handledRequests = new Set();
-
-// Cache implementations
-const languageCache = new Map();
-const productMatchCache = new Map();
-const inventoryCache = new Map();
-const productTranslationCache = new Map();
-
-// Cache TTL values
-const LANGUAGE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
-const INVENTORY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-const PRODUCT_CACHE_TTL = 60 * 60 * 1000; // 1 hour
-const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 // ===== AI Debounce (per shop) =====
 const aiDebounce = new Map(); // shopId -> { timer, lastText, lastLang, lastReqId }
@@ -8921,7 +8949,9 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
 module.exports = async (req, res) => {
   const requestStart = Date.now();
   const response = new twilio.twiml.MessagingResponse();
-  const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;    
+  // STEP 2: single-response guard for the webhook
+  const resp = makeSafeResponder(res);
   try { cleanupCaches(); } catch (_) {}
 
   // --- Extract inbound fields early (so helpers can use them) ---
@@ -8949,8 +8979,9 @@ module.exports = async (req, res) => {
         // We already replied using the Programmable Messaging API.
         // Return a minimal TwiML response to acknowledge the webhook.
         const twiml = new twilio.twiml.MessagingResponse();
-        twiml.message('');
-        res.type('text/xml').send(twiml.toString());
+        twiml.message('');                
+        res.type('text/xml');
+        resp.safeSend(200, twiml.toString());
         safeTrackResponseTime(requestStart, requestId);
         return;
       }
@@ -8977,8 +9008,9 @@ module.exports = async (req, res) => {
         handledRequests.add(requestId);
         // Minimal TwiML ack for webhook (your Content API has already sent messages)
         const twiml = new twilio.twiml.MessagingResponse();
-        twiml.message('');
-        res.type('text/xml').send(twiml.toString());
+        twiml.message('');                
+        res.type('text/xml');
+        resp.safeSend(200, twiml.toString());
         safeTrackResponseTime(requestStart, requestId);
         return;
       }
@@ -8994,8 +9026,9 @@ module.exports = async (req, res) => {
       if (!gate.allow) {
         // The gate already sent the appropriate reply (onboarding / paywall / trial end).
         const twiml = new twilio.twiml.MessagingResponse();
-        twiml.message(''); // minimal ack for webhook
-        res.type('text/xml').send(twiml.toString());
+        twiml.message(''); // minimal ack for webhook               
+        res.type('text/xml');
+        resp.safeSend(200, twiml.toString());
         safeTrackResponseTime(requestStart, requestId);
         return;
       }
@@ -9031,8 +9064,9 @@ module.exports = async (req, res) => {
           handledRequests.add(requestId);
           // Minimal TwiML ack for webhook
           const twiml = new twilio.twiml.MessagingResponse();
-          twiml.message('');
-          res.type('text/xml').send(twiml.toString());
+          twiml.message('');                    
+          res.type('text/xml');
+          resp.safeSend(200, twiml.toString());
           safeTrackResponseTime(requestStart, requestId);
           return;
         }
@@ -9051,8 +9085,9 @@ module.exports = async (req, res) => {
               const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
               if (handledCombined) {
                 const twiml = new twilio.twiml.MessagingResponse();
-                twiml.message('');
-                res.type('text/xml').send(twiml.toString());
+                twiml.message('');                               
+                res.type('text/xml');
+                resp.safeSend(200, twiml.toString());
                 safeTrackResponseTime(requestStart, requestId);
                 return; // exit early; wrapper 'finally' will stop tips
               }
@@ -9066,15 +9101,13 @@ module.exports = async (req, res) => {
     await handleRequest(req, res, response, requestId, requestStart);
 
     // --- FINAL CATCH-ALL: If nothing above handled the message, send examples ---
-    if (!res.headersSent) {
-      await safeSendParseError(From, detectedLanguage, requestId);
-      try {
-        const twiml = new twilio.twiml.MessagingResponse();
-        twiml.message(''); // minimal ack
-        res.type('text/xml').send(twiml.toString());
-      } catch (_) {
-        res.status(200).end();
-      }
+    if (!resp.alreadySent()) {
+      await safeSendParseError(From, detectedLanguage, requestId);           
+      // minimal TwiML ack (single-response guard)
+      const twiml = new twilio.twiml.MessagingResponse();
+      twiml.message('');
+      res.type('text/xml');
+      resp.safeSend(200, twiml.toString());
       safeTrackResponseTime(requestStart, requestId);
       return;
     }
