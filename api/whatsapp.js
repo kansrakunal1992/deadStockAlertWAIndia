@@ -3434,7 +3434,13 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
              * even for new/unactivated users. This enables qa-sales mode reliably.
              */
             if (isQuestion) {
-              try {
+              try {                               
+                // STEP 5: Debounce Q&A if enabled (prevents duplicate/tail sends)
+                      if (Number(process.env.AI_DEBOUNCE_MS ?? 0) > 0) {
+                        scheduleAiAnswer(shopId, From, text, detectedLanguage, requestId);
+                        handledRequests.add(requestId);
+                        return true; // early exit; actual answer will be sent by the debounce timer
+                      }
                 const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
                 const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa-first`);
                 await sendMessageQueued(From, msg);
@@ -3584,7 +3590,13 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   
     try {     
       // NEW: Smart sales Q&A for non-transaction, question-like prompts (benefits/clarifications)                        
-      if (!looksLikeTransaction(text) && isQuestion) {
+      if (!looksLikeTransaction(text) && isQuestion) {          
+          // STEP 5: Debounce Q&A if enabled (same behavior as early branch)
+              if (Number(process.env.AI_DEBOUNCE_MS ?? 0) > 0) {
+                scheduleAiAnswer(shopId, From, text, detectedLanguage, requestId);
+                handledRequests.add(requestId);
+                return true; // early exit; debounce will send the answer
+              }
           const shopId = String(From).replace('whatsapp:', '');
           const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
           const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa`);
