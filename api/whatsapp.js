@@ -207,34 +207,27 @@ function isResetMessage(text) {
 }
 
 // --- Question intent detector (AI-backed when uncertain) ---
-function looksLikeQuestion(text, lang = 'en') {
+async function looksLikeQuestion(text, lang = 'en') {
   const t = String(text ?? '').trim().toLowerCase();
   if (!t) return false;
-  if (/[?\uff1f]\s*$/.test(t)) return true; // quick path
+  if (/[?\uff1f]\s*$/.test(t)) return true; // obvious question
 
-  // Heuristic tokens (English + Hinglish + Hindi native)
+  // Heuristics
   const en = /\b(what|why|when|how|who|which|price|cost|charges?|benefit|pros|cons|compare|best)\b/;
   const hinglish = /\b(kya|kaise|kyon|kyu|kab|kitna|daam|kimat|fayda|nuksan)\b/;
   const hiNative = /(क्या|कैसे|क्यों|कब|कितना|दाम|कीमत|फ़ायदा|नुकसान)/;
-  const heuristicHit = en.test(t) || hinglish.test(t) || hiNative.test(t);
-  if (heuristicHit) return true;
+  if (en.test(t) || hinglish.test(t) || hiNative.test(t)) return true;
 
-  // Use AI only when ambiguous (ASCII-only, short-ish, weak punctuation)
+  // Ambiguous → ask AI intent
   const isAscii = /^[\x00-\x7F]+$/.test(t);
   const weakPunct = !/[.!]$/.test(t);
-  const maybeAmbiguous = isAscii && weakPunct && t.split(/\s+/).length <= 8;
-  if (!maybeAmbiguous) return false;
+  const shortish = t.split(/\s+/).length <= 8;
+  if (!(isAscii && weakPunct && shortish)) return false;
 
   try {
-    // This call is rate-limited by _aiDetectCache in aiDetectLangIntent
-    const p = aiDetectLangIntent(text);
-    // Allow sync callers to handle Promise as truthy—router awaits anyway
-    if (p && typeof p.then === 'function') {
-      // non-blocking hint usage in async flows elsewhere
-      return false;
-    }
-    return false;
-  } catch (_) {
+    const { intent } = await aiDetectLangIntent(text);
+    return intent === 'question';
+  } catch {
     return false;
   }
 }
@@ -2815,21 +2808,6 @@ function nativeglishWrap(text, lang) {
   } catch { return String(text ?? ''); }
 }
 
-// Looks-like-question detector (no "?" needed), across EN + common Indian langs (roman + native)
-function looksLikeQuestion(text, lang) {
-  const q = String(text || '').trim().toLowerCase();
-  if (!q) return false;
-  if (/[?？]$/.test(q)) return true;
-  const en = /(what|why|when|how|who|which|price|cost|charges?|benefit|pros|cons|compare|best)\b/;
-  const hi = /(kya|kaise|kyon|kyu|kab|kitna|daam|kimat|fayda|nuksan)\b|[क्या|कैसे|क्यों|कब|कितना|दाम|कीमत|फायदा|नुकसान]/;
-  const bn = /মূল্য|কীভাবে|কেন|কবে|কত|দাম/;
-  const ta = /எப்படி|ஏன்|எப்போது|எவ்வளவு|விலை/;
-  const te = /ఎలా|ఎందుకు|ఎప్పుడు|ఎంత|ధర/;
-  const kn = /ಹೇಗೆ|ಏಕೆ|ಯಾವಾಗ|ಎಷ್ಟು|ಬೆಲೆ/;
-  const gu = /કેમ|શા માટે|ક્યારે|કેટલું|ભાવ/;
-  return en.test(q) || hi.test(q) || bn.test(q) || ta.test(q) || te.test(q) || kn.test(q) || gu.test(q);
-}
-
 // Centralized minimal Help (new copy), localized + tagged with footer
 async function sendHelpMinimal(From, lang, requestId) {
   const base = [
@@ -3821,7 +3799,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const text = String(rawBody || '').trim();    
   const shopId = String(From).replace('whatsapp:', '');   
   // Robust question detection for *all* modes (no "?" required)
-  const isQuestion = looksLikeQuestion(text, detectedLanguage);
+  let isQuestion = await looksLikeQuestion(text, detectedLanguage);
   
     // ===== STEP 14: "mode" keyword shows Purchase/Sale/Return buttons =====
     try {
@@ -3931,11 +3909,12 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   // NEW: gate for paywall/onboarding    
   const gate = await ensureAccessOrOnboard(From, rawBody, detectedLanguage);                  
       // Send ack for non-question messages only (see Enhancement D)
-        // Stronger question detection for Indian-language Qs
-        const isQuestion =
+        // Stronger question detection for Indian-language Qs               
+        isQuestion = isQuestion ||
           /\?\s*$/.test(text) ||
           /\b(price|cost|charges?)\b/i.test(text) ||
-          /(\bकीमत\b|\bमूल्य\b|\bलागत\b|\bकितना\b|\bक्यों\b|\bकैसे\b)/i.test(text);            
+          /(\bकीमत\b|\bमूल्य\b|\bलागत\b|\bकितना\b|\bक्यों\b|\bकैसे\b)/i.test(text);
+     
           /**
              * Q&A BEFORE WELCOME:
              * If the user asks a question (price/benefits/how), answer via AI sales Q&A first,
@@ -9741,7 +9720,7 @@ module.exports = async (req, res) => {
   // ===== Webhook: answer questions *in all modes* before inventory parse =====
   try {
     const sanitized = Body; // already sanitized above
-    if (looksLikeQuestion(sanitized, detectedLanguage)) {
+    if (await looksLikeQuestion(sanitized, detectedLanguage)) {
       await handleQuickQueryEN(sanitized, From, detectedLanguage, requestId);
       const twiml = new twilio.twiml.MessagingResponse();
       twiml.message('');
