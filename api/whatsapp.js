@@ -808,6 +808,7 @@ const { sendContentTemplate } = require('./whatsappButtons');
 const { ensureLangTemplates, getLangSids } = require('./contentCache');
 
 async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId = null)
+{
   const toNumber = From.replace('whatsapp:', '');   
   // Mark this request as handled (suppresses parse-error apologies later in this cycle)
   try { if (requestId) handledRequests.add(requestId); } catch {}
