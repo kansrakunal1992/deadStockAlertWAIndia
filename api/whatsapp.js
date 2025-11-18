@@ -9121,7 +9121,9 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     
   } catch (error) {
     console.error(`[${requestId}] Error processing text message:`, error);
-    // Send error message via Twilio API
+    // Send error message via Twilio API        
+    // STEP 6: global tail/apology guard — if a response was already sent, skip
+    try { if (handledRequests.has(requestId)) return; } catch (_) {}
     const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
     await client.messages.create({
       body: 'Sorry, I had trouble processing your message. Please try again.',
@@ -10784,7 +10786,11 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
       }
     } catch (parseError) {
       console.error(`[${requestId}] Error parsing transcript for confirmation:`, parseError.message);
-      // If parsing failed, ask to retry
+      // If parsing failed, ask to retry            
+      // STEP 6: Skip tail/apology if this request was already handled upstream
+          if (handledRequests.has(requestId)) {
+            return; // do not send late apology/tail
+          }
       const errorMessage = await t(
         'Sorry, I had trouble processing your message. Please try again.',
         detectedLanguage,
@@ -10980,7 +10986,11 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
       }
     } catch (parseError) {
       console.error(`[${requestId}] Error parsing transcript for confirmation:`, parseError.message);
-      // If parsing failed, ask to retry
+      // If parsing failed, ask to retry           
+      // STEP 6: Skip tail/apology if this request was already handled upstream
+          if (handledRequests.has(requestId)) {
+            return; // do not send late apology/tail
+          }
       const errorMessage = await t(
         'Sorry, I had trouble processing your message. Please try again.',
         detectedLanguage,
@@ -11054,7 +11064,11 @@ Reply with:
     } catch (parseError) {
       console.error(`[${requestId}] Error parsing transcript for correction:`, parseError.message);
       
-      // FIX: Even if there's an error during parsing, create a default update object and proceed to correction
+      // FIX: Even if there's an error during parsing, create a default update object and proceed to correction           
+      // STEP 6: If already handled, avoid sending any late fallback
+          if (handledRequests.has(requestId)) {
+            return;
+          }
       const update = {
         product: pendingTranscript,
         quantity: 0,
