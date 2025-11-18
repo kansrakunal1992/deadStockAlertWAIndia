@@ -1504,7 +1504,7 @@ async function sendOnboardingQR(shopId, lang) {
   await ensureLangTemplates(lang);
   const sids = getLangSids(lang) || {};
   const contentSid = String(process.env.ONBOARDING_QR_SID ?? '').trim() || sids.onboardingQrSid;
-  if (contentSid) await sendContentTemplate({ toWhatsApp: shopId, contentSid });
+  if (contentSid) await sendContentTemplateOnce({ toWhatsApp: shopId, contentSid, requestId });
 }
 
 // Localized trial CTA text fallback (used only if Content send fails)
@@ -2443,7 +2443,13 @@ scheduleTrialExpiryReminders();
 
 // ===== AI Debounce (per shop) =====
 const aiDebounce = new Map(); // shopId -> { timer, lastText, lastLang, lastReqId }
-const AI_DEBOUNCE_MS = Number(process.env.AI_DEBOUNCE_MS ?? 0);
+const AI_DEBOUNCE_MS = Number(process.env.AI_DEBOUNCE_MS ?? 0); 
+// STEP 9: Cancel any pending AI-debounced Q&A for this shop
+function cancelAiDebounce(shopId) {
+  const prev = aiDebounce.get(shopId);
+  if (prev?.timer) clearTimeout(prev.timer);
+  aiDebounce.delete(shopId);
+}
 function scheduleAiAnswer(shopId, From, text, lang, requestId) {
   const key = shopId;
   const prev = aiDebounce.get(key);
@@ -2461,6 +2467,19 @@ function scheduleAiAnswer(shopId, From, text, lang, requestId) {
       } finally { aiDebounce.delete(key); }
     }, AI_DEBOUNCE_MS)
   });
+}
+
+// STEP 8: Per-request idempotency for Content API template sends
+const _sentTemplatesThisReq = new Set(); // keys: `${requestId}::${contentSid}`
+async function sendContentTemplateOnce({ toWhatsApp, contentSid, requestId }) {
+  const key = `${requestId}::${contentSid}`;
+  if (_sentTemplatesThisReq.has(key)) return;
+  try {
+    await sendContentTemplate({ toWhatsApp, contentSid });
+    _sentTemplatesThisReq.add(key);
+  } catch (e) {
+    console.warn('[contentTemplateOnce] send failed', { status: e?.response?.status, data: e?.response?.data });
+  }
 }
 
 // Cache key prefix for command normalization (any-language -> English)
@@ -3409,8 +3428,18 @@ function _norm(s) { return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,''
 async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();    
-  const shopId = String(From).replace('whatsapp:', '');
-
+  const shopId = String(From).replace('whatsapp:', '');  
+    
+  // STEP 9: If this input is not a question, cancel any pending debounced Q&A
+    // (prevents answering an outdated question after the user changed context)
+    try {
+      const isQ = (() => {
+        const t = text.toLowerCase();
+        return /\?$/.test(t) || /price|how|why|benefit|फायदा|क्यों|कैसे|कितना|कीमत/.test(t);
+      })();
+      if (!isQ) cancelAiDebounce(shopId);
+    } catch (_) { /* best-effort */ }
+  
   // FAST PATH: pure greeting → welcome and exit early (prevents ack/parse-error later)
   if (_isGreeting(text)) {
    await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
@@ -3443,7 +3472,11 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
                       }
                 const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
                 const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa-first`);
-                await sendMessageQueued(From, msg);
+                await sendMessageQueued(From, msg);                              
+                // STEP 7: Persist turn (for parity with debounced path)
+                      try {
+                        await appendTurn(shopId, text, msg, inferTopic(text));
+                      } catch (_) { /* best-effort */ }
                 handledRequests.add(requestId);                               
                 // Q&A → For non-activated users, show Onboarding QR (Activate Trial / Demo / Help)
                       try {
@@ -3600,7 +3633,11 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
           const shopId = String(From).replace('whatsapp:', '');
           const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
           const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa`);
-          await sendMessageQueued(From, msg);
+          await sendMessageQueued(From, msg);                  
+          // STEP 7: Persist turn (for parity with debounced path)
+              try {
+                await appendTurn(shopId, text, msg, inferTopic(text));
+              } catch (_) { /* best-effort */ }
           handledRequests.add(requestId); // avoid any late parse-error or duplicate onboarding                   
           // Q&A → For non-activated users, show Onboarding QR
               try {
