@@ -9782,14 +9782,17 @@ module.exports = async (req, res) => {
   // ===== Webhook: answer questions *in all modes* before inventory parse =====
   try {
     const sanitized = Body; // already sanitized above
-    if (await looksLikeQuestion(sanitized, detectedLanguage)) {
-      await handleQuickQueryEN(sanitized, From, detectedLanguage, requestId);
-      const twiml = new twilio.twiml.MessagingResponse();
-      twiml.message('');
-      res.type('text/xml');
-      resp.safeSend(200, twiml.toString());
-      safeTrackResponseTime(requestStart, requestId);
-      return;
+    if (await looksLikeQuestion(sanitized, detectedLanguage)) {        
+    const handled = await handleQuickQueryEN(sanitized, From, detectedLanguage, requestId);
+        if (handled) {
+          const twiml = new twilio.twiml.MessagingResponse();
+          twiml.message('');
+          res.type('text/xml');
+          resp.safeSend(200, twiml.toString());
+          safeTrackResponseTime(requestStart, requestId);
+          return; // only if a reply was actually sent
+        }
+        // else: fall through to Sales Q&A block below
     }
   } catch (e) {
     console.warn(`[${requestId}] pre-inventory Q&A handler error:`, e.message);
