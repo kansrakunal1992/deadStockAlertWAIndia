@@ -55,7 +55,7 @@ const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 const _aiDetectCache = new Map(); // key: text|heuristicLang -> {language,intent,ts}
 const AI_DETECT_TTL_MS = Number(process.env.AI_DETECT_TTL_MS ?? 5 * 60 * 1000); // 5 min
 
-function parseMultipleUpdates() { return null; }
+function parseMultipleUpdates(text) { return []; }
 
 // SAFE SHIM: ensure nativeglishWrap exists even if bundling misses the real one
 if (typeof nativeglishWrap !== 'function') {
@@ -2271,11 +2271,6 @@ function formatDateForDisplay(iso) {
     return dd;
   } catch { return String(iso ?? '—'); }
 }
-function parseMultipleUpdatesSafe(text) {
-  try { if (typeof parseMultipleUpdates === 'function') return parseMultipleUpdates(text); }
-  catch (_) {}
-  return null;
-}
 
 // ===== AI onboarding & sales Q&A (Deepseek) — grounded KB (no hallucinations) =====
 // Trial and Paid plans have identical features; trial is time-limited only.
@@ -4110,13 +4105,30 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const text = String(rawBody || '').trim();    
   const shopId = String(From).replace('whatsapp:', '');   
 
-// ===== NEW: Single AI orchestration pass (advisory only)
-  let languagePinned = String(detectedLanguage ?? 'en').toLowerCase();
-  let orchestrated = { language: languagePinned, isQuestion: null, normalizedCommand: null, aiTxn: null };
+// ===== EARLY EXIT: questions win before any inventory/transaction parse =====
+  let _lang = String(detectedLanguage ?? 'en').toLowerCase();
+  let _orch = { language: _lang, kind: null, isQuestion: null, normalizedCommand: null };
   try {
-    orchestrated = await applyAIOrchestration(text, From, languagePinned, requestId);
-    languagePinned = orchestrated.language || languagePinned;
+    _orch = await applyAIOrchestration(text, From, _lang, requestId);
+    _lang = _orch.language ?? _lang;
   } catch (_) { /* best-effort */ }
+
+  // If orchestrator classified it as a QUESTION, answer and exit.
+  if (_orch.isQuestion === true || _orch.kind === 'question') {
+    handledRequests.add(requestId); // prevent late apologies in this cycle
+    const ans  = await composeAISalesAnswer(shopId, text, _lang);
+    const msg0 = await tx(ans, _lang, From, text, `${requestId}::sales-qa`);
+    const msg  = nativeglishWrap(msg0, _lang);
+    await sendMessageQueued(From, msg);
+    return true;
+  }
+
+  // If AI produced a normalized read-only command (summary/list/etc.), route it and exit.
+  if (_orch.normalizedCommand) {
+    handledRequests.add(requestId);
+    await handleQuickQueryEN(_orch.normalizedCommand, From, _lang, `${requestId}::ai-norm`);
+    return true;
+  }
 
   // If AI produced a normalized command, route it immediately (pure read-only/list/summaries).
   // This uses your existing deterministic command router and keeps business gating unchanged.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
@@ -10124,26 +10136,42 @@ module.exports = async (req, res) => {
 
   // Language detection (also persists preference)
   const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);  
-  
-  // ===== Webhook: answer questions *in all modes* before inventory parse =====
-  try {
-    const sanitized = Body; // already sanitized above
-    if (await looksLikeQuestion(sanitized, detectedLanguage)) {        
-    const handled = await handleQuickQueryEN(sanitized, From, detectedLanguage, requestId);
-        if (handled) {
-          const twiml = new twilio.twiml.MessagingResponse();
-          twiml.message('');
-          res.type('text/xml');
-          resp.safeSend(200, twiml.toString());
-          safeTrackResponseTime(requestStart, requestId);
-          return; // only if a reply was actually sent
-        }
-        // else: fall through to Sales Q&A block below
-    }
-  } catch (e) {
-    console.warn(`[${requestId}] pre-inventory Q&A handler error:`, e.message);
-    // Fall through to normal flow if anything goes wrong
-  }
+      
+  // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====
+   try {
+     const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
+       const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+       // Question → answer & exit
+       if (orch.isQuestion === true || orch.kind === 'question') {
+         handledRequests.add(requestId);
+         const shopId = String(From).replace('whatsapp:', '');
+         const ans = await composeAISalesAnswer(shopId, Body, langPinned);
+         const msg0 = await tx(ans, langPinned, From, Body, `${requestId}::sales-qa`);
+         const msg  = nativeglishWrap(msg0, langPinned);
+         await sendMessageQueued(From, msg);
+         // minimal TwiML ack
+         const twiml = new twilio.twiml.MessagingResponse();
+         twiml.message('');
+         res.type('text/xml');
+         resp.safeSend(200, twiml.toString());
+         safeTrackResponseTime(requestStart, requestId);
+         return;
+       }
+       // Read‑only normalized command → route & exit
+       if (orch.normalizedCommand) {
+         handledRequests.add(requestId);
+         await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm`);
+         const twiml = new twilio.twiml.MessagingResponse();
+         twiml.message('');
+         res.type('text/xml');
+         resp.safeSend(200, twiml.toString());
+         safeTrackResponseTime(requestStart, requestId);
+         return;
+       }
+     } catch (e) {
+       console.warn(`[${requestId}] orchestrator early-exit error:`, e?.message);
+       // Fall through gracefully
+     }
     
   // --- C) Welcome first for new users with greeting/language ---
     try {
@@ -10200,51 +10228,6 @@ module.exports = async (req, res) => {
       console.warn(`[${requestId}] gate error:`, e.message);
       // If the gate fails for any reason, fall through to normal flow gracefully.
     }
-  
-    // --- D) Sales Q&A first for non-greeting questions ---
-      try {
-        const shopId = String(From).replace('whatsapp:', '');
-        const lower = Body.toLowerCase();
-    
-        // Your stronger question detector (kept local to webhook)
-        const isQuestionPunc = /\?\s*$/.test(Body);
-        const isPriceAskEn   = /\b(price|cost|charge|charges?)\b/i.test(lower);
-        const isPriceAskHi   = /\b(कीमत|मूल्य|लागत|कितना|दाम)\b/i.test(lower);
-        const isWhyHowHi     = /\b(क्यों|कैसे)\b/i.test(lower);
-        const isBenefitsEn   = /\b(benefits?|advantage|how does it help)\b/i.test(lower);
-        const isQuestion     = isQuestionPunc || isPriceAskEn || isPriceAskHi || isWhyHowHi || isBenefitsEn;
-    
-        // Do NOT trigger Q&A on greeting/language messages (those are handled by Patch C)
-        const isGreetingOrLang =
-          (typeof _isGreeting === 'function' && _isGreeting(Body)) ||
-          (typeof _isLanguageChoice === 'function' && _isLanguageChoice(Body));
-    
-        if (!isGreetingOrLang && isQuestion) {
-          // Compose a concise, localized answer (uses your manifest + pricing rules)
-          const ans = await composeAISalesAnswer(shopId, Body, detectedLanguage || 'en');
-          const msg = await t(ans, detectedLanguage || 'en', `${requestId}::sales-qa-first`);
-          // Send via your queued API (safer for rate limiting)
-          await sendMessageQueued(From, msg);
-          handledRequests.add(requestId);                   
-          // STEP 3: Immediately send Q&A buttons
-              try {
-                const isActivated = await isUserActivated(shopId);
-                await sendSalesQAButtons(From, detectedLanguage || 'en', isActivated);
-              } catch (e) {
-                console.warn('[qa-buttons] post-qa send failed:', e?.message);
-              }
-          // Minimal TwiML ack for webhook
-          const twiml = new twilio.twiml.MessagingResponse();
-          twiml.message('');                    
-          res.type('text/xml');
-          resp.safeSend(200, twiml.toString());
-          safeTrackResponseTime(requestStart, requestId);
-          return;
-        }
-      } catch (e) {
-        console.warn(`[${requestId}] sales-qa short-circuit error:`, e?.message);
-        // Continue to normal handlers if anything goes wrong
-      }
 
   // === Centralized engagement tips: wrap the entire request handling ===    
   // use SAFE wrapper to avoid ReferenceError when runWithTips isn't loaded
