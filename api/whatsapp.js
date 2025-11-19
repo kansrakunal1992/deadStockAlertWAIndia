@@ -57,39 +57,6 @@ const AI_DETECT_TTL_MS = Number(process.env.AI_DETECT_TTL_MS ?? 5 * 60 * 1000); 
 
 function parseMultipleUpdates() { return null; }
 
-// --- SAFE SHIM: ensure nativeglishWrap exists even if build misses it ---
-if (typeof nativeglishWrap !== 'function') {
-  function nativeglishWrap(text, lang) {
-    try {
-      // Keep helpful English anchors (units/₹/MRP) inside localized strings
-      const anchors = ['kg','kgs','g','gm','gms','ltr','ltrs','l','ml','packet','packets','piece','pieces','₹','Rs','MRP'];
-      let out = String(text ?? '');
-      anchors.forEach(tok => {
-        const rx = new RegExp(`\\b${tok}\\b`, 'gi');
-        out = out.replace(rx, tok); // normalize casing and prevent translation of anchors
-      });
-      return out;
-    } catch {
-      return String(text ?? '');
-    }
-  }
-
-// Nativeglish demo: short, clear, localized with helpful English anchors
-async function sendNativeglishDemo(From, lang, requestId) {
-  const demo = [
-    '🎬 Demo (उदाहरण):',
-    '• sold milk 2 ltr — स्टॉक auto-update',
-    '• purchase Parle-G 12 packets ₹10 — exp +6m',
-    '• return 1 packet — instant add-back',
-    'Try: "short summary" / "छोटा सारांश"'
-  ].join('\n');
-  const msg = nativeglishWrap(await tx(demo, lang, From, demo, `demo-ng-${requestId}`), lang);
-  try {
-    const withTag = await tagWithLocalizedMode(From, msg, lang);
-    await sendMessageViaAPI(From, withTag);
-  } catch { await sendMessageViaAPI(From, msg); }
-}
-
 /**
  * aiDetectLangIntent(text)
  * Uses Deepseek to classify:
@@ -1430,19 +1397,18 @@ function _normLite(s) {
     return true;
   }
   
-  // --- NEW: Demo button ---      
-  if (payload === 'show_demo') {
-  // Use Nativeglish demo: localized + helpful English anchors (units/₹)
-  await sendNativeglishDemo(from, lang, `cta-demo-${shopId}`);
-  return true;
+  // --- NEW: Demo button ---
+  if (payload === 'show_demo') {        
+    // STEP 3: Use a richer single-message demo transcript (text-only)
+    await sendDemoTranscriptOnce(from, lang, `cta-demo-${shopId}`);
+    return true;
   }
-
   // --- NEW: Help button ---
   if (payload === 'show_help') {        
     const helpEn = [
           'Help:',
           `• WhatsApp or call: +91-9013283687`,
-          `• WhatsApp link: ${WHATSAPP_LINK}`
+          `• WhatsApp link: https://wa.link/6q3ol7`
         ].join('\n');
         const help = await t(helpEn, lang, `cta-help-${shopId}`);
         await sendMessageViaAPI(from, help);
@@ -1741,7 +1707,7 @@ const PAYTM_NAME   = String(process.env.PAYTM_NAME   ?? 'Saamagrii.AI Support Te
 const TRIAL_DAYS   = Number(process.env.TRIAL_DAYS   ?? 3);
 const PAID_PRICE_INR = Number(process.env.PAID_PRICE_INR ?? 11);
 const INLINE_PAYTM_IN_PRICING = String(process.env.INLINE_PAYTM_IN_PRICING ?? 'false').toLowerCase() === 'true';
-const WHATSAPP_LINK = String(process.env.WHATSAPP_LINK ?? '<whatsapp_link>');
+const WHATSAPP_LINK = String(process.env.WHATSAPP_LINK ?? 'https://wa.link/6q3ol7');
 const PAYMENT_LINK  = String(process.env.PAYMENT_LINK  ?? '<payment_link>');
 
 // NEW: Trial CTA ContentSid (Quick-Reply template)
@@ -2974,9 +2940,25 @@ async function sendHelpMinimal(From, lang, requestId) {
   const base = [
     'Help:',
     '• WhatsApp or call: +91-9013283687',
-    `• WhatsApp link: ="${WHATSAPP_LINK}"`
+    `• WhatsApp link: https://wa.link/6q3ol7`
   ].join('\n');
   const msg = await tx(base, lang, From, 'help', `help-min-${requestId}`);
+  try {
+    const withTag = await tagWithLocalizedMode(From, msg, lang);
+    await sendMessageViaAPI(From, withTag);
+  } catch { await sendMessageViaAPI(From, msg); }
+}
+
+// Nativeglish demo: short, clear, localized with helpful English anchors
+async function sendNativeglishDemo(From, lang, requestId) {
+  const demo = [
+    '🎬 Demo (उदाहरण):',
+    '• sold milk 2 ltr — स्टॉक auto-update',
+    '• purchase Parle-G 12 packets ₹10 — exp +6m',
+    '• return 1 packet — instant add-back',
+    'Try: "short summary" / "छोटा सारांश"'
+  ].join('\n');
+  const msg = nativeglishWrap(await tx(demo, lang, From, demo, `demo-ng-${requestId}`), lang);
   try {
     const withTag = await tagWithLocalizedMode(From, msg, lang);
     await sendMessageViaAPI(From, withTag);
