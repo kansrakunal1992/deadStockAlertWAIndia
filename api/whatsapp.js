@@ -443,7 +443,7 @@ const isQuestion = forcedQuestion ? true : (o.kind === 'question');
   let language = String(o.language ?? detectedLanguageHint ?? 'en').toLowerCase();
   // Persist language preference best-effort
   try { if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, language); } catch (_) {}
-  const isQuestion = o.kind === 'question';
+  let isQuestion = o.kind === 'question';
   const normalizedCommand = o.kind === 'command' && o?.command?.normalized ? o.command.normalized : null;
   const aiTxn = o.kind === 'transaction' ? o.transaction : null;
   console.log('[orchestrator]', { requestId, language, kind: o.kind, normalizedCommand: normalizedCommand ?? '—' });
@@ -554,12 +554,16 @@ async function looksLikeQuestion(text, lang = 'en') {
   if (!t) return false;
   if (/[?\uff1f]\s*$/.test(t)) return true; // obvious question
 
-  // Heuristics
-  const en = /\b(what|why|when|how|who|which|price|cost|charges?|benefit|pros|cons|compare|best)\b/;
-  // Strengthened Hinglish detection (no '?' required)
-  const hinglish = /\b(kya|kaise|kyon|kyu|kab|kitna|daam|kimat|fayda|nuksan|bana|sakte|skte|hai|h)\b/;
-  const hiNative = /(क्या|कैसे|क्यों|कब|कितना|दाम|कीमत|फ़ायदा|नुकसान)/;
-  if (en.test(t) || hinglish.test(t) || hiNative.test(t)) return true;
+  // Heuristics      
+    const en = /\b(what|why|when|how|who|which|price|cost|charges?|benefit|pros|cons|compare|best|can\s+i|will\s+it\s+work)\b/;
+     
+     // --- Patch 4: Strengthened Hinglish (Roman Hindi) ---
+     const hinglish = /\b(kya|kaise|kyon|kyu|kab|kitna|daam|kimat|fayda|faida|nuksan|bana|sakte|skte|hai|h|kaam\s*kare(ga|gi)?|kaam\s*karta|will\s*it\s*work|can\s*i|invoice|bill|chalan)\b/;
+     
+     // Native Hindi (Devanagari) indicators incl. suitability/pricing/invoice
+     const hiNative = /(क्या|कैसे|क्यों|कब|कितना|दाम|कीमत|फ़ायदा|फायदा|नुकसान|काम\s*करेगा|काम\s*करेगी|काम\s*करता|इनवॉइस|बिल|चालान)/;
+     
+     if (en.test(t) || hinglish.test(t) || hiNative.test(text)) return true;
 
   // Ambiguous → ask AI intent
   const isAscii = /^[\x00-\x7F]+$/.test(t);
@@ -3956,28 +3960,45 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
 // If the message clearly looks like a transaction (qty/unit + buy/sell verb), never rewrite it
    // into an English quick command like "sales today".
    
-  // ✅ Prevent double handling if Q&A or onboarding already replied
-  if (handledRequests.has(requestId)) {
-    console.log(`[router] skipping transaction parse (already handled)`, { requestId });
-    return true;
- }
-    
-// ✅ Prevent double handling if Q&A or onboarding already replied
-  if (handledRequests.has(requestId)) {
-      console.log(`[router] skipping transaction parse (already handled)`, { requestId });
-      return true;
-  }
-
-  if (looksLikeTransaction(text)) {
-     return String(text).trim();
-   }
-  try {
-    if (!text || !text.trim()) return text;
-    const lang = (detectedLanguage || 'en').toLowerCase();
+  // ✅ Prevent double handling if Q&A or onboarding already replied     
+    if (handledRequests.has(requestId)) {
+       console.log(`[router] skipping normalization (already handled)`, { requestId });
+       return String(text || '').trim();
+     }
+     // Never normalize transactions
+     if (looksLikeTransaction(text)) {
+       return String(text || '').trim();
+     }
+     
+     // --- Patch 3: HARD GUARD (only normalize clear inventory queries) ---
+     const raw = String(text || '').trim();
+     const rawLc = raw.toLowerCase();
+     const looksLikeInventoryQuery =
+       /^stock\s+\S+$/i.test(rawLc) ||
+       /^batches?\s+\S+$/i.test(rawLc) ||
+       /^expiry\s+\S+$/i.test(rawLc) ||
+       /^expiring(\s+\d+)?$/i.test(rawLc) ||
+       /^sales\s+(today|week|month)$/i.test(rawLc) ||
+       /^low\s*stock$/i.test(rawLc) ||
+       /^value\s*summary$/.test(rawLc) ||
+       /^inventory\s*value$/.test(rawLc) ||
+       /^reorder(\s+suggestions)?$/i.test(rawLc) ||
+       /^top\s+\d+\s+products(\s+(today|week|month))?$/i.test(rawLc) ||
+       /^products(\s+(search|page)\s+\S+)?$/i.test(rawLc) ||
+       /^prices(\s+page\s+\d+)?$/i.test(rawLc);
+     
+     if (!looksLikeInventoryQuery) {
+       // Do NOT rewrite general questions or non-query text
+       return raw;
+     }
+     // --- END Patch 3 guard ---
+     
+     try {
+       if (!raw) return raw;
+       const lang = (detectedLanguage || 'en').toLowerCase();
     // If English already, no need to normalize
-    if (lang === 'en') return text.trim();
-
-    const raw = text.trim();
+    if (lang === 'en') return raw;
+    // Keep your existing summary alias resolver
     const intent = resolveSummaryIntent(raw);
     if (intent) return intent;
 
@@ -4044,9 +4065,9 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
     console.log(`[${requestId}] Normalized: "${raw}" (${lang}) -> "${normalized}"`);
     return normalized;
   } catch (err) {
+    // Graceful fallback (no normalization)
     console.warn(`[${requestId}] Command normalization failed:`, err?.message);
-    // Gracefully fallback to original text if the API is unavailable
-    return text;
+    return raw;
   }
 }
 
