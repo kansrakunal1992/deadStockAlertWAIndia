@@ -430,23 +430,49 @@ async function aiOrchestrate(text) {
  * - aiTxn: parsed transaction skeleton (NEVER auto-applied; deterministic parser still decides).
  * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
  */
-async function applyAIOrchestration(text, From, detectedLanguageHint, requestId) {
-  if (!USE_AI_ORCHESTRATOR) return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
-  const shopId = String(From ?? '').replace('whatsapp:', '');
-  const o = await aiOrchestrate(text);
-    const tNorm = String(text || '').trim().toLowerCase();
-    const qTokens = /\b(kaam\s*karega|kaam\s*karegi|kaam\s*kare|fayda|faida|benefit|price|cost|charges?|kimat|daam|invoice|bill|chal[aā]n|bana\s*sakta|bana\s*sakti|generate|how|why|kaise|kya|kyu|kyon|can\s*i|will\s*it\s*work)\b/i;  
-const forcedQuestion = qTokens.test(tNorm);
-const kind = forcedQuestion ? 'question' : (o.kind || 'other');
-const isQuestion = forcedQuestion ? true : (o.kind === 'question');
+async function applyAIOrchestration(text, From, detectedLanguageHint, requestId) {  
+// Short-circuit if toggled off
+  if (!USE_AI_ORCHESTRATOR) {
+    return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
+  }
 
+  const shopId = String(From ?? '').replace('whatsapp:', '');
+
+  // Null-safe call to AI
+  let o;
+  try {
+    o = await aiOrchestrate(text);
+  } catch (e) {
+    console.warn('[applyAIOrchestration] aiOrchestrate failed:', e?.message);
+    o = null; // fall back below
+  }
+  // Normalize shape to avoid undefined access
+  o = (o && typeof o === 'object') ? o : { language: detectedLanguageHint ?? 'en', kind: 'other', command: null, transaction: null };
+
+  // Language pinning (lowercased)
   let language = String(o.language ?? detectedLanguageHint ?? 'en').toLowerCase();
   // Persist language preference best-effort
-  try { if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, language); } catch (_) {}
-  let isQuestion = o.kind === 'question';
-  const normalizedCommand = o.kind === 'command' && o?.command?.normalized ? o.command.normalized : null;
-  const aiTxn = o.kind === 'transaction' ? o.transaction : null;
-  console.log('[orchestrator]', { requestId, language, kind: o.kind, normalizedCommand: normalizedCommand ?? '—' });
+  try {
+    if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, language);
+  } catch (_) {}
+
+  // --- Forced-question heuristic (Roman+native tokens for suitability/benefit/pricing/invoice) ---
+  const tNorm = String(text || '').trim().toLowerCase();
+  const qTokens = /\b(kaam\s*kare(ga|gi)?|kaam\s*kare|kaam\s*karta|fayda|faida|benefit|price|cost|charges?|kimat|daam|invoice|bill|chal[aā]n|bana\s*sakta|bana\s*sakti|generate|how|why|kaise|kya|kyu|kyon|can\s*i|will\s*it\s*work)\b/i;
+  const forcedQuestion = qTokens.test(tNorm);
+
+  const kind = forcedQuestion ? 'question' : String(o.kind ?? 'other').toLowerCase();
+  const isQuestion = forcedQuestion ? true : (kind === 'question');
+  const normalizedCommand = (kind === 'command' && o?.command?.normalized) ? o.command.normalized : null;
+  const aiTxn = (kind === 'transaction' && o?.transaction && typeof o.transaction === 'object') ? o.transaction : null;
+
+  console.log('[orchestrator]', {
+    requestId,
+    language,
+    kind,
+    normalizedCommand: normalizedCommand ?? '—'
+  });
+
   return { language, isQuestion, normalizedCommand, aiTxn };
 }
 
