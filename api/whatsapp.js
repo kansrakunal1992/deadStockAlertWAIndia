@@ -4119,7 +4119,13 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     const ans  = await composeAISalesAnswer(shopId, text, _lang);
     const msg0 = await tx(ans, _lang, From, text, `${requestId}::sales-qa`);
     const msg  = nativeglishWrap(msg0, _lang);
-    await sendMessageQueued(From, msg);
+    await sendMessageQueued(From, msg);        
+    try {
+          const isActivated = await isUserActivated(shopId);
+          await sendSalesQAButtons(From, _lang, isActivated);
+        } catch (e) {
+          console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
+        }
     return true;
   }
 
@@ -8446,11 +8452,21 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       try {
         const orch = await applyAIOrchestration(transcript, from, detectedLanguage, requestId);
         const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+        // Prefer the detector's script variant (e.g., hi-latn) when available
+          if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
+            langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
+          }
         if (orch.isQuestion === true || orch.kind === 'question') {
           handledRequests.add(requestId);
           const ans = await composeAISalesAnswer(shopId, transcript, langPinned);
           const msg = await t(ans, langPinned, `${requestId}::sales-qa-confirmed`);
-          await sendMessageViaAPI(from, msg);
+          await sendMessageViaAPI(from, msg);                    
+          try {                          
+                const buttonLang = langPinned.includes('-latn') ? langPinned.split('-')[0] : langPinned;
+                await sendSalesQAButtons(From, buttonLang, isActivated);
+                } catch (e) {
+                  console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
+                }
           return res.send(response.toString());
         }
         if (orch.normalizedCommand) {
@@ -9474,12 +9490,23 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       try {
         const orch = await applyAIOrchestration(cleanTranscript, From, detectedLanguage, requestId);
         const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+          // Prefer the detector's script variant (e.g., hi-latn) when available
+          if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
+            langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
+          }
         // Question → answer & exit
         if (orch.isQuestion === true || orch.kind === 'question') {
           handledRequests.add(requestId);
           const ans = await composeAISalesAnswer(shopId, cleanTranscript, langPinned);
           const msg = await t(ans, langPinned, `${requestId}::sales-qa-voice`);
-          await sendMessageViaAPI(From, msg);
+          await sendMessageViaAPI(From, msg);                  
+          try {
+                  const isActivated = await isUserActivated(shopId);
+                  const buttonLang = langPinned.includes('-latn') ? langPinned.split('-')[0] : langPinned;
+                  await sendSalesQAButtons(From, buttonLang, isActivated);
+                } catch (e) {
+                  console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
+                }
           return;
         }
         // Read‑only normalized command → route & exit
@@ -9926,6 +9953,10 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       try {
         const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
         const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+          // Prefer the detector's script variant (e.g., hi-latn) when available
+          if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
+            langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
+          }
         // Question → answer & exit
         if (orch.isQuestion === true || orch.kind === 'question') {
           handledRequests.add(requestId);
@@ -9934,6 +9965,13 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           const msg0 = await tx(ans, langPinned, From, Body, `${requestId}::sales-qa-text`);
           const msg  = nativeglishWrap(msg0, langPinned);
           await sendMessageViaAPI(From, msg);
+          try {
+              const isActivated = await isUserActivated(shopId);
+              const buttonLang = langPinned.includes('-latn') ? langPinned.split('-')[0] : langPinned;
+              await sendSalesQAButtons(From, buttonLang, isActivated);
+            } catch (e) {
+              console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
+            }
           return;
         }
         // Read‑only normalized command → route & exit
@@ -10212,7 +10250,11 @@ module.exports = async (req, res) => {
   // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====
    try {
      const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
-       const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+       const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();        
+    // Prefer the detector's script variant (e.g., hi-latn) when available
+      if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
+        langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
+      }
        // Question → answer & exit
        if (orch.isQuestion === true || orch.kind === 'question') {
          handledRequests.add(requestId);
@@ -10220,7 +10262,14 @@ module.exports = async (req, res) => {
          const ans = await composeAISalesAnswer(shopId, Body, langPinned);
          const msg0 = await tx(ans, langPinned, From, Body, `${requestId}::sales-qa`);
          const msg  = nativeglishWrap(msg0, langPinned);
-         await sendMessageQueued(From, msg);
+         await sendMessageQueued(From, msg);                
+         try {
+                  const isActivated = await isUserActivated(shopId);
+                  const buttonLang = langPinned.includes('-latn') ? langPinned.split('-')[0] : langPinned;
+                  await sendSalesQAButtons(From, buttonLang, isActivated);
+                } catch (e) {
+                  console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
+                }
          // minimal TwiML ack
          const twiml = new twilio.twiml.MessagingResponse();
          twiml.message('');
@@ -11369,6 +11418,10 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
             try {
               const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
               const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+              // Prefer the detector's script variant (e.g., hi-latn) when available
+              if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
+                langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
+              }
               // Question → answer & exit
               if (orch.isQuestion === true || orch.kind === 'question') {
                 handledRequests.add(requestId);
@@ -11376,6 +11429,13 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
                 const msg0 = await tx(ans, langPinned, From, Body, `${requestId}::sales-qa-text`);
                 const msg  = nativeglishWrap(msg0, langPinned);
                 await sendMessageViaAPI(From, msg);
+                try {
+                  const isActivated = await isUserActivated(shopId);
+                  const buttonLang = langPinned.includes('-latn') ? langPinned.split('-')[0] : langPinned;
+                  await sendSalesQAButtons(From, buttonLang, isActivated);
+                } catch (e) {
+                  console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
+                }
                 return res.send('<Response></Response>');
               }
               // Read‑only normalized command → route & exit
