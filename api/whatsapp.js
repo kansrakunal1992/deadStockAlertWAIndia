@@ -424,15 +424,24 @@ async function detectLanguageWithFallback(text, from, requestId) {
        else if (/[\u0C00-\u0C7F]/.test(text)) detectedLanguage = 'te';
         else if (/[\u0C80-\u0CFF]/.test(text)) detectedLanguage = 'kn';
         else if (/[\u0A80-\u0AFF]/.test(text)) detectedLanguage = 'gu';
-        else {
-          if (lowerText.includes('hello') || lowerText.includes('hi') || lowerText.includes('hey')) detectedLanguage = 'en';
-          else if (lowerText.includes('नमस्ते') || lowerText.includes('नमस्कार')) detectedLanguage = 'hi';
-          else if (lowerText.includes('வணக்கம்')) detectedLanguage = 'ta';
-          else if (lowerText.includes('నమస్కారం')) detectedLanguage = 'te';
-          else if (lowerText.includes('ನಮಸ್ಕಾರ')) detectedLanguage = 'kn';
-          else if (lowerText.includes('নমস্কার')) detectedLanguage = 'bn';
-          else if (lowerText.includes('નમસ્તે')) detectedLanguage = 'gu';
-          else if (lowerText.includes('नमस्कार')) detectedLanguage = 'mr';
+        else {                        
+                // Use word-boundary based greeting checks to avoid false positives like "bhi" → "hi"
+                      const hasEnGreet = /(?:^|\\s)(hello|hi|hey)(?:\\s|$)/i.test(lowerText);
+                      const hasHiGreet = /(?:^|\\s)(नमस्ते|नमस्कार)(?:\\s|$)/.test(text);
+                      const hasTaGreet = /(?:^|\\s)(வணக்கம்)(?:\\s|$)/.test(text);
+                      const hasTeGreet = /(?:^|\\s)(నమస్కారం)(?:\\s|$)/.test(text);
+                      const hasKnGreet = /(?:^|\\s)(ನಮಸ್ಕಾರ)(?:\\s|$)/.test(text);
+                      const hasBnGreet = /(?:^|\\s)(নমস্কার)(?:\\s|$)/.test(text);
+                      const hasGuGreet = /(?:^|\\s)(નમસ્તે)(?:\\s|$)/.test(text);
+                      const hasMrGreet = /(?:^|\\s)(नमस्कार)(?:\\s|$)/.test(text);
+                      if (hasEnGreet) detectedLanguage = 'en';
+                      else if (hasHiGreet) detectedLanguage = 'hi';
+                      else if (hasTaGreet) detectedLanguage = 'ta';
+                      else if (hasTeGreet) detectedLanguage = 'te';
+                      else if (hasKnGreet) detectedLanguage = 'kn';
+                      else if (hasBnGreet) detectedLanguage = 'bn';
+                      else if (hasGuGreet) detectedLanguage = 'gu';
+                      else if (hasMrGreet) detectedLanguage = 'mr';
         }
       }
             
@@ -1711,9 +1720,23 @@ function _isLanguageChoice(text) {
 async function shouldWelcomeNow(shopId, text) {
   const last = getLastWelcomedISO(shopId);
   const greetingOrLang = _isGreeting(text) || _isLanguageChoice(text);
-  // FIRST-EVER: show welcome only for greeting/language selection; questions should go to Q&A
-  if (!last) {
-    if (greetingOrLang) { console.log('[welcome] reason=first-ever + greeting/lang'); return true; }
+    // HARD GUARD: NEVER welcome if this turn looks like a question
+      try {
+        // Use AI-backed question detector when possible; fall back to heuristic
+        const langHint = (await getUserPreference(shopId))?.language || 'en';
+        const isQ = await looksLikeQuestion(text, String(langHint).toLowerCase());
+        if (isQ) {
+          console.log('[welcome] suppressed: turn looks like question');
+          return false;
+        }
+      } catch (_) { /* best-effort; default continue */ }
+    
+      // FIRST-EVER: show welcome only for greeting/language selection; questions are already suppressed above
+      if (!last) {
+        if (greetingOrLang) {
+          console.log('[welcome] reason=first-ever + greeting/lang');
+          return true;
+        }
     console.log('[welcome] first-ever but not greeting/lang → skip');
     return false;
   }
