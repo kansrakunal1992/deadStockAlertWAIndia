@@ -1594,7 +1594,7 @@ function looksLikeTransaction(text) {
     /\b(opening|received|recd|restock|purchase|bought|sold)\b/i.test(s);
 
   // parse updates only when it _looks_ like a transaction
-  return hasTxnVerb || (hasDigits && (mentionsMoney || hasUnit));
+  return hasTxnVerb && hasDigits && (mentionsMoney || hasUnit);
 }
 
 // NOTE: function declaration (not const arrow) so it's hoisted and available everywhere.
@@ -3771,7 +3771,13 @@ function daysBetween(date1, date2) {
 async function normalizeCommandText(text, detectedLanguage = 'en', requestId = 'cmd-norm') { 
 // If the message clearly looks like a transaction (qty/unit + buy/sell verb), never rewrite it
    // into an English quick command like "sales today".
-   if (looksLikeTransaction(text)) {
+   
+  // ✅ Prevent double handling if Q&A or onboarding already replied
+  if (handledRequests.has(requestId)) {
+    console.log(`[router] skipping transaction parse (already handled)`, { requestId });
+    return true;
+ }
+    if (looksLikeTransaction(text)) {
      return String(text).trim();
    }
   try {
@@ -4125,7 +4131,9 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
               }
               // IMPORTANT: Do not schedule upsell/tips after Q&A
               try { suppressTipsFor.add(requestId); } catch {}
-              console.log('[router] sales-qa branch completed', { requestId });
+              console.log('[router] sales-qa branch completed', { requestId });            
+              handledRequests.add(requestId); // ensure marked
+              return true; // ✅ EARLY EXIT to prevent downstream parsing
               return true;
             } catch (e) {
               console.warn('[sales-qa] first-answer failed:', e?.message);
