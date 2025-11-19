@@ -493,14 +493,19 @@ async function safeSendParseError(From, detectedLanguage, requestId, header) {
   try {
     if (typeof sendParseErrorWithExamples === 'function') {
       await sendParseErrorWithExamples(From, detectedLanguage, requestId, header);
-    } else {             
+    } else {                             
         // Ultra-compact fallback in user's language (ensure msg is defined)
               const msg = await t(
                 header ?? 'Sorry, I could not understand that. Try: "sold milk 2 ltr" or "short summary".',
                 detectedLanguage,
                 requestId + '::err-fallback'
               );
-              await sendMessageViaAPI(From, msg);
+              // Guard: if already handled elsewhere in this cycle, do not send apology
+              if (!handledRequests.has(requestId)) {
+                await sendMessageViaAPI(From, msg);
+              } else {
+                console.log('[safeSendParseError] suppressed (already handled)', { requestId });
+              }
     }
   } catch (e) {
     // last resort noop
@@ -3806,14 +3811,18 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();    
   const shopId = String(From).replace('whatsapp:', '');   
+      
   // Robust question detection for *all* modes (no "?" required)
   let isQuestion = await looksLikeQuestion(text, detectedLanguage);
+  // Hard force: invoice/bill queries must go to Q&A
+  const qForce = /\b(invoice|bill|बिल|चालान)\b/i.test(text);
+  if (qForce) isQuestion = true;
   
     // ===== STEP 14: "mode" keyword shows Purchase/Sale/Return buttons =====
     try {
       const MODE_ALIASES = [/^mode$/i, /^मोड$/i];
       const askMode = MODE_ALIASES.some(rx => rx.test(text));
-      if (askMode) {
+      if (askMode && !isQuestion) {
         // Show the quick-reply template in user's saved language (queued + idempotent)
         let lang = String(detectedLanguage || 'en').toLowerCase();
         try {
@@ -3937,13 +3946,21 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
                         handledRequests.add(requestId);
                         return true; // early exit; actual answer will be sent by the debounce timer
                       }                                                          
+                                
                 // Immediate send path (serverless-safe) with explicit logs
-                      const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
+                      let ans;
+                      try {
+                        ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
+                      } catch (e) {
+                        console.warn('[sales-qa] composeAISalesAnswer failed, using localized fallback', e?.message);
+                        ans = getLocalizedQAFallback(String(detectedLanguage ?? 'en').toLowerCase());
+                      }
                       const m0  = await tx(ans, detectedLanguage, From, text, `${requestId}::sales-qa-first`);
                       const msg = nativeglishWrap(m0, detectedLanguage);
-                      console.log('[sales-qa] sending answer to', From, { requestId });
-                      await sendMessageQueued(From, msg);
-                      console.log('[sales-qa] sent OK', { requestId });    
+                      console.log('[sales-qa] sending answer via API to', From, { requestId });
+                      await sendMessageViaAPI(From, msg); // use direct send for immediate delivery
+                      console.log('[sales-qa] sent OK', { requestId });
+
                 // STEP 7: Persist turn (for parity with debounced path)
                       try {
                         await appendTurn(shopId, text, msg, inferTopic(text));
@@ -4101,13 +4118,19 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
                 handledRequests.add(requestId);
                 return true; // early exit; debounce will send the answer
               }
-                  
+                                 
         const shopId = String(From).replace('whatsapp:', '');
-            const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
+            let ans;
+            try {
+              ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
+            } catch (e) {
+              console.warn('[sales-qa] composeAISalesAnswer failed, using localized fallback', e?.message);
+              ans = getLocalizedQAFallback(String(detectedLanguage ?? 'en').toLowerCase());
+            }
             const m0  = await tx(ans, detectedLanguage, From, text, `${requestId}::sales-qa`);
             const msg = nativeglishWrap(m0, detectedLanguage);
-            console.log('[sales-qa] sending answer to', From, { requestId });
-            await sendMessageQueued(From, msg);
+            console.log('[sales-qa] sending answer via API to', From, { requestId });
+            await sendMessageViaAPI(From, msg);
             console.log('[sales-qa] sent OK', { requestId });
                   
           // STEP 7: Persist turn (for parity with debounced path)
@@ -4139,8 +4162,9 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
 
 // Greeting -> concise, actionable welcome (single-script friendly)
     
-  if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {          
-      if (await shouldWelcomeNow(shopId, text)) {
+  if (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i.test(text)) {                
+    // Never welcome during a question turn — answer first
+      if (!isQuestion && await shouldWelcomeNow(shopId, text)) {
       await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
       handledRequests.add(requestId);
       return true;
