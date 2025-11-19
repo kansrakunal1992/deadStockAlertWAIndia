@@ -368,9 +368,21 @@ function _safeJsonExtract(txt) {
 
 async function aiOrchestrate(text) {
   const sys = [
-    'You are a deterministic classifier and lightweight parser.',
-    'Return ONLY valid JSON with keys: language, kind, command(normalized), transaction(action,product,quantity,unit,pricePerUnit,expiry).',
-    'No prose, no extra keys.'
+    
+'You are a deterministic classifier and lightweight parser for a retail inventory WhatsApp bot.',
+  'Return ONLY valid JSON: {"language":"<code>","kind":"<kind>","command":{"normalized": "<en_cmd>"},"transaction":{"action": "...", "product": "...", "quantity": <num>, "unit":"...", "pricePerUnit": <num>, "expiry":"<iso>"} }.',
+  'KIND DEFINITIONS (domain-specific):',
+  '• "question": suitability/benefit/pricing/how/why/when/can-do/about-features (e.g., "kaam karega?", "kya fayda", "price kitna", "invoice pdf bana sakta?", "how does it help").',
+  '• "query": inventory insights/lookup only (e.g., "stock Maggi", "batches milk", "expiring 30", "sales today/week/month", "low stock", "value summary", "reorder suggestions", "top 5 products").',
+  '• "transaction": purchase/sale/return with quantities/units/prices (e.g., "sold milk 2 ltr", "purchase Parle-G 12 packets ₹10 exp +6m").',
+  '• "command": mode/help/demo or explicit app control (e.g., "mode", "help", "demo").',
+  'RULES:',
+  '1) If text asks suitability/benefit/price/invoice/can-do for the shop, classify as "question".',
+  '2) Only classify as "query" if it matches inventory lookups/summaries exactly; DO NOT put general questions in "query".',
+  '3) Romanized Indic must use -Latn codes (hi-Latn, ta-Latn...).',
+  '4) Provide command.normalized ONLY for read-only inventory queries (examples above), in English.',
+  '5) Provide transaction fields ONLY when the text clearly contains action+qty+unit (and optionally price/expiry).',
+  'No prose. Deterministic outputs.'
   ].join(' ');
   const user = String(text ?? '').trim();
   if (!user) return { language: 'en', kind: 'other', command: null, transaction: null };
@@ -422,6 +434,12 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
   if (!USE_AI_ORCHESTRATOR) return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
   const shopId = String(From ?? '').replace('whatsapp:', '');
   const o = await aiOrchestrate(text);
+    const tNorm = String(text || '').trim().toLowerCase();
+    const qTokens = /\b(kaam\s*karega|kaam\s*karegi|kaam\s*kare|fayda|faida|benefit|price|cost|charges?|kimat|daam|invoice|bill|chal[aā]n|bana\s*sakta|bana\s*sakti|generate|how|why|kaise|kya|kyu|kyon|can\s*i|will\s*it\s*work)\b/i;  
+const forcedQuestion = qTokens.test(tNorm);
+const kind = forcedQuestion ? 'question' : (o.kind || 'other');
+const isQuestion = forcedQuestion ? true : (o.kind === 'question');
+
   let language = String(o.language ?? detectedLanguageHint ?? 'en').toLowerCase();
   // Persist language preference best-effort
   try { if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, language); } catch (_) {}
