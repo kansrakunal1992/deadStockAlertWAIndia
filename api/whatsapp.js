@@ -229,6 +229,36 @@ async function sendDemoTranscriptLocalized(From, lang, rid = 'cta-demo') {
 }
 
 /**
+ * tx: Translation wrapper with script preservation (roman/native).
+ * If the user typed roman for lang, try `${lang}-Latn` first and fall back to `${lang}`.
+ */
+async function tx(message, lang, fromOrShopId, sourceText, cacheKey) {
+  const preferRoman = preferRomanFor(lang, sourceText);
+  try {
+    if (preferRoman) {
+      return await t(message, `${lang}-Latn`, cacheKey);
+    }
+    return await t(message, lang, cacheKey);
+  } catch (_) {
+    try { return await t(message, lang, cacheKey); } catch { return String(message); }
+  }
+}
+
+// "Nativeglish": keep helpful English anchors (units, brand words) in an otherwise localized string.
+function nativeglishWrap(text, lang) {
+  try {
+    const u = ['kg','kgs','g','ltr','l','ml','packet','packets','piece','pieces','₹','Rs','MRP'];
+    // ensure numerals and unit tokens remain Latin where helpful
+    let out = String(text ?? '');
+    u.forEach(tok => {
+      const rx = new RegExp(`\\b${tok}\\b`, 'gi');
+      out = out.replace(rx, tok); // normalize casing
+    });
+    return out;
+  } catch { return String(text ?? ''); }
+}
+
+/**
  * aiDetectLangIntent(text)
  * Uses Deepseek to classify:
  *  - language: hi|hi-Latn|en|bn|bn-Latn|ta|ta-Latn|te|te-Latn|kn|kn-Latn|mr|mr-Latn|gu|gu-Latn
@@ -3069,36 +3099,6 @@ function preferRomanFor(lang, sourceText) {
     case 'gu': return !_hasGujarati(t);
     default:   return false;
   }
-}
-
-/**
- * tx: Translation wrapper with script preservation (roman/native).
- * If the user typed roman for lang, try `${lang}-Latn` first and fall back to `${lang}`.
- */
-async function tx(message, lang, fromOrShopId, sourceText, cacheKey) {
-  const preferRoman = preferRomanFor(lang, sourceText);
-  try {
-    if (preferRoman) {
-      return await t(message, `${lang}-Latn`, cacheKey);
-    }
-    return await t(message, lang, cacheKey);
-  } catch (_) {
-    try { return await t(message, lang, cacheKey); } catch { return String(message); }
-  }
-}
-
-// "Nativeglish": keep helpful English anchors (units, brand words) in an otherwise localized string.
-function nativeglishWrap(text, lang) {
-  try {
-    const u = ['kg','kgs','g','ltr','l','ml','packet','packets','piece','pieces','₹','Rs','MRP'];
-    // ensure numerals and unit tokens remain Latin where helpful
-    let out = String(text ?? '');
-    u.forEach(tok => {
-      const rx = new RegExp(`\\b${tok}\\b`, 'gi');
-      out = out.replace(rx, tok); // normalize casing
-    });
-    return out;
-  } catch { return String(text ?? ''); }
 }
 
 // Centralized minimal Help (new copy), localized + tagged with footer
