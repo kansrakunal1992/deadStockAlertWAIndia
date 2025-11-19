@@ -228,6 +228,29 @@ async function sendDemoTranscriptLocalized(From, lang, rid = 'cta-demo') {
   await sendMessageViaAPI(From, tagged);
 }
 
+// Return true if user's text is romanized for the target language (so reply should be roman)
+function preferRomanFor(lang, sourceText) {
+  const t = String(sourceText || '').trim();
+  if (!t) return false;
+  const lc = String(lang || 'en').toLowerCase();
+  switch (lc) {
+    case 'hi':
+    case 'mr': return !_hasDevanagari(t);
+    case 'bn': return !_hasBengali(t);
+    case 'ta': return !_hasTamil(t);
+    case 'te': return !_hasTelugu(t);
+    case 'kn': return !_hasKannada(t);
+    case 'gu': return !_hasGujarati(t);
+    default:   return false;
+  }
+}
+
+// Localization helper: centralize generateMultiLanguageResponse + single-script clamp
+async function t(text, languageCode, requestId) {
+  const out = await generateMultiLanguageResponse(text, languageCode, requestId);
+  return enforceSingleScript(out, languageCode);
+}
+
 /**
  * tx: Translation wrapper with script preservation (roman/native).
  * If the user typed roman for lang, try `${lang}-Latn` first and fall back to `${lang}`.
@@ -2209,12 +2232,6 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
   return false;
 }
 
-// Localization helper: centralize generateMultiLanguageResponse + single-script clamp
-async function t(text, languageCode, requestId) {
-  const out = await generateMultiLanguageResponse(text, languageCode, requestId);
-  return enforceSingleScript(out, languageCode);
-}
-
 // ---------------------------------------------------------------------------
 // STEP 3: After any AI Sales Q&A answer, send appropriate buttons.
 // - Unactivated (no plan / demo): Onboarding QR (Start Trial / Demo / Help)
@@ -3083,23 +3100,6 @@ function _hasTelugu(s)     { return /[\u0C00-\u0C7F]/.test(s); }
 function _hasKannada(s)    { return /[\u0C80-\u0CFF]/.test(s); }
 function _hasGujarati(s)   { return /[\u0A80-\u0AFF]/.test(s); }
 // Marathi uses Devanagari
-
-// Return true if user's text is romanized for the target language (so reply should be roman)
-function preferRomanFor(lang, sourceText) {
-  const t = String(sourceText || '').trim();
-  if (!t) return false;
-  const lc = String(lang || 'en').toLowerCase();
-  switch (lc) {
-    case 'hi':
-    case 'mr': return !_hasDevanagari(t);
-    case 'bn': return !_hasBengali(t);
-    case 'ta': return !_hasTamil(t);
-    case 'te': return !_hasTelugu(t);
-    case 'kn': return !_hasKannada(t);
-    case 'gu': return !_hasGujarati(t);
-    default:   return false;
-  }
-}
 
 // Centralized minimal Help (new copy), localized + tagged with footer
 async function sendHelpMinimal(From, lang, requestId) {
