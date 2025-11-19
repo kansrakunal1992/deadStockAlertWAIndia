@@ -1569,31 +1569,29 @@ function isReadOnlyQuery(text) {
 }
 
 function looksLikeTransaction(text) {
-  const s = String(text || '').toLowerCase();
-  // reset lastIndex because patterns were defined with /g
+  const s = String(text ?? '').toLowerCase();
   try { regexPatterns.purchaseKeywords.lastIndex = 0; } catch (_) {}
   try { regexPatterns.salesKeywords.lastIndex = 0; } catch (_) {}
   try { regexPatterns.remainingKeywords.lastIndex = 0; } catch (_) {}
   try { regexPatterns.returnKeywords.lastIndex = 0; } catch (_) {}
   try { regexPatterns.digits.lastIndex = 0; } catch (_) {}
-
   const hasDigits = regexPatterns.digits.test(s);
-    
   const mentionsMoney =
-     /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i.test(s)
-     ||
-     /(?:@|at)\s*(?:\d+(?:\.\d+)?)\s*(?:per\s+)?(kg|liter|litre|liters|litres|packet|packets|box|boxes|piece|pieces|ml|g|kg|ltr)/i.test(s);
-  
-// Extend unit detection with Gujarati: કિલો/કિગ્રા/ગ્રામ/લિટર/પૅકેટ/પેકેટ/બોક્સ/ટુકડો/ટુકડાઓ/નંગ
-   const hasUnit =
-     /(kg|g|gram|grams|ml|ltr|l|liter|litre|liters|litres|packet|packets|box|boxes|piece|pieces|કિલો|કિગ્રા|ગ્રામ|લિટર|પૅકેટ|પેકેટ|બોક્સ|ટુકડાઓ?|ટુકડો|નંગ)/i.test(s);
+    /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i.test(s)
+    ||
+    /(?:@|at)\s*(?:\d+(?:\.\d+)?)\s*(?:per\s+)?(kg|liter|litre|liters|litres|packet|packets|box|boxes|piece|pieces|ml|g|kg|ltr)/i.test(s);
+  const hasUnit =
+    /(kg|g|gram|grams|ml|ltr|l|liter|litre|liters|litres|packet|packets|box|boxes|piece|pieces|किलो|किग्रा|ग्राम|लिटर|पॅकेट|पेकट|बॉक्स|टुकडो|टुकडाओ|नंग)/i.test(s);
   const hasTxnVerb =
-    regexPatterns.purchaseKeywords.test(s) ||
-    regexPatterns.salesKeywords.test(s) ||
-    regexPatterns.returnKeywords.test(s) ||
+    regexPatterns.purchaseKeywords.test(s)
+    ||
+    regexPatterns.salesKeywords.test(s)
+    ||
+    regexPatterns.returnKeywords.test(s)
+    ||
     /\b(opening|received|recd|restock|purchase|bought|sold)\b/i.test(s);
 
-  // parse updates only when it _looks_ like a transaction
+  // ✅ Tightened condition: must have verb AND digits AND unit/money
   return hasTxnVerb && hasDigits && (mentionsMoney || hasUnit);
 }
 
@@ -3777,7 +3775,14 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
     console.log(`[router] skipping transaction parse (already handled)`, { requestId });
     return true;
  }
-    if (looksLikeTransaction(text)) {
+    
+// ✅ Prevent double handling if Q&A or onboarding already replied
+  if (handledRequests.has(requestId)) {
+      console.log(`[router] skipping transaction parse (already handled)`, { requestId });
+      return true;
+  }
+
+  if (looksLikeTransaction(text)) {
      return String(text).trim();
    }
   try {
@@ -3953,11 +3958,18 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   }
 
   // Question detection: prefer orchestrator; if null, use legacy detector.
-  // This makes Q&A win BEFORE welcome, while gating (ensureAccessOrOnboard) remains non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
-  let isQuestion = orchestrated.isQuestion;
-  if (isQuestion == null) {
-    isQuestion = await looksLikeQuestion(text, languagePinned);
-  }
+  // This makes Q&A win BEFORE welcome, while gating (ensureAccessOrOnboard) remains non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)    
+    let isQuestion = orchestrated.isQuestion;
+      if (isQuestion == null) {
+          isQuestion = await looksLikeQuestion(text, languagePinned);
+      }
+    
+      // ✅ Respect AI orchestration: if kind === 'question', exit early
+      if (orchestrated.kind === 'question') {
+          handledRequests.add(requestId);
+          console.log(`[router] AI classified as question → skipping downstream parse`, { requestId });
+          return true;
+      }
 
   // Prevent greeting/onboarding on question turns (AI or legacy).  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
   try {
