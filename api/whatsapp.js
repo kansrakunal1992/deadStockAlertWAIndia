@@ -3811,12 +3811,14 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();    
   const shopId = String(From).replace('whatsapp:', '');   
+          
       
   // Robust question detection for *all* modes (no "?" required)
   let isQuestion = await looksLikeQuestion(text, detectedLanguage);
   // Hard force: invoice/bill queries must go to Q&A
   const qForce = /\b(invoice|bill|बिल|चालान)\b/i.test(text);
   if (qForce) isQuestion = true;
+  console.log('[router] entry', { requestId, isQuestion, qForce, text });
   
     // ===== STEP 14: "mode" keyword shows Purchase/Sale/Return buttons =====
     try {
@@ -3946,7 +3948,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
                         handledRequests.add(requestId);
                         return true; // early exit; actual answer will be sent by the debounce timer
                       }                                                          
-                                
+                                                                
                 // Immediate send path (serverless-safe) with explicit logs
                       let ans;
                       try {
@@ -3957,8 +3959,8 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
                       }
                       const m0  = await tx(ans, detectedLanguage, From, text, `${requestId}::sales-qa-first`);
                       const msg = nativeglishWrap(m0, detectedLanguage);
-                      console.log('[sales-qa] sending answer via API to', From, { requestId });
-                      await sendMessageViaAPI(From, msg); // use direct send for immediate delivery
+                      console.log('[sales-qa] sending via API', { requestId, to: From, len: msg.length });
+                      await sendMessageViaAPI(From, msg);
                       console.log('[sales-qa] sent OK', { requestId });
 
                 // STEP 7: Persist turn (for parity with debounced path)
@@ -3979,6 +3981,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
                       }
                       // IMPORTANT: Do not schedule upsell/tips after Q&A
                       try { suppressTipsFor.add(requestId); } catch {}
+                      console.log('[router] sales-qa branch completed', { requestId });
                       return true;
               } catch (e) {
                 console.warn('[sales-qa] first-answer failed:', e?.message);
@@ -4117,8 +4120,8 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
                 scheduleAiAnswer(shopId, From, text, detectedLanguage, requestId);
                 handledRequests.add(requestId);
                 return true; // early exit; debounce will send the answer
-              }
-                                 
+              }                             
+                
         const shopId = String(From).replace('whatsapp:', '');
             let ans;
             try {
@@ -4129,7 +4132,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
             }
             const m0  = await tx(ans, detectedLanguage, From, text, `${requestId}::sales-qa`);
             const msg = nativeglishWrap(m0, detectedLanguage);
-            console.log('[sales-qa] sending answer via API to', From, { requestId });
+            console.log('[sales-qa] sending via API', { requestId, to: From, len: msg.length });
             await sendMessageViaAPI(From, msg);
             console.log('[sales-qa] sent OK', { requestId });
                   
@@ -4151,6 +4154,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
               }
               // IMPORTANT: Do not schedule upsell/tips after Q&A
               try { suppressTipsFor.add(requestId); } catch {}
+              console.log('[router] sales-qa (non-txn) branch completed', { requestId });
               return true;
         }
 
@@ -4172,6 +4176,25 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     // If we've welcomed recently in this session, fall through to Q&A/other handlers
   }
   
+  // ---------- LAST-RESORT: if it's a question and nothing has replied, send a crisp invoice answer ----------
+  if (isQuestion && !handledRequests.has(requestId)) {
+    try {
+      const lang = String(detectedLanguage ?? 'en').toLowerCase();
+      const ansBase =
+        lang.startsWith('hi')
+          ? 'Haan — sale ke baad invoice (PDF) auto-generate hota hai (trial/paid dono me). Example: “sold milk 2 ltr” ke baad PDF ban jayega.'
+          : 'Yes — after a sale, an invoice (PDF) is generated automatically (trial & paid). Example: “sold milk 2 ltr”.';
+      const msg = await tx(ansBase, lang, From, text, `${requestId}::sales-qa-fallback-final`);
+      console.log('[sales-qa] FINAL FALLBACK sending via API', { requestId, to: From, len: msg.length });
+      await sendMessageViaAPI(From, msg);
+      handledRequests.add(requestId);
+      console.log('[sales-qa] FINAL FALLBACK sent OK', { requestId });
+      return true;
+    } catch (e) {
+      console.warn('[sales-qa] FINAL FALLBACK failed:', e?.message);
+    }
+  }
+  console.log('[router] exit no-send', { requestId, isQuestion });
 
   // ---- Localized one-word switch handler (open options or set directly) ----
   {
