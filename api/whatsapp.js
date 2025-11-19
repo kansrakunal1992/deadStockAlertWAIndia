@@ -9450,12 +9450,35 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     // Save user preference
     const shopId = From.replace('whatsapp:', '');
     await saveUserPreference(shopId, detectedLanguage);
-    
+       
+    // ===== EARLY EXIT: AI orchestrator on the transcript =====
+      try {
+        const orch = await applyAIOrchestration(cleanTranscript, From, detectedLanguage, requestId);
+        const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+        // Question → answer & exit
+        if (orch.isQuestion === true || orch.kind === 'question') {
+          handledRequests.add(requestId);
+          const ans = await composeAISalesAnswer(shopId, cleanTranscript, langPinned);
+          const msg = await t(ans, langPinned, `${requestId}::sales-qa-voice`);
+          await sendMessageViaAPI(From, msg);
+          return;
+        }
+        // Read‑only normalized command → route & exit
+        if (orch.normalizedCommand) {
+          handledRequests.add(requestId);
+          await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm-voice`);
+          return;
+        }
+      } catch (e) {
+        console.warn(`[${requestId}] orchestrator (voice) early-exit error:`, e?.message);
+        // fall through gracefully
+      }
+      
     // First, try to parse as inventory update (higher priority)
     try {
-      console.log(`[${requestId}] Attempting to parse as inventory update`);
-      const parsedUpdates = await parseMultipleUpdates(cleanTranscript);
-      if (parsedUpdates.length > 0) {
+      console.log(`[${requestId}] Attempting to parse as inventory update`);            
+        const parsedUpdates = await parseMultipleUpdates(cleanTranscript);
+            if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
         console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from voice message`);
         
         // Process the updates
@@ -9576,11 +9599,12 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       console.log(`[${requestId}] [5.5] High confidence (${confidence}), proceeding without confirmation...`);
       
       try {
+                
         // Parse the transcript
-        const updates = await parseMultipleUpdates(cleanTranscript);
-        
-        // Check if any updates are for unknown products
-        const unknownProducts = updates.filter(u => !u.isKnown);
+            const updates = await parseMultipleUpdates(cleanTranscript);
+            // Check if any updates are for unknown products (guard against null)
+            const unknownProducts = Array.isArray(updates) ? updates.filter(u => !u.isKnown) : [];
+
         if (unknownProducts.length > 0) {
           console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
           
@@ -9878,11 +9902,37 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     let detectedLanguage = conversationState ? conversationState.language : 'en';
     detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
     console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
-    console.log(`[${requestId}] Attempting to parse as inventory update`);
+        
+    // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====
+      try {
+        const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
+        const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+        // Question → answer & exit
+        if (orch.isQuestion === true || orch.kind === 'question') {
+          handledRequests.add(requestId);
+          const shopId = From.replace('whatsapp:', '');
+          const ans  = await composeAISalesAnswer(shopId, Body, langPinned);
+          const msg0 = await tx(ans, langPinned, From, Body, `${requestId}::sales-qa-text`);
+          const msg  = nativeglishWrap(msg0, langPinned);
+          await sendMessageViaAPI(From, msg);
+          return;
+        }
+        // Read‑only normalized command → route & exit
+        if (orch.normalizedCommand) {
+          handledRequests.add(requestId);
+          await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm-text`);
+          return;
+        }
+      } catch (e) {
+        console.warn(`[${requestId}] orchestrator early-exit error:`, e?.message);
+        // fall through gracefully
+      }
+      console.log(`[${requestId}] Attempting to parse as inventory update`);
+    
     
     // First, try to parse as inventory update (higher priority)
-    const parsedUpdates = await parseMultipleUpdates(req);
-    if (parsedUpdates.length > 0) {
+      const parsedUpdates = parseMultipleUpdates(Body); // <— pass text, not req
+      if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
       console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
       
       // Process inventory updates here
@@ -9943,9 +9993,12 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       }
     }
     
+
     // If we get here, it's not a valid inventory update and not a quick query
-    // Check if any updates are for unknown products
-    const unknownProducts = updates.filter(u => !u.isKnown);
+     // Check if any updates are for unknown products (use parsedUpdates from above)
+     const unknownProducts = Array.isArray(parsedUpdates)
+       ? parsedUpdates.filter(u => !u.isKnown)
+       : [];
     if (unknownProducts.length > 0) {
       console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
       
@@ -11292,14 +11345,35 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   
       // Handle text messages
       if (Body) {
-        
+                
+        // ===== EARLY EXIT: AI orchestrator before any inventory parse =====
+            try {
+              const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
+              const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+              // Question → answer & exit
+              if (orch.isQuestion === true || orch.kind === 'question') {
+                handledRequests.add(requestId);
+                const ans  = await composeAISalesAnswer(shopId, Body, langPinned);
+                const msg0 = await tx(ans, langPinned, From, Body, `${requestId}::sales-qa-text`);
+                const msg  = nativeglishWrap(msg0, langPinned);
+                await sendMessageViaAPI(From, msg);
+                return res.send('<Response></Response>');
+              }
+              // Read‑only normalized command → route & exit
+              if (orch.normalizedCommand) {
+                handledRequests.add(requestId);
+                await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm-text`);
+                return res.send('<Response></Response>');
+              }
+            } catch (e) {
+              console.warn(`[${requestId}] orchestrator early-exit error:`, e?.message);
+              // fall through gracefully
+            }
         console.log(`[${requestId}] Attempting to parse as inventory update`);
-        // Create mock request object
-        const mockReq = { body: { From, Body } };
-        
+                
         // First, try to parse as inventory update (higher priority)
-        const parsedUpdates = await parseMultipleUpdates(mockReq);
-        if (parsedUpdates.length > 0) {
+            const parsedUpdates = parseMultipleUpdates(Body); // pass text, not request
+            if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
           console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
           
           // Process the updates
@@ -11375,9 +11449,10 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           return;
         }
         
+                
         // Try to parse as inventory update
-        const updates = await parseMultipleUpdates(mockReq);
-        if (updates.length > 0) {
+          const updates = parseMultipleUpdates(Body);
+          if (Array.isArray(updates) && updates.length > 0) {
           console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
           const shopId = From.replace('whatsapp:', '');
           
