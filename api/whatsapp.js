@@ -86,9 +86,9 @@ function composeDemoByLanguage(lang) {
     case 'hi': // Hindi (Devanagari)
       return [
         'डेमो:',
-        'User: sold milk 2 ltr',
+        'User: 2 लीटर दूध बेचा',
         'Bot: ✅ 2 लीटर दूध बेचा — @ ₹? प्रति यूनिट — स्टॉक: (अपडेट)',
-        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'User: Parle-G के 12 पैकेट ₹10 exp +6m पर खरीदे',
         'Bot: ✅ Parle-G के 12 पैकेट खरीदे — कीमत: ₹10',
         '      Expiry: +6 महीने सेट',
         'User: छोटा सारांश',
@@ -100,9 +100,9 @@ function composeDemoByLanguage(lang) {
     case 'bn': // Bengali
       return [
         'ডেমো:',
-        'User: sold milk 2 ltr',
+        'User: 2 লিটার দুধ বিক্রি',
         'Bot: ✅ 2 লিটার দুধ বিক্রি — @ ₹? প্রতি ইউনিট — স্টক: (আপডেট)',
-        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'User: Parle-G 12 প্যাকেট ₹10 exp +6m এ কিনেছি',
         'Bot: ✅ Parle-G 12 প্যাকেট কেনা — দাম: ₹10',
         '      মেয়াদ: +6 মাস সেট',
         'User: ছোট সারাংশ',
@@ -114,9 +114,9 @@ function composeDemoByLanguage(lang) {
     case 'ta': // Tamil
       return [
         'டெமோ:',
-        'User: sold milk 2 ltr',
+        'User: 2 லிட்டர் பால் விற்றேன்',
         'Bot: ✅ 2 லிட்டர் பால் விற்றோம் — @ ₹? ஒவ்வொன்றும் — ஸ்டாக்: (புதுப்பிப்பு)',
-        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'User: Parle-G 12 பாக்கெட் ₹10 exp +6m க்கு வாங்கினேன்',
         'Bot: ✅ Parle-G 12 பாக்கெட் வாங்கப்பட்டது — விலை: ₹10',
         '      Expiry: +6 மாதங்கள் அமைக்கப்பட்டது',
         'User: சுருக்கம்',
@@ -128,9 +128,9 @@ function composeDemoByLanguage(lang) {
     case 'te': // Telugu
       return [
         'డెమో:',
-        'User: sold milk 2 ltr',
+        'User: 2 లీటర్ పాలు అమ్మాను',
         'Bot: ✅ 2 లీటర్ పాలు అమ్మారు — @ ₹? ప్రతి యూనిట్ — స్టాక్: (అప్‌డేట్)',
-        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'User: Parle-G 12 ప్యాకెట్లు ₹10 exp +6m తో కొనుగోలు చేశాను',
         'Bot: ✅ Parle-G 12 ప్యాకెట్లు కొనుగోలు — ధర: ₹10',
         '      Expiry: +6 నెలలు సెట్ చేశారు',
         'User: సంక్షిప్త సారాంశం',
@@ -142,9 +142,9 @@ function composeDemoByLanguage(lang) {
     case 'kn': // Kannada
       return [
         'ಡೆಮೊ:',
-        'User: sold milk 2 ltr',
+        'User: 2 ಲೀಟರ್ ಹಾಲು ಮಾರಿದೆ',
         'Bot: ✅ 2 ಲೀಟರ್ ಹಾಲು ಮಾರಾಟ — @ ₹? ಪ್ರತಿಯೊಂದು — ಸ್ಟಾಕ್: (ನವೀಕರಣ)',
-        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'User: Parle-G 12 ಪ್ಯಾಕೆಟ್‌ಗಳನ್ನು ₹10 exp +6m ಗೆ ಖರೀದಿಸಿದೆ',
         'Bot: ✅ Parle-G 12 ಪ್ಯಾಕೆಟ್ ಖರೀದಿ — ಬೆಲೆ: ₹10',
         '      Expiry: +6 ತಿಂಗಳು ಸೆಟ್',
         'User: ಸಂಕ್ಷಿಪ್ತ ಸಾರಾಂಶ',
@@ -156,9 +156,9 @@ function composeDemoByLanguage(lang) {
     case 'mr': // Marathi
       return [
         'डेमो:',
-        'User: sold milk 2 ltr',
+        'User: 2 लिटर दूध विकले',
         'Bot: ✅ 2 लिटर दूध विकले — @ ₹? प्रति युनिट — स्टॉक: (अपडेट)',
-        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'User: Parle-G चे 12 पॅकेट ₹10 exp +6m ला घेतले',
         'Bot: ✅ Parle-G चे 12 पॅकेट घेतले — किंमत: ₹10',
         '      Expiry: +6 महिने सेट',
         'User: संक्षिप्त सारांश',
@@ -170,9 +170,9 @@ function composeDemoByLanguage(lang) {
     case 'gu': // Gujarati
       return [
         'ડેમો:',
-        'User: sold milk 2 ltr',
+        'User: 2 લીટર દૂધ વેચ્યું',
         'Bot: ✅ 2 લીટર દૂધ વેચાયું — @ ₹? પ્રતિ યુનિટ — સ્ટોક: (અપડેટ)',
-        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'User: Parle-G ના 12 પેકેટ ₹10 exp +6m પર ખરીદ્યા',
         'Bot: ✅ Parle-G ના 12 પેકેટ ખરીદ્યા — ભાવ: ₹10',
         '      Expiry: +6 મહિના સેટ',
         'User: સંક્ષિપ્ત સારાંશ',
@@ -184,9 +184,9 @@ function composeDemoByLanguage(lang) {
     case 'hi-latn': // Hinglish (Roman Hindi)
       return [
         'Demo:',
-        'User: sold milk 2 ltr',
+        'User: 2 ltr doodh becha',
         'Bot: ✅ 2 ltr doodh becha — @ ₹? each — Stock: (updated)',
-        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'User: Parle-G 12 packets ₹10 exp +6m par kharide',
         'Bot: ✅ Parle-G 12 packets kharide — Price: ₹10',
         '      Expiry: +6 months set',
         'User: chhota saransh',
