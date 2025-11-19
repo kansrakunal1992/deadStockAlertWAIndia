@@ -105,6 +105,98 @@ async function aiDetectLangIntent(text) {
   }
 }
 
+// ====== NEW: Lightweight AI Orchestrator (strict JSON) ======
+// Purpose: one-pass classification of inbound text into language, kind and normalized command,
+// while keeping business gating and stateful ops deterministic (non-AI).
+// This rides alongside your existing heuristics and never replaces trial/paywall/onboarding gates.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
+const USE_AI_ORCHESTRATOR = String(process.env.USE_AI_ORCHESTRATOR ?? 'true').toLowerCase() === 'true';
+
+function _safeJsonExtract(txt) {
+  if (!txt) return null;
+  try { return JSON.parse(txt); } catch (_) {
+    const m = txt.match(/\{[\s\S]*\}/);
+    if (m) { try { return JSON.parse(m[0]); } catch (_) { return null; } }
+    return null;
+  }
+}
+
+/**
+ * aiOrchestrate(text): returns a strict decision object:
+ * {
+ *   language: "<code or -latn>",
+ *   kind: "greeting|question|transaction|command|other",
+ *   command: { normalized: "short summary|low stock|..." } | null,
+ *   transaction: { action, product, quantity, unit, pricePerUnit, expiry } | null
+ * }
+ * Low tokens, temperature=0 for determinism.
+ */
+
+async function aiOrchestrate(text) {
+  const sys = [
+    'You are a deterministic classifier and lightweight parser.',
+    'Return ONLY valid JSON with keys: language, kind, command(normalized), transaction(action,product,quantity,unit,pricePerUnit,expiry).',
+    'No prose, no extra keys.'
+  ].join(' ');
+  const user = String(text ?? '').trim();
+  if (!user) return { language: 'en', kind: 'other', command: null, transaction: null };
+  try {
+    const resp = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
+        temperature: 0.0,
+        max_tokens: 180
+      },
+      { headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,'Content-Type':'application/json' }, timeout: 8000 }
+    );
+    const raw = String(resp?.data?.choices?.[0]?.message?.content ?? '').trim();
+    const out = _safeJsonExtract(raw);
+    if (!out || typeof out !== 'object') return { language: 'en', kind: 'other', command: null, transaction: null };
+    // Guard: sanitize shape
+    const language = String(out.language ?? 'en').toLowerCase();
+    const kind = String(out.kind ?? 'other').toLowerCase();
+    const command = out.command && typeof out.command === 'object' ? { normalized: String(out.command.normalized ?? '') || null } : null;
+    const tx = out.transaction && typeof out.transaction === 'object'
+      ? {
+          action: out.transaction.action ?? null,
+          product: out.transaction.product ?? null,
+          quantity: Number.isFinite(out.transaction.quantity) ? out.transaction.quantity : null,
+          unit: out.transaction.unit ?? null,
+          pricePerUnit: Number.isFinite(out.transaction.pricePerUnit) ? out.transaction.pricePerUnit : null,
+          expiry: out.transaction.expiry ?? null
+        }
+      : null;
+    return { language, kind, command, transaction: tx };
+  } catch (e) {
+    console.warn('[aiOrchestrate] fail:', e?.message);
+    return { language: 'en', kind: 'other', command: null, transaction: null };
+  }
+}
+
+/**
+ * applyAIOrchestration(text, From, detectedLanguageHint, requestId)
+ * Merges orchestrator advice into our routing variables:
+ * - language: prefer AI language if present; persist preference (best-effort).
+ * - isQuestion: true if kind === 'question'.
+ * - normalizedCommand: exact English command if kind === 'command'.
+ * - aiTxn: parsed transaction skeleton (NEVER auto-applied; deterministic parser still decides).
+ * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
+ */
+async function applyAIOrchestration(text, From, detectedLanguageHint, requestId) {
+  if (!USE_AI_ORCHESTRATOR) return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
+  const shopId = String(From ?? '').replace('whatsapp:', '');
+  const o = await aiOrchestrate(text);
+  let language = String(o.language ?? detectedLanguageHint ?? 'en').toLowerCase();
+  // Persist language preference best-effort
+  try { if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, language); } catch (_) {}
+  const isQuestion = o.kind === 'question';
+  const normalizedCommand = o.kind === 'command' && o?.command?.normalized ? o.command.normalized : null;
+  const aiTxn = o.kind === 'transaction' ? o.transaction : null;
+  console.log('[orchestrator]', { requestId, language, kind: o.kind, normalizedCommand: normalizedCommand ?? '—' });
+  return { language, isQuestion, normalizedCommand, aiTxn };
+}
+
 // Decide if AI should be used (cost guard)
 function _shouldUseAI(text, heuristicLang) {
   const t = String(text ?? '').trim().toLowerCase();
@@ -3833,7 +3925,40 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();    
   const shopId = String(From).replace('whatsapp:', '');   
-          
+
+// ===== NEW: Single AI orchestration pass (advisory only)
+  let languagePinned = String(detectedLanguage ?? 'en').toLowerCase();
+  let orchestrated = { language: languagePinned, isQuestion: null, normalizedCommand: null, aiTxn: null };
+  try {
+    orchestrated = await applyAIOrchestration(text, From, languagePinned, requestId);
+    languagePinned = orchestrated.language || languagePinned;
+  } catch (_) { /* best-effort */ }
+
+  // If AI produced a normalized command, route it immediately (pure read-only/list/summaries).
+  // This uses your existing deterministic command router and keeps business gating unchanged.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
+  if (orchestrated.normalizedCommand) {
+    try {
+      await handleQuickQueryEN(orchestrated.normalizedCommand, From, languagePinned, `${requestId}::ai-norm`);
+      handledRequests.add(requestId);
+      return true;
+    } catch (e) {
+      console.warn('[router] ai-normalized command failed, falling back:', e?.message);
+    }
+  }
+
+  // Question detection: prefer orchestrator; if null, use legacy detector.
+  // This makes Q&A win BEFORE welcome, while gating (ensureAccessOrOnboard) remains non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
+  let isQuestion = orchestrated.isQuestion;
+  if (isQuestion == null) {
+    isQuestion = await looksLikeQuestion(text, languagePinned);
+  }
+
+  // Prevent greeting/onboarding on question turns (AI or legacy).  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
+  try {
+    if (isQuestion) {
+      cancelAiDebounce(shopId);
+    }
+  } catch (_) {}
       
   // Robust question detection for *all* modes (no "?" required)
   let isQuestion = await looksLikeQuestion(text, detectedLanguage);
@@ -3845,7 +3970,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     // ===== STEP 14: "mode" keyword shows Purchase/Sale/Return buttons =====
     try {
       const MODE_ALIASES = [/^mode$/i, /^मोड$/i];
-      const askMode = MODE_ALIASES.some(rx => rx.test(text));
+      const askMode = MODE_ALIASES.some(rx => rx.test(text)) && !isQuestion; // do not override Q&A
       if (askMode && !isQuestion) {
         // Show the quick-reply template in user's saved language (queued + idempotent)
         let lang = String(detectedLanguage || 'en').toLowerCase();
@@ -3960,56 +4085,62 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
              * Q&A BEFORE WELCOME:
              * If the user asks a question (price/benefits/how), answer via AI sales Q&A first,
              * even for new/unactivated users. This enables qa-sales mode reliably.
-             */
-            if (isQuestion) {
-              try {
-                cancelAiDebounce(shopId); // reset any old pending answer                            
-                // STEP 5: Debounce Q&A if enabled (prevents duplicate/tail sends)
-                      if (SHOULD_DEBOUNCE) {
-                        scheduleAiAnswer(shopId, From, text, detectedLanguage, requestId);
-                        handledRequests.add(requestId);
-                        return true; // early exit; actual answer will be sent by the debounce timer
-                      }                                                          
-                                                                
-                // Immediate send path (serverless-safe) with explicit logs
-                      let ans;
-                      try {
-                        ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
-                      } catch (e) {
-                        console.warn('[sales-qa] composeAISalesAnswer failed, using localized fallback', e?.message);
-                        ans = getLocalizedQAFallback(String(detectedLanguage ?? 'en').toLowerCase());
-                      }
-                      const m0  = await tx(ans, detectedLanguage, From, text, `${requestId}::sales-qa-first`);
-                      const msg = nativeglishWrap(m0, detectedLanguage);
-                      console.log('[sales-qa] sending via API', { requestId, to: From, len: msg.length });
-                      await sendMessageViaAPI(From, msg);
-                      console.log('[sales-qa] sent OK', { requestId });
-
-                // STEP 7: Persist turn (for parity with debounced path)
-                      try {
-                        await appendTurn(shopId, text, msg, inferTopic(text));
-                      } catch (_) { /* best-effort */ }
-                handledRequests.add(requestId);                               
-                // Q&A → For non-activated users, show Onboarding QR (Activate Trial / Demo / Help)
-                      try {
-                        const activated = await isUserActivated(shopId);
-                        if (!activated) {
-                          await sendOnboardingQR(shopId, detectedLanguage ?? 'en');
-                        }
-                      } catch (e) {
-                        console.warn('[sales-qa-first] onboarding send failed', {
-                          status: e?.response?.status, data: e?.response?.data, msg: e?.message
-                        });
-                      }
-                      // IMPORTANT: Do not schedule upsell/tips after Q&A
-                      try { suppressTipsFor.add(requestId); } catch {}
-                      console.log('[router] sales-qa branch completed', { requestId });
-                      return true;
-              } catch (e) {
-                console.warn('[sales-qa] first-answer failed:', e?.message);
+             */               
+        if (isQuestion) {
+            try {
+              cancelAiDebounce(shopId); // reset any old pending answer
+              // STEP 5: Debounce Q&A if enabled (prevents duplicate/tail sends)
+              if (SHOULD_DEBOUNCE) {
+                // use languagePinned if available, else detectedLanguage
+                const langForDebounce = (typeof languagePinned === 'string' ? languagePinned : String(detectedLanguage ?? 'en').toLowerCase());
+                scheduleAiAnswer(shopId, From, text, langForDebounce, requestId);
+                handledRequests.add(requestId);
+                return true; // early exit; actual answer will be sent by the debounce timer
               }
+        
+              // Immediate send path (serverless-safe); prefer languagePinned (e.g., hi-latn for Hinglish)
+              const langForQa = (typeof languagePinned === 'string' ? languagePinned : String(detectedLanguage ?? 'en').toLowerCase());
+              let ans;
+              try {
+                ans = await composeAISalesAnswer(shopId, text, langForQa);
+              } catch (e) {
+                console.warn('[sales-qa] composeAISalesAnswer failed, using localized fallback', e?.message);
+                ans = getLocalizedQAFallback(langForQa);
+              }
+              const m0  = await tx(ans, langForQa, From, text, `${requestId}::sales-qa-first`);
+              const msg = nativeglishWrap(m0, langForQa);
+              console.log('[sales-qa] sending via API', { requestId, to: From, len: msg.length });
+              await sendMessageViaAPI(From, msg);
+              console.log('[sales-qa] sent OK', { requestId });
+        
+              // STEP 7: Persist turn (parity with debounced path)
+              try { await appendTurn(shopId, text, msg, inferTopic(text)); } catch (_) { /* best-effort */ }
+              handledRequests.add(requestId);
+              // Q&A → For non-activated users, show Onboarding QR (business gate remains non-AI)
+              try {
+                const activated = await isUserActivated(shopId);
+                if (!activated) await sendOnboardingQR(shopId, langForQa ?? 'en');
+              } catch (e) {
+                console.warn('[sales-qa-first] onboarding send failed', { status: e?.response?.status, data: e?.response?.data, msg: e?.message });
+              }
+              // IMPORTANT: Do not schedule upsell/tips after Q&A
+              try { suppressTipsFor.add(requestId); } catch {}
+              console.log('[router] sales-qa branch completed', { requestId });
+              return true;
+            } catch (e) {
+              console.warn('[sales-qa] first-answer failed:', e?.message);
             }
+          }
           
+            // ===== NEW: If AI hinted a transaction, DO NOT auto-apply.
+              // We keep deterministic transaction parsing/update and state windows.
+              // (aiTxn is advisory; the normal parser continues to parse raw text.)  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
+              if (orchestrated.aiTxn && !isQuestion) {
+                console.log('[router] aiTxn hint (advisory)', { requestId, aiTxn: orchestrated.aiTxn });
+                // No action here: fall through to existing deterministic transaction handlers.
+                // Your existing purchase/sale/return parsers and "awaitingPriceExpiry/BatchOverride" flows remain intact.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
+              }
+            
             // ====== Welcome/Onboarding WHEN appropriate (first-ever greeting/language, or session-expired greeting) ======
             try {                            
                 if (await shouldWelcomeNow(shopId, text)) {
