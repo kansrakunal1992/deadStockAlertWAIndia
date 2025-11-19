@@ -9803,13 +9803,24 @@ module.exports = async (req, res) => {
     try {
       const shopId = String(From).replace('whatsapp:', '');
       // Use your existing helpers to classify greeting or explicit language selection
-      const isGreetingOrLang =
+          
+    const isGreetingOrLang =
         (typeof _isGreeting === 'function' && _isGreeting(Body)) ||
         (typeof _isLanguageChoice === 'function' && _isLanguageChoice(Body));
+    
+      // EXTRA GUARD: never welcome during a question turn
+      const lower = Body.toLowerCase();
+      const isQuestionPunc = /\?\s*$/.test(Body);
+      const isPriceAskEn   = /\b(price|cost|charge|charges?)\b/i.test(lower);
+      const isPriceAskHi   = /\b(कीमत|मूल्य|लागत|कितना|दाम)\b/i.test(lower);
+      const isWhyHowHi     = /\b(क्यों|कैसे)\b/i.test(lower);
+      const isBenefitsEn   = /\b(benefits?|advantage|how does it help)\b/i.test(lower);
+      const isQuestion     = isQuestionPunc || isPriceAskEn || isPriceAskHi || isWhyHowHi || isBenefitsEn;
   
       // Show AI onboarding + interactive buttons only when shouldWelcomeNow says so           
-      if (isGreetingOrLang && await shouldWelcomeNow(shopId, Body)) {
-      await sendWelcomeFlowLocalized(From, detectedLanguage || 'en', requestId);
+      if (!isQuestion && isGreetingOrLang && await shouldWelcomeNow(shopId, Body)) {      
+      const langForWelcome = (detectedLanguage || 'en').toLowerCase();
+      await sendWelcomeFlowLocalized(From, langForWelcome, requestId);
 
         // Suppress late apologies / duplicate upsell for this request
         handledRequests.add(requestId);
