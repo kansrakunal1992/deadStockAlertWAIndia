@@ -1397,12 +1397,13 @@ function _normLite(s) {
     return true;
   }
   
-  // --- NEW: Demo button ---
-  if (payload === 'show_demo') {        
-    // STEP 3: Use a richer single-message demo transcript (text-only)
-    await sendDemoTranscriptOnce(from, lang, `cta-demo-${shopId}`);
-    return true;
+  // --- NEW: Demo button ---      
+  if (payload === 'show_demo') {
+  // Use Nativeglish demo: localized + helpful English anchors (units/₹)
+  await sendNativeglishDemo(from, lang, `cta-demo-${shopId}`);
+  return true;
   }
+
   // --- NEW: Help button ---
   if (payload === 'show_help') {        
     const helpEn = [
