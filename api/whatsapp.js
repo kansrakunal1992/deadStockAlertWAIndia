@@ -228,6 +228,15 @@ async function sendDemoTranscriptLocalized(From, lang, rid = 'cta-demo') {
   await sendMessageViaAPI(From, tagged);
 }
 
+// ===== Script, Language & "Nativeglish" helpers =====
+function _hasDevanagari(s) { return /[\u0900-\u097F]/.test(s); }
+function _hasBengali(s)    { return /[\u0980-\u09FF]/.test(s); }
+function _hasTamil(s)      { return /[\u0B80-\u0BFF]/.test(s); }
+function _hasTelugu(s)     { return /[\u0C00-\u0C7F]/.test(s); }
+function _hasKannada(s)    { return /[\u0C80-\u0CFF]/.test(s); }
+function _hasGujarati(s)   { return /[\u0A80-\u0AFF]/.test(s); }
+// Marathi uses Devanagari
+
 // Return true if user's text is romanized for the target language (so reply should be roman)
 function preferRomanFor(lang, sourceText) {
   const t = String(sourceText || '').trim();
@@ -3091,15 +3100,6 @@ const regexPatterns = {
   // NEW: split multi-item messages by newlines or bullets
   lineBreaks: /\r?\n|[•\u2022]/g
  };
-
-// ===== Script, Language & "Nativeglish" helpers =====
-function _hasDevanagari(s) { return /[\u0900-\u097F]/.test(s); }
-function _hasBengali(s)    { return /[\u0980-\u09FF]/.test(s); }
-function _hasTamil(s)      { return /[\u0B80-\u0BFF]/.test(s); }
-function _hasTelugu(s)     { return /[\u0C00-\u0C7F]/.test(s); }
-function _hasKannada(s)    { return /[\u0C80-\u0CFF]/.test(s); }
-function _hasGujarati(s)   { return /[\u0A80-\u0AFF]/.test(s); }
-// Marathi uses Devanagari
 
 // Centralized minimal Help (new copy), localized + tagged with footer
 async function sendHelpMinimal(From, lang, requestId) {
