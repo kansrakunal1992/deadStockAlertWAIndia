@@ -109,15 +109,12 @@ async function aiDetectLangIntent(text) {
 function _shouldUseAI(text, heuristicLang) {
   const t = String(text ?? '').trim().toLowerCase();
   if (!t) return false;
-  // Skip AI for obvious cases (has '?')
-  if (/[?\uff1f]$/.test(t)) return false;
-  // ASCII-only, looks like Romanized Indic (Hinglish/Tanglish/etc.)
+  // NOTE: Do NOT skip AI because of trailing '?' — Hinglish often ends with '?'
   const isAscii = /^[\x00-\x7F]+$/.test(t);
-  if (!isAscii) return false;
-  // Common Roman tokens across Indic languages (minimal; AI will decide exact lang)
-  const romanIndicTokens = /\b(kya|kyu|kaise|kab|kitna|daam|kimat|fayda|nuksan|bn(a|ana)|bana|skte|sakta|sakti|kar|kro|karo|kharid|bech|vapas|udhar|kitne|kiraya|kabse|kabtak)\b/;
-  // Use AI when heuristics think 'en' but pattern smells Indic
-  return romanIndicTokens.test(t) || heuristicLang === 'en';
+  // Expanded Roman-Indic tokens (captures “bana/skte/h/kya/kaise/kitna/…”)
+  const romanIndicTokens = /\b(kya|kyu|kaise|kab|kitna|daam|kimat|fayda|nuksan|bana|sakte|skte|hai|h|kharid|bech|karo)\b/i;
+  // Use AI when heuristics think 'en' but the text smells Indic and is ASCII
+  return isAscii && romanIndicTokens.test(t) && heuristicLang === 'en';
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +211,8 @@ async function looksLikeQuestion(text, lang = 'en') {
 
   // Heuristics
   const en = /\b(what|why|when|how|who|which|price|cost|charges?|benefit|pros|cons|compare|best)\b/;
-  const hinglish = /\b(kya|kaise|kyon|kyu|kab|kitna|daam|kimat|fayda|nuksan)\b/;
+  // Strengthened Hinglish detection (no '?' required)
+  const hinglish = /\b(kya|kaise|kyon|kyu|kab|kitna|daam|kimat|fayda|nuksan|bana|sakte|skte|hai|h)\b/;
   const hiNative = /(क्या|कैसे|क्यों|कब|कितना|दाम|कीमत|फ़ायदा|नुकसान)/;
   if (en.test(t) || hinglish.test(t) || hiNative.test(t)) return true;
 
@@ -1698,9 +1696,7 @@ function markWelcomed(shopId, whenISO = new Date().toISOString()) {
   state[shopId] = whenISO;
   writeWelcomeTracker(state);
 }
-function _isGreeting(text) {
-  return (/^\s*(hello|hi|hey|namaste|vanakkam|namaskar|hola|hallo)\s*$/i).test(String(text ?? ''));
-}
+
 function _isLanguageChoice(text) {
   try {
     const t = String(text ?? '').trim();
@@ -2068,7 +2064,10 @@ function getLocalizedOnboarding(lang = 'en') {
 function getLocalizedQAFallback(lang = 'en') {
   switch (String(lang).toLowerCase()) {
     case 'hi':
-      return `ठीक है! WhatsApp पर स्टॉक/एक्सपायरी ऑटोमेट करें; लो‑स्टॉक अलर्ट भी मिलेंगे。\nउदाहरण: sold milk 2 ltr • purchase Parle‑G 12 packets ₹10 exp +6m • short summary`;
+      return `ठीक है! WhatsApp पर स्टॉक/एक्सपायरी ऑटोमेट करें; लो‑स्टॉक अलर्ट भी मिलेंगे。\nउदाहरण: sold milk 2 ltr • purchase Parle‑G 12 packets ₹10 exp +6m • short summary`;    
+    case 'hi-latn':
+    // Roman Hindi fallback when AI is unavailable or detects Hinglish
+      return `Theek hai! WhatsApp par stock/expiry automate karo; low‑stock alerts milenge.\nUdaharan: sold milk 2 ltr • purchase Parle‑G 12 packets ₹10 exp +6m • short summary`;
     default:
       return `Automate stock & expiry on WhatsApp; get low‑stock alerts.\nTry: sold milk 2 ltr • purchase Parle‑G 12 packets ₹10 exp +6m • short summary`;
   }
