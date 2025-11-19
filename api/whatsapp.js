@@ -493,10 +493,14 @@ async function safeSendParseError(From, detectedLanguage, requestId, header) {
   try {
     if (typeof sendParseErrorWithExamples === 'function') {
       await sendParseErrorWithExamples(From, detectedLanguage, requestId, header);
-    } else {
-      // ultra-compact fallback in user's language
-      //const msg = await t('Sorry, I could not understand that. Try: "sold milk 2 ltr" or "short summary".', detectedLanguage, requestId + '::err-fallback');
-      await sendMessageViaAPI(From, msg);
+    } else {             
+        // Ultra-compact fallback in user's language (ensure msg is defined)
+              const msg = await t(
+                header ?? 'Sorry, I could not understand that. Try: "sold milk 2 ltr" or "short summary".',
+                detectedLanguage,
+                requestId + '::err-fallback'
+              );
+              await sendMessageViaAPI(From, msg);
     }
   } catch (e) {
     // last resort noop
@@ -2668,7 +2672,11 @@ scheduleTrialExpiryReminders();
 
 // ===== AI Debounce (per shop) =====
 const aiDebounce = new Map(); // shopId -> { timer, lastText, lastLang, lastReqId }
-const AI_DEBOUNCE_MS = Number(process.env.AI_DEBOUNCE_MS ?? 0); 
+
+const AI_DEBOUNCE_MS = Number(process.env.AI_DEBOUNCE_MS ?? 0);
+// Disable debouncing on serverless (timers may not fire reliably)
+const SHOULD_DEBOUNCE = AI_DEBOUNCE_MS > 0 && !isServerless;
+ 
 // STEP 9: Cancel any pending AI-debounced Q&A for this shop
 function cancelAiDebounce(shopId) {
   const prev = aiDebounce.get(shopId);
@@ -3922,17 +3930,20 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
              */
             if (isQuestion) {
               try {
-                cancelAiDebounce(shopId); // reset any old pending answer
+                cancelAiDebounce(shopId); // reset any old pending answer                            
                 // STEP 5: Debounce Q&A if enabled (prevents duplicate/tail sends)
-                      if (Number(process.env.AI_DEBOUNCE_MS ?? 0) > 0) {
+                      if (SHOULD_DEBOUNCE) {
                         scheduleAiAnswer(shopId, From, text, detectedLanguage, requestId);
                         handledRequests.add(requestId);
                         return true; // early exit; actual answer will be sent by the debounce timer
-                      }                            
-                const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
-                const m0  = await tx(ans, detectedLanguage, From, text, `${requestId}::sales-qa-first`);
-                const msg = nativeglishWrap(m0, detectedLanguage);
-                await sendMessageQueued(From, msg);                              
+                      }                                                          
+                // Immediate send path (serverless-safe) with explicit logs
+                      const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
+                      const m0  = await tx(ans, detectedLanguage, From, text, `${requestId}::sales-qa-first`);
+                      const msg = nativeglishWrap(m0, detectedLanguage);
+                      console.log('[sales-qa] sending answer to', From, { requestId });
+                      await sendMessageQueued(From, msg);
+                      console.log('[sales-qa] sent OK', { requestId });    
                 // STEP 7: Persist turn (for parity with debounced path)
                       try {
                         await appendTurn(shopId, text, msg, inferTopic(text));
@@ -4082,19 +4093,23 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     }
   
     try {     
-      // NEW: Smart sales Q&A for non-transaction, question-like prompts (benefits/clarifications)                        
-      if (!looksLikeTransaction(text) && isQuestion) {          
-          // STEP 5: Debounce Q&A if enabled (same behavior as early branch)
-              if (Number(process.env.AI_DEBOUNCE_MS ?? 0) > 0) {
+      // NEW: Smart sales Q&A for non-transaction, question-like prompts (benefits/clarifications)                                      
+        if (!looksLikeTransaction(text) && isQuestion) {
+            // STEP 5: Debounce Q&A if enabled (same behavior as early branch)
+            if (SHOULD_DEBOUNCE) {
                 scheduleAiAnswer(shopId, From, text, detectedLanguage, requestId);
                 handledRequests.add(requestId);
                 return true; // early exit; debounce will send the answer
               }
-          const shopId = String(From).replace('whatsapp:', '');                   
-          const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
-          const m0  = await tx(ans, detectedLanguage, From, text, `${requestId}::sales-qa`);
-          const msg = nativeglishWrap(m0, detectedLanguage);
-          await sendMessageQueued(From, msg);                  
+                  
+        const shopId = String(From).replace('whatsapp:', '');
+            const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
+            const m0  = await tx(ans, detectedLanguage, From, text, `${requestId}::sales-qa`);
+            const msg = nativeglishWrap(m0, detectedLanguage);
+            console.log('[sales-qa] sending answer to', From, { requestId });
+            await sendMessageQueued(From, msg);
+            console.log('[sales-qa] sent OK', { requestId });
+                  
           // STEP 7: Persist turn (for parity with debounced path)
               try {
                 await appendTurn(shopId, text, msg, inferTopic(text));
