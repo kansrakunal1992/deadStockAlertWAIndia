@@ -21,6 +21,12 @@ if (!ACCOUNT_SID || !AUTH_TOKEN) {
    throw new Error('Missing ACCOUNT_SID or AUTH_TOKEN');
  }
 
+// Helper: map script variants (e.g., 'hi-latn') to base language ('hi') for content labels
+function normalizeLangForContent(lang) {
+  const L = String(lang || 'en').toLowerCase();
+  return L.endsWith('-latn') ? L.split('-')[0] : L;
+}
+
  // ---------- LOCALIZATION DICTS (native script labels) ----------
  const QR_LABELS = {
    en: { purchase: 'Record Purchase', sale: 'Record Sale', ret: 'Record Return', body: 'What would you like to do?' },
@@ -224,9 +230,10 @@ async function createOnboardingQuickReplyForLang(lang) {
 }
 
  async function createQuickReplyForLang(lang) {
-   const l = QR_LABELS[lang] || QR_LABELS.en;
+   const base = normalizeLangForContent(lang);
+   const l = QR_LABELS[base] ?? QR_LABELS.en;
    const payload = {
-    friendly_name: `saamagrii_welcome_qr_${lang}_${Date.now()}`,
+    friendly_name: `saamagrii_welcome_qr_${base}_${Date.now()}`,
      language: 'en', // metadata only; labels are already localized
      types: {
        'twilio/quick-reply': {
@@ -246,11 +253,11 @@ async function createOnboardingQuickReplyForLang(lang) {
  }
 
 async function createListPickerForLang(lang) {
-   
-const l  = LIST_LABELS[lang] ?? LIST_LABELS.en;
+   const base = normalizeLangForContent(lang);
+const l = LIST_LABELS[base] ?? LIST_LABELS.en;
   const it = l.items;
   const payload = {
-    friendly_name: `saamagrii_query_list_${lang}_${Date.now()}`, // force NEW ContentSid
+    friendly_name: `saamagrii_query_list_${base}_${Date.now()}`, // force NEW ContentSid
     language: 'en',
     types: {
       'twilio/list-picker': {              
@@ -282,9 +289,10 @@ const l  = LIST_LABELS[lang] ?? LIST_LABELS.en;
 
 // --- NEW: Trial CTA (single-button quick reply) ---
 async function createActivateTrialCTAForLang(lang) {
-  const l = ACTIVATE_TRIAL_LABELS[lang] ?? ACTIVATE_TRIAL_LABELS.en;
+  const base = normalizeLangForContent(lang);
+  const l = ACTIVATE_TRIAL_LABELS[base] ?? ACTIVATE_TRIAL_LABELS.en;
   const payload = {
-    friendly_name: `saamagrii_activate_trial_${lang}_${Date.now()}`,
+    friendly_name: `saamagrii_activate_trial_${base}_${Date.now()}`,
     language: 'en',
     types: {
       'twilio/quick-reply': {              
@@ -302,9 +310,10 @@ async function createActivateTrialCTAForLang(lang) {
 
 // --- NEW: Paid CTA (single-button quick reply) ---
 async function createActivatePaidCTAForLang(lang) {
-  const l = ACTIVATE_PAID_LABELS[lang] ?? ACTIVATE_PAID_LABELS.en;
+  const base = normalizeLangForContent(lang);
+  const l = ACTIVATE_PAID_LABELS[base] ?? ACTIVATE_PAID_LABELS.en;
   const payload = {
-    friendly_name: `saamagrii_activate_paid_${lang}_${Date.now()}`,
+    friendly_name: `saamagrii_activate_paid_${base}_${Date.now()}`,
     language: 'en',
     types: {
       'twilio/quick-reply': {              
@@ -324,7 +333,7 @@ async function createActivatePaidCTAForLang(lang) {
 const sidsByLang = new Map();
 
 async function ensureLangTemplates(lang) {
-const language = String(lang || 'en').toLowerCase();
+const language = normalizeLangForContent(lang);
   // Fast path with TTL
   const cached = sidsByLang.get(language);
   if (cached && (Date.now() - (cached.ts || 0) < TTL_MS)) {
@@ -345,7 +354,7 @@ const language = String(lang || 'en').toLowerCase();
 }
 
 function getLangSids(lang) {  
- const language = String(lang || 'en').toLowerCase();
+ const language = normalizeLangForContent(lang);
    // Prefer cache; if not present, return nulls rather than force creation here.
    // The caller should have invoked ensureLangTemplates(language) first.
    return sidsByLang.get(language) || {
