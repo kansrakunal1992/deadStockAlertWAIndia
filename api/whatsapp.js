@@ -57,6 +57,177 @@ const AI_DETECT_TTL_MS = Number(process.env.AI_DETECT_TTL_MS ?? 5 * 60 * 1000); 
 
 function parseMultipleUpdates() { return null; }
 
+// SAFE SHIM: ensure nativeglishWrap exists even if bundling misses the real one
+if (typeof nativeglishWrap !== 'function') {
+  function nativeglishWrap(text, lang) {
+    try {
+      const anchors = ['kg','kgs','g','gm','gms','ltr','ltrs','l','ml','packet','packets','piece','pieces','₹','Rs','MRP'];
+      let out = String(text ?? '');
+      anchors.forEach(tok => {
+        const rx = new RegExp(`\\b${tok}\\b`, 'gi');
+        out = out.replace(rx, tok);
+      });
+      return out;
+    } catch {
+      return String(text ?? '');
+    }
+  }
+}
+
+/**
+ * composeDemoByLanguage(lang)
+ * Returns the rich multi-line demo transcript localized per language.
+ * Designed to keep brand names & units readable while matching your old format.
+ */
+function composeDemoByLanguage(lang) {
+  const L = String(lang || 'en').toLowerCase();
+
+  switch (L) {
+    case 'hi': // Hindi (Devanagari)
+      return [
+        'डेमो:',
+        'User: sold milk 2 ltr',
+        'Bot: ✅ 2 लीटर दूध बेचा — @ ₹? प्रति यूनिट — स्टॉक: (अपडेट)',
+        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'Bot: ✅ Parle-G के 12 पैकेट खरीदे — कीमत: ₹10',
+        '      Expiry: +6 महीने सेट',
+        'User: छोटा सारांश',
+        'Bot: 📊 संक्षिप्त सारांश — आज की बिक्री, स्टॉक कम, शीघ्र समाप्त…',
+        '',
+        `Tip: “${SWITCH_WORD.hi}” लिखें Purchase/Sale/Return बदलने के लिए`
+      ].join('\n');
+
+    case 'bn': // Bengali
+      return [
+        'ডেমো:',
+        'User: sold milk 2 ltr',
+        'Bot: ✅ 2 লিটার দুধ বিক্রি — @ ₹? প্রতি ইউনিট — স্টক: (আপডেট)',
+        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'Bot: ✅ Parle-G 12 প্যাকেট কেনা — দাম: ₹10',
+        '      মেয়াদ: +6 মাস সেট',
+        'User: ছোট সারাংশ',
+        'Bot: 📊 সংক্ষিপ্ত সারাংশ — আজকের বিক্রি, স্টক কম, শিগগিরই মেয়াদোত্তীর্ণ…',
+        '',
+        `Tip: “${SWITCH_WORD.bn}” টাইপ করুন Purchase/Sale/Return বদলাতে`
+      ].join('\n');
+
+    case 'ta': // Tamil
+      return [
+        'டெமோ:',
+        'User: sold milk 2 ltr',
+        'Bot: ✅ 2 லிட்டர் பால் விற்றோம் — @ ₹? ஒவ்வொன்றும் — ஸ்டாக்: (புதுப்பிப்பு)',
+        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'Bot: ✅ Parle-G 12 பாக்கெட் வாங்கப்பட்டது — விலை: ₹10',
+        '      Expiry: +6 மாதங்கள் அமைக்கப்பட்டது',
+        'User: சுருக்கம்',
+        'Bot: 📊 சுருக்கம் — இன்றைய விற்பனை, குறைந்த இருப்பு, விரைவில் காலாவதி…',
+        '',
+        `Tip: “${SWITCH_WORD.ta}” என தட்டச்சு செய்து Purchase/Sale/Return மாறவும்`
+      ].join('\n');
+
+    case 'te': // Telugu
+      return [
+        'డెమో:',
+        'User: sold milk 2 ltr',
+        'Bot: ✅ 2 లీటర్ పాలు అమ్మారు — @ ₹? ప్రతి యూనిట్ — స్టాక్: (అప్‌డేట్)',
+        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'Bot: ✅ Parle-G 12 ప్యాకెట్లు కొనుగోలు — ధర: ₹10',
+        '      Expiry: +6 నెలలు సెట్ చేశారు',
+        'User: సంక్షిప్త సారాంశం',
+        'Bot: 📊 సంక్షిప్త సారాంశం — ఈరోజు అమ్మకాలు, తక్కువ నిల్వ, త్వరలో గడువు…',
+        '',
+        `Tip: “${SWITCH_WORD.te}” టైప్ చేసి Purchase/Sale/Return మార్చండి`
+      ].join('\n');
+
+    case 'kn': // Kannada
+      return [
+        'ಡೆಮೊ:',
+        'User: sold milk 2 ltr',
+        'Bot: ✅ 2 ಲೀಟರ್ ಹಾಲು ಮಾರಾಟ — @ ₹? ಪ್ರತಿಯೊಂದು — ಸ್ಟಾಕ್: (ನವೀಕರಣ)',
+        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'Bot: ✅ Parle-G 12 ಪ್ಯಾಕೆಟ್ ಖರೀದಿ — ಬೆಲೆ: ₹10',
+        '      Expiry: +6 ತಿಂಗಳು ಸೆಟ್',
+        'User: ಸಂಕ್ಷಿಪ್ತ ಸಾರಾಂಶ',
+        'Bot: 📊 ಸಂಕ್ಷಿಪ್ತ ಸಾರಾಂಶ — ಇಂದಿನ ಮಾರಾಟ, ಕಡಿಮೆ ಸಂಗ್ರಹ, ಶೀಘ್ರದಲ್ಲೇ ಅವಧಿ…',
+        '',
+        `Tip: “${SWITCH_WORD.kn}” ಎಂದು ಟೈಪ್ ಮಾಡಿ Purchase/Sale/Return ಬದಲಿಸಿ`
+      ].join('\n');
+
+    case 'mr': // Marathi
+      return [
+        'डेमो:',
+        'User: sold milk 2 ltr',
+        'Bot: ✅ 2 लिटर दूध विकले — @ ₹? प्रति युनिट — स्टॉक: (अपडेट)',
+        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'Bot: ✅ Parle-G चे 12 पॅकेट घेतले — किंमत: ₹10',
+        '      Expiry: +6 महिने सेट',
+        'User: संक्षिप्त सारांश',
+        'Bot: 📊 संक्षिप्त सारांश — आजची विक्री, कमी साठा, लवकरच कालबाह्य…',
+        '',
+        `Tip: “${SWITCH_WORD.mr}” टाइप करा Purchase/Sale/Return बदलण्यासाठी`
+      ].join('\n');
+
+    case 'gu': // Gujarati
+      return [
+        'ડેમો:',
+        'User: sold milk 2 ltr',
+        'Bot: ✅ 2 લીટર દૂધ વેચાયું — @ ₹? પ્રતિ યુનિટ — સ્ટોક: (અપડેટ)',
+        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'Bot: ✅ Parle-G ના 12 પેકેટ ખરીદ્યા — ભાવ: ₹10',
+        '      Expiry: +6 મહિના સેટ',
+        'User: સંક્ષિપ્ત સારાંશ',
+        'Bot: 📊 સંક્ષિપ્ત સારાંશ — આજનું વેચાણ, ઓછો જથ્થો, ટૂંક સમયમાં ગાળાપૂરા…',
+        '',
+        `Tip: “${SWITCH_WORD.gu}” લખો Purchase/Sale/Return બદલવા`
+      ].join('\n');
+
+    case 'hi-latn': // Hinglish (Roman Hindi)
+      return [
+        'Demo:',
+        'User: sold milk 2 ltr',
+        'Bot: ✅ 2 ltr doodh becha — @ ₹? each — Stock: (updated)',
+        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'Bot: ✅ Parle-G 12 packets kharide — Price: ₹10',
+        '      Expiry: +6 months set',
+        'User: chhota saransh',
+        'Bot: 📊 Short Summary — Aaj ki sales, Low Stock, Expiring soon…',
+        '',
+        `Tip: type “${SWITCH_WORD.hi}” to switch Purchase/Sale/Return`
+      ].join('\n');
+
+    default: // English
+      return [
+        'Demo:',
+        'User: sold milk 2 ltr',
+        'Bot: ✅ Sold 2 ltr milk @ ₹? each — Stock: (updated)',
+        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'Bot: ✅ Purchased 12 packets Parle-G — Price: ₹10',
+        '      Expiry: set to +6 months',
+        'User: short summary',
+        'Bot: 📊 Short Summary — Sales Today, Low Stock, Expiring Soon…',
+        '',
+        'Tip: type “mode” to switch Purchase/Sale/Return'
+      ].join('\n');
+  }
+}
+
+/**
+ * sendDemoTranscriptLocalized(From, lang, rid)
+ * Sends the rich demo transcript in the user's language, preserves anchors,
+ * and appends your localized footer «<MODE_BADGE> • <SWITCH_WORD>».
+ */
+async function sendDemoTranscriptLocalized(From, lang, rid = 'cta-demo') {
+  const body0 = composeDemoByLanguage(lang);
+
+  // Keep helpful English anchors like units and ₹ inside localized text
+  const wrapped = nativeglishWrap(body0, lang);
+
+  // Append localized mode footer
+  const tagged = await tagWithLocalizedMode(From, wrapped, lang);
+
+  await sendMessageViaAPI(From, tagged);
+}
+
 /**
  * aiDetectLangIntent(text)
  * Uses Deepseek to classify:
@@ -1398,10 +1569,10 @@ function _normLite(s) {
   }
   
   // --- NEW: Demo button ---
-  if (payload === 'show_demo') {        
-    // STEP 3: Use a richer single-message demo transcript (text-only)
-    await sendDemoTranscriptOnce(from, lang, `cta-demo-${shopId}`);
-    return true;
+  if (payload === 'show_demo') {           
+  // new: rich multilingual demo
+  await sendDemoTranscriptLocalized(from, lang, `cta-demo-${shopId}`);
+  return true;
   }
   // --- NEW: Help button ---
   if (payload === 'show_help') {        
