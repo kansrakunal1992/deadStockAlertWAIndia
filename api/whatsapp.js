@@ -57,6 +57,22 @@ const AI_DETECT_TTL_MS = Number(process.env.AI_DETECT_TTL_MS ?? 5 * 60 * 1000); 
 
 function parseMultipleUpdates() { return null; }
 
+// Nativeglish demo: short, clear, localized with helpful English anchors
+async function sendNativeglishDemo(From, lang, requestId) {
+  const demo = [
+    '🎬 Demo (उदाहरण):',
+    '• sold milk 2 ltr — स्टॉक auto-update',
+    '• purchase Parle-G 12 packets ₹10 — exp +6m',
+    '• return 1 packet — instant add-back',
+    'Try: "short summary" / "छोटा सारांश"'
+  ].join('\n');
+  const msg = nativeglishWrap(await tx(demo, lang, From, demo, `demo-ng-${requestId}`), lang);
+  try {
+    const withTag = await tagWithLocalizedMode(From, msg, lang);
+    await sendMessageViaAPI(From, withTag);
+  } catch { await sendMessageViaAPI(From, msg); }
+}
+
 /**
  * aiDetectLangIntent(text)
  * Uses Deepseek to classify:
@@ -2944,22 +2960,6 @@ async function sendHelpMinimal(From, lang, requestId) {
     `• WhatsApp link: ="${WHATSAPP_LINK}"`
   ].join('\n');
   const msg = await tx(base, lang, From, 'help', `help-min-${requestId}`);
-  try {
-    const withTag = await tagWithLocalizedMode(From, msg, lang);
-    await sendMessageViaAPI(From, withTag);
-  } catch { await sendMessageViaAPI(From, msg); }
-}
-
-// Nativeglish demo: short, clear, localized with helpful English anchors
-async function sendNativeglishDemo(From, lang, requestId) {
-  const demo = [
-    '🎬 Demo (उदाहरण):',
-    '• sold milk 2 ltr — स्टॉक auto-update',
-    '• purchase Parle-G 12 packets ₹10 — exp +6m',
-    '• return 1 packet — instant add-back',
-    'Try: "short summary" / "छोटा सारांश"'
-  ].join('\n');
-  const msg = nativeglishWrap(await tx(demo, lang, From, demo, `demo-ng-${requestId}`), lang);
   try {
     const withTag = await tagWithLocalizedMode(From, msg, lang);
     await sendMessageViaAPI(From, withTag);
