@@ -1703,7 +1703,7 @@ const COMPACT_MODE = String(process.env.COMPACT_MODE ?? 'true').toLowerCase() ==
 const SINGLE_SCRIPT_MODE = String(process.env.SINGLE_SCRIPT_MODE ?? 'true').toLowerCase() === 'true';
 // ===== Paywall / Trial / Links (env-driven) =====
 const PAYTM_NUMBER = String(process.env.PAYTM_NUMBER ?? '9013283687');
-const PAYTM_NAME   = String(process.env.PAYTM_NAME   ?? 'Kunal Kansra');
+const PAYTM_NAME   = String(process.env.PAYTM_NAME   ?? 'Saamagrii.AI Support Team');
 const TRIAL_DAYS   = Number(process.env.TRIAL_DAYS   ?? 3);
 const PAID_PRICE_INR = Number(process.env.PAID_PRICE_INR ?? 11);
 const INLINE_PAYTM_IN_PRICING = String(process.env.INLINE_PAYTM_IN_PRICING ?? 'false').toLowerCase() === 'true';
@@ -3961,7 +3961,7 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   } catch (_) {}
       
   // Robust question detection for *all* modes (no "?" required)
-  let isQuestion = await looksLikeQuestion(text, detectedLanguage);
+  isQuestion = await looksLikeQuestion(text, detectedLanguage);
   // Hard force: invoice/bill queries must go to Q&A
   const qForce = /\b(invoice|bill|बिल|चालान)\b/i.test(text);
   if (qForce) isQuestion = true;
