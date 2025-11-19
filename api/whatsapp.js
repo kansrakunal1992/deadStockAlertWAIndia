@@ -8451,7 +8451,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     // ===== EARLY EXIT: AI orchestrator on confirmed transcript =====
       try {
         const orch = await applyAIOrchestration(transcript, from, detectedLanguage, requestId);
-        const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+        let langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
         // Prefer the detector's script variant (e.g., hi-latn) when available
           if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
             langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
@@ -9489,7 +9489,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     // ===== EARLY EXIT: AI orchestrator on the transcript =====
       try {
         const orch = await applyAIOrchestration(cleanTranscript, From, detectedLanguage, requestId);
-        const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+        let langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
           // Prefer the detector's script variant (e.g., hi-latn) when available
           if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
             langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
@@ -9952,7 +9952,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====
       try {
         const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
-        const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+        let langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
           // Prefer the detector's script variant (e.g., hi-latn) when available
           if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
             langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
@@ -10250,7 +10250,7 @@ module.exports = async (req, res) => {
   // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====
    try {
      const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
-       const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();        
+       let langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();        
     // Prefer the detector's script variant (e.g., hi-latn) when available
       if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
         langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
@@ -11417,7 +11417,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         // ===== EARLY EXIT: AI orchestrator before any inventory parse =====
             try {
               const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
-              const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+              let langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
               // Prefer the detector's script variant (e.g., hi-latn) when available
               if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
                 langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
