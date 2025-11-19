@@ -8440,27 +8440,36 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       handledRequests.add(requestId);
       return res.send(response.toString());
     }       
+
         
+    // ===== EARLY EXIT: AI orchestrator on confirmed transcript =====
+      try {
+        const orch = await applyAIOrchestration(transcript, from, detectedLanguage, requestId);
+        const langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
+        if (orch.isQuestion === true || orch.kind === 'question') {
+          handledRequests.add(requestId);
+          const ans = await composeAISalesAnswer(shopId, transcript, langPinned);
+          const msg = await t(ans, langPinned, `${requestId}::sales-qa-confirmed`);
+          await sendMessageViaAPI(from, msg);
+          return res.send(response.toString());
+        }
+        if (orch.normalizedCommand) {
+          handledRequests.add(requestId);
+          await handleQuickQueryEN(orch.normalizedCommand, from, langPinned, `${requestId}::ai-norm-confirmed`);
+          return res.send(response.toString());
+        }
+      } catch (e) {
+        console.warn(`[${requestId}] orchestrator (confirmed) early-exit error:`, e?.message);
+        // fall through gracefully
+      }
+          
     console.log(`[${requestId}] [6] Parsing updates using AI...`);
       const updates = await parseOrReturn(transcript, from, detectedLanguage, requestId);
-      if (updates.length === 0) {
+      if (!Array.isArray(updates) || updates.length === 0) {
         handledRequests.add(requestId);
         return res.send(response.toString()); // "return ..." case already replied
       }
 
-     
-    if (updates.length === 0) {
-      console.log(`[${requestId}] Rejected: No valid inventory updates`);
-      await sendSystemMessage(
-        'Please send inventory updates only. Examples: "10 Parle-G sold at 10/packet exp 11/12/25", "5kg sugar purchased at 20/kg exp 14/11", "2 boxes Maggi bought at 22/packet exp 11/12/2025". You can send multiple updates in one message!',
-        from,
-        detectedLanguage,
-        requestId,
-        response
-      );
-      handledRequests.add(requestId);
-      return res.send(response.toString());
-    }
     console.log(`[${requestId}] [7] Testing Airtable connection...`);
     const connectionTest = await testConnection();
     if (!connectionTest) {
@@ -8517,12 +8526,15 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
      }
  
         
-        // Only send the summary message if there are non-pending results
-        const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
-        if (totalProcessed > 0) {
-          // Create base message in English first          
-          const header = chooseHeader(results.length, COMPACT_MODE, /*isPrice*/ false);
-          let baseMessage = header;
+        
+        // Base message (will be populated only if we have non-pending results)
+         let baseMessage = '';
+         // Only send the summary message if there are non-pending results
+         const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
+         if (totalProcessed > 0) {
+           // Create base message in English first
+           const header = chooseHeader(results.length, COMPACT_MODE, /*isPrice*/ false);
+           baseMessage = header;
           let successCount = 0;
           let hasSales = false;
           let totalSalesValue = 0;
@@ -8604,21 +8616,24 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
           baseMessage += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
           
           const formattedResponse = await t(baseMessage, detectedLanguage, requestId);
-          await sendMessageViaAPI(From, formattedResponse);
+          await sendMessageViaAPI(from, formattedResponse);
         }
         
         // Debug: Log final totals
         console.log(`[Update ${shopId}] Final totals - totalSalesValue: ${totalSalesValue}, totalPurchaseValue: ${totalPurchaseValue}`);
         
-        // Add summary values
-        if (totalSalesValue > 0) {
-          baseMessage += `\n💰 Total sales value: ₹${(totalSalesValue).toFixed(2)}`;
-        }
-        if (totalPurchaseValue > 0) {
-          baseMessage += `\n📦 Total purchase value: ₹${(totalPurchaseValue).toFixed(2)}`;
-        } else {
-          console.log(`[Update ${shopId}] Not showing purchase value because totalPurchaseValue is 0`);
-        }
+        
+    // Add summary values (only if we started building baseMessage)
+     if (baseMessage) {
+       if (totalSalesValue > 0) {
+         baseMessage += `\n💰 Total sales value: ₹${(totalSalesValue).toFixed(2)}`;
+       }
+       if (totalPurchaseValue > 0) {
+         baseMessage += `\n📦 Total purchase value: ₹${(totalPurchaseValue).toFixed(2)}`;
+       } else {
+         console.log(`[Update ${shopId}] Not showing purchase value because totalPurchaseValue is 0`);
+       }
+     }
     if (hasSales) {
        baseMessage += `\n\nFor better batch tracking, please specify which batch was sold in your next message.`;
        // Set conversation state to await batch selection
@@ -8631,14 +8646,18 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
          timestamp: Date.now()
        };
      }
-     // Add switch option in completion messages
-     baseMessage += `\n\nYou can reply with a voice or text message. Examples:\n• Milk purchased - 5 litres\n• Oreo Biscuits sold - 9 packets\nWe'll automatically detect your input type.`;
-     // Add reset option
-     baseMessage += `\nTo reset the flow, reply "reset".`;
-     // Translate the entire message to user's preferred language
-     const translatedMessage = await t(baseMessage, userLanguage, requestId);
-     // Send the message
-    response.message(translatedMessage);
+     
+    // Only send completion message if baseMessage exists
+     if (baseMessage) {
+       // Add switch option in completion messages
+       baseMessage += `\n\nYou can reply with a voice or text message. Examples:\n• Milk purchased - 5 litres\n• Oreo Biscuits sold - 9 packets\nWe'll automatically detect your input type.`;
+       // Add reset option
+       baseMessage += `\nTo reset the flow, reply "reset".`;
+       // Translate the entire message to user's preferred language
+       const translatedMessage = await t(baseMessage, userLanguage, requestId);
+       // Send the message
+       response.message(translatedMessage);
+     }
     handledRequests.add(requestId);
     return res.send(response.toString()); 
   }
