@@ -57,6 +57,23 @@ const AI_DETECT_TTL_MS = Number(process.env.AI_DETECT_TTL_MS ?? 5 * 60 * 1000); 
 
 function parseMultipleUpdates() { return null; }
 
+// --- SAFE SHIM: ensure nativeglishWrap exists even if build misses it ---
+if (typeof nativeglishWrap !== 'function') {
+  function nativeglishWrap(text, lang) {
+    try {
+      // Keep helpful English anchors (units/₹/MRP) inside localized strings
+      const anchors = ['kg','kgs','g','gm','gms','ltr','ltrs','l','ml','packet','packets','piece','pieces','₹','Rs','MRP'];
+      let out = String(text ?? '');
+      anchors.forEach(tok => {
+        const rx = new RegExp(`\\b${tok}\\b`, 'gi');
+        out = out.replace(rx, tok); // normalize casing and prevent translation of anchors
+      });
+      return out;
+    } catch {
+      return String(text ?? '');
+    }
+  }
+
 // Nativeglish demo: short, clear, localized with helpful English anchors
 async function sendNativeglishDemo(From, lang, requestId) {
   const demo = [
