@@ -55,6 +55,8 @@ const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 const _aiDetectCache = new Map(); // key: text|heuristicLang -> {language,intent,ts}
 const AI_DETECT_TTL_MS = Number(process.env.AI_DETECT_TTL_MS ?? 5 * 60 * 1000); // 5 min
 
+function parseMultipleUpdates() { return null; }
+
 /**
  * aiDetectLangIntent(text)
  * Uses Deepseek to classify:
