@@ -2618,7 +2618,8 @@ const lang = (language ?? 'en').toLowerCase();
      QuestionTopic: ${topic ?? 'unknown'}
      PricingFlavor: ${pricingFlavor ?? 'n/a'}
      UserQuestion: ${question}
-     Rules: ${targetScriptNote}. Keep it crisp and on-topic.`).trim();
+     Rules: ${targetScriptNote}. Keep it crisp and on-topic.`).trim()
+        );
 
 
   try {
