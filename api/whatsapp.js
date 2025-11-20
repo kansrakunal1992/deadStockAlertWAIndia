@@ -2355,6 +2355,7 @@ async function sendPostQABundle(From, detectedLanguage) {
   } catch (e) {
     console.warn('[post-qa-bundle] failed:', e?.message);
   }
+}
 
 // OPTIONAL: Quiet 422 Airtable errors when trying to save 'demo' as a plan
 async function _safeSaveUserPlan(shopId, plan) {
