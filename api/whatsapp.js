@@ -7514,7 +7514,6 @@ async function sendPriceUpdatesPaged(From, detectedLanguage, requestId, page = 1
       const msg0 = await t(`${header}\nAll prices look fresh.`, detectedLanguage, requestId);
       return msg0; // let handler send queued + upsell
     }
-  }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageSafe = Math.min(Math.max(1, Number(page) || 1), totalPages);
@@ -7540,7 +7539,6 @@ async function sendPriceUpdatesPaged(From, detectedLanguage, requestId, page = 1
   const localized = await t(message.trim(), detectedLanguage, requestId);
   return localized;
 }
-
 
 // Add this helper function for robust JSON parsing
 function safeJsonParse(str) {
