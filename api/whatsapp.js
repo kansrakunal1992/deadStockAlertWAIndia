@@ -422,14 +422,70 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
   if (!USE_AI_ORCHESTRATOR) return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
   const shopId = String(From ?? '').replace('whatsapp:', '');
   const o = await aiOrchestrate(text);
+  // ---- NEW: topic detection helpers (pricing/benefits/capabilities) ----
+  function isPricingQuestion(msg) {
+    const t = String(msg ?? '').toLowerCase();
+    const en = /\b(price|cost|charge|charges|rate)\b/;
+    const hing = /\b(kimat|daam|rate|price kya|kitna|kitni)\b/;
+    const hiNative = /(कीमत|दाम|भाव|रेट|कितना|कितनी)/;
+    return en.test(t) || hing.test(t) || hiNative.test(msg);
+  }
+  function isBenefitQuestion(msg) {
+    const t = String(msg ?? '').toLowerCase();
+    return /\b(benefit|daily benefit|value|help|use case)\b/.test(t)
+        || /(फ़ायदा|लाभ|मदद|दैनिक)/.test(msg)
+        || /\b(fayda)\b/.test(t);
+  }
+  function isCapabilitiesQuestion(msg) {
+    const t = String(msg ?? '').toLowerCase();
+    return /\b(what.*do|what does it do|exactly.*does|how does it work|kya karta hai)\b/.test(t)
+        || /(क्या करता है|किस काम का है|कैसे चलता है)/.test(msg)
+        || /\b(kya karta hai)\b/.test(t);
+  }
+  function classifyQuestionTopic(msg) {
+    if (isPricingQuestion(msg)) return 'pricing';
+    if (isBenefitQuestion(msg)) return 'benefits';
+    if (isCapabilitiesQuestion(msg)) return 'capabilities';
+    return null;
+  }
+  // inventory-looking text: product names/units/money hints
+  function looksLikeInventoryPricing(msg) {
+    const s = String(msg ?? '').toLowerCase();
+    const unitRx = /(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|बॉक्स|टुकड़ा|नंग)/i;
+    const moneyRx = /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i;
+    const brandRx = /(milk|doodh|parle\-g|maggi|amul|oreo|frooti|marie gold|good day|dabur|tata|nestle)/i;
+    return unitRx.test(s) || moneyRx.test(s) || brandRx.test(s);
+  }
+
+  // ---- NEW: force question routing when a topic is detected ----
+  const topicForced = classifyQuestionTopic(text);
+  if (topicForced) {
+    o.kind = 'question';
+  }
+  // ---- NEW: attach topic + pricing flavor (tool vs inventory) for downstream use ----
+  let pricingFlavor = null; // 'tool_pricing' | 'inventory_pricing' | null
+  if (topicForced === 'pricing') {
+    let activated = false;
+    try {
+      const pref = await getUserPreference(shopId);
+      const plan = String(pref?.plan ?? '').toLowerCase();
+      activated = (plan === 'trial' || plan === 'paid');
+    } catch { /* best effort */ }
+    if (activated && looksLikeInventoryPricing(text)) {
+      pricingFlavor = 'inventory_pricing';
+    } else {
+      pricingFlavor = 'tool_pricing';
+    }
+  }
+
   let language = String(o.language ?? detectedLanguageHint ?? 'en').toLowerCase();
   // Persist language preference best-effort
   try { if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, language); } catch (_) {}
   const isQuestion = o.kind === 'question';
   const normalizedCommand = o.kind === 'command' && o?.command?.normalized ? o.command.normalized : null;
-  const aiTxn = o.kind === 'transaction' ? o.transaction : null;
-  console.log('[orchestrator]', { requestId, language, kind: o.kind, normalizedCommand: normalizedCommand ?? '—' });
-  return { language, isQuestion, normalizedCommand, aiTxn };
+  const aiTxn = o.kind === 'transaction' ? o.transaction : null;   
+  console.log('[orchestrator]', { requestId, language, kind: o.kind, normalizedCommand: normalizedCommand ?? '—', topicForced, pricingFlavor });
+  return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor }; // <— NEW fields
 }
 
 // Decide if AI should be used (cost guard)
@@ -2283,6 +2339,22 @@ async function sendSalesQAButtons(From, lang, isActivated) {
   }
 }
 
+// ---- OPTIONAL: convenience wrapper (call after every Sales-Q&A answer) ----
+async function sendPostQABundle(From, detectedLanguage) {
+  try {
+    const toNumber = String(From).replace('whatsapp:', '');
+    let lang = (detectedLanguage ?? 'en').toLowerCase();
+    try {
+      const pref = await getUserPreference(toNumber);
+      if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+    } catch { /* noop */ }
+    const plan = (await getUserPreference(toNumber))?.plan ?? '';
+    const isActivated = String(plan).toLowerCase() === 'trial' || String(plan).toLowerCase() === 'paid';
+    await sendSalesQAButtons(From, lang, isActivated);
+  } catch (e) {
+    console.warn('[post-qa-bundle] failed:', e?.message);
+  }
+
 // OPTIONAL: Quiet 422 Airtable errors when trying to save 'demo' as a plan
 async function _safeSaveUserPlan(shopId, plan) {
   try { await saveUserPlan(shopId, plan); }
@@ -2379,13 +2451,22 @@ const SALES_AI_MANIFEST = Object.freeze({
 function ensureLanguageOrFallback(out, language = 'en') {
   try {
     const lang = String(language || 'en').toLowerCase();
-    const text = String(out || '').trim();
-    if (!text) return getLocalizedOnboarding(lang);
-    const nonAsciiLen = (text.match(/[^\x00-\x7F]/g) || []).length;
-    const asciiRatio = text.length ? (text.length - nonAsciiLen) / text.length : 1;
-    if (lang !== 'en' && asciiRatio > 0.85) {
-      return getLocalizedOnboarding(lang);
-    }
+    const text = String(out || '').trim();       
+    // ---- NEW: smarter empty / ASCII-heavy handling with Hinglish support ----
+        if (!text) {
+          return lang === 'hi-latn' ? getLocalizedQAFallback('hi-latn') : getLocalizedOnboarding(lang);
+        }
+        const nonAsciiLen = (text.match(/[^\x00-\x7F]/g) ?? []).length;
+        const asciiRatio = text.length ? (text.length - nonAsciiLen) / text.length : 1;
+    
+        // If Hinglish expected but output is mostly English ASCII → return Hinglish fallback, not English banner
+        if (lang === 'hi-latn' && asciiRatio > 0.85) {
+          return getLocalizedQAFallback('hi-latn');
+        }
+        // For other non-English languages with ASCII-heavy output → localized onboarding fallback
+        if (lang !== 'en' && asciiRatio > 0.85) {
+          return getLocalizedOnboarding(lang);
+        }
     return text;
   } catch { return out; }
 }
@@ -2452,33 +2533,96 @@ async function composeAIOnboarding(language = 'en') {
 }
 
 // NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
-async function composeAISalesAnswer(shopId, question, language = 'en') {
-  const lang = (language ?? 'en').toLowerCase();
-    // If user asks about invoice, force an explicit line in the reply about PDFs
-    const mustMentionInvoice = /\b(invoice|बिल|चालान)\b/i.test(String(question || ''));
-    const sys =
-      (`You are a helpful WhatsApp assistant. Always respond ONLY in ${lang} script (e.g., Hindi → Devanagari).
-  Be conversational, concise (3–5 short sentences), and avoid repeating earlier messages verbatim. Use ONLY MANIFEST facts; never invent features.
-  If pricing/cost is asked, include: free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month. If out of scope, say "I’m not sure yet" and share 2–3 relevant benefits of the product.
-  ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''}`).trim();
-  const manifest = JSON.stringify(SALES_AI_MANIFEST);
-
-  // Pull last 2–3 turns for better continuity (from DB)
-    let convoHint = '';
+async function composeAISalesAnswer(shopId, question, language = 'en') { 
+const lang = (language ?? 'en').toLowerCase();
+  // ---- NEW: topic & pricing flavor ----
+  function isPricingQuestion(msg) {
+    const t = String(msg ?? '').toLowerCase();
+    const en = /\b(price|cost|charge|charges|rate)\b/;
+    const hing = /\b(kimat|daam|rate|price kya|kitna|kitni)\b/;
+    const hiNative = /(कीमत|दाम|भाव|रेट|कितना|कितनी)/;
+    return en.test(t) || hing.test(t) || hiNative.test(msg);
+  }
+  function isBenefitQuestion(msg) {
+    const t = String(msg ?? '').toLowerCase();
+    return /\b(benefit|daily benefit|value|help|use case)\b/.test(t)
+        || /(फ़ायदा|लाभ|मदद|दैनिक)/.test(msg)
+        || /\b(fayda)\b/.test(t);
+  }
+  function isCapabilitiesQuestion(msg) {
+    const t = String(msg ?? '').toLowerCase();
+    return /\b(what.*do|what does it do|exactly.*does|how does it work|kya karta hai)\b/.test(t)
+        || /(क्या करता है|किस काम का है|कैसे चलता है)/.test(msg)
+        || /\b(kya karta hai)\b/.test(t);
+  }
+  function classifyQuestionTopic(msg) {
+    if (isPricingQuestion(msg)) return 'pricing';
+    if (isBenefitQuestion(msg)) return 'benefits';
+    if (isCapabilitiesQuestion(msg)) return 'capabilities';
+    return null;
+  }
+  function looksLikeInventoryPricing(msg) {
+    const s = String(msg ?? '').toLowerCase();
+    const unitRx = /(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|बॉक्स|टुकड़ा|नंग)/i;
+    const moneyRx = /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i;
+    const brandRx = /(milk|doodh|parle\-g|maggi|amul|oreo|frooti|marie gold|good day|dabur|tata|nestle)/i;
+    return unitRx.test(s) || moneyRx.test(s) || brandRx.test(s);
+  }
+  const topic = classifyQuestionTopic(question);
+  let pricingFlavor = null; // 'tool_pricing' | 'inventory_pricing' | null
+  if (topic === 'pricing') {
+    let activated = false;
     try {
-      const turns = await getRecentTurns(shopId, 3);
-      if (Array.isArray(turns) && turns.length) {
-        convoHint = 'Conversation so far:\n' + turns.map(t => `User: ${t.user_text}\nAssistant: ${t.ai_text}`).join('\n') + '\n';
-      }
-    } catch (_) {}
+      const pref = await getUserPreference(shopId);
+      const plan = String(pref?.plan ?? '').toLowerCase();
+      activated = (plan === 'trial' || plan === 'paid');
+    } catch { /* noop */ }
+    pricingFlavor = (activated && looksLikeInventoryPricing(question)) ? 'inventory_pricing' : 'tool_pricing';
+  }
+
+  // ---- NEW: Hinglish enforcement note ----
+  const targetScriptNote =
+    lang === 'hi-latn'
+      ? 'Respond ONLY in Roman Hindi (Hinglish; language code hi-Latn). Keep sentences short and natural Hinglish.'
+      : `Respond ONLY in ${lang} script.`;
+
+  // If user asks about invoice, force an explicit line in the reply about PDFs
+  const mustMentionInvoice = /\b(invoice|बिल|चालान)\b/i.test(String(question ?? ''));
+  const sys = (
+    (`You are a helpful WhatsApp assistant. ${targetScriptNote}
+     Be concise (3–5 short sentences). Use ONLY MANIFEST facts; never invent features.
+     If pricing/cost is asked, include: free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month.
+     Answer directly to the user's question topic; do not repeat onboarding slogans.
+     ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''}`).trim()
+  );
+  const manifest = JSON.stringify(SALES_AI_MANIFEST);  
+// Keep user instructions tight & topic-aware
+  const topicGuide = (() => {
+    switch (topic) {
+      case 'pricing':
+        return pricingFlavor === 'inventory_pricing'
+          ? 'User is asking for PRODUCT PRICE. Give short guidance: how to set/see item rates (purchase entry with ₹rate, or "prices" / "products price" query). Avoid subscription pricing unless asked.'
+          : 'User is asking for TOOL PRICE. Provide plan details (trial days & monthly price).';
+      case 'benefits':
+        return 'User is asking for BENEFITS. List 3 everyday, practical benefits (alerts, reorder tips, summaries). No pricing unless asked.';
+      case 'capabilities':
+        return 'User is asking WHAT IT DOES. State 3 core capabilities (stock updates, expiry tracking, summaries) in simple language.';
+      default:
+        return 'If topic unknown, give 2–3 most relevant capabilities succinctly.';
+    }
+  })();
   
-    const user = (`Language: ${lang}
-    MANIFEST: ${manifest}
-    ${convoHint}UserQuestion: ${question}
-    Rules: Use only capabilities listed. If pricing/cost asked, include trial days (${TRIAL_DAYS}) and ₹${PAID_PRICE_INR}/month. Always answer in ${lang} script. Keep it short.`).trim();
+    const user = 
+(`Language: ${lang}
+      MANIFEST: ${manifest}
+     QuestionTopic: ${topic ?? 'unknown'}
+     PricingFlavor: ${pricingFlavor ?? 'n/a'}
+     UserQuestion: ${question}
+     Rules: ${targetScriptNote}. Keep it crisp and on-topic.`).trim();
+
 
   try {
-    console.log('AI_AGENT_PRE_CALL', { kind: 'sales-qa', language: lang, promptHash: Buffer.from(String(question).toLowerCase()).toString('base64').slice(0,12) });
+    console.log('AI_AGENT_PRE_CALL', { kind: 'sales-qa', language: lang, topic, pricingFlavor, promptHash: Buffer.from(String(question).toLowerCase()).toString('base64').slice(0,12) });
     const resp = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -2492,26 +2636,42 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
         timeout: 10000
       }
     );               
-    let out = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
-    out = ensureLanguageOrFallback(out, lang);        
-    // Optional: add Paytm inline when user explicitly asks price/cost
+    let out = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();       
+    // --- NEW: Hinglish-aware fallback + nativeglish anchors ---
+        out = ensureLanguageOrFallback(out, lang);
+        out = nativeglishWrap(out, lang);
+    
+        // Optional: add Paytm inline ONLY for TOOL PRICING questions when user explicitly asked price/cost
         try {
-          const q = String(question || '').toLowerCase();
-          const askedPrice =
-            /(?:price|cost|charges?)/.test(q) ||
-            /(\bकितनी\s*लागत\b|\bकीमत\b|\bमूल्य\b|\bकितना\b|\bदाम\b)/i.test(q);
-          if (INLINE_PAYTM_IN_PRICING && askedPrice) {
+          const q = String(question || '').toLowerCase();         
+          const askedPrice = /(?:price|cost|charges?)/.test(q) || /(\bकीमत\b|\bमूल्य\b|\bदाम\b)/i.test(question) || /\b(kimat|daam|rate)\b/i.test(q);
+            if (INLINE_PAYTM_IN_PRICING && askedPrice && pricingFlavor === 'tool_pricing') {
             // Keep it short and language-neutral (numbers/brand names OK in single-script output)
             const line = `\nPaytm → ${PAYTM_NUMBER} (${PAYTM_NAME})`;
             out = out + line;
           }
         } catch (_) { /* no-op */ }
-    console.log('AI_AGENT_POST_CALL', { kind: 'sales-qa', ok: !!out, length: out?.length || 0 });
+    console.log('AI_AGENT_POST_CALL', { kind: 'sales-qa', ok: !!out, length: out?.length ?? 0, topic, pricingFlavor });
     return out;
-  } catch {
-   // Grounded fallback: show benefit or safe “not sure” with known commands             
-    console.warn('AI_AGENT_FALLBACK_USED', { kind: 'sales-qa' });
-    return getLocalizedQAFallback(lang);
+  } catch {      
+    // --- NEW: contextual fallbacks (Hinglish-aware) ---
+        console.warn('AI_AGENT_FALLBACK_USED', { kind: 'sales-qa', topic, pricingFlavor });
+        if (lang === 'hi-latn') {
+          if (topic === 'pricing') {
+            if (pricingFlavor === 'inventory_pricing') {
+              return `Inventory item ka rate set/dekhne ke liye entry me ₹rate likho: "purchase Parle-G 12 packets ₹10", ya "prices" command use karo.`;
+            } else {
+              return `Free trial ${TRIAL_DAYS} din ka hai; uske baad ₹${PAID_PRICE_INR}/month. Payment Paytm ${PAYTM_NUMBER} par ya link se ho sakta hai.`;
+            }
+          }
+          if (topic === 'benefits') {
+            return `Daily fayda: stock/expiry auto-update, low-stock alerts, smart reorder tips. Aaj ka "short summary" bhi milta hai.`;
+          }
+          if (topic === 'capabilities') {
+            return `WhatsApp par stock update, expiry tracking, aur summaries. Bas "sold milk 2 ltr" ya "purchase Parle-G 12 packets ₹10 exp +6m" type karo.`;
+          }
+        }
+        return getLocalizedQAFallback(lang);
   }
 }
 
