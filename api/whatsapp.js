@@ -4302,28 +4302,30 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
     await handleQuickQueryEN(_orch.normalizedCommand, From, _lang, `${requestId}::ai-norm`);
     return true;
   }
-
-  // If AI produced a normalized command, route it immediately (pure read-only/list/summaries).
-  // This uses your existing deterministic command router and keeps business gating unchanged.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
-  if (orchestrated.normalizedCommand) {
-    try {
-      await handleQuickQueryEN(orchestrated.normalizedCommand, From, languagePinned, `${requestId}::ai-norm`);
-      handledRequests.add(requestId);
-      return true;
-    } catch (e) {
-      console.warn('[router] ai-normalized command failed, falling back:', e?.message);
-    }
-  }
+      
+    // (Fix) Remove undefined 'orchestrated' and use _orch consistently
+     // (Fix) Ensure languagePinned is defined before use
+     if (_orch.normalizedCommand) {
+       try {
+         const languagePinned = (_orch.language ?? (detectedLanguage ?? 'en')).toLowerCase();
+         await handleQuickQueryEN(_orch.normalizedCommand, From, languagePinned, `${requestId}::ai-norm`);
+         handledRequests.add(requestId);
+         return true;
+       } catch (e) {
+         console.warn('[router] ai-normalized command failed, falling back:', e?.message);
+       }
+     }
 
   // Question detection: prefer orchestrator; if null, use legacy detector.
-  // This makes Q&A win BEFORE welcome, while gating (ensureAccessOrOnboard) remains non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)    
-    let isQuestion = orchestrated.isQuestion;
-      if (isQuestion == null) {
-          isQuestion = await looksLikeQuestion(text, languagePinned);
-      }
+  // This makes Q&A win BEFORE welcome, while gating (ensureAccessOrOnboard) remains non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)           
+    let isQuestion = _orch.isQuestion;
+     if (isQuestion == null) {
+       const languagePinned = (_orch.language ?? (detectedLanguage ?? 'en')).toLowerCase();
+       isQuestion = await looksLikeQuestion(text, languagePinned);
+     }
     
       // ✅ Respect AI orchestration: if kind === 'question', exit early
-      if (orchestrated.kind === 'question') {
+      if (_orch.kind === 'question') {
           handledRequests.add(requestId);
           console.log(`[router] AI classified as question → skipping downstream parse`, { requestId });
           return true;
