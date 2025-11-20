@@ -2626,7 +2626,8 @@ const lang = (language ?? 'en').toLowerCase();
          QuestionTopic: ${topic ?? 'unknown'}
          PricingFlavor: ${pricingFlavor ?? 'n/a'}
          UserQuestion: ${question}
-         Rules: ${targetScriptNote}. Keep it crisp and on-topic.`).trim());
+         Rules: ${targetScriptNote}. Keep it crisp and on-topic.`).trim()
+    );
 
   try {
     console.log('AI_AGENT_PRE_CALL', { kind: 'sales-qa', language: lang, topic, pricingFlavor, promptHash: Buffer.from(String(question).toLowerCase()).toString('base64').slice(0,12) });
@@ -3261,7 +3262,7 @@ const regexPatterns = {
    // Added Gujarati numerals [૦-૯]
    digits: /(\d+|[०-९]+|[૦-૯]+)/i,
    resetCommands: /(reset|start over|restart|cancel|exit|stop)/gi,
-   conjunctions: /(and|&amp;|aur|also|और|एवं)/gi,
+   conjunctions: /(and|&&;|aur|also|और|एवं)/gi,
   // NEW: split multi-item messages by newlines or bullets
   lineBreaks: /\r?\n|[•\u2022]/g
  };
