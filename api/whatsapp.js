@@ -2734,7 +2734,7 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
   // Active (trial or paid) → allow normal flows
   return { allow: true, language: lang, upsellReason: 'none' };
 }
-
+}
 
 
 // DB-backed memory helpers (Airtable via database.js)
