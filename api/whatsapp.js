@@ -279,16 +279,20 @@ async function tx(message, lang, fromOrShopId, sourceText, cacheKey) {
 // ---- NEW: scoped cache key builder to avoid generic translation reuse
 function shortHash(s) {
   try {
-    return crypto.createHash('sha256').update(String(s ?? '')).digest('hex').slice(0, 12);
-  } catch { return String(s ?? '').length.toString(16).padStart(12, '0'); }
+    return crypto.createHash('sha256')
+      .update(String(s ?? ''))
+      .digest('hex')
+      .slice(0, 12);
+  } catch {
+    return String(s ?? '').length.toString(16).padStart(12, '0');
+  }
 }
 function buildTranslationCacheKey(requestId, topic, flavor, lang, sourceText) {
   const rid = String(requestId ?? '').trim() || 'req';
-  const t = String(topic ?? 'unknown').toLowerCase();
-  const f = String(flavor ?? 'n/a').toLowerCase();
-  const L = String(lang ?? 'en').toLowerCase();
-  const h = shortHash(sourceText ?? '');
-  return `${rid}::${t}::${f}::${L}::${h}`;
+  const tpc = String(topic ?? 'unknown').toLowerCase();
+  const flv = String(flavor ?? 'n/a').toLowerCase();
+  const L   = String(lang ?? 'en').toLowerCase();
+  return `${rid}::${tpc}::${flv}::${L}::${shortHash(sourceText ?? '')}`;
 }
 
 // "Nativeglish": keep helpful English anchors (units, brand words) in otherwise localized text.
@@ -303,6 +307,16 @@ function nativeglishWrap(text, lang) {
     });
     return out;
   } catch { return String(text ?? ''); }
+}
+
+// ---- NEW: helper to sanitize after late string edits (e.g., replacing labels)
+function sanitizeAfterReplace(text, lang) {
+  try {
+    const wrapped = nativeglishWrap(text, lang);
+    return enforceSingleScript(wrapped, lang);
+  } catch {
+    return text;
+  }
 }
 
 /**
@@ -1361,17 +1375,19 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
              const ONBOARDING_QR_SID = String(process.env.ONBOARDING_QR_SID || '').trim();
                                           
             // 0) INTRO (AI onboarding benefits) — FIRST
-                try {                                  
-                  // Compose then translate intro
-                        let introText = await t(
-                          await composeAIOnboarding(detectedLanguage),
-                          detectedLanguage ?? 'en',
-                          'welcome-intro'
-                        );
-                        // Replace hardcoded "Start Trial" with the actual localized button label
-                        // so the onboarding copy matches the buttons the user sees.
-                        const startTrialLabel = getStaticLabel('startTrialBtn', detectedLanguage);
-                        introText = introText.replace(/"Start Trial"/g, `"${startTrialLabel}"`);                                                
+                try {                                                                        
+                    // Compose then translate intro — use per-shop cacheKey to avoid stale blended output
+                          const introKey = `welcome-intro::${toNumber}::${String(detectedLanguage).toLowerCase()}`;
+                          let introText = await t(
+                            await composeAIOnboarding(detectedLanguage),
+                            detectedLanguage ?? 'en',
+                            introKey
+                          );
+                          // Replace hardcoded "Start Trial" with the actual localized button label,
+                          // then re-sanitize after replacement to enforce single-script output.
+                        const startTrialLabel = getStaticLabel('startTrialBtn', detectedLanguage);                                                
+                        introText = introText.replace(/"Start Trial"/g, `"${startTrialLabel}"`);
+                        introText = sanitizeAfterReplace(introText, detectedLanguage ?? 'en');                        
                         // Suppress footer for onboarding promo
                             const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
                             await sendMessageQueued(From, NO_FOOTER_MARKER + introText);
@@ -2497,8 +2513,9 @@ function ensureLanguageOrFallback(out, language = 'en') {
         // For other non-English languages with ASCII-heavy output → localized onboarding fallback
         if (lang !== 'en' && asciiRatio > 0.85) {
           return getLocalizedOnboarding(lang);
-        }
-    return text;
+        }       
+    // Always return a single-script string (uses your existing paragraph-only clamp)
+    return enforceSingleScript(text, lang);
   } catch { return out; }
 }
 
@@ -2551,9 +2568,11 @@ async function composeAIOnboarding(language = 'en') {
         headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
         timeout: 10000
       }
-    );                
+    );                      
     let body = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
+    // Ensure localized text and clamp to single script even if MT blends lines
     body = ensureLanguageOrFallback(body, lang);
+    body = enforceSingleScript(body, lang);
     console.log('AI_AGENT_POST_CALL', { kind: 'onboarding', ok: !!body, length: body?.length || 0 });
     return body;
   } catch {
