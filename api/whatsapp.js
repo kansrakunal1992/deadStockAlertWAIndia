@@ -2178,30 +2178,45 @@ function isRomanTarget(lang) {
  *  - For native (non-Latn, non-English): keep non-ASCII paragraphs; drop ASCII-only dupes.
  *  - Inline sanitization keeps ₹, numerals & common punctuations.
  */
+
 function enforceSingleScript(out, lang) {
   if (!SINGLE_SCRIPT_MODE) return out;
   const L = String(lang ?? 'en').toLowerCase();
   const roman = isRomanTarget(L);
   const english = (L === 'en');
-  const parts = String(out).split(/\n\s*\n/);       // paragraph split
+  const text = String(out ?? '');
+
+  // Normalize newlines for better paragraph splitting
+  const normalized = text.replace(/\r?\n/g, '\n').replace(/\n{1,}/g, '\n\n');
+  const parts = normalized.split(/\n\s*\n/);
   const nonAscii = /[^\x00-\x7F]/;
 
   if (parts.length >= 2) {
     if (english || roman) {
-      // Keep ASCII-ish paras (no non-ASCII)
+      // Keep ASCII-only paragraphs
       const kept = parts.filter(p => !nonAscii.test(p)).join('\n\n');
       return kept || parts.join('\n\n');
     } else {
-      // Native: keep non-ASCII paras only
+      // Native: keep non-ASCII paragraphs only
       const kept = parts.filter(p => nonAscii.test(p)).join('\n\n');
       return kept || parts[0];
     }
   }
-  // Single paragraph: inline sanitization
-  if (english || roman) {
-    return out.replace(/[^\x00-\x7F₹\s.,@:%/\(\)\-\u2013\u2014\+\*\!?'"\`]/g, '');
+
+  // Single paragraph fallback: detect mixed script
+  const hasAscii = /[a-zA-Z]/.test(text);
+  const hasNonAscii = nonAscii.test(text);
+  if (hasAscii && hasNonAscii) {
+    return (english || roman)
+      ? text.replace(/[^\x00-\x7F₹\s.,@:%/\-+*!?'"\(\)\u2013\u2014]/g, '') // keep ASCII only
+      : text.replace(/[a-zA-Z]/g, ''); // keep native only
   }
-  return out; // native single paragraph: leave as-is
+
+  // Default sanitization
+  if (english || roman) {
+    return text.replace(/[^\x00-\x7F₹\s.,@:%/\-+*!?'"\(\)\u2013\u2014]/g, '');
+  }
+  return text; // native single paragraph: leave as-is
 }
 
 // === Compact/Verbose message helpers (inline; no new files) ===
@@ -2544,7 +2559,8 @@ async function composeAIOnboarding(language = 'en') {
   const lang = (language || 'en').toLowerCase();       
   const sys =
       'You are a friendly, professional WhatsApp assistant for a small retail inventory tool. ' +
-      'Always respond ONLY in the user language/script: ' + lang + ' (e.g., Hindi → Devanagari). Do not mix English unless a brand name. ' +
+      'Respond ONLY in one script: if Hindi, use Devanagari; if Hinglish, use Roman Hindi (hi-Latn). Do NOT mix native and Roman in the same message. Keep brand names unchanged.' +
+      'Separate paragraphs with double newlines if multiple lines are needed.' +
       'Tone: conversational, helpful, approachable. Keep it concise. Use emojis sparingly. ' +
       'Never invent features; stick to MANIFEST facts. End with a CTA line.';
   const manifest = JSON.stringify(SALES_AI_MANIFEST);
