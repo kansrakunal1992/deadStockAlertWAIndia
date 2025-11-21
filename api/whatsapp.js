@@ -222,10 +222,16 @@ async function sendDemoTranscriptLocalized(From, lang, rid = 'cta-demo') {
   // Keep helpful English anchors like units and ₹ inside localized text
   const wrapped = nativeglishWrap(body0, lang);
 
-  // Append localized mode footer
+  // Append localized mode footer    
   const tagged = await tagWithLocalizedMode(From, wrapped, lang);
-
+  // Send immediately, do not block on Airtable cache writes
   await sendMessageViaAPI(From, tagged);
+  // Async cache write (non-blocking)
+  try {
+     upsertTranslationEntry({ key: cacheKey, lang, text: tagged }).catch(e =>
+       console.warn('[cache-write-fail]', e.message)
+     );
+   } catch (_) { /* noop */ }
 }
 
 // ===== Script, Language & "Nativeglish" helpers =====
@@ -3339,8 +3345,9 @@ async function sendHelpMinimal(From, lang, requestId) {
     'Help:',
     '• WhatsApp or call: +91-9013283687',
     `• WhatsApp link: https://wa.link/6q3ol7`
-  ].join('\n');
-  const msg = await tx(base, lang, From, 'help', `help-min-${requestId}`);
+  ].join('\n');     
+  const cacheKey = buildTranslationCacheKey(requestId, 'help', 'n/a', lang, base);
+  const msg = await tx(base, lang, From, 'help', cacheKey);
   try {
     const withTag = await tagWithLocalizedMode(From, msg, lang);
     await sendMessageViaAPI(From, withTag);
@@ -3355,8 +3362,9 @@ async function sendNativeglishDemo(From, lang, requestId) {
     '• purchase Parle-G 12 packets ₹10 — exp +6m',
     '• return 1 packet — instant add-back',
     'Try: "short summary" / "छोटा सारांश"'
-  ].join('\n');
-  const msg = nativeglishWrap(await tx(demo, lang, From, demo, `demo-ng-${requestId}`), lang);
+  ].join('\n');     
+  const cacheKey = buildTranslationCacheKey(requestId, 'demo', 'n/a', lang, demo);
+  const msg = nativeglishWrap(await tx(demo, lang, From, demo, cacheKey), lang);
   try {
     const withTag = await tagWithLocalizedMode(From, msg, lang);
     await sendMessageViaAPI(From, withTag);
@@ -4348,8 +4356,9 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   // If orchestrator classified it as a QUESTION, answer and exit.
   if (_orch.isQuestion === true || _orch.kind === 'question') {
     handledRequests.add(requestId); // prevent late apologies in this cycle
-    const ans  = await composeAISalesAnswer(shopId, text, _lang);
-    const msg0 = await tx(ans, _lang, From, text, `${requestId}::sales-qa`);
+    const ans  = await composeAISalesAnswer(shopId, text, _lang);    
+    const cacheKey = buildTranslationCacheKey(requestId, topicForced || 'qa', pricingFlavor || 'n/a', _lang, text);
+    const msg0 = await tx(ans, _lang, From, text, cacheKey);
     const msg  = nativeglishWrap(msg0, _lang);
     await sendMessageQueued(From, msg);        
     try {
