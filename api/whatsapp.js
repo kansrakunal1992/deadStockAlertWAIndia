@@ -276,7 +276,22 @@ async function tx(message, lang, fromOrShopId, sourceText, cacheKey) {
   }
 }
 
-// "Nativeglish": keep helpful English anchors (units, brand words) in an otherwise localized string.
+// ---- NEW: scoped cache key builder to avoid generic translation reuse
+function shortHash(s) {
+  try {
+    return crypto.createHash('sha256').update(String(s ?? '')).digest('hex').slice(0, 12);
+  } catch { return String(s ?? '').length.toString(16).padStart(12, '0'); }
+}
+function buildTranslationCacheKey(requestId, topic, flavor, lang, sourceText) {
+  const rid = String(requestId ?? '').trim() || 'req';
+  const t = String(topic ?? 'unknown').toLowerCase();
+  const f = String(flavor ?? 'n/a').toLowerCase();
+  const L = String(lang ?? 'en').toLowerCase();
+  const h = shortHash(sourceText ?? '');
+  return `${rid}::${t}::${f}::${L}::${h}`;
+}
+
+// "Nativeglish": keep helpful English anchors (units, brand words) in otherwise localized text.
 function nativeglishWrap(text, lang) {
   try {
     const u = ['kg','kgs','g','ltr','l','ml','packet','packets','piece','pieces','₹','Rs','MRP'];
@@ -2135,31 +2150,43 @@ async function shouldWelcomeNow(shopId, text) {
   return yes;
 }
 
-// Single-script sanitizer: if lang != 'en', drop Latin-only transliteration blocks;
-// if lang == 'en', drop non-Latin blocks. Heuristic keeps ₹ and punctuation.
-function enforceSingleScript(out, lang) {
-  if (!SINGLE_SCRIPT_MODE) return out;
-  const isEnglish = (String(lang || 'en').toLowerCase() === 'en');
-  // Split on blank lines to catch “native\n\nromanized” pattern
-  const parts = String(out).split(/\n\s*\n/);
-  if (parts.length < 2) {
-    // Also strip inline duplicate if it was concatenated without blank line
-    return isEnglish
-      ? out.replace(/[^\x00-\x7F₹\s.,@:%/()\-–—+*!?'"`]/g, '')
-      : out; // leave native as-is
-  }
-  const nonAscii = /[^\x00-\x7F]/;    
-  if (!isEnglish) {
-      // Keep ALL native (non‑ASCII) paragraphs; drop ASCII‑only ones
-      const kept = parts.filter(p => nonAscii.test(p)).join('\n\n');
-      return kept || parts[0];
-    } else {
-    // English user: keep only ASCII-ish paragraphs
-    return parts.filter(p => !nonAscii.test(p)).join('\n\n') || parts.join('\n\n');
-  }
+// ---- NEW: treat languages ending with -Latn as Roman script targets (ASCII-preferred)
+function isRomanTarget(lang) {
+  return /-latn$/i.test(String(lang ?? 'en'));
 }
 
+/**
+ * enforceSingleScript(out, lang)
+ * If SINGLE_SCRIPT_MODE is on, keep only one script:
+ *  - For English or any *-Latn target: keep ASCII-ish paragraphs; strip native script.
+ *  - For native (non-Latn, non-English): keep non-ASCII paragraphs; drop ASCII-only dupes.
+ *  - Inline sanitization keeps ₹, numerals & common punctuations.
+ */
+function enforceSingleScript(out, lang) {
+  if (!SINGLE_SCRIPT_MODE) return out;
+  const L = String(lang ?? 'en').toLowerCase();
+  const roman = isRomanTarget(L);
+  const english = (L === 'en');
+  const parts = String(out).split(/\n\s*\n/);       // paragraph split
+  const nonAscii = /[^\x00-\x7F]/;
 
+  if (parts.length >= 2) {
+    if (english || roman) {
+      // Keep ASCII-ish paras (no non-ASCII)
+      const kept = parts.filter(p => !nonAscii.test(p)).join('\n\n');
+      return kept || parts.join('\n\n');
+    } else {
+      // Native: keep non-ASCII paras only
+      const kept = parts.filter(p => nonAscii.test(p)).join('\n\n');
+      return kept || parts[0];
+    }
+  }
+  // Single paragraph: inline sanitization
+  if (english || roman) {
+    return out.replace(/[^\x00-\x7F₹\s.,@:%/\(\)\-\u2013\u2014\+\*\!?'"\`]/g, '');
+  }
+  return out; // native single paragraph: leave as-is
+}
 
 // === Compact/Verbose message helpers (inline; no new files) ===
 function capitalize(s) {
@@ -2261,7 +2288,8 @@ if (typeof generateMultiLanguageResponse === 'undefined') {
 async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
   const shopId = String(From).replace('whatsapp:', '');
 
-  const sendTagged = async (body) => {
+  const sendTagged = async (body) => {    
+// keep existing per-command cache key (already unique & scoped)
     const msg0 = await tx(body, lang, From, cmd, `qq-${cmd}-${shopId}`);
     const msg = await tagWithLocalizedMode(From, msg0, lang);
     await sendMessageViaAPI(From, msg);
@@ -3200,9 +3228,11 @@ function scheduleAiAnswer(shopId, From, text, lang, requestId) {
     timer: setTimeout(async () => {
       try {                
         const last = aiDebounce.get(key);                
-        const ans = await composeAISalesAnswer(shopId, last.lastText, last.lastLang);
-        // Keep user's script preference and Nativeglish
-        const m0  = await tx(ans, last.lastLang, `whatsapp:${shopId}`, last.lastText, `${last.lastReqId}::sales-qa-debounced`);
+        const ans = await composeAISalesAnswer(shopId, last.lastText, last.lastLang);                
+        // Keep user's script preference & use scoped cache key to avoid generic reuse
+        const topic = inferTopic(last.lastText); // sync helper from database.js (already imported)
+        const cacheKey = buildTranslationCacheKey(last.lastReqId, topic, /*flavor*/ null, last.lastLang, last.lastText);
+        const m0 = await tx(ans, last.lastLang, `whatsapp:${shopId}`, last.lastText, cacheKey);
         const msg = nativeglishWrap(m0, last.lastLang);
         await sendMessageQueued(From, msg);                
         // Store the turn in DB
