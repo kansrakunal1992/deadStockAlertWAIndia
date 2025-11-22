@@ -1397,7 +1397,20 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                         // Suppress footer for onboarding promo
                             const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
                             await sendMessageQueued(From, NO_FOOTER_MARKER + introText);
-                  await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
+                  await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons           
+                          // >>> NEW: Send benefits video AFTER intro, BEFORE buttons (once per session gate already applies)
+                          try {
+                            // Prefer saved language if present
+                            let lang = (detectedLanguage ?? 'en').toLowerCase();
+                            try {
+                              const prefLang = await getUserPreference(toNumber);
+                              if (prefLang?.success && prefLang.language) lang = String(prefLang.language).toLowerCase();
+                            } catch {}
+                            await sendOnboardingBenefitsVideo(From, lang);
+                            await new Promise(r => setTimeout(r, 300)); // breathing room before buttons
+                          } catch (e) {
+                            console.warn('[onboard-video] skipped', e?.message);
+                          }
                 } catch (e) {
                   console.warn('[welcome] intro send failed', { message: e?.message });
                 }
@@ -2039,6 +2052,13 @@ const PAYMENT_LINK  = String(process.env.PAYMENT_LINK  ?? '<payment_link>');
 
 // NEW: Trial CTA ContentSid (Quick-Reply template)
 const TRIAL_CTA_SID = String(process.env.TRIAL_CTA_SID ?? '').trim();
+
+// === NEW: Onboarding benefits video (default URL; per-language fallbacks optional) ===
+// You provided: https://kansrakunal1992.github.io/deadStockAlertWAIndia/Saamagrii.AI_ व्यापार बढ़ाएं.mp4
+// Set this in env for prod; we also allow hi/hi-Latn overrides if you later add them.
+const ONBOARDING_VIDEO_URL       = String(process.env.ONBOARDING_VIDEO_URL       ?? 'https://kansrakunal1992.github.io/deadStockAlertWAIndia/Saamagrii.AI_ व्यापार बढ़ाएं.mp4').trim();
+const ONBOARDING_VIDEO_URL_HI    = String(process.env.ONBOARDING_VIDEO_URL_HI    ?? '').trim();
+const ONBOARDING_VIDEO_URL_HI_LATN = String(process.env.ONBOARDING_VIDEO_URL_HI_LATN ?? '').trim();
 
 /**
  * Canonical activation gate:
@@ -3352,6 +3372,54 @@ async function sendHelpMinimal(From, lang, requestId) {
     const withTag = await tagWithLocalizedMode(From, msg, lang);
     await sendMessageViaAPI(From, withTag);
   } catch { await sendMessageViaAPI(From, msg); }
+}
+
+// === NEW: Onboarding Benefits Video Sender ==========================================
+// Sends a WhatsApp video with a localized, single-script caption.
+// Called during onboarding for unactivated users, after intro text and before buttons.
+async function sendOnboardingBenefitsVideo(From, lang = 'en') {
+  try {
+    const toNumber = String(From).replace('whatsapp:', '');
+    const L = String(lang ?? 'en').toLowerCase();
+
+    // Prefer per-language URLs if provided; else fallback to default
+    let videoUrl = ONBOARDING_VIDEO_URL;
+    if (L === 'hi'      && ONBOARDING_VIDEO_URL_HI)      videoUrl = ONBOARDING_VIDEO_URL_HI;
+    if (L === 'hi-latn' && ONBOARDING_VIDEO_URL_HI_LATN) videoUrl = ONBOARDING_VIDEO_URL_HI_LATN;
+
+    if (!videoUrl) {
+      console.warn('[onboard-video] No video URL configured; skipping');
+      return;
+    }
+
+    // Short localized caption; enforce single script; suppress footer badges
+    const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+    const captionEn = 'Manage stock & expiry on WhatsApp • Low-stock alerts • Smart reorder tips';
+    let caption0 = await t(captionEn, L, 'onboard-video-caption');
+    let caption  = NO_FOOTER_MARKER + enforceSingleScript(caption0, L);
+
+    // Send via Twilio Messages API as video media
+    const accountSid   = process.env.TWILIO_ACCOUNT_SID;
+    const authToken    = process.env.TWILIO_AUTH_TOKEN;
+    const fromWhatsApp = process.env.TWILIO_WHATSAPP_NUMBER; // e.g. 'whatsapp:+14155238886'
+
+    if (!accountSid || !authToken || !fromWhatsApp) {
+      console.warn('[onboard-video] Missing Twilio credentials or from number; skipping');
+      return;
+    }
+
+    const twilioClient = require('twilio')(accountSid, authToken);
+    const resp = await twilioClient.messages.create({
+      from: fromWhatsApp,
+      to: `whatsapp:${toNumber}`,
+      mediaUrl: [videoUrl],
+      body: caption,
+    });
+
+    console.log('[onboard-video] sent', { sid: resp?.sid, to: toNumber, url: videoUrl, lang: L });
+  } catch (e) {
+    console.warn('[onboard-video] send failed', e?.message);
+  }
 }
 
 // Nativeglish demo: short, clear, localized with helpful English anchors
