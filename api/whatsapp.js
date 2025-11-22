@@ -2056,7 +2056,8 @@ const TRIAL_CTA_SID = String(process.env.TRIAL_CTA_SID ?? '').trim();
 // === NEW: Onboarding benefits video (default URL; per-language fallbacks optional) ===
 // You provided: https://kansrakunal1992.github.io/deadStockAlertWAIndia/Saamagrii.AI_ व्यापार बढ़ाएं.mp4
 // Set this in env for prod; we also allow hi/hi-Latn overrides if you later add them.
-const ONBOARDING_VIDEO_URL       = String(process.env.ONBOARDING_VIDEO_URL       ?? 'https://kansrakunal1992.github.io/deadStockAlertWAIndia/Saamagrii.AI_ व्यापार बढ़ाएं.mp4').trim();
+// Use a percent-encoded default to avoid Twilio "Invalid media URL"
+const ONBOARDING_VIDEO_URL       = String(process.env.ONBOARDING_VIDEO_URL ?? 'https://kansrakunal1992.github.io/deadStockAlertWAIndia/Saamagrii.AI_%20%E0%A4%B5%E0%A5%8D%E0%A4%AF%E0%A4%BE%E0%A4%AA%E0%A4%BE%E0%A4%B0%20%E0%A4%AC%E0%A4%A2%E0%A4%BC%E0%A4%BE%E0%A4%8F%E0%A4%82.mp4').trim();
 const ONBOARDING_VIDEO_URL_HI    = String(process.env.ONBOARDING_VIDEO_URL_HI    ?? '').trim();
 const ONBOARDING_VIDEO_URL_HI_LATN = String(process.env.ONBOARDING_VIDEO_URL_HI_LATN ?? '').trim();
 
@@ -3391,6 +3392,12 @@ async function sendOnboardingBenefitsVideo(From, lang = 'en') {
       console.warn('[onboard-video] No video URL configured; skipping');
       return;
     }
+        
+    // DEFENSIVE: percent-encode any spaces/Unicode to satisfy Twilio media URL requirements
+        try {
+          // encodeURI preserves valid URL parts and encodes non-ASCII safely
+          videoUrl = encodeURI(videoUrl);
+        } catch (_) { /* if encodeURI fails, keep original and let Twilio error show */ }
 
     // Short localized caption; enforce single script; suppress footer badges
     const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
