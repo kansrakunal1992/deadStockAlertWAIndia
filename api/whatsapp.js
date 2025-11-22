@@ -3390,39 +3390,72 @@ async function sendOnboardingBenefitsVideo(From, lang = 'en') {
     if (!videoUrl) {
       console.warn('[onboard-video] No video URL configured; skipping');
       return;
-    }
+    }                   
         
-    // DEFENSIVE: percent-encode any spaces/Unicode to satisfy Twilio media URL requirements
-        try {
-          // encodeURI preserves valid URL parts and encodes non-ASCII safely
-          videoUrl = encodeURI(videoUrl);
-        } catch (_) { /* if encodeURI fails, keep original and let Twilio error show */ }
+    // DEFENSIVE: percent-encode any spaces/Unicode; log both forms
+        const rawUrl = videoUrl;
+        let encodedUrl = rawUrl;
+        try { encodedUrl = encodeURI(rawUrl); }
+        catch (e) { console.warn('[onboard-video] encodeURI failed; using raw URL', { error: e?.message, rawUrl }); }
+        console.log('[onboard-video] media URL snapshot', { rawUrl, encodedUrl, lang: L });
 
-    // Short localized caption; enforce single script; suppress footer badges
+    // Short localized caption; enforce single script; suppress footer badges        
     const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
-    const captionEn = 'Manage stock & expiry on WhatsApp • Low-stock alerts • Smart reorder tips';
-    let caption0 = await t(captionEn, L, 'onboard-video-caption');
-    let caption  = NO_FOOTER_MARKER + enforceSingleScript(caption0, L);
-
+        const captionEn = 'Manage stock & expiry on WhatsApp • Low-stock alerts • Smart reorder tips';
+        let caption0 = await t(captionEn, L, 'onboard-video-caption');
+        let caption  = NO_FOOTER_MARKER + enforceSingleScript(caption0, L);
+        
     // Send via Twilio Messages API as video media
-    const accountSid   = process.env.ACCOUNT_SID;
-    const authToken    = process.env.AUTH_TOKEN;
+        const accountSid   = process.env.TWILIO_ACCOUNT_SID;
+        const authToken    = process.env.TWILIO_AUTH_TOKEN;
     const fromWhatsApp = process.env.TWILIO_WHATSAPP_NUMBER; // e.g. 'whatsapp:+14155238886'
-
-    if (!accountSid || !authToken || !fromWhatsApp) {
-      console.warn('[onboard-video] Missing Twilio credentials or from number; skipping');
-      return;
-    }
-
-    const twilioClient = require('twilio')(accountSid, authToken);
-    const resp = await twilioClient.messages.create({
-      from: fromWhatsApp,
-      to: `whatsapp:${toNumber}`,
-      mediaUrl: [videoUrl],
-      body: caption,
-    });
-
-    console.log('[onboard-video] sent', { sid: resp?.sid, to: toNumber, url: videoUrl, lang: L });
+       
+    if (accountSid && authToken && fromWhatsApp) {
+          // Direct Twilio send using ENCODED URL
+          const twilioClient = require('twilio')(accountSid, authToken);
+          try {
+            const resp = await twilioClient.messages.create({
+              from: fromWhatsApp,
+              to: `whatsapp:${toNumber}`,
+              mediaUrl: [encodedUrl],
+              body: caption,
+            });
+            console.log('[onboard-video] sent', { sid: resp?.sid, to: toNumber, url: encodedUrl, rawUrl, lang: L });
+            return;
+          } catch (err) {
+            // Deep diagnostics: error code/status/body and the URL we attempted
+            const code       = err?.code ?? err?.status;
+            const message    = err?.message ?? err?.moreInfo;
+            const respStatus = err?.status ?? err?.response?.status;
+            const respData   = err?.response?.data;
+            console.warn('[onboard-video] Twilio send failed', {
+              code, message, respStatus, respData, attemptedUrl: encodedUrl, rawUrl, lang: L
+            });
+            // Fall through to try the abstraction path next
+          }
+        } else {
+          console.warn('[onboard-video] Missing Twilio creds or from number; will try abstraction fallback', {
+            hasSid: !!accountSid, hasToken: !!authToken, hasFrom: !!fromWhatsApp
+          });
+        }
+    
+        // Fallback: use your abstraction if it supports mediaUrl (keeps queueing/backoff consistent)
+        try {
+          if (typeof sendMessageViaAPI === 'function') {
+            await sendMessageViaAPI(From, caption, { mediaUrl: encodedUrl });
+            console.log('[onboard-video] sent via sendMessageViaAPI (fallback)', { to: toNumber, url: encodedUrl, rawUrl, lang: L });
+            return;
+          } else {
+            console.warn('[onboard-video] sendMessageViaAPI not found or not a function; cannot use fallback');
+          }
+        } catch (e) {
+          console.warn('[onboard-video] fallback sendMessageViaAPI failed', {
+            error: e?.message, attemptedUrl: encodedUrl, rawUrl, lang: L
+          });
+        }
+    
+        // If we reach here, both paths failed
+        console.warn('[onboard-video] send wrapper failed', { error: e?.message });
   } catch (e) {
     console.warn('[onboard-video] send failed', e?.message);
   }
