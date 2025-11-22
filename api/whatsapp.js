@@ -3406,8 +3406,8 @@ async function sendOnboardingBenefitsVideo(From, lang = 'en') {
         let caption  = NO_FOOTER_MARKER + enforceSingleScript(caption0, L);
         
     // Send via Twilio Messages API as video media
-        const accountSid   = process.env.TWILIO_ACCOUNT_SID;
-        const authToken    = process.env.TWILIO_AUTH_TOKEN;
+        const accountSid   = process.env.ACCOUNT_SID;
+        const authToken    = process.env.AUTH_TOKEN;
     const fromWhatsApp = process.env.TWILIO_WHATSAPP_NUMBER; // e.g. 'whatsapp:+14155238886'
        
     if (accountSid && authToken && fromWhatsApp) {
