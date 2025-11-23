@@ -3086,13 +3086,54 @@ async function composeAIOnboarding(language = 'en') {
 async function composeAISalesAnswer(shopId, question, language = 'en') {
   
 const lang = (language ?? 'en').toLowerCase();        
-    // Domain: Mobile shop detector → tailor benefits/examples
-      function isMobileShopQuestion(msg) {
-        const t = String(msg ?? '').toLowerCase();
-        return /\b(mobile|mobiles|phone|smart ?phone|accessor(y|ies)|charger|earphone|tempered\s?glass|cover|case)\b/.test(t);
+
+  // ---------- Generic, extensible domain classification ----------
+  // Optional: pull a saved category from preferences if you later store it
+  async function getShopCategory(shopId) {
+    try {
+      const pref = await getUserPreference(shopId);
+      const cat = String(pref?.shopCategory ?? '').toLowerCase().trim();
+      return cat || null;
+    } catch { return null; }
+  }
+  const DOMAIN_MAP = {
+    mobile: {
+      rx: /\b(mobile|mobiles|phone|smart ?phone|accessor(y|ies)|charger|earpho(ne|nes)|tempered\s?glass|cover|case)\b/i,
+      examples: ['sold cover 2 pieces', 'purchase charger 10 pieces ₹120', 'stock earphones'],
+      benefits: {
+        'hi-latn': 'Aapki mobile shop ke liye: stock/expiry auto-update, low-stock alerts (covers, chargers, earphones), smart reorder tips.',
+        hi: 'आपकी मोबाइल शॉप के लिए: स्टॉक/एक्सपायरी ऑटो‑अपडेट, लो‑स्टॉक अलर्ट (कवर, चार्जर, ईयरफ़ोन), स्मार्ट री‑ऑर्डर सुझाव।'
       }
-      const isMobileShop = isMobileShopQuestion(question);
-    
+    },
+    garments: {
+      rx: /\b(garment|garments|kapde|clothes|apparel|shirts?|t[- ]?shirts?|jeans|kurta|salwar|saree|dress|hoodie|sweater|size|xl|l|m|s|xxl)\b/i,
+      examples: ['sold t-shirt L 3 pieces', 'purchase jeans 12 pieces ₹550', 'stock saree'],
+      benefits: {
+        'hi-latn': 'Kapdon ke liye: SKU/size tracking, low-stock alerts (sizes), fast reorder tips, daily summary.',
+        hi: 'कपड़ों के लिए: SKU/साइज़ ट्रैकिंग, लो‑स्टॉक अलर्ट (साइज़), तेज री‑ऑर्डर सुझाव, दैनिक सारांश।'
+      }
+    },
+    pickle: {
+      rx: /\b(pickle|achaar|aachar|factory|batch|jar|bottle)\b/i,
+      examples: ['sold mango pickle 5 bottles', 'purchase lemon pickle 20 jars ₹80 exp +6m', 'batches mango pickle'],
+      benefits: {
+        'hi-latn': 'Achar/pickle ke liye: batch & expiry tracking, low-stock alerts, smart reorder tips, daily summaries.',
+        hi: 'अचार/पिकल के लिए: बैच व एक्सपायरी ट्रैकिंग, लो‑स्टॉक अलर्ट, स्मार्ट री‑ऑर्डर सुझाव, दैनिक सारांश।'
+      }
+    }
+  };
+  function classifyDomain(msg, hintedCategory = null) {
+    const m = String(msg ?? '');
+    const hint = String(hintedCategory ?? '').toLowerCase();
+    // 1) explicit hint wins if present
+    if (hint && DOMAIN_MAP[hint]) return hint;
+    // 2) regex match
+    for (const [key, cfg] of Object.entries(DOMAIN_MAP)) {
+      if (cfg.rx.test(m)) return key;
+    }
+    return null;
+  }
+
   // ---- NEW: topic & pricing flavor ----
   function isPricingQuestion(msg) {
     const t = String(msg ?? '').toLowerCase();
@@ -3238,7 +3279,17 @@ const lang = (language ?? 'en').toLowerCase();
     let out = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();          
     try {
         console.log(`[${requestId}] [dbg] agentRaw="${out?.slice(0,200)}" lang=${langExactAgent} topic=${topicForced} flavor=${flavor}`);
-      } catch (_) { /* no-op */ }
+      } catch (_) { /* no-op */ }   
+          
+    // ---- Domain-aware benefits (generic hook) ----
+      let shopCat = await getShopCategory(shopId);
+      const domain = classifyDomain(question, shopCat);
+      if (topic === 'benefits' && domain && DOMAIN_MAP[domain]) {
+        const cfg = DOMAIN_MAP[domain];
+        const benefitLine = cfg.benefits[lang] || cfg.benefits['hi-latn'] || null;
+        const ex = cfg.examples?.slice(0,3).join(' • ');
+        if (benefitLine) out = `${benefitLine}\nUdaharan: ${ex}`;
+      }
 
     // [UNIQ:PRICING-GUARD-003] Strict retry if pricing answer lacks price
       // -------------------------------------------------------------------
@@ -3283,10 +3334,10 @@ const lang = (language ?? 'en').toLowerCase();
         out = nativeglishWrap(out, lang);
         // Final single-script guard for any residual mixed content; de-echo first
         const out0 = normalizeTwoBlockFormat(out, lang);                
-        out = enforceSingleScriptSafe(out0, lang);
-        
-          // Tailor benefits answer for mobile shops (post-format, pre-final clamp)
-          if (topic === 'benefits' && isMobileShop) {
+        out = enforceSingleScriptSafe(out0, lang);      
+          
+        // (kept compatible) Specific overrides still work if you ever pass flags
+          if (topic === 'benefits' && typeof isMobileShop !== 'undefined' && isMobileShop) {
             if (lang === 'hi-latn') {
               // Hinglish, single-script, concise and domain-specific
               out = 'Aapki mobile shop ke liye daily fayda: stock/expiry auto-update, low-stock alerts (covers, chargers, earphones), smart reorder tips. “short summary” se aaj ki sales & low-stock ek line me mil jaayegi.';
@@ -3320,11 +3371,17 @@ const lang = (language ?? 'en').toLowerCase();
               return `Free trial ${TRIAL_DAYS} din ka hai; uske baad ₹${PAID_PRICE_INR}/month. Payment Paytm ${PAYTM_NUMBER} par ya link se ho sakta hai.`;
             }
           }
-          if (topic === 'benefits') {                        
-            // Mobile-shop specific Hinglish fallback if detected
-                  if (isMobileShop) {
-                    return `Aapki mobile shop ke liye daily fayda: stock/expiry auto-update, low-stock alerts (covers, chargers, earphones), smart reorder tips. "short summary" se aaj ki sales & low-stock ek line me mil jaayegi.`;
-                  }
+          if (topic === 'benefits') {                                            
+            // Generic domain-aware Hinglish fallback
+                  try {
+                    const cat = await getShopCategory(shopId);
+                    const dom = classifyDomain(question, cat);
+                    if (dom && DOMAIN_MAP[dom]) {
+                      const cfg = DOMAIN_MAP[dom];
+                      const ex = cfg.examples?.slice(0,3).join(' • ');
+                      return `${cfg.benefits['hi-latn']}\nUdaharan: ${ex}`;
+                    }
+                  } catch {}
                   return `Daily fayda: stock/expiry auto-update, low-stock alerts, smart reorder tips. Aaj ka "short summary" bhi milta hai.`;
           }
           if (topic === 'capabilities') {
