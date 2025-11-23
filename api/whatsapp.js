@@ -98,6 +98,14 @@ function shouldUseRomanOnly(languageCode) {
   return String(languageCode || '').toLowerCase().endsWith('-latn');
 }
 
+const sys = `${baseRules}\n${topicGuide}\n${targetScriptNote}
+Use ONLY MANIFEST facts. Be concise.
+FORMAT RULES (strict):
+- Do NOT use code fences (no \`\`\`).
+- Do NOT use inline backticks (\`like this\`).
+- Avoid bullet lists; prefer short sentences.
+`;
+
 // [UNIQ:MLR-HELPER-003] Strict two-block formatter for translation responses
 // Ensures EXACT shape:
 //   Line 1: Native script translation (ends with punctuation)
@@ -108,6 +116,7 @@ function shouldUseRomanOnly(languageCode) {
 function normalizeTwoBlockFormat(raw, languageCode) {
   if (!raw) return '';
   let s = String(raw)
+    .replace(/`+/g, '')
     .replace(/<translation in roman script>/gi, '')
     .replace(/<translation in native script>/gi, '')
     .replace(/\[roman script\]/gi, '')
@@ -118,23 +127,32 @@ function normalizeTwoBlockFormat(raw, languageCode) {
     .replace(/"/g, '')
     .replace(/\n\s*\n\s*\n/g, '\n\n')
     .trim();
-  const parts = s.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+  s = s.replace(/^[\s.,\-–—•]+/u, '').trim();    
+    // Helpful split that tolerates list-like formatting without over-splitting;
+      // prefer longer blocks first to avoid choosing a trimmed stub.
+      const parts = s
+        .split(/\n{2,}/)
+        .map(p => p.trim())
+        .filter(Boolean)
+        .sort((a, b) => b.length - a.length);
   const punct = /[.!?]$/;
   const romanOnly = shouldUseRomanOnly(languageCode); // [UNIQ:MLR-UTIL-003C]
 
   // If we are in a *-latn language, emit *only* the roman line.
   if (romanOnly) {
     // Prefer second block as roman; if missing, fall back to first.
-    const romanCandidate = (parts[1] || parts[0] || '').trim();
+    const romanCandidate = (parts[0] || parts[1] || '').trim();
     if (!romanCandidate) return '';
     const safeRoman = punct.test(romanCandidate) ? romanCandidate : (romanCandidate + '.');
     return safeRoman; // SINGLE-SCRIPT OUTPUT
   }
 
   // Non-latn languages → enforce two blocks (native + roman).
-  if (parts.length >= 2) {
-    const native = parts[0] || '';
-    const roman  = parts[1] || '';
+  if (parts.length >= 2) {       
+    // Heuristic: choose native as a block containing Indic script; roman as Latin
+    const hasIndic = (t) => /[\u0900-\u0D7F]/.test(t);
+    const native = parts.find(hasIndic) || parts[0] || '';
+    const roman  = parts.find(p => !hasIndic(p) && /[A-Za-z]/.test(p)) || parts[1] || '';
     const safeNative = native ? (punct.test(native) ? native : native + '.') : '';
     const safeRoman  = roman  ? (punct.test(roman)  ? roman  : roman  + '.') : safeNative;
     return `${safeNative}\n\n${safeRoman}`;
@@ -3293,6 +3311,8 @@ const lang = (language ?? 'en').toLowerCase();
         return getLocalizedQAFallback(lang);
   }
 }
+
+
 
 // ===== Access Gate & Onboarding =====
 async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
@@ -7827,6 +7847,7 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
        return message; // keep current fallback behavior
      }
 
+    const firstPassRaw = translated; // [UNIQ:SAN-TRUNC-012C] keep for fallback
     console.log(`[${requestId}] Raw translation response:`, translated);
     translated = normalizeTwoBlockFormat(translated, langExact); // [UNIQ:MLR-POST-008A]
 
@@ -7860,6 +7881,20 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
         console.warn(`[${requestId}] Retry translation failed, using first translation:`, e.message);
       }
     }
+      
+    // [UNIQ:SAN-TRUNC-012D] Final min-length guard: avoid sending tiny/garbled stubs
+      try {
+        const MIN_LEN = 25;
+        if ((translated || '').trim().length < MIN_LEN) {
+          console.warn(`[${requestId}] Output too short (${translated.length}). Falling back to first-pass raw after sanitize.`);
+          const fallbackClean = String(firstPassRaw || '')
+            .replace(/`+/g, '')
+            .replace(/^[\s.,\-–—•]+/u, '')
+            .trim();
+          if (fallbackClean.length >= MIN_LEN) translated = fallbackClean;
+        }
+      } catch (_) {}
+
     // Last-resort guard: if still too long, prefer native script only
     const MAX_LENGTH = 1600;
     if (translated.length > MAX_LENGTH) {
