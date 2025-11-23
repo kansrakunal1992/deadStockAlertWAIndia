@@ -1921,11 +1921,16 @@ function _normLite(s) {
     const start = await startTrialForAuthUser(shopId, TRIAL_DAYS);        
     if (start.success) {
     const planNote = `🎉 Trial activated for ${TRIAL_DAYS} days!`;
-      const msg = await t(
+      let msg = await t(
         `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
         lang, `cta-trial-ok-${shopId}`
-      );
-      await sendMessageViaAPI(from, msg);
+      );          
+    // Defensive fallback: if translation failed or returned a sentinel value like "None",
+          // send the base English text to avoid empty/incorrect acknowledgements.
+          if (!msg || !msg.trim() || /^none$/i.test(msg.trim())) {
+            msg = `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`;
+          }
+          await sendMessageViaAPI(from, msg);
             
       // NEW: Immediately send activated menus (Quick-Reply + List-Picker)
           try {
