@@ -2449,7 +2449,6 @@ const invokeWithTips = async (ctx, fn) => {
 // ===== Compact & Single-Script config =====
 const COMPACT_MODE = String(process.env.COMPACT_MODE ?? 'true').toLowerCase() === 'true';
 const SINGLE_SCRIPT_MODE = String(process.env.SINGLE_SCRIPT_MODE ?? 'true').toLowerCase() === 'true';
-const NO_CLAMP_MARKER = '<!NO_CLAMP!>'; // opt out of clamps for special messages
 // Optional debug switch for QA sanitize instrumentation
 const DEBUG_QA_SANITIZE = String(process.env.DEBUG_QA_SANITIZE ?? 'false').toLowerCase() === 'true';
 // ===== Paywall / Trial / Links (env-driven) =====
