@@ -3184,11 +3184,29 @@ const lang = (language ?? 'en').toLowerCase();
       console.log('AI_AGENT_PRE_CALL', {
         kind: 'sales-qa', language: langExactAgent, topic: topicForced, pricingFlavor: flavor, promptHash
       });
+      
+    // [UNIQ:QA-PROMPT-PRICING-004] Topic-aware system prompt
+      // Strengthen pricing so the model includes actual price tokens.
+      // -------------------------------------------------------------------
+      // Existing parts in your function: sys, manifest, topicGuide, user
+      // We derive a topic-focused system prompt without touching your base sys.
+      let sysForTopic = sys;
+      if (topicForced === 'pricing') {
+        sysForTopic = `${sys}
+    
+    You are answering a PRICING question for Saamagrii.AI.
+    REQUIREMENTS:
+    - Include at least one price token: use ₹ amounts or 'Rs'/'INR' plus digits.
+    - Mention current plan(s) or trial info if applicable.
+    - Keep the answer under 2 lines suitable for WhatsApp.
+    - Do NOT describe generic benefits unless the user specifically asked for benefits.
+    `;
+      }
     const resp = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
         model: 'deepseek-chat',
-        messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
+        messages: [{ role: 'system', content: sysForTopic }, { role: 'user', content: user }],
         temperature: 0.5,
         max_tokens: 220
       },
@@ -3197,9 +3215,47 @@ const lang = (language ?? 'en').toLowerCase();
         timeout: 10000
       }
     );               
-    let out = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();    
-    // --- NEW: Hinglish-aware fallback + nativeglish anchors ---
-        out = ensureLanguageOrFallback(out, lang);
+    let out = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();             
+    // [UNIQ:PRICING-GUARD-003] Strict retry if pricing answer lacks price
+      // -------------------------------------------------------------------
+      if ((topicForced === 'pricing' || flavor) && !isPricingAnswer(out)) {
+        console.warn(`[${requestId}] [UNIQ:PRICING-GUARD-003] First pricing answer lacked price tokens; retrying with stricter prompt.`);
+        const sysPricingStrict = `${sysForTopic}
+    
+    Return a concise pricing answer that MUST include at least one price token:
+    - Use ₹ amounts or 'Rs'/'INR' plus digits.
+    - Mention plan/duration if relevant.
+    - Keep under 2 lines for WhatsApp.
+    `;
+        try {
+          const resp2 = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+            model: 'deepseek-chat',
+            messages: [
+              { role: 'system', content: sysPricingStrict },
+              { role: 'user', content: user }
+            ],
+            max_tokens: 400,
+            temperature: 0.2
+          }, {
+            headers: {
+              'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: Number(process.env.SALES_QA_TIMEOUT_MS ?? 15000)
+          });
+          const out2 = String(resp2.data?.choices?.[0]?.message?.content ?? '').trim();
+          if (isPricingAnswer(out2)) out = out2;
+          console.log(`[${requestId}] [UNIQ:PRICING-GUARD-003] Retry pricing ok=${isPricingAnswer(out2)} length=${out2.length}`);
+        } catch (e) {
+          console.warn(`[${requestId}] [UNIQ:PRICING-GUARD-003] Strict retry failed: ${e?.message}`);
+        }
+      }
+
+    // --- NEW: Hinglish-aware fallback + nativeglish anchors ---         
+    // Avoid generic benefits fallback for pricing in *-latn flows
+      if (!(topicForced === 'pricing' && langExactAgent.endsWith('-latn'))) {
+        out = ensureLanguageOrFallback(out, lang);   // keep fallback for non-pricing topics
+      }
         out = nativeglishWrap(out, lang);
         try {
           const q = String(question || '').toLowerCase();                
