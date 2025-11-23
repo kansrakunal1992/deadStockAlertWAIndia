@@ -634,6 +634,20 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
   const shopId = String(From ?? '').replace('whatsapp:', '');
   const o = await aiOrchestrate(text);
     
+    // --- NEW: Normalize summary intent into the command contract ---------------
+      // Router recognizes only: greeting | question | transaction | command | other.
+      // If resolveSummaryIntent sees a summary, force it into 'command'.
+      try {
+        const summaryCmd = resolveSummaryIntent(text); // 'short summary' | 'full summary' | null
+        if (summaryCmd) {
+          // Never use kind='summary' in orchestrator output.
+          o.kind = 'command';
+          o.command = { normalized: summaryCmd };
+        }
+      } catch (_) {
+        // best-effort: ignore if resolver throws
+      }
+    
 // ---- NEW: topic detection helpers (pricing/benefits/capabilities) ----
   function isPricingQuestion(msg) {
     const t = String(msg ?? '').toLowerCase();
@@ -695,7 +709,8 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
   try { if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, language); } catch (_) {}
   const isQuestion = o.kind === 'question';
   const normalizedCommand = o.kind === 'command' && o?.command?.normalized ? o.command.normalized : null;
-  const aiTxn = o.kind === 'transaction' ? o.transaction : null;      
+  const aiTxn = o.kind === 'transaction' ? o.transaction : null;
+  // Note: summaries now appear as kind='command' with normalizedCommand.
   console.log('[orchestrator]', { requestId, language, kind: o.kind, normalizedCommand: normalizedCommand ?? '—', topicForced, pricingFlavor });
   return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor };
 }
@@ -992,6 +1007,40 @@ const SWITCH_WORD = {
   mr: 'मोड',
   gu: 'મોડ'
 };
+
+// ===== TERMINAL COMMANDS & ALIAS GUARD (new unified) =========================
+// Commands that are terminal (one-shot, read-only). Once resolved to these,
+// we should NOT recurse/re-route or re-orchestrate in the same cycle.
+const TERMINAL_COMMANDS = new Set([
+  'short summary',
+  'full summary'
+  // Optional: add other read-only queries to keep single-pass routing strict:
+  // 'low stock', 'expiring 0', 'expiring 7', 'expiring 30', 'sales today', 'sales week'
+]);
+
+// Robust alias-depth counter (handles ':alias' and '::ai-norm' forms).
+function _aliasDepth(id) {
+  const s = String(id || '');
+  const aliasHits   = (s.match(/:alias/g)    || []).length;      // ':alias'
+  const aiNormHitsD = (s.match(/::ai-norm/g) || []).length;      // '::ai-norm'
+  const aiNormHitsS = (s.match(/:ai-norm/g)  || []).length;      // ':ai-norm' (defensive)
+  return aliasHits + aiNormHitsD + aiNormHitsS;
+}
+
+// Allow overriding via env if needed; default is 1 hop.
+const MAX_ALIAS_DEPTH = Number(process.env.MAX_ALIAS_DEPTH ?? 1);
+
+// Helper: is this a terminal command?
+function _isTerminalCommand(cmd) {
+  const c = String(cmd || '').trim().toLowerCase();
+  return TERMINAL_COMMANDS.has(c);
+}
+
+// Helper: normalize language hint safely
+function _safeLang(...candidates) {
+  for (const c of candidates) { if (c) return String(c).toLowerCase(); }
+  return 'en';
+}
 
 // ==== SINGLE SOURCE: Language detection (heuristic + optional AI) ====
 // Must be declared BEFORE any calls (e.g., in handleRequest or module.exports).
@@ -2518,7 +2567,14 @@ if (typeof generateMultiLanguageResponse === 'undefined') {
 }
 
 // ---------- SHORT/FULL SUMMARY HANDLER (used by List-Picker & buttons) ----------
-async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
+async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {    
+// Early terminal guard: if caller already passed a terminal command,
+  // mark handled and short-circuit—no further normalization/re-entry.
+  try {
+    if (_isTerminalCommand(cmd)) {
+      handledRequests.add(String(source || 'qq') + '::terminal'); // suppress late apologies in-cycle
+    }
+  } catch (_) { /* noop */ }
   const shopId = String(From).replace('whatsapp:', '');
 
   const sendTagged = async (body) => {    
@@ -4651,7 +4707,11 @@ function _periodWindow(period) {
 
 function _norm(s) { return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,'').trim(); }
 
-async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
+// ====== Raw-body quick-query wrapper (de-duplicated) =========================
+// IMPORTANT: The canonical command router is `handleQuickQueryEN(cmd, From, lang, source)`.
+// This wrapper orchestrates the raw text once, then routes any normalized command
+// to the canonical router (no self-recursion).
+async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();    
   const shopId = String(From).replace('whatsapp:', '');   
@@ -4688,13 +4748,15 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
         const raw = String(text).trim().toLowerCase();
     
         // Recursion guard #1: if normalizer returns the same command, dispatch inline (no re-orchestration)
-        const sameCommand = normalized === raw;
-    
+        const sameCommand = normalized === raw;           
+                
         // Recursion guard #2: cap re-entry depth based on requestId markers
-        const aliasDepth =
-          ((requestId || '').match(/:alias/g) || []).length +
-          ((requestId || '').match(/:ai-norm/g) || []).length;
-        const MAX_ALIAS_DEPTH = 1;
+          const aliasDepth =
+            ((requestId || '').match(/:alias/g) || []).length +
+            ((requestId || '').match(/::ai-norm/g) || []).length +   // handle double-colon marker
+            ((requestId || '').match(/:ai-norm/g) || []).length;     // defensive: single-colon form
+          const MAX_ALIAS_DEPTH = Number(process.env.MAX_ALIAS_DEPTH ?? 1);
+
         const tooDeep = aliasDepth >= MAX_ALIAS_DEPTH;
         // Helper: direct dispatch for summary commands with activation gate
         const dispatchSummaryInline = async (cmd) => {
@@ -4764,16 +4826,17 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
           // If not a summary, stop recursion to avoid loops
           return true;
         }
-    
-        // Safe single hop: re-enter once with an alias marker
-        return await handleQuickQueryEN(_orch.normalizedCommand, From, _lang, `${requestId}:alias`);
+                    
+        // Safe single hop: route once to canonical command router
+        return await handleQuickQueryEN(_orch.normalizedCommand, From, _lang, `${requestId}:alias-raw`);
   }
       
     // (Fix) Remove undefined 'orchestrated' and use _orch consistently
      // (Fix) Ensure languagePinned is defined before use
      if (_orch.normalizedCommand) {
        try {
-         const languagePinned = (_orch.language ?? (detectedLanguage ?? 'en')).toLowerCase();
+         const languagePinned = (_orch.language ?? (detectedLanguage ?? 'en')).toLowerCase();                 
+        // Route to canonical command router (no recursion into this wrapper)
          await handleQuickQueryEN(_orch.normalizedCommand, From, languagePinned, `${requestId}::ai-norm`);
          handledRequests.add(requestId);
          return true;
@@ -4890,8 +4953,9 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
         if (FULL_FALLBACK.some(rx  => rx.test(text))) return 'full summary';
         return null;
       })();
-      if (normalized) {
-        await handleQuickQueryEN(normalized, From, detectedLanguage, `${requestId}:alias`);
+      if (normalized) {              
+        // Route to canonical command router (normalized alias)
+        await handleQuickQueryEN(normalized, From, detectedLanguage, `${requestId}:alias-raw`);
         handledRequests.add(requestId);
         return true;
       }
@@ -5064,8 +5128,9 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
       'list_top_month': 'top 5 products month',
       'list_value': 'value summary'
     };
-    if (listMap[id]) {
-      return await handleQuickQueryEN(listMap[id], From, detectedLanguage, `${requestId}::listfb`);
+    if (listMap[id]) {             
+        // Route list selection → canonical command router
+        return await handleQuickQueryEN(listMap[id], From, detectedLanguage, `${requestId}::listfb`);
     }
   }
   
@@ -9985,7 +10050,34 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
        
     // ===== EARLY EXIT: AI orchestrator on the transcript =====
       try {
-        const orch = await applyAIOrchestration(cleanTranscript, From, detectedLanguage, requestId);
+        const orch = await applyAIOrchestration(cleanTranscript, From, detectedLanguage, requestId);                  
+        /* VOICE_HANDLER_PATCH */
+        try {
+          if (orch?.normalizedCommand) {
+            const normalized = String(orch.normalizedCommand).toLowerCase();
+            if (_isTerminalCommand(normalized)) {
+              handledRequests.add(requestId);
+              await handleQuickQueryEN(
+                normalized,
+                From,
+                _safeLang(orch.language, detectedLanguage, 'en'),
+                `${requestId}::terminal-voice`
+              );
+              return true;
+            }
+            if (_aliasDepth(requestId) >= MAX_ALIAS_DEPTH) {
+              return true;
+            }
+            return await handleQuickQueryEN(
+              orch.normalizedCommand,
+              From,
+              _safeLang(orch.language, detectedLanguage, 'en'),
+              `${requestId}:alias-voice`
+            );
+          }
+        } catch (_) { /* noop */ }
+        /* END VOICE_HANDLER_PATCH */
+
         let langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
           // Prefer the detector's script variant (e.g., hi-latn) when available
           if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
@@ -10075,7 +10167,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     // Only if not an inventory update, try quick queries
     try {
       const normalized = await normalizeCommandText(cleanTranscript, detectedLanguage, requestId + ':normalize');
-      const handled = await handleQuickQueryEN(normalized, From, detectedLanguage, requestId);
+      const handled = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
       if (handled) return; // reply already sent
     } catch (e) {
       console.warn(`[${requestId}] Quick-query (voice) normalization failed, falling back.`, e?.message);
@@ -10448,7 +10540,38 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         
     // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====
       try {
-        const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
+        const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);                  
+        // --- BEGIN TEXT HANDLER INSERT ---
+        /* TEXT_HANDLER_PATCH */
+        try {
+          if (orch?.normalizedCommand) {
+            const normalized = String(orch.normalizedCommand).toLowerCase();
+            // Terminal → dispatch once, stop
+            if (_isTerminalCommand(normalized)) {
+              handledRequests.add(requestId); // suppress late parse-error/apology
+              await handleQuickQueryEN(
+                normalized,
+                From,
+                _safeLang(orch.language, detectedLanguage, 'en'),
+                `${requestId}::terminal`
+              );
+              return true;
+            }
+            // Alias-depth guard → do not recurse past cap
+            if (_aliasDepth(requestId) >= MAX_ALIAS_DEPTH) {
+              return true;
+            }
+            // Non-terminal normalized command → single hop
+            return await handleQuickQueryEN(
+              orch.normalizedCommand,
+              From,
+              _safeLang(orch.language, detectedLanguage, 'en'),
+              `${requestId}:alias`
+            );
+          }
+        } catch (_) { /* noop: fall through to existing paths */ }
+        /* END TEXT_HANDLER_PATCH */
+
         let langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
           // Prefer the detector's script variant (e.g., hi-latn) when available
           if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
@@ -10538,7 +10661,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       // Only if not an inventory update, try quick queries
       try {
         const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
-        const handledQuick = await handleQuickQueryEN(normalized, From, detectedLanguage, requestId);
+        const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
         if (handledQuick) {
           return; // reply already sent via API
         }
@@ -12003,7 +12126,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           // Only if not an inventory update, try quick queries
           try {
             const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
-            const handledQuick = await handleQuickQueryEN(normalized, From, detectedLanguage, requestId);
+            const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
             if (handledQuick) {
               return res.send('<Response></Response>'); // reply already sent via API
             }
