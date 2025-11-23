@@ -1196,9 +1196,10 @@ async function detectLanguageWithFallback(text, from, requestId) {
 
       // 1) Script/keyword heuristics only if not decided yet
       if (detectedLanguage === 'en') {
-        if (/[\u0900-\u097F]/.test(text)) { // Devanagari
-          const englishKeywords = ['milk','sold','purchased','bought','oreo','frooti','maggi','amul'];
-          detectedLanguage = englishKeywords.some(w => lowerText.includes(w)) ? 'en' : 'hi';
+        if (/[\u0900-\u097F]/.test(text)) { // Devanagari                        
+                   // If Devanagari script is present, prefer native Hindi.
+                   // Do NOT flip to English due to a few English brand/verb tokens.
+                   detectedLanguage = 'hi';
         } else if (/[\u0980-\u09FF]/.test(text)) detectedLanguage = 'bn';
         else if (/[\u0B80-\u0BFF]/.test(text)) detectedLanguage = 'ta';
        else if (/[\u0C00-\u0C7F]/.test(text)) detectedLanguage = 'te';
@@ -2999,15 +3000,20 @@ function ensureLanguageOrFallback(out, language = 'en') {
   try {
     const lang = String(language ?? 'en').toLowerCase();
     const text = String(out ?? '').trim();
-    if (!text) {
-      return lang === 'hi-latn' ? getLocalizedQAFallback('hi-latn') : getLocalizedOnboarding(lang);
+    if (!text) {              
+        // Only fallback when output is empty
+             return lang === 'hi-latn'
+               ? getLocalizedQAFallback('hi-latn')
+               : getLocalizedOnboarding(lang);
     }
     const nonAsciiLen = (text.match(/[^\x00-\x7F]/g) ?? []).length;
-    const asciiRatio = text.length ? (text.length - nonAsciiLen) / text.length : 1;
-    // Hinglish-specific: if mostly ASCII yet too generic, use Hinglish fallback.
-    if (lang === 'hi-latn' && asciiRatio > 0.85) {
-      return getLocalizedQAFallback('hi-latn');
-    }
+    const asciiRatio = text.length ? (text.length - nonAsciiLen) / text.length : 1;       
+    // ⚠️ Do NOT treat ASCII as a reason to fallback for hi-latn.
+       // Hinglish is expected to be ASCII; keep the model answer.
+       // Optionally: fallback only if the text is "too short" (e.g., < 40 chars).
+       if (lang === 'hi-latn' && text.length < 40) {
+         return getLocalizedQAFallback('hi-latn');
+       }
     // Native languages: if output is mostly ASCII (over 85%), show localized onboarding/fallback.
     if (lang !== 'en' && !lang.endsWith('-latn') && asciiRatio > 0.85) {
       return getLocalizedOnboarding(lang);
