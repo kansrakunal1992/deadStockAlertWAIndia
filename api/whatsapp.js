@@ -1013,9 +1013,21 @@ const SWITCH_WORD = {
 // we should NOT recurse/re-route or re-orchestrate in the same cycle.
 const TERMINAL_COMMANDS = new Set([
   'short summary',
-  'full summary'
-  // Optional: add other read-only queries to keep single-pass routing strict:
-  // 'low stock', 'expiring 0', 'expiring 7', 'expiring 30', 'sales today', 'sales week'
+  'full summary',    
+  // Router single-pass: treat these read-only queries as terminal too
+  'low stock',
+  'reorder suggestions',
+  'expiring 0',
+  'expiring 7',
+  'expiring 30',
+  'sales today',
+  'sales week',
+  'sales month',
+  'top 5 products month',
+  'top products month',
+  'value summary',
+  'inventory value',
+  'stock value'
 ]);
 
 // Robust alias-depth counter (handles ':alias' and '::ai-norm' forms).
@@ -1907,8 +1919,7 @@ function _normLite(s) {
          await sendMessageViaAPI(from, msg);
          return true;
    }
-
-   
+ 
   // --- NEW: Activate Trial Plan ---
   if (payload === 'activate_trial') {       
     // shopId/lang already prepared above; use activation gate too
@@ -1918,19 +1929,39 @@ function _normLite(s) {
           return true;
         }
     // Treat tap as explicit confirmation to start trial
-    const start = await startTrialForAuthUser(shopId, TRIAL_DAYS);        
-    if (start.success) {
-    const planNote = `🎉 Trial activated for ${TRIAL_DAYS} days!`;
-      let msg = await t(
-        `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
-        lang, `cta-trial-ok-${shopId}`
-      );          
-    // Defensive fallback: if translation failed or returned a sentinel value like "None",
-          // send the base English text to avoid empty/incorrect acknowledgements.
-          if (!msg || !msg.trim() || /^none$/i.test(msg.trim())) {
-            msg = `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`;
-          }
-          await sendMessageViaAPI(from, msg);
+        
+    const start = await startTrialForAuthUser(shopId, TRIAL_DAYS);
+        if (start.success) {
+            const planNote = `🎉 Trial activated for ${TRIAL_DAYS} days!`;
+            let msg;
+            try {
+                msg = await t(
+                    `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
+                    lang,
+                    `cta-trial-ok-${shopId}`
+                );
+            } catch (e) {
+                console.warn('[trial-activated] translation failed:', e.message);
+            }
+            // Enforce fallback if translation empty or invalid
+            if (!msg || !msg.trim() || /^none$/i.test(msg.trim())) {
+                msg = `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`;
+            }
+    
+            // Diagnostic logging before send
+            console.log('[trial-activated] sending ack message:', { to: from, msg });
+    
+            try {
+                const resp = await sendMessageViaAPI(from, msg);
+                console.log('[trial-activated] ack send OK:', { sid: resp?.sid, to: from });
+            } catch (err) {
+                console.error('[trial-activated] ack send FAILED:', {
+                    error: err?.message,
+                    code: err?.code,
+                    status: err?.status,
+                    data: err?.response?.data
+                });
+            }
             
       // NEW: Immediately send activated menus (Quick-Reply + List-Picker)
           try {
@@ -2572,7 +2603,30 @@ if (typeof generateMultiLanguageResponse === 'undefined') {
 }
 
 // ---------- SHORT/FULL SUMMARY HANDLER (used by List-Picker & buttons) ----------
-async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {    
+// NEW: Inventory commands that must be gated behind activation, same as summaries.
+// These cover all List-Picker items defined in contentCache.js LIST_LABELS
+// and their canonical English forms used by handleInteractiveSelection routing.
+const INVENTORY_COMMANDS = new Set([
+  // Summaries
+  'short summary',
+  'full summary',
+  // Inventory insights / queries
+  'low stock',
+  'reorder suggestions',
+  'expiring 0',
+  'expiring 7',
+  'expiring 30',
+  'sales today',
+  'sales week',
+  'sales month',
+  'top 5 products month',
+  'top products month',
+  'value summary',
+  'inventory value',
+  'stock value'
+]);
+
+async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {  
 // Early terminal guard: if caller already passed a terminal command,
   // mark handled and short-circuit—no further normalization/re-entry.
   try {
@@ -2588,25 +2642,29 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     const msg = await tagWithLocalizedMode(From, msg0, lang);
     await sendMessageViaAPI(From, msg);
   };
-        
-    // -- Early activation gate for summary commands (avoid unnecessary pulls)
+              
+    // -- Early activation gate for ANY inventory command (same defense as summaries)
+      //    This prevents DB lookups for unactivated users and shows the same CTA prompt.
       try {
-        if (cmd === 'short summary' || cmd === 'full summary') {
+        if (INVENTORY_COMMANDS.has(String(cmd).toLowerCase())) {
           const planInfo = await getUserPlan(shopId);
           const plan = String(planInfo?.plan ?? '').toLowerCase();
           const activated = (plan === 'trial' || plan === 'paid');
-          if (!activated) {
-            const prompt = await t(
-              'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
-              lang,
-              `cta-summary-${shopId}`
-            );
+          if (!activated) {                        
+                // Keep EXACT same prompt text you use for summaries, per request.
+                        // (If you prefer a more generic line like "To use inventory queries...",
+                        // you can change only the text below without touching the gating.)
+                        const prompt = await t(
+                          'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+                          lang,
+                          `cta-summary-${shopId}`
+                        );
             await sendTagged(prompt);
             return true;
           }
         }
       } catch (_e) {
-        if (cmd === 'short summary' || cmd === 'full summary') {
+        if (INVENTORY_COMMANDS.has(String(cmd).toLowerCase())) {
           const prompt = await t(
             'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
             lang,
