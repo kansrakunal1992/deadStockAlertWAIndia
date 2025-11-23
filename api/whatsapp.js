@@ -1934,19 +1934,21 @@ function _normLite(s) {
         if (start.success) {
             const planNote = `🎉 Trial activated for ${TRIAL_DAYS} days!`;
             let msg;
-            try {
+            try {                               
                 msg = await t(
-                    `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
-                    lang,
-                    `cta-trial-ok-${shopId}`
-                );
+                                `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
+                                lang,
+                                `cta-trial-ok-${shopId}`
+                            );
             } catch (e) {
                 console.warn('[trial-activated] translation failed:', e.message);
             }
-            // Enforce fallback if translation empty or invalid
-            if (!msg || !msg.trim() || /^none$/i.test(msg.trim())) {
-                msg = `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`;
-            }
+                       
+            // ✅ Guard: skip cache if suspiciously short (e.g., "Try:")
+                    if (!msg || msg.trim().length < 20 || /^none$/i.test(msg.trim())) {
+                        console.warn('[trial-activated] cache value too short or invalid, using fallback');
+                        msg = `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`;
+                    }
     
             // Diagnostic logging before send
             console.log('[trial-activated] sending ack message:', { to: from, msg });
