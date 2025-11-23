@@ -98,11 +98,8 @@ function shouldUseRomanOnly(languageCode) {
   return String(languageCode || '').toLowerCase().endsWith('-latn');
 }
 
+// === Single-block formatter with de-duplication for echoes ===================
 function normalizeTwoBlockFormat(raw, languageCode) {
-  // UNIFIED SINGLE-SCRIPT INTENT:
-  // - For *-Latn targets: return ONE Roman block (no 2-block composition).
-  // - For native targets: return ONE native block.
-  // - For English: return ONE ASCII block.
   if (!raw) return '';
   const L = String(languageCode ?? 'en').toLowerCase();
   const romanOnly = shouldUseRomanOnly(L);
@@ -111,12 +108,19 @@ function normalizeTwoBlockFormat(raw, languageCode) {
     .replace(/\n\s*\n\s*\n/g, '\n\n')
     .trim();
   const punct = /[.!?]$/;
-  // (A) Romanized targets → keep raw as a single Roman line; just ensure punctuation.
+  // De-echo: drop exact duplicate lines and bilingual echoes
+  const lines = s.split(/\n+/).map(l => l.trim()).filter(Boolean);
+  const uniq = [];
+  const seen = new Set();
+  for (const l of lines) {
+    const key = l.toLowerCase();
+    if (!seen.has(key)) { uniq.push(l); seen.add(key); }
+  }
+  s = uniq.join('\n');
   if (romanOnly) {
     if (!s) return '';
     return punct.test(s) ? s : (s + '.');
   }
-  // (B) Native targets → prefer non-ASCII paragraphs (if any); else keep entire s.
   const parts = s.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
   const nonAscii = /[^\x00-\x7F]/;
   if (parts.length >= 2) {
@@ -124,7 +128,6 @@ function normalizeTwoBlockFormat(raw, languageCode) {
     const safeNative = nativeBlock ? (punct.test(nativeBlock) ? nativeBlock : nativeBlock + '.') : '';
     return safeNative;
   }
-  // (C) Single paragraph: keep as-is in target script and ensure punctuation.
   return punct.test(s) ? s : (s + '.');
 }
 
@@ -513,15 +516,28 @@ function preferRomanFor(lang, sourceText) {
   }
 }
 
+// NEW: Force -Latn variant when source looks Roman Indic (Hinglish)
+function forceLatnIfRoman(languageCode, sourceText) {
+  const raw = String(sourceText ?? '');
+  const ascii = /^[\x00-\x7F]+$/.test(raw);
+  const romanIndicTokens = /\b(kya|kyu|kaise|kab|kitna|daam|kimat|fayda|nuksan|bana|sakte|skte|hai|h|kharid|bech|karo)\b/i;
+  if (ascii && romanIndicTokens.test(raw)) {
+    const base = String(languageCode ?? 'hi').toLowerCase().replace(/-latn$/,'');
+    return `${base}-latn`;
+  }
+  return languageCode;
+}
+
 // Localization helper: centralize generateMultiLanguageResponse + single-script clamp
 // === SAFETY: single-script clamp with short-message guard =====================
 const NO_CLAMP_MARKER = '<!NO_CLAMP!>'; // opt out of clamps when needed (help/tutorials)
+// === Short-message guard + single-script safe clamp ===========================
 function isShortSingleParagraph(text, maxLen = 120) {
   const t = String(text ?? '').trim();
   return !/\n/.test(t) && t.length <= maxLen;
 }
 function enforceSingleScriptSafe(out, lang) {
-  // Allow explicit opt-out
+  // Allow explicit opt-out (tutorial/help that you want bilingual)
   if (String(out ?? '').startsWith(NO_CLAMP_MARKER)) {
     return String(out).slice(NO_CLAMP_MARKER.length);
   }
@@ -539,15 +555,19 @@ async function t(text, languageCode, requestId) {
  * tx: Translation wrapper with script preservation (roman/native).
  * If the user typed roman for lang, try `${lang}-Latn` first and fall back to `${lang}`.
  */
-async function tx(message, lang, fromOrShopId, sourceText, cacheKey) {
-  const preferRoman = preferRomanFor(lang, sourceText);
-  try {
-    if (preferRoman) {
-      return await t(message, `${lang}-Latn`, cacheKey);
-    }
-    return await t(message, lang, cacheKey);
+async function tx(message, lang, fromOrShopId, sourceText, cacheKey) {  
+// Decide final target language: force -Latn when user text looks Hinglish
+  let L = String(lang ?? 'en').toLowerCase();
+  L = forceLatnIfRoman(L, sourceText);
+  const preferRoman = preferRomanFor(L, sourceText);
+
+  try {       
+    if (preferRoman || L.endsWith('-latn')) {
+          return await t(message, L, cacheKey); // already *-Latn
+        }
+        return await t(message, L, cacheKey);
   } catch (_) {
-    try { return await t(message, lang, cacheKey); } catch { return String(message); }
+    try { return await t(message, L, cacheKey); } catch { return String(message); }
   }
 }
 
@@ -1213,7 +1233,9 @@ async function detectLanguageWithFallback(text, from, requestId) {
             const useAI = _shouldUseAI(text, detectedLanguage);
             if (useAI) {
               const ai = await aiDetectLangIntent(text);
-              if (ai.language) detectedLanguage = ai.language;
+              if (ai.language) detectedLanguage = ai.language;                            
+              // OVERRIDE: if AI returned native 'hi' but text looks Hinglish ASCII → lock to hi-Latn
+              detectedLanguage = forceLatnIfRoman(detectedLanguage, text);
               try {
                 const shopId = String(from ?? '').replace('whatsapp:', '');
                 if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, detectedLanguage);
@@ -2427,6 +2449,7 @@ const invokeWithTips = async (ctx, fn) => {
 // ===== Compact & Single-Script config =====
 const COMPACT_MODE = String(process.env.COMPACT_MODE ?? 'true').toLowerCase() === 'true';
 const SINGLE_SCRIPT_MODE = String(process.env.SINGLE_SCRIPT_MODE ?? 'true').toLowerCase() === 'true';
+const NO_CLAMP_MARKER = '<!NO_CLAMP!>'; // opt out of clamps for special messages
 // Optional debug switch for QA sanitize instrumentation
 const DEBUG_QA_SANITIZE = String(process.env.DEBUG_QA_SANITIZE ?? 'false').toLowerCase() === 'true';
 // ===== Paywall / Trial / Links (env-driven) =====
@@ -2998,6 +3021,7 @@ function ensureLanguageOrFallback(out, language = 'en') {
   } catch { return out; }
 }
 
+
 function getLocalizedOnboarding(lang = 'en') {
   switch (String(lang).toLowerCase()) {
     case 'hi':
@@ -3250,12 +3274,15 @@ const lang = (language ?? 'en').toLowerCase();
       }
 
     // --- NEW: Hinglish-aware fallback + nativeglish anchors ---         
-    // Avoid generic benefits fallback for pricing in *-latn flows
-      if (!(topicForced === 'pricing' && langExactAgent.endsWith('-latn'))) {
-        out = ensureLanguageOrFallback(out, lang);   // keep fallback for non-pricing topics
-      }
+    // Avoid generic benefits fallback for pricing in *-latn flows        
+    if (!(topicForced === 'pricing' && langExactAgent.endsWith('-latn'))) {
+          out = ensureLanguageOrFallback(out, lang); // keep fallback for non-pricing topics
+        }
         out = nativeglishWrap(out, lang);
-        try {
+        // Final single-script guard for any residual mixed content; de-echo first
+        const out0 = normalizeTwoBlockFormat(out, lang);
+        out = enforceSingleScriptSafe(out0, lang);
+        try {        
           const q = String(question || '').toLowerCase();                
           const askedPrice = /(?:price|cost|charges?)/.test(q) || /(\bकीमत\b|\bमूल्य\b|\bदाम\b)/i.test(question) || /\b(kimat|daam|rate)\b/i.test(q);
              if (INLINE_PAYTM_IN_PRICING && askedPrice && pricingFlavor === 'tool_pricing') {
@@ -3266,7 +3293,7 @@ const lang = (language ?? 'en').toLowerCase();
         } catch (_) { /* no-op */ }    
     // Final single-script guard for any residual mixed content
       const finalOut = enforceSingleScriptSafe(out, lang);
-      console.log('AI_AGENT_POST_CALL', { kind: 'sales-qa', ok: !!finalOut, length: finalOut?.length ?? 0, topic, pricingFlavor });
+      console.log('AI_AGENT_POST_CALL', { kind: 'sales-qa', ok: !!out, length: out?.length ?? 0, topic, pricingFlavor });
       return finalOut;
   } catch {
     // --- NEW: contextual fallbacks (Hinglish-aware) ---
@@ -3825,10 +3852,12 @@ function scheduleAiAnswer(shopId, From, text, lang, requestId) {
         const ans = await composeAISalesAnswer(shopId, last.lastText, last.lastLang);                
         // Keep user's script preference & use scoped cache key to avoid generic reuse
         const topic = inferTopic(last.lastText); // sync helper from database.js (already imported)
-        const cacheKey = buildTranslationCacheKey(last.lastReqId, topic, /*flavor*/ null, last.lastLang, last.lastText);                
+        const cacheKey = buildTranslationCacheKey(last.lastReqId, topic, /*flavor*/ null, last.lastLang, last.lastText);                                
         const m0 = await tx(ans, last.lastLang, `whatsapp:${shopId}`, last.lastText, cacheKey);
                 if (DEBUG_QA_SANITIZE) { try { console.log('[qa] rawOut len=%d: "%s"', String(ans ?? '').length, String(ans ?? '').slice(0, 120)); } catch {} }
-                let msg = nativeglishWrap(m0, last.lastLang);
+                // De-echo before nativeglish/clamp to remove bilingual duplicates
+                let msg0 = normalizeTwoBlockFormat(m0, last.lastLang);
+                let msg = nativeglishWrap(msg0, last.lastLang);
                 if (DEBUG_QA_SANITIZE) { try { console.log('[qa] after nativeglish len=%d: "%s"', msg.length, msg.slice(0, 120)); } catch {} }
                 msg = enforceSingleScriptSafe(msg, last.lastLang);
                 if (DEBUG_QA_SANITIZE) { try { console.log('[qa] after singleScriptSafe len=%d: "%s"', msg.length, msg.slice(0, 120)); } catch {} }
