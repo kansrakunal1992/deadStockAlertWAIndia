@@ -107,8 +107,12 @@ function shouldUseRomanOnly(languageCode) {
 // ---------------------------------------------------------------------------
 function normalizeTwoBlockFormat(raw, languageCode) {
   if (!raw) return '';
-  let s = String(raw)
-    .replace(/`+/g, '')
+  let s = String(raw)      
+    // [UNIQ:SAN-LINES-014A] Keep content length; only sanitize spacing/backticks
+    .replace(/`+/g, '')                        // strip inline backticks safely
+    .replace(/[ \t]+/g, ' ')                   // collapse multiple spaces
+    .replace(/\r\n/g, '\n')                    // normalize EOLs
+    .replace(/\n[ \t]+\n/g, '\n\n')            // trim spaces on blank lines
     .replace(/<translation in roman script>/gi, '')
     .replace(/<translation in native script>/gi, '')
     .replace(/\[roman script\]/gi, '')
@@ -117,36 +121,37 @@ function normalizeTwoBlockFormat(raw, languageCode) {
     .replace(/translation in native script:/gi, '')
     .replace(/^"(.*)"$/, '$1')
     .replace(/"/g, '')
-    .replace(/\n\s*\n\s*\n/g, '\n\n')
+    .replace(/\n\s*\n\s*\n+/g, '\n\n')
     .trim();
   s = s.replace(/^[\s.,\-–—•]+/u, '').trim();    
     // Helpful split that tolerates list-like formatting without over-splitting;
-      // prefer longer blocks first to avoid choosing a trimmed stub.
+    // prefer longer blocks first to avoid choosing a trimmed stub.      
+    // Split blocks by blank lines; DO NOT flatten or shorten intra-block lines
       const parts = s
         .split(/\n{2,}/)
         .map(p => p.trim())
-        .filter(Boolean)
-        .sort((a, b) => b.length - a.length);
+        .filter(Boolean);
   const punct = /[.!?]$/;
   const romanOnly = shouldUseRomanOnly(languageCode); // [UNIQ:MLR-UTIL-003C]
 
   // If we are in a *-latn language, emit *only* the roman line.
-  if (romanOnly) {
-    // Prefer second block as roman; if missing, fall back to first.
-    const romanCandidate = (parts[0] || parts[1] || '').trim();
-    if (!romanCandidate) return '';
-    const safeRoman = punct.test(romanCandidate) ? romanCandidate : (romanCandidate + '.');
-    return safeRoman; // SINGLE-SCRIPT OUTPUT
+  if (romanOnly) {     
+    // Choose the block that looks Latin; if none, use the first as-is
+    const pickLatin = parts.find(p => /[A-Za-z]/.test(p)) || parts[0] || '';
+    if (!pickLatin) return '';        
+    // Preserve all original line breaks; just ensure final punctuation on last line
+    const lastLineEnded = punct.test(pickLatin.trim());
+    return lastLineEnded ? pickLatin : (pickLatin + '.'); // SINGLE-SCRIPT OUTPUT (no shortening)
   }
 
   // Non-latn languages → enforce two blocks (native + roman).
   if (parts.length >= 2) {       
-    // Heuristic: choose native as a block containing Indic script; roman as Latin
+    // Heuristic: choose native as a block containing Indic script; roman as Latin    
     const hasIndic = (t) => /[\u0900-\u0D7F]/.test(t);
-    const native = parts.find(hasIndic) || parts[0] || '';
-    const roman  = parts.find(p => !hasIndic(p) && /[A-Za-z]/.test(p)) || parts[1] || '';
-    const safeNative = native ? (punct.test(native) ? native : native + '.') : '';
-    const safeRoman  = roman  ? (punct.test(roman)  ? roman  : roman  + '.') : safeNative;
+    const nativeBlock = parts.find(hasIndic) || parts[0] || '';
+    const romanBlock  = parts.find(p => !hasIndic(p) && /[A-Za-z]/.test(p)) || parts[1] || '';
+    const safeNative = nativeBlock ? (punct.test(nativeBlock.trim()) ? nativeBlock : nativeBlock + '.') : '';
+    const safeRoman  = romanBlock  ? (punct.test(romanBlock.trim())  ? romanBlock  : romanBlock  + '.') : safeNative;
     return `${safeNative}\n\n${safeRoman}`;
   }
   if (s.length) {
