@@ -2351,6 +2351,34 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     const msg = await tagWithLocalizedMode(From, msg0, lang);
     await sendMessageViaAPI(From, msg);
   };
+        
+    // -- Early activation gate for summary commands (avoid unnecessary pulls)
+      try {
+        if (cmd === 'short summary' || cmd === 'full summary') {
+          const planInfo = await getUserPlan(shopId);
+          const plan = String(planInfo?.plan ?? '').toLowerCase();
+          const activated = (plan === 'trial' || plan === 'paid');
+          if (!activated) {
+            const prompt = await t(
+              'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+              lang,
+              `cta-summary-${shopId}`
+            );
+            await sendTagged(prompt);
+            return true;
+          }
+        }
+      } catch (_e) {
+        if (cmd === 'short summary' || cmd === 'full summary') {
+          const prompt = await t(
+            'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+            lang,
+            `cta-summary-${shopId}`
+          );
+          await sendTagged(prompt);
+          return true;
+        }
+      }
 
   if (cmd === 'short summary') {
     let hasAny = false;
@@ -7966,8 +7994,23 @@ function appendInlineGlossary(text, languageCode) {
 // Add these functions after the existing helper functions
 
 // Generate instant summary (concise, <300 words)
-async function generateInstantSummary(shopId, languageCode, requestId) {  
+async function generateInstantSummary(shopId, languageCode, requestId) {    
+// -- Activation gate: block only users who haven't started trial/paid
   try {
+    const planInfo = await getUserPlan(shopId);
+    const plan = String(planInfo?.plan ?? '').toLowerCase();
+    const activated = (plan === 'trial' || plan === 'paid');
+    if (!activated) {
+      // Localized prompt to activate trial; no enterprise wording
+      const prompt = 'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.';
+      return await t(prompt, languageCode, requestId);
+    }
+  } catch (_e) {
+    // If plan lookup fails, be conservative and prompt to activate
+    const prompt = 'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.';
+    return await t(prompt, languageCode, requestId);
+  }
+    try {
       console.log(`[${requestId}] Generating instant summary for shop ${shopId}`);
   
       // --- Today / Yesterday windows in IST (converted for Airtable queries)
@@ -8050,21 +8093,23 @@ async function generateInstantSummary(shopId, languageCode, requestId) {
 
 
 // Generate full-scale summary (detailed with AI insights)
-async function generateFullScaleSummary(shopId, languageCode, requestId) {
+async function generateFullScaleSummary(shopId, languageCode, requestId) {  
+// -- Activation gate: block only users who haven't started trial/paid
   try {
-    // Check if AI summaries are available for this plan
-    const canUseAI = await isFeatureAvailable(shopId, 'ai_summary');
-    if (!canUseAI) {
-      const planInfo = await getUserPlan(shopId);
-      let errorMessage = 'Advanced AI summaries are only available on the Enterprise plan.';
-      
-      if (planInfo.plan === 'free_demo_first_50') {
-        errorMessage = 'Your trial period has expired. Please upgrade to the Enterprise plan for advanced AI summaries.';
-      }
-      
-      return await t(errorMessage, languageCode, requestId);
+    const planInfo = await getUserPlan(shopId);
+    const plan = String(planInfo?.plan ?? '').toLowerCase();
+    const activated = (plan === 'trial' || plan === 'paid');
+    if (!activated) {
+      // Localized prompt to activate trial; no enterprise wording
+      const prompt = 'To use full summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.';
+      return await t(prompt, languageCode, requestId);
     }
-    
+  } catch (_e) {
+    // If plan lookup fails, be conservative and prompt to activate
+    const prompt = 'To use full summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.';
+    return await t(prompt, languageCode, requestId);
+  }
+  try {    
     console.log(`[${requestId}] Generating full-scale summary for shop ${shopId}`);
     
     // Get 30-day sales data
@@ -8089,18 +8134,21 @@ async function generateFullScaleSummary(shopId, languageCode, requestId) {
       expiringProducts,
       period: "30 days"
     };
-    
-    // Generate AI-powered insights
-    const insights = await generateSummaryInsights(contextData, languageCode, requestId);
-    
-    // Generate multilingual response
-    return insights;
+                
+    // Prefer AI insights; if service/key unavailable, higher-level catch will fallback
+        const insights = await generateSummaryInsights(contextData, languageCode, requestId);
+        return insights; // Nativeglish text
+
   } catch (error) {
-    console.error(`[${requestId}] Error generating full-scale summary:`, error.message);
+    console.error(`[${requestId}] Error generating full-scale summary:`, error.message);    
     
-    // Fallback error message in user's language
-    const errorMessage = `Sorry, I couldn't generate your detailed summary right now. Please try again later.`;
-    return await t(errorMessage, languageCode, requestId);
+    // Robust fallback: return a deterministic, data-backed summary (no plan/enterprise wording)
+        try {
+          return await generateInstantSummary(shopId, languageCode, requestId);
+        } catch (_fallbackErr) {
+          const errorMessage = `Sorry, I couldn't generate your detailed summary right now. Please try again later.`;
+          return await t(errorMessage, languageCode, requestId);
+        }
   }
 }
 
