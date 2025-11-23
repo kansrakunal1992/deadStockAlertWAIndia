@@ -531,19 +531,15 @@ function forceLatnIfRoman(languageCode, sourceText) {
 // Localization helper: centralize generateMultiLanguageResponse + single-script clamp
 // === SAFETY: single-script clamp with short-message guard =====================
 const NO_CLAMP_MARKER = '<!NO_CLAMP!>'; // opt out of clamps when needed (help/tutorials)
-// === Short-message guard + single-script safe clamp ===========================
-function isShortSingleParagraph(text, maxLen = 120) {
-  const t = String(text ?? '').trim();
-  return !/\n/.test(t) && t.length <= maxLen;
-}
+
 function enforceSingleScriptSafe(out, lang) {
   // Allow explicit opt-out (tutorial/help that you want bilingual)
   if (String(out ?? '').startsWith(NO_CLAMP_MARKER)) {
     return String(out).slice(NO_CLAMP_MARKER.length);
   }
-  if (!SINGLE_SCRIPT_MODE) return out;
-  // Skip heavy clamp for short, single-paragraph answers (typical WhatsApp Q&A).
-  if (isShortSingleParagraph(out)) return out;
+  if (!SINGLE_SCRIPT_MODE) return out;    
+  // ALWAYS clamp for all languages (English, Roman-Indic, native scripts).
+  // This guarantees a single-script output in every case.
   return enforceSingleScript(out, lang);
 }
 async function t(text, languageCode, requestId) {
@@ -3089,7 +3085,14 @@ async function composeAIOnboarding(language = 'en') {
 // NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
 async function composeAISalesAnswer(shopId, question, language = 'en') {
   
-const lang = (language ?? 'en').toLowerCase();
+const lang = (language ?? 'en').toLowerCase();        
+    // Domain: Mobile shop detector → tailor benefits/examples
+      function isMobileShopQuestion(msg) {
+        const t = String(msg ?? '').toLowerCase();
+        return /\b(mobile|mobiles|phone|smart ?phone|accessor(y|ies)|charger|earphone|tempered\s?glass|cover|case)\b/.test(t);
+      }
+      const isMobileShop = isMobileShopQuestion(question);
+    
   // ---- NEW: topic & pricing flavor ----
   function isPricingQuestion(msg) {
     const t = String(msg ?? '').toLowerCase();
@@ -3279,8 +3282,20 @@ const lang = (language ?? 'en').toLowerCase();
         }
         out = nativeglishWrap(out, lang);
         // Final single-script guard for any residual mixed content; de-echo first
-        const out0 = normalizeTwoBlockFormat(out, lang);
+        const out0 = normalizeTwoBlockFormat(out, lang);                
         out = enforceSingleScriptSafe(out0, lang);
+        
+          // Tailor benefits answer for mobile shops (post-format, pre-final clamp)
+          if (topic === 'benefits' && isMobileShop) {
+            if (lang === 'hi-latn') {
+              // Hinglish, single-script, concise and domain-specific
+              out = 'Aapki mobile shop ke liye daily fayda: stock/expiry auto-update, low-stock alerts (covers, chargers, earphones), smart reorder tips. “short summary” se aaj ki sales & low-stock ek line me mil jaayegi.';
+            } else if (lang === 'hi') {
+              // Native Hindi, single-script
+              out = 'आपकी मोबाइल शॉप के लिए रोज़ाना फ़ायदा: स्टॉक/एक्सपायरी ऑटो‑अपडेट, लो‑स्टॉक अलर्ट (कवर, चार्जर, ईयरफ़ोन), स्मार्ट री‑ऑर्डर सुझाव। “छोटा सारांश” से आज की बिक्री व लो‑स्टॉक एक लाइन में मिल जाएगी।';
+            }
+          }
+
         try {        
           const q = String(question || '').toLowerCase();                
           const askedPrice = /(?:price|cost|charges?)/.test(q) || /(\bकीमत\b|\bमूल्य\b|\bदाम\b)/i.test(question) || /\b(kimat|daam|rate)\b/i.test(q);
@@ -3291,7 +3306,7 @@ const lang = (language ?? 'en').toLowerCase();
           }
         } catch (_) { /* no-op */ }    
     // Final single-script guard for any residual mixed content
-      const finalOut = enforceSingleScriptSafe(out, lang);
+      const finalOut = enforceSingleScript(out, lang);
       console.log('AI_AGENT_POST_CALL', { kind: 'sales-qa', ok: !!out, length: out?.length ?? 0, topic, pricingFlavor });
       return finalOut;
   } catch {
@@ -3305,8 +3320,12 @@ const lang = (language ?? 'en').toLowerCase();
               return `Free trial ${TRIAL_DAYS} din ka hai; uske baad ₹${PAID_PRICE_INR}/month. Payment Paytm ${PAYTM_NUMBER} par ya link se ho sakta hai.`;
             }
           }
-          if (topic === 'benefits') {
-            return `Daily fayda: stock/expiry auto-update, low-stock alerts, smart reorder tips. Aaj ka "short summary" bhi milta hai.`;
+          if (topic === 'benefits') {                        
+            // Mobile-shop specific Hinglish fallback if detected
+                  if (isMobileShop) {
+                    return `Aapki mobile shop ke liye daily fayda: stock/expiry auto-update, low-stock alerts (covers, chargers, earphones), smart reorder tips. "short summary" se aaj ki sales & low-stock ek line me mil jaayegi.`;
+                  }
+                  return `Daily fayda: stock/expiry auto-update, low-stock alerts, smart reorder tips. Aaj ka "short summary" bhi milta hai.`;
           }
           if (topic === 'capabilities') {
             return `WhatsApp par stock update, expiry tracking, aur summaries. Bas "sold milk 2 ltr" ya "purchase Parle-G 12 packets ₹10 exp +6m" type karo.`;
