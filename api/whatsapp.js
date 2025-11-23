@@ -51,6 +51,68 @@ const INVENTORY_CACHE_TTL = 5 * 60 * 1000;               // 5 minutes
 const PRODUCT_CACHE_TTL = 60 * 60 * 1000;                // 1 hour
 const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+// [UNIQ:MLR-FLAGS-002] Runtime flag: disable translation cache for *-latn
+// Default ON to avoid generic/stale cache for Hinglish (hi-latn) & variants.
+// Set DISABLE_TRANSLATION_CACHE_FOR_LATN=0 to re-enable if ever needed.
+// ---------------------------------------------------------------------------
+const DISABLE_TRANSLATION_CACHE_FOR_LATN =
+  String(process.env.DISABLE_TRANSLATION_CACHE_FOR_LATN ?? '1') === '1';
+
+// ---------------------------------------------------------------------------
+// [UNIQ:MLR-UTIL-003B] Decide if we should emit roman-only for language variants
+// ---------------------------------------------------------------------------
+function shouldUseRomanOnly(languageCode) {
+  return String(languageCode || '').toLowerCase().endsWith('-latn');
+}
+
+// [UNIQ:MLR-HELPER-003] Strict two-block formatter for translation responses
+// Ensures EXACT shape:
+//   Line 1: Native script translation (ends with punctuation)
+//   Blank line
+//   Line 3: Roman transliteration (ends with punctuation)
+// Also scrubs common label noise the model may emit.
+// ---------------------------------------------------------------------------
+function normalizeTwoBlockFormat(raw, languageCode) {
+  if (!raw) return '';
+  let s = String(raw)
+    .replace(/<translation in roman script>/gi, '')
+    .replace(/<translation in native script>/gi, '')
+    .replace(/\[roman script\]/gi, '')
+    .replace(/\[native script\]/gi, '')
+    .replace(/translation in roman script:/gi, '')
+    .replace(/translation in native script:/gi, '')
+    .replace(/^"(.*)"$/, '$1')
+    .replace(/"/g, '')
+    .replace(/\n\s*\n\s*\n/g, '\n\n')
+    .trim();
+  const parts = s.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+  const punct = /[.!?]$/;
+  const romanOnly = shouldUseRomanOnly(languageCode); // [UNIQ:MLR-UTIL-003C]
+
+  // If we are in a *-latn language, emit *only* the roman line.
+  if (romanOnly) {
+    // Prefer second block as roman; if missing, fall back to first.
+    const romanCandidate = (parts[1] || parts[0] || '').trim();
+    if (!romanCandidate) return '';
+    const safeRoman = punct.test(romanCandidate) ? romanCandidate : (romanCandidate + '.');
+    return safeRoman; // SINGLE-SCRIPT OUTPUT
+  }
+
+  // Non-latn languages → enforce two blocks (native + roman).
+  if (parts.length >= 2) {
+    const native = parts[0] || '';
+    const roman  = parts[1] || '';
+    const safeNative = native ? (punct.test(native) ? native : native + '.') : '';
+    const safeRoman  = roman  ? (punct.test(roman)  ? roman  : roman  + '.') : safeNative;
+    return `${safeNative}\n\n${safeRoman}`;
+  }
+  if (s.length) {
+    const safe = punct.test(s) ? s : (s + '.');
+    return `${safe}\n\n${safe}`;
+  }
+  return '';
+}
+
 // ====== AI-backed language & intent detection (guarded, cached) ======
 const _aiDetectCache = new Map(); // key: text|heuristicLang -> {language,intent,ts}
 const AI_DETECT_TTL_MS = Number(process.env.AI_DETECT_TTL_MS ?? 5 * 60 * 1000); // 5 min
@@ -7489,36 +7551,46 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
 // Generate response in multiple languages and scripts without labels
 async function generateMultiLanguageResponse(message, languageCode, requestId) {
-  try {
-    // If the language is English, return the message as is
-    if (languageCode === 'en') {
+// [UNIQ:MLR-ENTRY-004] Hardened multi-language responder with strict script policy
+  try {      
+    // Keep EXACT variant (e.g., 'hi-latn'); do not normalize away '-latn'
+        const langExact = String(languageCode || 'en');
+        const isRomanOnly = shouldUseRomanOnly(langExact); // [UNIQ:MLR-ENTRY-004A]
+        // If the language is English, return the message as is
+        if (langExact === 'en') {
       return message;
     }
     // Check cache first  
-    // --- KEY: hash of FULL message prevents collisions and increases hits ---
-    const hash = crypto.createHash('sha1').update(`${languageCode}::${message}`).digest('hex');
-    const cacheKey = `${languageCode}:${hash}`;
-    // 0) In-memory cache first (fastest)
-
-
-    const cached = languageCache.get(cacheKey);
-    if (cached && (Date.now() - cached.timestamp < LANGUAGE_CACHE_TTL)) {
-      console.log(`[${requestId}] Using cached translation for ${languageCode}`);
+    // --- KEY: hash of FULL message prevents collisions and increases hits ---  
+    const hash = crypto.createHash('sha1').update(`${langExact}::${message}`).digest('hex'); // [UNIQ:MLR-ENTRY-004B]
+    const cacheKey = `${langExact}:${hash}`;
+    // 0) In-memory cache first (fastest)   
+        
+    // Bypass cache entirely for *-latn to avoid generic cached replies
+        const canUseCache = !(isRomanOnly && DISABLE_TRANSLATION_CACHE_FOR_LATN); // [UNIQ:MLR-CACHE-005A]
+        const cached = canUseCache ? languageCache.get(cacheKey) : null;
+        if (canUseCache && cached && (Date.now() - cached.timestamp < LANGUAGE_CACHE_TTL)) {
+          console.log(`[${requestId}] Using cached translation for ${langExact}`);
       return cached.translation;
     }
 
     
 // 1) Persistent cache (Airtable) next
     try {
-      const hit = await getTranslationEntry(hash, languageCode);
+      const hit = canUseCache ? await getTranslationEntry(hash, langExact) : { success: false }; // [UNIQ:MLR-AIR-006]
       if (hit.success && hit.translatedText) {
-        console.log(`[${requestId}] Translation cache hit in Airtable (${languageCode})`);
+        console.log(`[${requestId}] Translation cache hit in Airtable (${langExact})`);
         languageCache.set(cacheKey, { translation: hit.translatedText, timestamp: Date.now() });
         return hit.translatedText;
       }
     } catch (e) {
       console.warn(`[${requestId}] Translation Airtable lookup failed: ${e.message}`);
     }
+        
+    // If *-latn cache was disabled, purge any stale in-memory entry for safety
+        if (isRomanOnly && DISABLE_TRANSLATION_CACHE_FOR_LATN) {
+          languageCache.delete(cacheKey); // [UNIQ:MLR-CACHE-005B]
+        }
 
     console.log(`[${requestId}] Translating to ${languageCode}: "${message}"`);
     // Fallback strategies:
@@ -7566,9 +7638,21 @@ if (isShortGreeting && (
     lowerMessage.includes('hi') ||
     lowerMessage.includes('नमस्ते')
 )) {
-  const greeting = commonGreetings[languageCode] || commonGreetings['en'];
-  const fallback = `${greeting.native}\n\n${greeting.roman}`;
-  languageCache.set(cacheKey, { translation: fallback, timestamp: Date.now() });
+  const greeting = commonGreetings[langExact] || commonGreetings['en'];     
+    let fallback;
+      if (shouldUseRomanOnly(langExact)) {               // [UNIQ:MLR-GREET-011]
+        fallback = greeting.roman;                       // SINGLE-SCRIPT (roman)
+      } else {
+        fallback = `${greeting.native}\n\n${greeting.roman}`; // two-block default
+      }        
+    // Optional: enforce ending punctuation for consistency
+    if (!/[.!?]$/.test(fallback)) {
+      fallback += '.';
+    }
+      // Cache greeting only if cache allowed for this language variant
+      if (canUseCache) {
+        languageCache.set(cacheKey, { translation: fallback, timestamp: Date.now() });
+      }
   return fallback;
 }
 
@@ -7596,7 +7680,7 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
           },
           {
             role: "user",
-            content: `Translate this message to ${languageCode}: "${message}"`
+            content: `Translate this message to ${langExact}: "${message}"` // [UNIQ:MLR-API-007B]
           }
         ],
         max_tokens: 600,
@@ -7626,23 +7710,11 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
      }
 
     console.log(`[${requestId}] Raw translation response:`, translated);
-    // Post-process to remove any labels that might have been included
-    translated = translated.replace(/<translation in roman script>/gi, '');
-    translated = translated.replace(/<translation in native script>/gi, '');
-    translated = translated.replace(/\[roman script\]/gi, '');
-    translated = translated.replace(/\[native script\]/gi, '');
-    translated = translated.replace(/translation in roman script:/gi, '');
-    translated = translated.replace(/translation in native script:/gi, '');
-    // Remove quotes that might have been added
-    translated = translated.replace(/^"(.*)"$/, '$1');
-    translated = translated.replace(/"/g, '');
-    // Remove extra blank lines
-    translated = translated.replace(/\n\s*\n\s*\n/g, '\n\n');
-    translated = translated.replace(/^\s+|\s+$/g, '');
+    translated = normalizeTwoBlockFormat(translated, langExact); // [UNIQ:MLR-POST-008A]
 
-// Quick integrity check: ensure we have 2 blocks and not cut mid-sentence
-    const endsNeatly = /[.!?]$/.test(translated.trim());
-    const hasTwoBlocks = translated.includes('\n\n');
+// Quick integrity check: ensure we have 2 blocks and not cut mid-sentence    
+    const endsNeatly = /[.!?]$/.test(String(translated).trim());  // [UNIQ:MLR-GUARD-009]
+    const hasTwoBlocks = String(translated).includes('\n\n');
     if (!hasTwoBlocks || !endsNeatly) {
       try {
         console.warn(`[${requestId}] Translation looks incomplete. Retrying with larger budget...`);
@@ -7652,7 +7724,7 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
             model: "deepseek-chat",
             messages: [
               { role: "system", content: `Return COMPLETE translation as two blocks (native script, blank line, roman transliteration). Do not omit the ending punctuation.` },
-              { role: "user", content: `Translate this message to ${languageCode}: "${message}"` }
+              { role: "user", content: `Translate this message to ${langExact}: "${message}"` } // [UNIQ:MLR-API-007C }
             ],
             max_tokens: Math.min(2000, Math.max(800, Math.ceil(message.length * 3))),
             temperature: 0.2
@@ -7665,7 +7737,7 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
             timeout: 20000
           }
         );
-        translated = retry.data.choices[0].message.content.trim();
+        translated = normalizeTwoBlockFormat(retry.data.choices[0].message.content.trim(), langExact); // [UNIQ:MLR-GUARD-009A]
       } catch (e) {
         console.warn(`[${requestId}] Retry translation failed, using first translation:`, e.message);
       }
@@ -7680,18 +7752,21 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
 // After you have a valid `translated` value:
     if (translated && translated.trim()) {
       // 2) Save to Airtable (persistent cache) - non-blocking preferred, but safe to await
-      try {
-        await upsertTranslationEntry({
-          key: hash,
-          language: languageCode,
-          sourceText: message,
-          translatedText: translated
-        });
+      try {               
+        // Skip persistence for *-latn when cache disabled to avoid generic reuse
+                if (!isRomanOnly || !DISABLE_TRANSLATION_CACHE_FOR_LATN) {
+                  await upsertTranslationEntry({ // [UNIQ:MLR-AIR-006B]
+                    key: hash,
+                    language: langExact,
+                    sourceText: message,
+                    translatedText: translated
+                  });
+                }
       } catch (e) {
         console.warn(`[${requestId}] Failed to persist translation: ${e.message}`);
       }
       // 3) Save to in-memory cache
-      languageCache.set(cacheKey, { translation: translated, timestamp: Date.now() });
+      if (canUseCache) languageCache.set(cacheKey, { translation: translated, timestamp: Date.now() });
       return translated;
     }
 
