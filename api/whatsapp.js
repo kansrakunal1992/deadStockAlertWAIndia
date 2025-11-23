@@ -3215,7 +3215,11 @@ const lang = (language ?? 'en').toLowerCase();
         timeout: 10000
       }
     );               
-    let out = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();             
+    let out = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();          
+    try {
+        console.log(`[${requestId}] [dbg] agentRaw="${out?.slice(0,200)}" lang=${langExactAgent} topic=${topicForced} flavor=${flavor}`);
+      } catch (_) { /* no-op */ }
+
     // [UNIQ:PRICING-GUARD-003] Strict retry if pricing answer lacks price
       // -------------------------------------------------------------------
       if ((topicForced === 'pricing' || flavor) && !isPricingAnswer(out)) {
