@@ -799,15 +799,30 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
     }
   }
 
-  let language = String(o.language ?? detectedLanguageHint ?? 'en').toLowerCase();
-  // Persist language preference best-effort
-  try { if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, language); } catch (_) {}
+  
+    // [UNIQ:ORCH-LANG-LOCK-004] Prefer the exact variant from the detector
+      // Keep 'hi-latn' if the hint carries it, even when orchestrator returns 'hi'
+      // ---------------------------------------------------------------------
+      const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
+      const orchestratedLang = ensureLangExact(o.language ?? hintedLang);
+      const language = hintedLang.endsWith('-latn') ? hintedLang : orchestratedLang;
+    
+      // Persist language preference best-effort (with exact variant)
+      try {
+        if (typeof saveUserPreference === 'function') {
+          await saveUserPreference(shopId, language);
+        }
+      } catch (_) {}
   const isQuestion = o.kind === 'question';
   const normalizedCommand = o.kind === 'command' && o?.command?.normalized ? o.command.normalized : null;
   const aiTxn = o.kind === 'transaction' ? o.transaction : null;
-  // Note: summaries now appear as kind='command' with normalizedCommand.
-  console.log('[orchestrator]', { requestId, language, kind: o.kind, normalizedCommand: normalizedCommand ?? '—', topicForced, pricingFlavor });
-  return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor };
+  // Note: summaries now appear as kind='command' with normalizedCommand.    
+    console.log('[orchestrator]', {
+        requestId, language, kind: o.kind,
+        normalizedCommand: normalizedCommand ?? '—',
+        topicForced, pricingFlavor
+      });
+      return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor };
 }
 
 // Decide if AI should be used (cost guard)
