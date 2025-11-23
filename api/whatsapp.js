@@ -98,67 +98,34 @@ function shouldUseRomanOnly(languageCode) {
   return String(languageCode || '').toLowerCase().endsWith('-latn');
 }
 
-// [UNIQ:MLR-HELPER-003] Strict two-block formatter for translation responses
-// Ensures EXACT shape:
-//   Line 1: Native script translation (ends with punctuation)
-//   Blank line
-//   Line 3: Roman transliteration (ends with punctuation)
-// Also scrubs common label noise the model may emit.
-// ---------------------------------------------------------------------------
 function normalizeTwoBlockFormat(raw, languageCode) {
+  // UNIFIED SINGLE-SCRIPT INTENT:
+  // - For *-Latn targets: return ONE Roman block (no 2-block composition).
+  // - For native targets: return ONE native block.
+  // - For English: return ONE ASCII block.
   if (!raw) return '';
-  let s = String(raw)      
-    // [UNIQ:SAN-LINES-014A] Keep content length; only sanitize spacing/backticks
-    .replace(/`+/g, '')                        // strip inline backticks safely
-    .replace(/[ \t]+/g, ' ')                   // collapse multiple spaces
-    .replace(/\r\n/g, '\n')                    // normalize EOLs
-    .replace(/\n[ \t]+\n/g, '\n\n')            // trim spaces on blank lines
-    .replace(/<translation in roman script>/gi, '')
-    .replace(/<translation in native script>/gi, '')
-    .replace(/\[roman script\]/gi, '')
-    .replace(/\[native script\]/gi, '')
-    .replace(/translation in roman script:/gi, '')
-    .replace(/translation in native script:/gi, '')
-    .replace(/^"(.*)"$/, '$1')
-    .replace(/"/g, '')
-    .replace(/\n\s*\n\s*\n+/g, '\n\n')
+  const L = String(languageCode ?? 'en').toLowerCase();
+  const romanOnly = shouldUseRomanOnly(L);
+  let s = String(raw ?? '')
+    .replace(/[`"<>\[\]]/g, '')
+    .replace(/\n\s*\n\s*\n/g, '\n\n')
     .trim();
-  s = s.replace(/^[\s.,\-–—•]+/u, '').trim();    
-    // Helpful split that tolerates list-like formatting without over-splitting;
-    // prefer longer blocks first to avoid choosing a trimmed stub.      
-    // Split blocks by blank lines; DO NOT flatten or shorten intra-block lines
-      const parts = s
-        .split(/\n{2,}/)
-        .map(p => p.trim())
-        .filter(Boolean);
   const punct = /[.!?]$/;
-  const romanOnly = shouldUseRomanOnly(languageCode); // [UNIQ:MLR-UTIL-003C]
-
-  // If we are in a *-latn language, emit *only* the roman line.
-  if (romanOnly) {     
-    // Choose the block that looks Latin; if none, use the first as-is
-    const pickLatin = parts.find(p => /[A-Za-z]/.test(p)) || parts[0] || '';
-    if (!pickLatin) return '';        
-    // Preserve all original line breaks; just ensure final punctuation on last line
-    const lastLineEnded = punct.test(pickLatin.trim());
-    return lastLineEnded ? pickLatin : (pickLatin + '.'); // SINGLE-SCRIPT OUTPUT (no shortening)
+  // (A) Romanized targets → keep raw as a single Roman line; just ensure punctuation.
+  if (romanOnly) {
+    if (!s) return '';
+    return punct.test(s) ? s : (s + '.');
   }
-
-  // Non-latn languages → enforce two blocks (native + roman).
-  if (parts.length >= 2) {       
-    // Heuristic: choose native as a block containing Indic script; roman as Latin    
-    const hasIndic = (t) => /[\u0900-\u0D7F]/.test(t);
-    const nativeBlock = parts.find(hasIndic) || parts[0] || '';
-    const romanBlock  = parts.find(p => !hasIndic(p) && /[A-Za-z]/.test(p)) || parts[1] || '';
-    const safeNative = nativeBlock ? (punct.test(nativeBlock.trim()) ? nativeBlock : nativeBlock + '.') : '';
-    const safeRoman  = romanBlock  ? (punct.test(romanBlock.trim())  ? romanBlock  : romanBlock  + '.') : safeNative;
-    return `${safeNative}\n\n${safeRoman}`;
+  // (B) Native targets → prefer non-ASCII paragraphs (if any); else keep entire s.
+  const parts = s.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+  const nonAscii = /[^\x00-\x7F]/;
+  if (parts.length >= 2) {
+    const nativeBlock = parts.find(p => nonAscii.test(p)) ?? parts[0] ?? '';
+    const safeNative = nativeBlock ? (punct.test(nativeBlock) ? nativeBlock : nativeBlock + '.') : '';
+    return safeNative;
   }
-  if (s.length) {
-    const safe = punct.test(s) ? s : (s + '.');
-    return `${safe}\n\n${safe}`;
-  }
-  return '';
+  // (C) Single paragraph: keep as-is in target script and ensure punctuation.
+  return punct.test(s) ? s : (s + '.');
 }
 
 // ====== AI-backed language & intent detection (guarded, cached) ======
@@ -547,9 +514,25 @@ function preferRomanFor(lang, sourceText) {
 }
 
 // Localization helper: centralize generateMultiLanguageResponse + single-script clamp
+// === SAFETY: single-script clamp with short-message guard =====================
+const NO_CLAMP_MARKER = '<!NO_CLAMP!>'; // opt out of clamps when needed (help/tutorials)
+function isShortSingleParagraph(text, maxLen = 120) {
+  const t = String(text ?? '').trim();
+  return !/\n/.test(t) && t.length <= maxLen;
+}
+function enforceSingleScriptSafe(out, lang) {
+  // Allow explicit opt-out
+  if (String(out ?? '').startsWith(NO_CLAMP_MARKER)) {
+    return String(out).slice(NO_CLAMP_MARKER.length);
+  }
+  if (!SINGLE_SCRIPT_MODE) return out;
+  // Skip heavy clamp for short, single-paragraph answers (typical WhatsApp Q&A).
+  if (isShortSingleParagraph(out)) return out;
+  return enforceSingleScript(out, lang);
+}
 async function t(text, languageCode, requestId) {
   const out = await generateMultiLanguageResponse(text, languageCode, requestId);
-  return enforceSingleScript(out, languageCode);
+  return enforceSingleScriptSafe(out, languageCode);
 }
 
 /**
@@ -2444,6 +2427,8 @@ const invokeWithTips = async (ctx, fn) => {
 // ===== Compact & Single-Script config =====
 const COMPACT_MODE = String(process.env.COMPACT_MODE ?? 'true').toLowerCase() === 'true';
 const SINGLE_SCRIPT_MODE = String(process.env.SINGLE_SCRIPT_MODE ?? 'true').toLowerCase() === 'true';
+// Optional debug switch for QA sanitize instrumentation
+const DEBUG_QA_SANITIZE = String(process.env.DEBUG_QA_SANITIZE ?? 'false').toLowerCase() === 'true';
 // ===== Paywall / Trial / Links (env-driven) =====
 const PAYTM_NUMBER = String(process.env.PAYTM_NUMBER ?? '9013283687');
 const PAYTM_NAME   = String(process.env.PAYTM_NAME   ?? 'Saamagrii.AI Support Team');
@@ -2609,43 +2594,35 @@ function isRomanTarget(lang) {
  */
 
 function enforceSingleScript(out, lang) {
+  // Original clamp (kept for comprehensive handling).
   if (!SINGLE_SCRIPT_MODE) return out;
   const L = String(lang ?? 'en').toLowerCase();
   const roman = isRomanTarget(L);
   const english = (L === 'en');
   const text = String(out ?? '');
-
-  // Normalize newlines for better paragraph splitting
   const normalized = text.replace(/\r?\n/g, '\n').replace(/\n{1,}/g, '\n\n');
   const parts = normalized.split(/\n\s*\n/);
   const nonAscii = /[^\x00-\x7F]/;
-
   if (parts.length >= 2) {
     if (english || roman) {
-      // Keep ASCII-only paragraphs
       const kept = parts.filter(p => !nonAscii.test(p)).join('\n\n');
       return kept || parts.join('\n\n');
     } else {
-      // Native: keep non-ASCII paragraphs only
       const kept = parts.filter(p => nonAscii.test(p)).join('\n\n');
       return kept || parts[0];
     }
   }
-
-  // Single paragraph fallback: detect mixed script
   const hasAscii = /[a-zA-Z]/.test(text);
   const hasNonAscii = nonAscii.test(text);
   if (hasAscii && hasNonAscii) {
     return (english || roman)
-      ? text.replace(/[^\x00-\x7F₹\s.,@:%/\-+*!?'"\(\)\u2013\u2014]/g, '') // keep ASCII only
-      : text.replace(/[a-zA-Z]/g, ''); // keep native only
+      ? text.replace(/[^\x00-\x7F₹\s.,@:%/\-\+\*\!?'"\(\)\u2013\u2014]/g, '')
+      : text.replace(/[a-zA-Z]/g, '');
   }
-
-  // Default sanitization
   if (english || roman) {
-    return text.replace(/[^\x00-\x7F₹\s.,@:%/\-+*!?'"\(\)\u2013\u2014]/g, '');
+    return text.replace(/[^\x00-\x7F₹\s.,@:%/\-\+\*\!?'"\(\)\u2013\u2014]/g, '');
   }
-  return text; // native single paragraph: leave as-is
+  return text;
 }
 
 // === Compact/Verbose message helpers (inline; no new files) ===
@@ -3002,26 +2979,22 @@ const SALES_AI_MANIFEST = Object.freeze({
 // Helper: if target lang is non-English but output is mostly ASCII/English, replace with localized deterministic copy
 function ensureLanguageOrFallback(out, language = 'en') {
   try {
-    const lang = String(language || 'en').toLowerCase();
-    const text = String(out || '').trim();
-    
-    // ---- NEW: smarter empty / ASCII-heavy handling with Hinglish support ----
-        if (!text) {
-          return lang === 'hi-latn' ? getLocalizedQAFallback('hi-latn') : getLocalizedOnboarding(lang);
-        }
-        const nonAsciiLen = (text.match(/[^\x00-\x7F]/g) ?? []).length;
-        const asciiRatio = text.length ? (text.length - nonAsciiLen) / text.length : 1;
-    
-        // If Hinglish expected but output is mostly English ASCII → return Hinglish fallback, not English banner
-        if (lang === 'hi-latn' && asciiRatio > 0.85) {
-          return getLocalizedQAFallback('hi-latn');
-        }
-        // For other non-English languages with ASCII-heavy output → localized onboarding fallback
-        if (lang !== 'en' && asciiRatio > 0.85) {
-          return getLocalizedOnboarding(lang);
-        }       
-    // Always return a single-script string (uses your existing paragraph-only clamp)
-    return enforceSingleScript(text, lang);
+    const lang = String(language ?? 'en').toLowerCase();
+    const text = String(out ?? '').trim();
+    if (!text) {
+      return lang === 'hi-latn' ? getLocalizedQAFallback('hi-latn') : getLocalizedOnboarding(lang);
+    }
+    const nonAsciiLen = (text.match(/[^\x00-\x7F]/g) ?? []).length;
+    const asciiRatio = text.length ? (text.length - nonAsciiLen) / text.length : 1;
+    // Hinglish-specific: if mostly ASCII yet too generic, use Hinglish fallback.
+    if (lang === 'hi-latn' && asciiRatio > 0.85) {
+      return getLocalizedQAFallback('hi-latn');
+    }
+    // Native languages: if output is mostly ASCII (over 85%), show localized onboarding/fallback.
+    if (lang !== 'en' && !lang.endsWith('-latn') && asciiRatio > 0.85) {
+      return getLocalizedOnboarding(lang);
+    }
+    return enforceSingleScriptSafe(text, lang);
   } catch { return out; }
 }
 
@@ -3290,9 +3263,11 @@ const lang = (language ?? 'en').toLowerCase();
             const line = `\nPaytm → ${PAYTM_NUMBER} (${PAYTM_NAME})`;
             out = out + line;
           }
-        } catch (_) { /* no-op */ }
-    console.log('AI_AGENT_POST_CALL', { kind: 'sales-qa', ok: !!out, length: out?.length ?? 0, topic, pricingFlavor });
-    return out;
+        } catch (_) { /* no-op */ }    
+    // Final single-script guard for any residual mixed content
+      const finalOut = enforceSingleScriptSafe(out, lang);
+      console.log('AI_AGENT_POST_CALL', { kind: 'sales-qa', ok: !!finalOut, length: finalOut?.length ?? 0, topic, pricingFlavor });
+      return finalOut;
   } catch {
     // --- NEW: contextual fallbacks (Hinglish-aware) ---
         console.warn('AI_AGENT_FALLBACK_USED', { kind: 'sales-qa', topic, pricingFlavor });
@@ -3826,6 +3801,18 @@ function cancelAiDebounce(shopId) {
   if (prev?.timer) clearTimeout(prev.timer);
   aiDebounce.delete(shopId);
 }
+
+// === Broken-output detector ===================================================
+function looksBroken(s) {
+  const t = String(s ?? '').trim();
+  if (!t) return true;
+  // Collapsed to an anchor like "PDF - ."
+  if (/^pdf\s*[-–—]?\s*\.$/i.test(t)) return true;
+  // Overly short with almost no letters in any supported scripts
+  const letters = (t.match(/[A-Za-z\u0900-\u0D7F]/g) ?? []).length;
+  return letters < 6;
+}
+
 function scheduleAiAnswer(shopId, From, text, lang, requestId) {
   const key = shopId;
   const prev = aiDebounce.get(key);
@@ -3838,10 +3825,18 @@ function scheduleAiAnswer(shopId, From, text, lang, requestId) {
         const ans = await composeAISalesAnswer(shopId, last.lastText, last.lastLang);                
         // Keep user's script preference & use scoped cache key to avoid generic reuse
         const topic = inferTopic(last.lastText); // sync helper from database.js (already imported)
-        const cacheKey = buildTranslationCacheKey(last.lastReqId, topic, /*flavor*/ null, last.lastLang, last.lastText);
+        const cacheKey = buildTranslationCacheKey(last.lastReqId, topic, /*flavor*/ null, last.lastLang, last.lastText);                
         const m0 = await tx(ans, last.lastLang, `whatsapp:${shopId}`, last.lastText, cacheKey);
-        const msg = nativeglishWrap(m0, last.lastLang);
-        await sendMessageQueued(From, msg);                
+                if (DEBUG_QA_SANITIZE) { try { console.log('[qa] rawOut len=%d: "%s"', String(ans ?? '').length, String(ans ?? '').slice(0, 120)); } catch {} }
+                let msg = nativeglishWrap(m0, last.lastLang);
+                if (DEBUG_QA_SANITIZE) { try { console.log('[qa] after nativeglish len=%d: "%s"', msg.length, msg.slice(0, 120)); } catch {} }
+                msg = enforceSingleScriptSafe(msg, last.lastLang);
+                if (DEBUG_QA_SANITIZE) { try { console.log('[qa] after singleScriptSafe len=%d: "%s"', msg.length, msg.slice(0, 120)); } catch {} }
+                if (looksBroken(msg)) {
+                  msg = getLocalizedQAFallback(last.lastLang);
+                  if (DEBUG_QA_SANITIZE) { try { console.log('[qa] broken detected → fallback len=%d', msg.length); } catch {} }
+                }
+                await sendMessageQueued(From, msg);        
         // Store the turn in DB
         try { await appendTurn(shopId, last.lastText, msg, inferTopic(last.lastText)); } catch (_) {}
       } finally { aiDebounce.delete(key); }
