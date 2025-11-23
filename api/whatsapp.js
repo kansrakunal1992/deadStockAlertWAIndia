@@ -3051,6 +3051,7 @@ async function composeAIOnboarding(language = 'en') {
       'Respond ONLY in one script: if Hindi, use Devanagari; if Hinglish, use Roman Hindi (hi-Latn). Do NOT mix native and Roman in the same message. Keep brand names unchanged.' +
       'Separate paragraphs with double newlines if multiple lines are needed.' +
       'Tone: conversational, helpful, approachable. Keep it concise. Use emojis sparingly. ' +
+      'STYLE (respectful, professional): In Hindi or Hinglish, ALWAYS address the user with “aap / aapki / aapke / aapko / aapse”; NEVER use “tum…”. Use polite plural verb forms (“sakte hain”, “karenge”, “kar payenge”). ' +
       'Never invent features; stick to MANIFEST facts. End with a CTA line.';
   const manifest = JSON.stringify(SALES_AI_MANIFEST);
   const user =
@@ -3058,7 +3059,7 @@ async function composeAIOnboarding(language = 'en') {
     `MANIFEST: ${manifest}\n` +      
     `Task: Write ONLY in ${lang} script. Produce 2 short lines of benefits from MANIFEST.capabilities, in natural ${lang}. ` +
     `Then a third line CTA: say how to start trial via the “Start Trial” button. ` +
-    `If later asked product questions, answer only using MANIFEST.quickCommands; otherwise say "I'm not sure yet" and show 3 example commands.`;
+    `If later asked product questions, answer only using MANIFEST.quickCommands; otherwise say "I'm not sure yet" and show 3 example commands. Maintain respectful “aap” tone and polite plurals.`;
   try {
     console.log('AI_AGENT_PRE_CALL', { kind: 'onboarding', language: lang });
     const resp = await axios.post(
@@ -3192,20 +3193,25 @@ const lang = (language ?? 'en').toLowerCase();
       : `Respond ONLY in ${lang} script.`;
 
   // If user asks about invoice, force an explicit line in the reply about PDFs
-  const mustMentionInvoice = /\b(invoice|बिल|चालान)\b/i.test(String(question ?? ''));
+  const mustMentionInvoice = /\b(invoice|बिल|चालान)\b/i.test(String(question ?? ''));     
   const sys = (
-      (`
-    You are a helpful WhatsApp assistant. ${targetScriptNote}
-    Be concise (3–5 short sentences). Use ONLY MANIFEST facts; never invent features.
-    If pricing/cost is asked, include: free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month.
-    Answer directly to the user's question topic; do not repeat onboarding slogans.
-    ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''} 
-    FORMAT RULES (strict):
-    - Do NOT use code fences (no \`\`\`).
-    - Do NOT use inline backticks (\`like this\`).
-    - Avoid bullet lists; prefer short sentences.
-    `.trim())
-    );
+        (`
+        You are a helpful WhatsApp assistant. ${targetScriptNote}
+        Be concise (3–5 short sentences). Use ONLY MANIFEST facts; never invent features.
+        If pricing/cost is asked, include: free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month.
+        Answer directly to the user's question topic; do not repeat onboarding slogans.
+        ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''}
+        STYLE (respectful, professional):
+        - In Hindi or Hinglish or any Native+English, ALWAYS address the user with “aap / aapki / aapke / aapko / aapse”.
+        - NEVER use “tum / tumhari / tumhara / tumhare / tumko / tumse”.
+        - Use polite plural verb forms: “sakte hain”, “karenge”, “kar payenge”; avoid “sakte ho”, “karoge”, “kar paoge”.
+        - In Hindi or Hinglish or any Native+English, always ensure numerals/numbers are in roman script only - e.g. केवल ₹11 प्रति माह.
+        FORMAT RULES (strict):
+        - Do NOT use code fences (no ```).
+        - Do NOT use inline backticks (`like this`).
+        - Avoid bullet lists; prefer short sentences.
+        `.trim())
+      );
 
   const manifest = JSON.stringify(SALES_AI_MANIFEST);
 
@@ -3267,6 +3273,7 @@ const lang = (language ?? 'en').toLowerCase();
     - Mention current plan(s) or trial info if applicable.
     - Keep the answer under 2 lines suitable for WhatsApp.
     - Do NOT describe generic benefits unless the user specifically asked for benefits.
+    - Maintain respectful Hindi/Hinglish tone: “aap…” forms and polite plurals (“sakte hain”, “karenge”, “kar payenge”); never “tum…”.
     `;
       }
     const resp = await axios.post(
