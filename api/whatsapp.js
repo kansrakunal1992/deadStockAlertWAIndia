@@ -98,14 +98,6 @@ function shouldUseRomanOnly(languageCode) {
   return String(languageCode || '').toLowerCase().endsWith('-latn');
 }
 
-const sys = `${baseRules}\n${topicGuide}\n${targetScriptNote}
-Use ONLY MANIFEST facts. Be concise.
-FORMAT RULES (strict):
-- Do NOT use code fences (no \`\`\`).
-- Do NOT use inline backticks (\`like this\`).
-- Avoid bullet lists; prefer short sentences.
-`;
-
 // [UNIQ:MLR-HELPER-003] Strict two-block formatter for translation responses
 // Ensures EXACT shape:
 //   Line 1: Native script translation (ends with punctuation)
@@ -3151,12 +3143,18 @@ const lang = (language ?? 'en').toLowerCase();
   // If user asks about invoice, force an explicit line in the reply about PDFs
   const mustMentionInvoice = /\b(invoice|बिल|चालान)\b/i.test(String(question ?? ''));
   const sys = (
-    (`You are a helpful WhatsApp assistant. ${targetScriptNote}
-     Be concise (3–5 short sentences). Use ONLY MANIFEST facts; never invent features.
-     If pricing/cost is asked, include: free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month.
-     Answer directly to the user's question topic; do not repeat onboarding slogans.
-     ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''}`).trim()
-  );
+      (`
+    You are a helpful WhatsApp assistant. ${targetScriptNote}
+    Be concise (3–5 short sentences). Use ONLY MANIFEST facts; never invent features.
+    If pricing/cost is asked, include: free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month.
+    Answer directly to the user's question topic; do not repeat onboarding slogans.
+    ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''} 
+    FORMAT RULES (strict):
+    - Do NOT use code fences (no \`\`\`).
+    - Do NOT use inline backticks (\`like this\`).
+    - Avoid bullet lists; prefer short sentences.
+    `.trim())
+    );
 
   const manifest = JSON.stringify(SALES_AI_MANIFEST);
 
