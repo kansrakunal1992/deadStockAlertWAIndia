@@ -4732,12 +4732,6 @@ function daysBetween(date1, date2) {
 async function normalizeCommandText(text, detectedLanguage = 'en', requestId = 'cmd-norm') { 
 // If the message clearly looks like a transaction (qty/unit + buy/sell verb), never rewrite it
    // into an English quick command like "sales today".
-   
-  // ✅ Prevent double handling if Q&A or onboarding already replied
-  if (handledRequests.has(requestId)) {
-    console.log(`[router] skipping transaction parse (already handled)`, { requestId });
-    return true;
- }
     
 // ✅ Prevent double handling if Q&A or onboarding already replied
   if (handledRequests.has(requestId)) {
@@ -4749,17 +4743,20 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
      return String(text).trim();
    }
   try {
-    if (!text || !text.trim()) return text;
-    const lang = (detectedLanguage || 'en').toLowerCase();
-    // If English already, no need to normalize
-    if (lang === 'en') return text.trim();
-
+    if (!text || !text.trim()) return text;        
+    // [UNIQ:NORM-VAR-LOCK-001] Keep exact variant (e.g., 'hi-latn')
+        const langExact = ensureLangExact(detectedLanguage || 'en');
+        // If some upstream normalized to base 'hi', this defensive fix retains '-latn' when present.
+        // Use langExact consistently for cache & logs to avoid cross-variant reuse.
+    
+        const lang = langExact; // keep original variable name below for minimal patch
+      
     const raw = text.trim();
     const intent = resolveSummaryIntent(raw);
     if (intent) return intent;
 
     // Cache check
-    const keyHash = crypto.createHash('sha1').update(`${lang}::${raw}`).digest('hex');
+    const keyHash = crypto.createHash('sha1').update(`${langExact}::${raw}`).digest('hex'); // variant-safe
     const cacheKey = `${COMMAND_NORM_PREFIX}${lang}:${keyHash}`;
     const cached = languageCache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp < LANGUAGE_CACHE_TTL)) {
@@ -4818,7 +4815,7 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
 
     // Cache & return
     languageCache.set(cacheKey, { value: normalized, timestamp: Date.now() });
-    console.log(`[${requestId}] Normalized: "${raw}" (${lang}) -> "${normalized}"`);
+    console.log(`[${requestId}] Normalized: "${raw}" (${langExact}) -> "${normalized}"`); // clearer logs
     return normalized;
   } catch (err) {
     console.warn(`[${requestId}] Command normalization failed:`, err?.message);
@@ -9214,15 +9211,11 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     // ===== EARLY EXIT: AI orchestrator on confirmed transcript =====
       try {
         const orch = await applyAIOrchestration(transcript, from, detectedLanguage, requestId);
-        let langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
-        // Prefer the detector's script variant (e.g., hi-latn) when available
-          if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
-            langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
-          }
+        const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
         if (orch.isQuestion === true || orch.kind === 'question') {
           handledRequests.add(requestId);
-          const ans = await composeAISalesAnswer(shopId, transcript, langPinned);
-          const msg = await t(ans, langPinned, `${requestId}::sales-qa-confirmed`);
+          const ans = await composeAISalesAnswer(shopId, transcript, langExact);
+          const msg = await t(ans, langExact, `${requestId}::sales-qa-confirmed`);
           await sendMessageViaAPI(from, msg);                    
           try {                          
                 const buttonLang = langPinned.includes('-latn') ? langPinned.split('-')[0] : langPinned;
@@ -9234,7 +9227,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         }
         if (orch.normalizedCommand) {
           handledRequests.add(requestId);
-          await handleQuickQueryEN(orch.normalizedCommand, from, langPinned, `${requestId}::ai-norm-confirmed`);
+          await handleQuickQueryEN(orch.normalizedCommand, from, langExact, `${requestId}::ai-norm-confirmed`);
           return res.send(response.toString());
         }
       } catch (e) {
@@ -10278,17 +10271,15 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           }
         } catch (_) { /* noop */ }
         /* END VOICE_HANDLER_PATCH */
+               
+        // [UNIQ:ORCH-VAR-LOCK-ENTRY-02] keep exact variant
+        const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
 
-        let langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
-          // Prefer the detector's script variant (e.g., hi-latn) when available
-          if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
-            langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
-          }
         // Question → answer & exit
         if (orch.isQuestion === true || orch.kind === 'question') {
           handledRequests.add(requestId);
-          const ans = await composeAISalesAnswer(shopId, cleanTranscript, langPinned);
-          const msg = await t(ans, langPinned, `${requestId}::sales-qa-voice`);
+          const ans = await composeAISalesAnswer(shopId, cleanTranscript, langExact);
+          const msg = await t(ans, langExact, `${requestId}::sales-qa-voice`);
           await sendMessageViaAPI(From, msg);                  
           try {
                   const isActivated = await isUserActivated(shopId);
@@ -10302,7 +10293,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         // Read‑only normalized command → route & exit
         if (orch.normalizedCommand) {
           handledRequests.add(requestId);
-          await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm-voice`);
+          await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-voice`);
           return;
         }
       } catch (e) {
@@ -10773,18 +10764,17 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         } catch (_) { /* noop: fall through to existing paths */ }
         /* END TEXT_HANDLER_PATCH */
 
-        let langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
-          // Prefer the detector's script variant (e.g., hi-latn) when available
-          if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
-            langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
-          }
+                
+        // [UNIQ:ORCH-VAR-LOCK-ENTRY-01] keep exact variant
+        const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
+
         // Question → answer & exit
         if (orch.isQuestion === true || orch.kind === 'question') {
           handledRequests.add(requestId);
           const shopId = From.replace('whatsapp:', '');
-          const ans  = await composeAISalesAnswer(shopId, Body, langPinned);
-          const msg0 = await tx(ans, langPinned, From, Body, `${requestId}::sales-qa-text`);
-          const msg  = nativeglishWrap(msg0, langPinned);
+          const ans  = await composeAISalesAnswer(shopId, Body, langExact);
+          const msg0 = await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`);
+          const msg  = nativeglishWrap(msg0, langExact);
           await sendMessageViaAPI(From, msg);
           try {
               const isActivated = await isUserActivated(shopId);
@@ -10798,7 +10788,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         // Read‑only normalized command → route & exit
         if (orch.normalizedCommand) {
           handledRequests.add(requestId);
-          await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm-text`);
+          await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
           return;
         }
       } catch (e) {
@@ -12238,17 +12228,13 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         // ===== EARLY EXIT: AI orchestrator before any inventory parse =====
             try {
               const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
-              let langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();
-              // Prefer the detector's script variant (e.g., hi-latn) when available
-              if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
-                langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
-              }
+              const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
               // Question → answer & exit
               if (orch.isQuestion === true || orch.kind === 'question') {
                 handledRequests.add(requestId);
-                const ans  = await composeAISalesAnswer(shopId, Body, langPinned);
-                const msg0 = await tx(ans, langPinned, From, Body, `${requestId}::sales-qa-text`);
-                const msg  = nativeglishWrap(msg0, langPinned);
+                const ans  = await composeAISalesAnswer(shopId, Body, langExact);
+                const msg0 = await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`);
+                const msg  = nativeglishWrap(msg0, langExact);
                 await sendMessageViaAPI(From, msg);
                 try {
                   const isActivated = await isUserActivated(shopId);
@@ -12262,7 +12248,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
               // Read‑only normalized command → route & exit
               if (orch.normalizedCommand) {
                 handledRequests.add(requestId);
-                await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm-text`);
+                await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
                 return res.send('<Response></Response>');
               }
             } catch (e) {
