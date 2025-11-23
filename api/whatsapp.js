@@ -1953,7 +1953,22 @@ function _normLite(s) {
     
             try {
                 const resp = await sendMessageViaAPI(from, msg);
-                console.log('[trial-activated] ack send OK:', { sid: resp?.sid, to: from });
+                console.log('[trial-activated] ack send OK:', { sid: resp?.sid, to: from });                                
+                // ✅ NEW: Overwrite translation cache with clean text for future calls
+                            async function overwriteTranslationCache(key, lang, text) {
+                                try {
+                                    await upsertTranslationEntry({ key, lang, text });
+                                    console.log(`[cache-update] Overwritten key=${key}, lang=${lang}`);
+                                } catch (e) {
+                                    console.error('[cache-update] Failed:', e.message);
+                                }
+                            }
+                
+                            await overwriteTranslationCache(
+                                `cta-trial-ok-${shopId}`,
+                                lang,
+                                `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`
+                            );
             } catch (err) {
                 console.error('[trial-activated] ack send FAILED:', {
                     error: err?.message,
