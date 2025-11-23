@@ -55,7 +55,183 @@ const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 const _aiDetectCache = new Map(); // key: text|heuristicLang -> {language,intent,ts}
 const AI_DETECT_TTL_MS = Number(process.env.AI_DETECT_TTL_MS ?? 5 * 60 * 1000); // 5 min
 
-function parseMultipleUpdates(text) { return []; }
+// Parse multiple inventory updates from transcript
+// Accepts either a req-like object (req.body.{From, Body}) OR plain text.
+async function parseMultipleUpdates(reqOrText) {
+  // Shape detection: request-like vs plain text
+  const isReq = reqOrText && typeof reqOrText === 'object';
+  const from =
+    (isReq && (reqOrText.body?.From || reqOrText.From)) || null;
+  const transcript =
+    (isReq && (reqOrText.body?.Body || reqOrText.Body)) ||
+    (!isReq ? String(reqOrText ?? '') : '');
+
+  // Guard: never throw on missing From; just log once & return []
+  if (!from) {
+    if (isReq) {
+      try {
+        console.warn('[parseMultipleUpdates] Missing "From" in request body:', JSON.stringify(reqOrText.body ?? {}, null, 2));
+      } catch (_) {
+        console.warn('[parseMultipleUpdates] Missing "From" in request body: <unavailable>');
+      }
+    }
+    // No shopId → no user state; safely return no updates
+    return [];
+  }
+  const shopId = String(from).replace('whatsapp:', '');
+  const updates = [];
+  const t = String(transcript || '').trim(); 
+  const userState = await getUserStateFromDB(shopId);
+
+  // Standardize valid actions - use 'sold' consistently
+  const VALID_ACTIONS = ['purchase', 'sold', 'remaining', 'returned'];
+  
+  // Get pending action from user state if available    
+  let pendingAction = null;
+    if (userState) {
+      if (userState.mode === 'awaitingTransactionDetails' && userState.data?.action) {
+        pendingAction = userState.data.action;              // purchase | sold | returned
+      } else if (userState.mode === 'awaitingBatchOverride') {
+        pendingAction = 'sold';                             // still in SALE context
+      } else if (userState.mode === 'awaitingPurchaseExpiryOverride') {
+        pendingAction = 'purchase';                         // still in PURCHASE context
+      }
+      if (pendingAction) {
+        console.log(`[parseMultipleUpdates] Using pending action from state: ${pendingAction}`);
+      }
+    }
+  
+  // Never treat summary commands as inventory messages
+  if (resolveSummaryIntent(t)) return [];
+  // NEW: ignore read-only inventory queries outright
+  if (isReadOnlyQuery(t)) {
+    console.log('[Parser] Read-only query detected; skipping update parsing.');
+    return [];
+  }
+  // NEW: only attempt update parsing if message looks like a transaction
+  if (!looksLikeTransaction(t)) {
+    console.log('[Parser] Not transaction-like; skipping update parsing.');
+    return [];
+  }
+  // Try AI-based parsing first  
+  try {
+    console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);  
+    const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
+    // Only accept AI results if they are valid inventory updates (qty > 0 + valid action)
+    if (aiUpdate && aiUpdate.length > 0) {          
+    const cleaned = aiUpdate.map(update => {
+        try {
+          // Apply state override with validation            
+          const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
+          const ACTION_MAP = {                     
+            purchase: 'purchase',
+            buy: 'purchase',
+            bought: 'purchase',
+            sold: 'sold',
+            sale: 'sold',
+            return: 'returned',
+            returned: 'returned'
+          };
+          
+          const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
+          
+          if (['purchase', 'sold', 'remaining', 'returned'].includes(finalAction)) {
+            update.action = finalAction;
+            console.log(`[AI Parsing] Overriding AI action with normalized state action: ${update.action}`);
+          } else {
+            console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
+          }
+          return update;
+        } catch (error) {
+          console.warn(`[AI Parsing] Error processing update:`, error.message);
+          return update;
+        }
+      }).filter(isValidInventoryUpdate);
+      if (cleaned.length > 0) {
+        console.log(`[AI Parsing] Successfully parsed ${cleaned.length} valid updates using AI`);              
+        //if (userState?.mode === 'awaitingTransactionDetails') {
+        //          await deleteUserStateFromDB(userState.id);
+        //        }
+        // STICKY MODE: keep awaitingTransactionDetails until user switches/resets
+        return cleaned;
+      } else {
+        console.log(`[AI Parsing] AI produced ${aiUpdate.length} updates but none were valid. Falling back to rule-based parsing.`);
+      }
+    }
+
+    
+    console.log(`[AI Parsing] No valid AI results, falling back to rule-based parsing`);
+  } catch (error) {
+    console.warn(`[AI Parsing] Failed, falling back to rule-based parsing:`, error.message);
+  }
+  
+    
+  // Fallback prompt if no action and no state       
+    if (!userState) {
+        try {
+          if (typeof sendMessageQueued === 'function') {
+            await sendMessageQueued(from, 'Did you mean to record a purchase, sale, or return?');
+          }
+          // Avoid ReferenceError: 'gate' is not defined
+          if (typeof scheduleUpsell === 'function') {
+            await scheduleUpsell('transaction_hint');
+          }
+        } catch (_) { /* noop */ }
+        return [];
+      }
+  
+  // Fallback to rule-based parsing ONLY if AI fails
+  // Better sentence splitting to handle conjunctions    
+  const sentences = String(transcript)
+     .split(regexPatterns.lineBreaks)               // split on newlines/bullets first
+     .flatMap(chunk => chunk.split(regexPatterns.conjunctions)) // then split on conjunctions
+     .map(s => s.trim())
+     .filter(Boolean);
+  for (const sentence of sentences) {
+    const trimmed = sentence.trim();
+    if (trimmed) {
+      try {
+        let update = parseSingleUpdate(trimmed);
+        if (update && update.product) {
+          // Apply state override for rule-based parsing too                    
+          const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
+          const ACTION_MAP = {                       
+            purchase: 'purchase',
+            buy: 'purchase',
+            bought: 'purchase',
+            sold: 'sold',
+            sale: 'sold',
+            return: 'returned',
+            returned: 'returned'
+          };
+          
+          const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
+          
+          if (['purchase', 'sold', 'remaining', 'returned'].includes(finalAction)) {
+            update.action = finalAction;
+            console.log(`[Rule Parsing] Overriding action with normalized state action: ${update.action}`);
+          } else {
+            console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
+          }      
+          // Only translate if not already processed by AI
+          update.product = await translateProductName(update.product, 'rule-parsing');
+        }
+        if (isValidInventoryUpdate(update)) {
+          updates.push(update);
+        }
+      } catch (err) {
+        console.warn(`[parseMultipleUpdates] Failed to parse sentence: "${trimmed}"`, err.message);
+      }
+    }
+  }
+  
+  console.log(`[Rule-based Parsing] Parsed ${updates.length} valid updates from transcript`);   
+  //if (userState?.mode === 'awaitingTransactionDetails') {
+  //    await deleteUserStateFromDB(userState.id);
+  //  }
+  // STICKY MODE: keep awaitingTransactionDetails until user switches/resets
+  return updates;
+}
 
 // SAFE SHIM: ensure nativeglishWrap exists even if bundling misses the real one
 if (typeof nativeglishWrap !== 'function') {
@@ -4506,10 +4682,91 @@ async function handleQuickQueryEN(rawBody, From, detectedLanguage, requestId) {
   }
 
   // If AI produced a normalized read-only command (summary/list/etc.), route it and exit.
-  if (_orch.normalizedCommand) {
+  if (_orch.normalizedCommand) {   
     handledRequests.add(requestId);
-    await handleQuickQueryEN(_orch.normalizedCommand, From, _lang, `${requestId}::ai-norm`);
-    return true;
+        const normalized = String(_orch.normalizedCommand).trim().toLowerCase();
+        const raw = String(text).trim().toLowerCase();
+    
+        // Recursion guard #1: if normalizer returns the same command, dispatch inline (no re-orchestration)
+        const sameCommand = normalized === raw;
+    
+        // Recursion guard #2: cap re-entry depth based on requestId markers
+        const aliasDepth =
+          ((requestId || '').match(/:alias/g) || []).length +
+          ((requestId || '').match(/:ai-norm/g) || []).length;
+        const MAX_ALIAS_DEPTH = 1;
+        const tooDeep = aliasDepth >= MAX_ALIAS_DEPTH;
+        // Helper: direct dispatch for summary commands with activation gate
+        const dispatchSummaryInline = async (cmd) => {
+          try {
+            const planInfo = await getUserPlan(shopId);
+            const plan = String(planInfo?.plan ?? '').toLowerCase();
+            const activated = (plan === 'trial' || plan === 'paid');
+    
+            const sendTagged = async (body) => {
+              const msg0 = await tx(body, _lang, From, cmd, `qq-${cmd}-${shopId}`);
+              const msg = await tagWithLocalizedMode(From, msg0, _lang);
+              await sendMessageViaAPI(From, msg);
+            };
+    
+            if (!activated) {
+              const prompt = await t(
+                'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+                _lang,
+                `cta-summary-${shopId}`
+              );
+              await sendTagged(prompt);
+              return true;
+            }
+    
+            if (cmd === 'short summary') {
+              // Build concise snapshot (data-backed)
+              let hasAny = false;
+              try {
+                const today = await getTodaySalesSummary(shopId);
+                const inv = await getInventorySummary(shopId);
+                hasAny = !!(today?.totalSales || inv?.totalValue || (inv?.lowStock ?? []).length);
+              } catch (_) {}
+              if (!hasAny) {
+                await sendTagged('📊 Short Summary — Aaj abhi koi transaction nahi hua.\nTip: “sold milk 2 ltr” try karo.');
+                return true;
+              }
+              const lines = [];
+              try { const s = await getTodaySalesSummary(shopId); if (s?.totalSales) lines.push(`Sales Today: ₹${s.totalSales}`); } catch (_) {}
+              try { const l = await getLowStockProducts(shopId) ?? []; if (l.length) lines.push(`Low Stock: ${l.slice(0,5).map(x=>x.product).join(', ')}`); } catch (_) {}
+              try { const e = await getExpiringProducts(shopId, 7) ?? []; if (e.length) lines.push(`Expiring Soon: ${e.slice(0,5).map(x=>x.product).join(', ')}`); } catch (_) {}
+              const body = `📊 Short Summary\n${lines.join('\n') || '—'}`;
+              await sendTagged(body);
+              return true;
+            }
+    
+            if (cmd === 'full summary') {
+              try {
+                const insights = await generateFullScaleSummary(shopId, _lang, `qq-full-${shopId}`);
+                await sendTagged(insights);
+              } catch (_) {
+                await sendTagged('📊 Full Summary — snapshot unavailable. Try: “short summary”.');
+              }
+              return true;
+            }
+          } catch (e) {
+            console.warn(`[${requestId}] inline summary dispatch failed:`, e?.message);
+          }
+          // Fallback: do not recurse further; stop here
+          return true;
+        };
+    
+        // Avoid infinite loops: inline dispatch for summaries, or stop if depth exceeded
+        if (sameCommand || tooDeep) {
+          if (normalized === 'short summary' || normalized === 'full summary') {
+            return await dispatchSummaryInline(normalized);
+          }
+          // If not a summary, stop recursion to avoid loops
+          return true;
+        }
+    
+        // Safe single hop: re-enter once with an alias marker
+        return await handleQuickQueryEN(_orch.normalizedCommand, From, _lang, `${requestId}:alias`);
   }
       
     // (Fix) Remove undefined 'orchestrated' and use _orch consistently
@@ -6225,162 +6482,6 @@ async function parseInventoryUpdateWithAI(transcript, requestId) {
               return null;
             }
           }
-
-// Parse multiple inventory updates from transcript
-async function parseMultipleUpdates(req) {
-   const from = req.body?.From;
-   const transcript = req.body?.Body ?? '';
-   if (!from) {
-     console.warn('[parseMultipleUpdates] Missing "From" in request body:', JSON.stringify(req.body, null, 2));
-     return [];
-   }
-  const shopId = from.replace('whatsapp:', '');
-  const updates = [];
-  const t = String(transcript || '').trim(); 
-  const userState = await getUserStateFromDB(shopId);
-
-  // Standardize valid actions - use 'sold' consistently
-  const VALID_ACTIONS = ['purchase', 'sold', 'remaining', 'returned'];
-  
-  // Get pending action from user state if available    
-  let pendingAction = null;
-    if (userState) {
-      if (userState.mode === 'awaitingTransactionDetails' && userState.data?.action) {
-        pendingAction = userState.data.action;              // purchase | sold | returned
-      } else if (userState.mode === 'awaitingBatchOverride') {
-        pendingAction = 'sold';                             // still in SALE context
-      } else if (userState.mode === 'awaitingPurchaseExpiryOverride') {
-        pendingAction = 'purchase';                         // still in PURCHASE context
-      }
-      if (pendingAction) {
-        console.log(`[parseMultipleUpdates] Using pending action from state: ${pendingAction}`);
-      }
-    }
-  
-  // Never treat summary commands as inventory messages
-  if (resolveSummaryIntent(t)) return [];
-  // NEW: ignore read-only inventory queries outright
-  if (isReadOnlyQuery(t)) {
-    console.log('[Parser] Read-only query detected; skipping update parsing.');
-    return [];
-  }
-  // NEW: only attempt update parsing if message looks like a transaction
-  if (!looksLikeTransaction(t)) {
-    console.log('[Parser] Not transaction-like; skipping update parsing.');
-    return [];
-  }
-  // Try AI-based parsing first  
-  try {
-    console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);  
-    const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
-    // Only accept AI results if they are valid inventory updates (qty > 0 + valid action)
-    if (aiUpdate && aiUpdate.length > 0) {          
-    const cleaned = aiUpdate.map(update => {
-        try {
-          // Apply state override with validation            
-          const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
-          const ACTION_MAP = {
-            purchase: 'purchased',
-            buy: 'purchased',
-            bought: 'purchased',
-            sold: 'sold',
-            sale: 'sold',
-            return: 'returned',
-            returned: 'returned'
-          };
-          
-          const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
-          
-          if (['purchased', 'sold', 'remaining', 'returned'].includes(finalAction)) {
-            update.action = finalAction;
-            console.log(`[AI Parsing] Overriding AI action with normalized state action: ${update.action}`);
-          } else {
-            console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
-          }
-          return update;
-        } catch (error) {
-          console.warn(`[AI Parsing] Error processing update:`, error.message);
-          return update;
-        }
-      }).filter(isValidInventoryUpdate);
-      if (cleaned.length > 0) {
-        console.log(`[AI Parsing] Successfully parsed ${cleaned.length} valid updates using AI`);              
-        //if (userState?.mode === 'awaitingTransactionDetails') {
-        //          await deleteUserStateFromDB(userState.id);
-        //        }
-        // STICKY MODE: keep awaitingTransactionDetails until user switches/resets
-        return cleaned;
-      } else {
-        console.log(`[AI Parsing] AI produced ${aiUpdate.length} updates but none were valid. Falling back to rule-based parsing.`);
-      }
-    }
-
-    
-    console.log(`[AI Parsing] No valid AI results, falling back to rule-based parsing`);
-  } catch (error) {
-    console.warn(`[AI Parsing] Failed, falling back to rule-based parsing:`, error.message);
-  }
-  
-    
-  // Fallback prompt if no action and no state
-    if (!userState) {
-      await sendMessageQueued(from, 'Did you mean to record a purchase, sale, or return?');
-      await scheduleUpsell(gate?.upsellReason);
-      return [];
-    }
-  
-  // Fallback to rule-based parsing ONLY if AI fails
-  // Better sentence splitting to handle conjunctions    
-  const sentences = String(transcript)
-     .split(regexPatterns.lineBreaks)               // split on newlines/bullets first
-     .flatMap(chunk => chunk.split(regexPatterns.conjunctions)) // then split on conjunctions
-     .map(s => s.trim())
-     .filter(Boolean);
-  for (const sentence of sentences) {
-    const trimmed = sentence.trim();
-    if (trimmed) {
-      try {
-        let update = parseSingleUpdate(trimmed);
-        if (update && update.product) {
-          // Apply state override for rule-based parsing too                    
-          const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
-          const ACTION_MAP = {
-            purchase: 'purchased',
-            buy: 'purchased',
-            bought: 'purchased',
-            sold: 'sold',
-            sale: 'sold',
-            return: 'returned',
-            returned: 'returned'
-          };
-          
-          const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
-          
-          if (['purchased', 'sold', 'remaining', 'returned'].includes(finalAction)) {
-            update.action = finalAction;
-            console.log(`[AI Parsing] Overriding AI action with normalized state action: ${update.action}`);
-          } else {
-            console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
-          }      
-          // Only translate if not already processed by AI
-          update.product = await translateProductName(update.product, 'rule-parsing');
-        }
-        if (isValidInventoryUpdate(update)) {
-          updates.push(update);
-        }
-      } catch (err) {
-        console.warn(`[parseMultipleUpdates] Failed to parse sentence: "${trimmed}"`, err.message);
-      }
-    }
-  }
-  
-  console.log(`[Rule-based Parsing] Parsed ${updates.length} valid updates from transcript`);   
-  //if (userState?.mode === 'awaitingTransactionDetails') {
-  //    await deleteUserStateFromDB(userState.id);
-  //  }
-  // STICKY MODE: keep awaitingTransactionDetails until user switches/resets
-  return updates;
-}
 
 // Improved product extraction function
 function extractProduct(transcript) {
