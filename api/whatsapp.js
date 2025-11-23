@@ -51,6 +51,39 @@ const INVENTORY_CACHE_TTL = 5 * 60 * 1000;               // 5 minutes
 const PRODUCT_CACHE_TTL = 60 * 60 * 1000;                // 1 hour
 const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+// [UNIQ:ORCH-VAR-LOCK-001] Variant lock & Sales-QA cache helpers
+// ============================================================================
+// Keep exact language variant (e.g., 'hi-latn') instead of normalizing to 'hi'
+function ensureLangExact(languageDetected, fallback = 'en') {
+  const l = String(languageDetected || fallback).toLowerCase().trim();
+  // Do NOT convert 'hi-latn' -> 'hi' (this caused cache/template mismatches)
+  return l;
+}
+// Normalize user question for cache key purposes
+function normalizeUserTextForKey(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[^\p{L}\p{N}\s₹\.]/gu, '');
+}
+// Build a robust Sales-QA key that separates language variants & topics
+// Using base64 for log readability (your logs show base64 promptHash values)
+function buildSalesQaCacheKey({ langExact, topicForced, pricingFlavor, text }) {
+  // crypto is already imported in your file; reuse it here
+  const payload = [
+    'sales-qa',
+    String(langExact || 'en'),
+    String(topicForced || 'none'),
+    String(pricingFlavor || 'none'),
+    normalizeUserTextForKey(text)
+  ].join('::');
+  return crypto.createHash('sha1').update(payload).digest('base64');
+}
+// Lightweight pricing validator (optional use downstream)
+function isPricingAnswer(text) {
+  return /\b(₹|rs\.?|inr)\b/i.test(String(text || '')) || /\d/.test(String(text || ''));
+}
+
 // [UNIQ:MLR-FLAGS-002] Runtime flag: disable translation cache for *-latn
 // Default ON to avoid generic/stale cache for Hinglish (hi-latn) & variants.
 // Set DISABLE_TRANSLATION_CACHE_FOR_LATN=0 to re-enable if ever needed.
@@ -3121,8 +3154,21 @@ const lang = (language ?? 'en').toLowerCase();
          Rules: ${targetScriptNote}. Keep it crisp and on-topic.`).trim()
     );
 
-  try {
-    console.log('AI_AGENT_PRE_CALL', { kind: 'sales-qa', language: lang, topic, pricingFlavor, promptHash: Buffer.from(String(question).toLowerCase()).toString('base64').slice(0,12) });
+  try {    
+    // [UNIQ:QA-CACHE-KEY-002A] Robust key & variant lock for sales-qa
+      const langExactAgent = ensureLangExact(lang);            // keep 'hi-latn' if present
+      const topicForced = topic;
+      const flavor = pricingFlavor;
+      const userText = question;
+      const promptHash = buildSalesQaCacheKey({
+        langExact: langExactAgent,
+        topicForced,
+        pricingFlavor: flavor,
+        text: userText
+      });
+      console.log('AI_AGENT_PRE_CALL', {
+        kind: 'sales-qa', language: langExactAgent, topic: topicForced, pricingFlavor: flavor, promptHash
+      });
     const resp = await axios.post(
       'https://api.deepseek.com/v1/chat/completions',
       {
@@ -7552,30 +7598,30 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 // Generate response in multiple languages and scripts without labels
 async function generateMultiLanguageResponse(message, languageCode, requestId) {
 // [UNIQ:MLR-ENTRY-004] Hardened multi-language responder with strict script policy
-  try {      
-    // Keep EXACT variant (e.g., 'hi-latn'); do not normalize away '-latn'
-        const langExact = String(languageCode || 'en');
-        const isRomanOnly = shouldUseRomanOnly(langExact); // [UNIQ:MLR-ENTRY-004A]
-        // If the language is English, return the message as is
-        if (langExact === 'en') {
-      return message;
-    }
-    // Check cache first  
-    // --- KEY: hash of FULL message prevents collisions and increases hits ---  
-    const hash = crypto.createHash('sha1').update(`${langExact}::${message}`).digest('hex'); // [UNIQ:MLR-ENTRY-004B]
-    const cacheKey = `${langExact}:${hash}`;
-    // 0) In-memory cache first (fastest)   
+  try { 
+        // -----------------------------------------------------------------------
+            // [UNIQ:ORCH-VAR-LOCK-001A] Lock the exact variant before any caching/hashing
+            // -----------------------------------------------------------------------
+            // NOTE: We keep 'hi-latn' as-is throughout. Do not normalize away '-latn'.
+            const langExact = ensureLangExact(languageCode || 'en');
+            const isRomanOnly = shouldUseRomanOnly(langExact); // existing helper
+            // If the language is English, return the message as is
+            if (langExact === 'en') {
+              return message;
+            }
         
-    // Bypass cache entirely for *-latn to avoid generic cached replies
-        const canUseCache = !(isRomanOnly && DISABLE_TRANSLATION_CACHE_FOR_LATN); // [UNIQ:MLR-CACHE-005A]
-        const cached = canUseCache ? languageCache.get(cacheKey) : null;
-        if (canUseCache && cached && (Date.now() - cached.timestamp < LANGUAGE_CACHE_TTL)) {
-          console.log(`[${requestId}] Using cached translation for ${langExact}`);
-      return cached.translation;
-    }
-
-    
-// 1) Persistent cache (Airtable) next
+            // --- KEY: hash of FULL message prevents collisions and increases hits ---
+            const hash = crypto.createHash('sha1').update(`${langExact}::${message}`).digest('hex'); // [UNIQ:MLR-ENTRY-004B]
+            const cacheKey = `${langExact}:${hash}`;
+            // 0) In-memory cache first (fastest)
+            // Bypass cache entirely for *-latn to avoid generic cached replies
+            const canUseCache = !(isRomanOnly && DISABLE_TRANSLATION_CACHE_FOR_LATN); // [UNIQ:MLR-CACHE-005A]
+            const cached = canUseCache ? languageCache.get(cacheKey) : null;
+            if (canUseCache && cached && (Date.now() - cached.timestamp < LANGUAGE_CACHE_TTL)) {
+              console.log(`[${requestId}] Using cached translation for ${langExact}`);
+              return cached.translation;
+            }
+    // 1) Persistent cache (Airtable) next
     try {
       const hit = canUseCache ? await getTranslationEntry(hash, langExact) : { success: false }; // [UNIQ:MLR-AIR-006]
       if (hit.success && hit.translatedText) {
