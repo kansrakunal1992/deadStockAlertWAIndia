@@ -2184,7 +2184,7 @@ function _normLite(s) {
             let msg;
             try {                               
                 msg = await t(
-                                `${planNote}\nClick on 'Record Purchase/Sale/Return' button & then \nTry:\n• milk 2 ltr at 40/ltr exp +4d`,
+                                `${planNote}\n•Click on 'Record Purchase/Sale/Return' button & then \nTry:\n• milk 2 ltr at 40/ltr exp +4d`,
                                 lang,
                                 `cta-trial-ok-${shopId}`
                             );
@@ -11157,7 +11157,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     
     // First, try to parse as inventory update (higher priority)          
     // COPILOT-PATCH-TEXT-PARSE-FROM-1
-      const parsedUpdates = parseMultipleUpdates({ From, Body }); // pass req-like object with From
+      const parsedUpdates = await parseMultipleUpdates({ From, Body }); // pass req-like object with From
       if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
       console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
       
@@ -11218,6 +11218,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
           const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
           if (handledQuick) {
+              __handled = true;
             return res.send('<Response></Response>'); // reply already sent via API
           }
         }
@@ -11553,6 +11554,7 @@ module.exports = async (req, res) => {
                 res.type('text/xml');
                 resp.safeSend(200, twiml.toString());
                 safeTrackResponseTime(requestStart, requestId);
+                  __handled = true;
                 return; // exit early; wrapper 'finally' will stop tips
               }
             }
@@ -11581,6 +11583,7 @@ module.exports = async (req, res) => {
         res.type('text/xml');
         resp.safeSend(200, twiml.toString());
         safeTrackResponseTime(requestStart, requestId);
+        __handled = true;
         return;
       }
   }); // <- tips auto-stop here even on early returns
@@ -12461,7 +12464,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     if (stickyAction && looksLikeTxnLite(Body)) {
       console.log(`[${requestId}] [sticky] mode active=${stickyAction} → forcing inventory parse`);
       // COPILOT-PATCH-STICKY-PARSE-FROM
-      const parsedUpdates = parseMultipleUpdates({ From, Body });
+      const parsedUpdates = await parseMultipleUpdates({ From, Body });
       if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
         console.log(`[${requestId}] [sticky] Parsed ${parsedUpdates.length} updates`);
         const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
@@ -12676,7 +12679,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
 
     // First, try to parse as inventory update (higher priority)
     // COPILOT-PATCH-HNI-PARSE-FROM
-    const parsedUpdates = parseMultipleUpdates({ From, Body }); // pass req-like object
+    const parsedUpdates = await parseMultipleUpdates({ From, Body }); // pass req-like object
     if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
       console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
       const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
@@ -12728,6 +12731,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
           const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
           if (handledQuick) {
+              __handled = true;
             return res.send('<Response></Response>'); // reply already sent via API
           }
         }
@@ -12749,7 +12753,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
 
     // Try to parse as inventory update (second pass)
     // COPILOT-PATCH-HNI-PARSE-FROM-SECOND
-    const updates = parseMultipleUpdates({ From, Body });
+    const updates = await parseMultipleUpdates({ From, Body });
     if (Array.isArray(updates) && updates.length > 0) {
       console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
       const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
@@ -12781,7 +12785,6 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           });
         } catch (_){}
         res.send('<Response></Response>');
-        __handled = true;
         return;
       }
 
@@ -12813,8 +12816,8 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       const formattedResponse2 = await t(message2.trim(), detectedLanguage, requestId);
       await sendMessageViaAPI(From, formattedResponse2);
       await clearUserState(From);
+        __handled = true;
       res.send('<Response></Response>');
-      __handled = true;
       return;
     }
   }
