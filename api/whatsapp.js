@@ -2092,13 +2092,14 @@ function _normLite(s) {
     try {
       const prefLP = await getUserPreference(shopId);
       if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();
-    } catch (_) {}
-    let activated = false;
-    try {
-      const pref = await getUserPreference(shopId);
-      const plan = String(pref?.plan ?? '').toLowerCase();
-      activated = (plan === 'trial' || plan === 'paid');
-    } catch (_) {}
+    } catch (_) {}     
+    // COPILOT-PATCH-ACTIVATION-CHECK-QR
+      let activated = false;
+      try {
+        const planInfo = await getUserPlan(shopIdTop);
+        const plan = String(planInfo?.plan ?? '').toLowerCase();
+        activated = (plan === 'trial' || plan === 'paid');
+      } catch {}
   
    // Quick‑Reply buttons (payload IDs are language‑independent)
    if (payload === 'qr_purchase') {         
@@ -2160,7 +2161,15 @@ function _normLite(s) {
     // Treat tap as explicit confirmation to start trial
         
     const start = await startTrialForAuthUser(shopId, TRIAL_DAYS);
-        if (start.success) {
+        if (start.success) {                 
+        // Mirror plan into UserPlan so all activation checks succeed consistently
+              try {
+                const trialEnd = new Date();
+                trialEnd.setDate(trialEnd.getDate() + TRIAL_DAYS);
+                await saveUserPlan(shopId, 'trial', trialEnd);
+              } catch (e) {
+                console.warn('[trial-mirror] saveUserPlan failed:', e?.message);
+              }
             const planNote = `🎉 Trial activated for ${TRIAL_DAYS} days!`;
             let msg;
             try {                               
@@ -2574,10 +2583,12 @@ const ONBOARDING_VIDEO_URL_HI_LATN = String(process.env.ONBOARDING_VIDEO_URL_HI_
  * Only 'trial' (explicit user action) or 'paid' are considered activated.
  * No implicit mapping for 'free_demo_first_50', 'demo', or ''.
  */
+
+// COPILOT-PATCH-ACTIVATION-READ-PLAN
 async function isUserActivated(shopId) {
   try {
-    const pref = await getUserPreference(shopId);
-    const plan = String(pref?.plan ?? '').toLowerCase();
+    const planInfo = await getUserPlan(shopId);
+    const plan = String(planInfo?.plan ?? '').toLowerCase();
     return plan === 'trial' || plan === 'paid';
   } catch {
     return false;
@@ -10627,7 +10638,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     // First, try to parse as inventory update (higher priority)
     try {
       console.log(`[${requestId}] Attempting to parse as inventory update`);            
-        const parsedUpdates = await parseMultipleUpdates(cleanTranscript);
+        const parsedUpdates = await parseMultipleUpdates({ From, Body: cleanTranscript });
             if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
         console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from voice message`);
         
@@ -10751,7 +10762,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       try {
                 
         // Parse the transcript
-            const updates = await parseMultipleUpdates(cleanTranscript);
+            const updates = await parseMultipleUpdates({ From, Body: cleanTranscript });
             // Check if any updates are for unknown products (guard against null)
             const unknownProducts = Array.isArray(updates) ? updates.filter(u => !u.isKnown) : [];
 
@@ -11121,8 +11132,9 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       console.log(`[${requestId}] Attempting to parse as inventory update`);
     
     
-    // First, try to parse as inventory update (higher priority)
-      const parsedUpdates = parseMultipleUpdates(Body); // <— pass text, not req
+    // First, try to parse as inventory update (higher priority)          
+    // COPILOT-PATCH-TEXT-PARSE-FROM-1
+      const parsedUpdates = parseMultipleUpdates({ From, Body }); // pass req-like object with From
       if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
       console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
       
@@ -12425,9 +12437,10 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       try {
         const stickyAction = await getStickyActionQuick();
         if (stickyAction && looksLikeTxnLite(Body)) {
-          console.log(`[${requestId}] [sticky] mode active=${stickyAction} → forcing inventory parse`);
-          // Parse updates (AI first then rule fallback inside parseMultipleUpdates)
-          const parsedUpdates = parseMultipleUpdates(Body);
+          console.log(`[${requestId}] [sticky] mode active=${stickyAction} → forcing inventory parse`);                
+          // COPILOT-PATCH-STICKY-PARSE-FROM
+             // Parse updates (AI first then rule fallback inside parseMultipleUpdates) with req-like shape
+              const parsedUpdates = parseMultipleUpdates({ From, Body });
           if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
             console.log(`[${requestId}] [sticky] Parsed ${parsedUpdates.length} updates`);
             const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
@@ -12657,7 +12670,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         console.log(`[${requestId}] Attempting to parse as inventory update`);
                 
         // First, try to parse as inventory update (higher priority)
-            const parsedUpdates = parseMultipleUpdates(Body); // pass text, not request
+            const parsedUpdates = parseMultipleUpdates({ From, Body }); // pass req-like shape
             if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
           console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
           
@@ -12735,8 +12748,10 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         }
         
                 
-        // Try to parse as inventory update
-          const updates = parseMultipleUpdates(Body);
+        // Try to parse as inventory update                  
+        // COPILOT-PATCH-TEXT-PARSE-FROM-2
+        const updates = parseMultipleUpdates({ From, Body });
+
           if (Array.isArray(updates) && updates.length > 0) {
           console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
           const shopId = From.replace('whatsapp:', '');
