@@ -2109,11 +2109,11 @@ function _normLite(s) {
            await sendMessageViaAPI(from, hint);
            return true;
          }
-         await setUserState(from, 'awaitingTransactionDetails', { action: 'purchase' });                 
+         await setUserState(from, 'awaitingTransactionDetails', { action: 'purchased' });                 
          // In-memory sticky mode fallback (align with sale/return branches)
             try {
               const shopIdLocal = String(from).replace('whatsapp:', '');
-              globalState.conversationState[shopIdLocal] = { mode: 'awaitingTransactionDetails', data: { action: 'purchase' }, ts: Date.now() };
+              globalState.conversationState[shopIdLocal] = { mode: 'awaitingTransactionDetails', data: { action: 'purchased' }, ts: Date.now() };
             } catch (_) { /* noop */ }              
         // Send plain ASCII examples to avoid single-script clamp losses
             const examplesPurchase =
@@ -10588,7 +10588,8 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
        
     // ===== EARLY EXIT: AI orchestrator on the transcript =====
       try {
-        const orch = await applyAIOrchestration(cleanTranscript, From, detectedLanguage, requestId);                  
+        const orch = await applyAIOrchestration(cleanTranscript, From, detectedLanguage, requestId);
+          const FORCE_INVENTORY = !!orch?.forceInventory;
         /* VOICE_HANDLER_PATCH */
         try {
           if (orch?.normalizedCommand) {
@@ -10620,7 +10621,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
 
         // Question → answer & exit
-        if (orch.isQuestion === true || orch.kind === 'question') {
+        if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
           handledRequests.add(requestId);
           const ans = await composeAISalesAnswer(shopId, cleanTranscript, langExact);
           const msg = await t(ans, langExact, `${requestId}::sales-qa-voice`);
@@ -10635,7 +10636,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           return;
         }
         // Read‑only normalized command → route & exit
-        if (orch.normalizedCommand) {
+        if (!FORCE_INVENTORY && orch.normalizedCommand) {
           handledRequests.add(requestId);
           await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-voice`);
           return;
@@ -10700,14 +10701,22 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       console.warn(`[${requestId}] Failed to parse as inventory update:`, error.message);
     }
     
-    // Only if not an inventory update, try quick queries
+    // Only if not an inventory update, try quick queries        
     try {
-      const normalized = await normalizeCommandText(cleanTranscript, detectedLanguage, requestId + ':normalize');
-      const handled = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
-      if (handled) return; // reply already sent
-    } catch (e) {
-      console.warn(`[${requestId}] Quick-query (voice) normalization failed, falling back.`, e?.message);
-    }
+        // Skip quick-query normalization when we're in sticky/txn context
+        // or when the voice transcript looks transaction-like (qty+unit+price).
+        const stickyAction = await getStickyActionQuick(From);
+        const looksTxn = looksLikeTxnLite(cleanTranscript);
+        if (stickyAction || looksTxn) {
+          console.log(`[${requestId}] [voice] skipping quick-query in sticky/txn turn`);
+        } else {
+          const normalized = await normalizeCommandText(cleanTranscript, detectedLanguage, requestId + ':normalize');
+          const handled = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
+          if (handled) return; // reply already sent
+        }
+      } catch (e) {
+        console.warn(`[${requestId}] Quick-query (voice) normalization failed, falling back.`, e?.message);
+      }
     
     // Check if we're awaiting batch selection
     if (conversationState && conversationState.state === 'awaiting_batch_selection') {
@@ -11076,7 +11085,8 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         
     // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====
       try {
-        const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);                  
+        const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
+          const FORCE_INVENTORY = !!orch?.forceInventory;
         // --- BEGIN TEXT HANDLER INSERT ---
         /* TEXT_HANDLER_PATCH */
         try {
@@ -11113,7 +11123,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
 
         // Question → answer & exit
-        if (orch.isQuestion === true || orch.kind === 'question') {
+        if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
           handledRequests.add(requestId);
           const shopId = From.replace('whatsapp:', '');
           const ans  = await composeAISalesAnswer(shopId, Body, langExact);
@@ -11130,7 +11140,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           return;
         }
         // Read‑only normalized command → route & exit
-        if (orch.normalizedCommand) {
+        if (!FORCE_INVENTORY && orch.normalizedCommand) {
           handledRequests.add(requestId);
           await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
           return;
@@ -11192,14 +11202,20 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         await sendMessageViaAPI(From, formattedResponse);
      return;
     } else {
-      console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
-      
-      // Only if not an inventory update, try quick queries
+      console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);          
+          
+    // Only if not an inventory update AND NOT in sticky/txn context, try quick queries
       try {
-        const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
-        const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
-        if (handledQuick) {
-          return; // reply already sent via API
+        const stickyAction = await getStickyActionQuick(From);
+        const looksTxn = looksLikeTxnLite(Body);
+        if (stickyAction || looksTxn) {
+          console.log(`[${requestId}] Skipping quick-query routing in sticky/txn turn`);
+        } else {
+          const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
+          const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
+          if (handledQuick) {
+            return res.send('<Response></Response>'); // reply already sent via API
+          }
         }
       } catch (e) {
         console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
@@ -11410,9 +11426,12 @@ module.exports = async (req, res) => {
     // Prefer the detector's script variant (e.g., hi-latn) when available
       if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
         langPinned = String(detectedLanguage).toLowerCase(); // e.g., 'hi-latn'
-      }
+      }           
+    // If orchestrator forced inventory (sticky txn turn), SKIP Q&A and normalized-command routing.
+      const FORCE_INVENTORY = !!orch?.forceInventory;
+
        // Question → answer & exit
-       if (orch.isQuestion === true || orch.kind === 'question') {
+       if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
          handledRequests.add(requestId);
          const shopId = String(From).replace('whatsapp:', '');
          const ans = await composeAISalesAnswer(shopId, Body, langPinned);
@@ -11435,7 +11454,7 @@ module.exports = async (req, res) => {
          return;
        }
        // Read‑only normalized command → route & exit
-       if (orch.normalizedCommand) {
+       if (!FORCE_INVENTORY && orch.normalizedCommand) {
          handledRequests.add(requestId);
          await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm`);
          const twiml = new twilio.twiml.MessagingResponse();
@@ -12651,8 +12670,9 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
             try {
               const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
               const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
+                const FORCE_INVENTORY = !!orch?.forceInventory;
               // Question → answer & exit
-              if (orch.isQuestion === true || orch.kind === 'question') {
+              if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
                 handledRequests.add(requestId);
                 const ans  = await composeAISalesAnswer(shopId, Body, langExact);
                 const msg0 = await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`);
@@ -12668,7 +12688,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
                 return res.send('<Response></Response>');
               }
               // Read‑only normalized command → route & exit
-              if (orch.normalizedCommand) {
+              if (!FORCE_INVENTORY && orch.normalizedCommand) {
                 handledRequests.add(requestId);
                 await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
                 return res.send('<Response></Response>');
@@ -12730,19 +12750,23 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
 
           return res.send('<Response></Response>');
         } else {
-          console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
-          
-          // Only if not an inventory update, try quick queries
-          try {
-            const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
-            const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
-            if (handledQuick) {
-              return res.send('<Response></Response>'); // reply already sent via API
+        console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);                 
+                                  
+        try {
+              const stickyAction = await getStickyActionQuick(From);
+              const looksTxn = looksLikeTxnLite(Body);
+              if (stickyAction || looksTxn) {
+                console.log(`[${requestId}] [HNI] skipping quick-query in sticky/txn turn`);
+              } else {
+                const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
+                const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
+                if (handledQuick) {
+                  return res.send('<Response></Response>'); // reply already sent via API
+                }
+              }
+            } catch (e) {
+              console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
             }
-          } catch (e) {
-            console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
-          }
-        }
   
         // Check for price management commands
         const lowerBody = Body.toLowerCase();
@@ -12920,12 +12944,12 @@ if (Body) {
   }
 }
   
-  // Default response for unrecognized input
+  // Default response for unrecognized input      
   const defaultMessage = await t(
-    'Please send an inventory update like "10 Parle-G sold" or start with "Hello" for options.',
-    'en',
-    requestId
-  );
+     'Please send an inventory update like "10 Parle-G sold" or start with "Hello" for options.',
+     'en',
+     requestId
+   );
   
   await sendMessageViaAPI(From, defaultMessage);
   res.send('<Response></Response>');
