@@ -3462,66 +3462,56 @@ const lang = (language ?? 'en').toLowerCase();
 
 
 // ===== Access Gate & Onboarding =====
-async function ensureAccessOrOnboard(From, Body, detectedLanguage) {      
+async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
+  try {
+    const shopId = String(From).replace('whatsapp:', '');
+    let lang = (detectedLanguage ?? 'en').toLowerCase();
     try {
-        const shopId = String(From).replace('whatsapp:', '');
-        let lang = (detectedLanguage ?? 'en').toLowerCase();
-        try {
-          const pref = await getUserPreference(shopId);
-          if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-        } catch {}
-        const text = String(Body ?? '').trim().toLowerCase();
-
-  // Fast path: "paid" confirmation (Hinglish + English variants)
-  if (/(\bpaid\b|\bpayment done\b|\bpaydone\b|\bmaine pay kiya\b|\bpaid ho gaya\b)/i.test(text)) {
-    const ok = await markAuthUserPaid(shopId);
-    if (ok.success) {           
-      // Do not send upsell immediately; let handlers show main content first
-      return { allow: true, language: lang, upsellReason: 'paid_confirmed', suppressUpsell: true };
-    }
-    return { allow: true, language: lang, upsellReason: 'paid_verification_failed' };
-  }
-
-  // Lookup record in AuthUsers
-  const rec = await getAuthUserRecord(shopId);    
-  if (!rec) {
-  // New user → return reason, let handler show onboarding + main content
-    if (/^(1|yes|haan|start|trial|ok)$/i.test(text)) {
-      const s = await startTrialForAuthUser(shopId, TRIAL_DAYS);
-      if (s.success) {              
-      return { allow: true, language: lang, upsellReason: 'trial_started' };
+      const pref = await getUserPreference(shopId);
+      if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+    } catch {}
+    const text = String(Body ?? '').trim().toLowerCase();
+    // Fast path: "paid" confirmation (Hinglish + English variants)
+    if (/\b(paid|payment done|paydone|maine pay kiya|paid ho gaya)\b/i.test(text)) {
+      const ok = await markAuthUserPaid(shopId);
+      if (ok.success) {
+        return { allow: true, language: lang, upsellReason: 'paid_confirmed', suppressUpsell: true };
       }
-      return { allow: true, language: lang, upsellReason: 'new_user' };
-  }
-
-  // Existing user — gate by status/plan
-  const status = rec?.fields ? String(rec.fields.StatusUser ?? '').toLowerCase() : '';
-  const pref = await getUserPreference(shopId); // to read plan & trial end
-  const plan = String(pref?.plan ?? '').toLowerCase();
-  const trialEnd = pref?.trialEndDate ? new Date(pref.trialEndDate) : null;
-  
-    
-  // Only hard-block truly restricted states; otherwise let main content proceed and upsell later
+      return { allow: true, language: lang, upsellReason: 'paid_verification_failed' };
+    }
+    // Lookup record in AuthUsers
+    const rec = await getAuthUserRecord(shopId);
+    if (!rec) {
+      // New user → return reason, let handler show onboarding + main content
+      if (/^(1|yes|haan|start|trial|ok)$/i.test(text)) {
+        const s = await startTrialForAuthUser(shopId, TRIAL_DAYS);
+        if (s.success) {
+          return { allow: true, language: lang, upsellReason: 'trial_started' };
+        }
+        return { allow: true, language: lang, upsellReason: 'new_user' };
+      }
+    }
+    const status = rec?.fields ? String(rec.fields.StatusUser ?? '').toLowerCase() : '';
+    const pref2 = await getUserPreference(shopId); // to read plan & trial end
+    const plan = String(pref2?.plan ?? '').toLowerCase();
+    const trialEnd = pref2?.trialEndDate ? new Date(pref2.trialEndDate) : null;
+    // Only hard-block truly restricted states; otherwise let main content proceed and upsell later
     if (['deactivated','blacklisted','blocked'].includes(status)) {
       return { allow: false, language: lang, upsellReason: 'blocked' };
     }
-
-  // Trial ended → gentle pay wall    
-  if (plan === 'trial' && trialEnd && Date.now() > trialEnd.getTime()) {
+    // Trial ended → gentle pay wall
+    if (plan === 'trial' && trialEnd && Date.now() > trialEnd.getTime()) {
       return { allow: true, language: lang, upsellReason: 'trial_ended' };
     }
-
-  // Active (trial or paid) → allow normal flows
-  return { allow: true, language: lang, upsellReason: 'none' };    
-    } catch (e) {
-        console.warn('[access-gate] soft-fail', e?.message);
-        const lang = String(detectedLanguage ?? 'en').toLowerCase();
-        // Never block the request; proceed with main flow
-        return { allow: true, language: lang, upsellReason: 'soft_fail' };
-      }
-    }
+    // Active (trial or paid) → allow normal flows
+    return { allow: true, language: lang, upsellReason: 'none' };
+  } catch (e) {
+    console.warn('[access-gate] soft-fail', e?.message);
+    const lang = String(detectedLanguage ?? 'en').toLowerCase();
+    // Never block the request; proceed with main flow
+    return { allow: true, language: lang, upsellReason: 'soft_fail' };
+  }
 }
-
 
 // DB-backed memory helpers (Airtable via database.js)
 const { appendTurn, getRecentTurns, inferTopic } = require('../database');
