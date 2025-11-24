@@ -11080,6 +11080,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               return; // STOP here too
             }
           }
+        } catch { /* ignore and continue */ }
       
     let isGreeting = false;
     let greetingLang = 'en';
