@@ -2195,7 +2195,7 @@ function _normLite(s) {
             // ✅ Guard: skip cache if suspiciously short (e.g., "Try:")
                     if (!msg || msg.trim().length < 20 || /^none$/i.test(msg.trim())) {
                         console.warn('[trial-activated] cache value too short or invalid, using fallback');
-                        msg = `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`;
+                        msg = `${planNote}\nClick on 'Record Purchase/Sale/Return' button & then \nTry:\n• milk 2 ltr at 40/ltr exp +4d`;
                     }
     
             // Diagnostic logging before send
