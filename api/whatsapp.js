@@ -10902,6 +10902,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
 async function processTextMessageAsync(Body, From, requestId, conversationState) {
   try {
     console.log(`[${requestId}] [1] Parsing text message: "${Body}"`);
+      let __handled = false;
     
     // === FRONT-DOOR SUMMARY GUARD (text path) ===
     const intentAtEntry = resolveSummaryIntent(Body);
@@ -11130,6 +11131,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           const msg0 = await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`);
           const msg  = nativeglishWrap(msg0, langExact);
           await sendMessageViaAPI(From, msg);
+            __handled = true;
           try {
               const isActivated = await isUserActivated(shopId);
               const buttonLang = langPinned.includes('-latn') ? langPinned.split('-')[0] : langPinned;
@@ -11143,6 +11145,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         if (!FORCE_INVENTORY && orch.normalizedCommand) {
           handledRequests.add(requestId);
           await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
+            __handled = true;
           return;
         }
       } catch (e) {
@@ -11200,6 +11203,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
         const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
         await sendMessageViaAPI(From, formattedResponse);
+          __handled = true;
      return;
     } else {
       console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);          
@@ -11325,11 +11329,18 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     const defaultMessage = userPreference === 'voice'
       ? '🎤 Send inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to text input, reply "switch to text".'
       : '📝 Type your inventory update: "10 Parle-G sold". Expiry dates are suggested for better batch tracking.\n\nTo switch to voice input, reply "switch to voice".';
-    
-    const translatedMessage = await t(defaultMessage, detectedLanguage, requestId);
-    
-    // Send via Twilio API
-    await sendMessageViaAPI(From, translatedMessage);
+              
+    // Only send the generic default if nothing else handled AND it is not a sticky/transaction turn
+      if (!__handled) {
+        const stickyAction3 = await getStickyActionQuick(From);
+        const looksTxn3 = looksLikeTxnLite(Body);
+        if (stickyAction3 || looksTxn3) {
+          console.log(`[${requestId}] Suppressing generic default in sticky/txn turn [text]`);
+        } else {
+          const translatedMessage = await t(defaultMessage, detectedLanguage, requestId);
+          await sendMessageViaAPI(From, translatedMessage);
+        }
+      }
     
   } catch (error) {
     console.error(`[${requestId}] Error processing text message:`, error);
@@ -11360,7 +11371,9 @@ module.exports = async (req, res) => {
   const From =
     (req.body && (req.body.From || req.body.from)) ||
     (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
-
+  
+  let __handled = false;
+  
   // (optional) quick log to confirm gate path in prod logs
     try { console.log('[webhook]', { From, Body: String(Body).slice(0,120) }); } catch(_) {}
       
@@ -11436,7 +11449,8 @@ module.exports = async (req, res) => {
          const ans = await composeAISalesAnswer(shopId, Body, langPinned);
          const msg0 = await tx(ans, langPinned, From, Body, `${requestId}::sales-qa`);
          const msg  = nativeglishWrap(msg0, langPinned);
-         await sendMessageQueued(From, msg);                
+         await sendMessageQueued(From, msg);
+        __handled = true;
          try {
                   const isActivated = await isUserActivated(shopId);
                   const buttonLang = langPinned.includes('-latn') ? langPinned.split('-')[0] : langPinned;
@@ -11456,6 +11470,7 @@ module.exports = async (req, res) => {
        if (!FORCE_INVENTORY && orch.normalizedCommand) {
          handledRequests.add(requestId);
          await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm`);
+           __handled = true;
          const twiml = new twilio.twiml.MessagingResponse();
          twiml.message('');
          res.type('text/xml');
@@ -11549,17 +11564,25 @@ module.exports = async (req, res) => {
     // --- Delegate to main request handler ---
     await handleRequest(req, res, response, requestId, requestStart);
 
-    // --- FINAL CATCH-ALL: If nothing above handled the message, send examples ---
+    // --- FINAL CATCH-ALL: If nothing above handled the message, send examples ---        
     if (!resp.alreadySent()) {
-      await safeSendParseError(From, detectedLanguage, requestId);           
-      // minimal TwiML ack (single-response guard)
-      const twiml = new twilio.twiml.MessagingResponse();
-      twiml.message('');
-      res.type('text/xml');
-      resp.safeSend(200, twiml.toString());
-      safeTrackResponseTime(requestStart, requestId);
-      return;
-    }
+        // COPILOT-PATCH-ROOT-PARSEERROR-GUARD
+        // Suppress parse-error examples during sticky/transaction turns
+        const stickyAction = await getStickyActionQuick(From);
+        const looksTxn = looksLikeTxnLite(Body);
+        if (stickyAction || looksTxn) {
+          console.log(`[${requestId}] Suppressing parse-error in sticky/txn turn`);
+        } else {
+          await safeSendParseError(From, detectedLanguage, requestId);
+        }
+        // minimal TwiML ack (single-response guard)
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message('');
+        res.type('text/xml');
+        resp.safeSend(200, twiml.toString());
+        safeTrackResponseTime(requestStart, requestId);
+        return;
+      }
   }); // <- tips auto-stop here even on early returns
 };
 
@@ -12362,6 +12385,9 @@ Reply with:
 async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {
   console.log(`[${requestId}] Handling new interaction`);
   const shopId = From.replace('whatsapp:', '');
+    
+  // Track whether this request has produced a final user-facing response
+  let __handled = false;
 
   // ✅ Language
   let userLanguage = 'en';
@@ -12471,10 +12497,11 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           message += `${rawLine}${stockPart}\n`;
           if (r.success) successCount++;
         }
-        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;               
         const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-        await sendMessageViaAPI(From, formattedResponse);
-        return res.send('<Response></Response>');
+                await sendMessageViaAPI(From, formattedResponse);
+                __handled = true;
+                return res.send('<Response></Response>');
       }
       // Fall through if no updates parsed
       console.log(`[${requestId}] [sticky] No updates parsed; continuing with normal flow`);
@@ -12628,14 +12655,16 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           await sendSalesQAButtons(From, buttonLang, isActivated);
         } catch (e) {
           console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
-        }
+        }               
+        __handled = true;
         return res.send('<Response></Response>');
       }
 
       // Read-only normalized command → route & exit
       if (!FORCE_INVENTORY && orch.normalizedCommand) {
         handledRequests.add(requestId);
-        await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
+        await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);                
+        __handled = true;
         return res.send('<Response></Response>');
       }
     } catch (e) {
@@ -12681,10 +12710,11 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         message += `${rawLine}${stockPart}\n`;
         if (r.success) successCount++;
       }
-      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;             
       const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-      await sendMessageViaAPI(From, formattedResponse);
-      return res.send('<Response></Response>');
+         await sendMessageViaAPI(From, formattedResponse);
+         __handled = true;
+         return res.send('<Response></Response>');
     } else {
       console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
       // Only if not an inventory update, try quick queries
@@ -12728,10 +12758,13 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message('');
           res.type('text/xml').send(twiml.toString());
-        } catch (_){
-          res.status(200).end();
-        }
+          __handled = true;
+          return;
+        } catch (e){
+          res.status(200).end();              
+        __handled = true;
         return;
+      }
       }
       await setUserState(From, 'inventory', { updates, detectedLanguage });
       const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
@@ -12748,6 +12781,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           });
         } catch (_){}
         res.send('<Response></Response>');
+        __handled = true;
         return;
       }
 
@@ -12780,6 +12814,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       await sendMessageViaAPI(From, formattedResponse2);
       await clearUserState(From);
       res.send('<Response></Response>');
+      __handled = true;
       return;
     }
   }
@@ -12826,15 +12861,23 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       return;
     }
   }
-
-  // ✅ Default response
-  const defaultMessage = await t(
-    'Please send an inventory update like "10 Parle-G sold" or start with "Hello" for options.',
-    'en',
-    requestId
-  );
-  await sendMessageViaAPI(From, defaultMessage);
-  res.send('<Response></Response>');
+      
+    // Only send generic default if nothing else handled AND we're not in sticky/txn context
+      if (!__handled) {
+        const stickyAction3 = await getStickyActionQuick(From);
+        const looksTxn3 = looksLikeTxnLite(Body);
+        if (stickyAction3 || looksTxn3) {
+          console.log(`[${requestId}] Suppressing generic default in sticky/txn turn`);
+        } else {
+          const defaultMessage = await t(
+            'Please send an inventory update like "10 Parle-G sold" or start with "Hello" for options.',
+            'en',
+            requestId
+          );
+          await sendMessageViaAPI(From, defaultMessage);
+        }
+        res.send('<Response></Response>');
+      }
 }
 
 async function handleGreetingResponse(Body, From, state, requestId, res) {
