@@ -10585,6 +10585,47 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     // Save user preference
     const shopId = From.replace('whatsapp:', '');
     await saveUserPreference(shopId, detectedLanguage);
+        
+    // --- EARLY: handle 'mode' / localized mode switch (voice) -------------------
+        try {
+          const found = parseModeSwitchLocalized(cleanTranscript);
+          if (found) {
+            let lang = String(detectedLanguage || 'en').toLowerCase();
+            if (found.set) {
+              await setStickyMode(From, found.set); // 'purchase' | 'sold' | 'returned'
+              const badge = getModeBadge(found.set, lang);
+              const ack   = await t(`✓ ${badge} mode set.\nSpeak/type an entry or press buttons.`, lang, `${requestId}::mode-set-voice`);
+              try {
+                await ensureLangTemplates(lang);
+                const sids = getLangSids(lang);
+                if (sids?.quickReplySid) {
+                  await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
+                }
+              } catch { /* best-effort only */ }
+              await sendMessageViaAPI(From, await tagWithLocalizedMode(From, ack, lang));
+              handledRequests.add(requestId);
+              return; // STOP: do not fall into orchestrator or inventory parsing
+            }
+            if (found.ask) {
+              try {
+                await ensureLangTemplates(lang);
+                const sids = getLangSids(lang);
+                const sent = sids?.quickReplySid
+                  ? await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid })
+                  : null;
+                if (!sent) {
+                  const msg = await t('Choose: Record Purchase • Record Sale • Record Return', lang, `${requestId}::mode-ask-voice`);
+                  await sendMessageViaAPI(From, await tagWithLocalizedMode(From, msg, lang));
+                }
+              } catch {
+                const msg = await t('Choose: Record Purchase • Record Sale • Record Return', lang, `${requestId}::mode-ask-voice-fallback`);
+                await sendMessageViaAPI(From, await tagWithLocalizedMode(From, msg, lang));
+              }
+              handledRequests.add(requestId);
+              return; // STOP here too
+            }
+          }
+        } catch { /* noop */ }
        
     // ===== EARLY EXIT: AI orchestrator on the transcript =====
       try {
@@ -10988,7 +11029,58 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       
       return;
     }
+       
+    // --- EARLY: handle 'mode' / localized mode switch -------------------
+        try {
+          const found = parseModeSwitchLocalized(Body); // supports: 'mode', 'mode <purchase|sale|return>', localized words
+          if (found) {
+            const shopId = From.replace('whatsapp:', '');
+            let lang = 'en';
+            try {
+              const pref = await getUserPreference(shopId);
+              if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+            } catch { /* noop */ }
     
+            if (found.set) {
+              // Direct-set: instantly switch sticky mode
+              await setStickyMode(From, found.set); // 'purchase' | 'sold' | 'returned'
+              const badge = getModeBadge(found.set, lang);
+              const ack   = await t(`✓ ${badge} mode set.\nType product line or press buttons.`, lang, `${requestId}::mode-set`);
+              // Resurface Purchase/Sale/Return quick-reply buttons (best-effort)
+              try {
+                await ensureLangTemplates(lang);
+                const sids = getLangSids(lang);
+                if (sids?.quickReplySid) {
+                  await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
+                }
+              } catch { /* best effort only */ }
+              await sendMessageViaAPI(From, await tagWithLocalizedMode(From, ack, lang));
+              handledRequests.add(requestId);
+              return; // STOP: do not fall into inventory parsing
+            }
+    
+            if (found.ask) {
+              // One-word 'mode' → show buttons to pick Purchase/Sale/Return
+              try {
+                await ensureLangTemplates(lang);
+                const sids = getLangSids(lang);
+                const sent = sids?.quickReplySid
+                  ? await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid })
+                  : null;
+                if (!sent) {
+                  // Text fallback when template isn't available
+                  const msg = await t('Choose: Record Purchase • Record Sale • Record Return', lang, `${requestId}::mode-ask`);
+                  await sendMessageViaAPI(From, await tagWithLocalizedMode(From, msg, lang));
+                }
+              } catch {
+                const msg = await t('Choose: Record Purchase • Record Sale • Record Return', lang, `${requestId}::mode-ask-fallback`);
+                await sendMessageViaAPI(From, await tagWithLocalizedMode(From, msg, lang));
+              }
+              handledRequests.add(requestId);
+              return; // STOP here too
+            }
+          }
+      
     let isGreeting = false;
     let greetingLang = 'en';
     // Use improved greeting detection
@@ -11219,7 +11311,8 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
           if (handledQuick) {
               __handled = true;
-            return res.send('<Response></Response>'); // reply already sent via API
+            handledRequests.add(requestId);
+              return;
           }
         }
       } catch (e) {
@@ -11431,7 +11524,61 @@ module.exports = async (req, res) => {
 
   // Language detection (also persists preference)
   const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);  
-      
+  
+  // --- EARLY: 'mode' / localized switch for plain text (webhook level) ---
+    try {
+        const found = Body && parseModeSwitchLocalized(Body);
+        if (found) {
+          const shopId = String(From).replace('whatsapp:', '');
+          let langPinned = String(detectedLanguage || 'en').toLowerCase();
+          
+          if (found.set) {
+            // Direct-set: switch sticky mode immediately
+            await setStickyMode(From, found.set); // 'purchase' | 'sold' | 'returned'
+            const badge = getModeBadge(found.set, langPinned);
+            const ack   = await t(`✓ ${badge} mode set.\nType a line or press buttons.`, langPinned, `${requestId}::mode-set-webhook`);
+            // Resurface Purchase/Sale/Return quick-reply buttons (best-effort)
+            try {
+              await ensureLangTemplates(langPinned);
+              const sids = getLangSids(langPinned);
+              if (sids?.quickReplySid) {
+                await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
+              }
+          } catch { /* best effort only */ }
+            await sendMessageViaAPI(From, await tagWithLocalizedMode(From, ack, langPinned));
+            handledRequests.add(requestId);
+            // Minimal TwiML ack for webhook
+            const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+            res.type('text/xml'); resp.safeSend(200, twiml.toString());
+            safeTrackResponseTime(requestStart, requestId);
+            return;
+          }
+          
+          if (found.ask) {
+            try {
+              await ensureLangTemplates(langPinned);
+              const sids = getLangSids(langPinned);
+              const sent = sids?.quickReplySid
+                ? await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid })
+                : null;
+              if (!sent) {
+                const msg = await t('Choose: Record Purchase • Record Sale • Record Return', langPinned, `${requestId}::mode-ask-webhook`);
+                await sendMessageViaAPI(From, await tagWithLocalizedMode(From, msg, langPinned));
+              }
+            } catch {
+              const msg = await t('Choose: Record Purchase • Record Sale • Record Return', langPinned, `${requestId}::mode-ask-webhook-fallback`);
+              await sendMessageViaAPI(From, await tagWithLocalizedMode(From, msg, langPinned));
+            }
+            handledRequests.add(requestId);
+            // Minimal TwiML ack for webhook
+            const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+            res.type('text/xml'); resp.safeSend(200, twiml.toString());
+            safeTrackResponseTime(requestStart, requestId);
+            return;
+          }
+        }
+      } catch { /* noop */ }
+    
   // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====
    try {
      const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
@@ -12431,6 +12578,49 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   }
   console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`);
 
+  // --- EARLY: 'mode' / localized switch — short-circuit this turn ---
+      try {
+        const found = parseModeSwitchLocalized(Body);
+        if (found) {
+          let lang = String(detectedLanguage || 'en').toLowerCase();
+          if (found.set) {
+            await setStickyMode(From, found.set); // 'purchase' | 'sold' | 'returned'
+            const badge = getModeBadge(found.set, lang);
+            const ack   = await t(`✓ ${badge} mode set.\nType a line or press buttons.`, lang, `${requestId}::mode-set-new`);
+            try {
+              await ensureLangTemplates(lang);
+              const sids = getLangSids(lang);
+              if (sids?.quickReplySid) {
+                await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
+              }
+            } catch { /* noop */ }
+            await sendMessageViaAPI(From, await tagWithLocalizedMode(From, ack, lang));
+            handledRequests.add(requestId);
+            __handled = true;
+            return res.send('&lt;Response&gt;&lt;/Response&gt;');
+          }
+          if (found.ask) {
+            try {
+              await ensureLangTemplates(lang);
+              const sids = getLangSids(lang);
+              const sent = sids?.quickReplySid
+                ? await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid })
+                : null;
+              if (!sent) {
+                const msg = await t('Choose: Record Purchase • Record Sale • Record Return', lang, `${requestId}::mode-ask-new`);
+                await sendMessageViaAPI(From, await tagWithLocalizedMode(From, msg, lang));
+              }
+            } catch {
+              const msg = await t('Choose: Record Purchase • Record Sale • Record Return', lang, `${requestId}::mode-ask-new-fallback`);
+              await sendMessageViaAPI(From, await tagWithLocalizedMode(From, msg, lang));
+            }
+            handledRequests.add(requestId);
+            __handled = true;
+            return res.send('&lt;Response&gt;&lt;/Response&gt;');
+          }
+        }
+      } catch { /* ignore and continue */ }
+    
   // ✅ Sticky-mode helpers (scoped to function)
   function looksLikeTxnLite(s) {
     const t = String(s ?? '').toLowerCase();
