@@ -776,6 +776,32 @@ async function aiOrchestrate(text) {
   }
 }
 
+// ===== Sticky-mode helpers (lightweight, deterministic) =====
+async function getStickyActionQuick(from) {
+  try {
+    const shopId = String(from ?? '').replace('whatsapp:', '');
+    const stateDb = await getUserStateFromDB(shopId);
+    const stateMem = globalState?.conversationState?.[shopId];
+    const st = stateDb || stateMem || null;
+    if (!st) return null;
+    switch (st.mode) {
+      case 'awaitingTransactionDetails': return st.data?.action ?? null;
+      case 'awaitingBatchOverride':      return 'sold';
+      case 'awaitingPurchaseExpiryOverride': return 'purchase';
+      default: return st.data?.action ?? null;
+    }
+  } catch { return null; }
+}
+function looksLikeTxnLite(s) {
+  const t = String(s ?? '').toLowerCase();
+  const hasNum = /\d/.test(t);
+  const hasUnit = /\b(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes)\b/i.test(t);
+  const hasPrice = /\b(?:@|at)\s*\d+(?:\.\d+)?(?:\s*\/\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes))?/i.test(t)
+                 || /(?:₹|rs\.?|inr)\s*\d+(?:\.\d+)?/i.test(t);
+  // Verb-less acceptance: number + unit is sufficient in sticky mode; price is optional
+  return (hasNum && hasUnit) || (hasUnit && hasPrice);
+}
+
 /**
  * applyAIOrchestration(text, From, detectedLanguageHint, requestId)
  * Merges orchestrator advice into our routing variables:
@@ -785,10 +811,20 @@ async function aiOrchestrate(text) {
  * - aiTxn: parsed transaction skeleton (NEVER auto-applied; deterministic parser still decides).
  * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
  */
-async function applyAIOrchestration(text, From, detectedLanguageHint, requestId) {
-  if (!USE_AI_ORCHESTRATOR) return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
-  const shopId = String(From ?? '').replace('whatsapp:', '');
-  const o = await aiOrchestrate(text);
+async function applyAIOrchestration(text, From, detectedLanguageHint, requestId) {     
+    if (!USE_AI_ORCHESTRATOR) return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
+      const shopId = String(From ?? '').replace('whatsapp:', '');
+      // ---- Sticky-mode clamp: if user is in purchase/sale/return, force inventory routing
+      try {
+        const stickyAction = await getStickyActionQuick(From);
+        if (stickyAction && looksLikeTxnLite(text)) {
+          const language = ensureLangExact(detectedLanguageHint ?? 'en');
+          console.log('[orchestrator]', { requestId, language, kind: 'transaction', normalizedCommand: '—', topicForced: null, pricingFlavor: null, sticky: stickyAction });
+          // Force router away from Sales-Q&A; downstream inventory parser will consume this turn
+          return { language, isQuestion: false, normalizedCommand: null, aiTxn: null, questionTopic: null, pricingFlavor: null, forceInventory: true };
+        }
+      } catch (_) { /* best-effort; fall through to AI orchestrator */ }
+      const o = await aiOrchestrate(text);
     
     // --- NEW: Normalize summary intent into the command contract ---------------
       // Router recognizes only: greeting | question | transaction | command | other.
@@ -874,10 +910,16 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
           await saveUserPreference(shopId, language);
         }
       } catch (_) {}
-  const isQuestion = o.kind === 'question';
-  const normalizedCommand = o.kind === 'command' && o?.command?.normalized ? o.command.normalized : null;
+      
+  let isQuestion = o.kind === 'question';
+  let normalizedCommand = o.kind === 'command' && o?.command?.normalized ? o.command.normalized : null;
   const aiTxn = o.kind === 'transaction' ? o.transaction : null;
-  // Note: summaries now appear as kind='command' with normalizedCommand.    
+  // Note: summaries now appear as kind='command' with normalizedCommand.  
+  // Final sticky-mode safety: never let Sales-Q&A trigger in active transaction mode
+   try {
+    const stickyAction = await getStickyActionQuick(From);
+    if (stickyAction) { isQuestion = false; normalizedCommand = null; }
+  } catch (_) { /* noop */ }
     console.log('[orchestrator]', {
         requestId, language, kind: o.kind,
         normalizedCommand: normalizedCommand ?? '—',
@@ -2066,7 +2108,12 @@ function _normLite(s) {
            await sendMessageViaAPI(from, hint);
            return true;
          }
-         await setUserState(from, 'awaitingTransactionDetails', { action: 'purchase' });                                   
+         await setUserState(from, 'awaitingTransactionDetails', { action: 'purchase' });                 
+         // In-memory sticky mode fallback (align with sale/return branches)
+            try {
+              const shopIdLocal = String(from).replace('whatsapp:', '');
+              globalState.conversationState[shopIdLocal] = { mode: 'awaitingTransactionDetails', data: { action: 'purchase' }, ts: Date.now() };
+            } catch (_) { /* noop */ }
         const msg0 = await t('Examples (purchase):\n• milk 10 ltr ₹60 exp +7d\n• दूध 10 लीटर ₹60 exp +7d', lang, 'txn-examples-purchase');
         await sendMessageViaAPI(from, dedupeBullets(msg0));
         return true;
