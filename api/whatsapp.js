@@ -12396,8 +12396,84 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     );
   }
   console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`);
+   // --- Sticky-mode clamp: consume verb-less transaction lines BEFORE any normalize/router/QA ---
+      // Local helpers scoped to this handler; no external changes needed.
+      function looksLikeTxnLite(s) {
+        const t = String(s ?? '').toLowerCase();
+        const hasNum = /\d/.test(t);
+        const hasUnit = /\b(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes)\b/i.test(t);
+        const hasPrice = /\b(?:@|at)\s*\d+(?:\.\d+)?(?:\s*\/\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes))?/i.test(t)
+                       || /(?:₹|rs\.?|inr)\s*\d+(?:\.\d+)?/i.test(t);
+        // Verb-less acceptance: number + unit is sufficient in sticky mode; price is optional
+        return (hasNum && hasUnit) || (hasUnit && hasPrice);
+      }
+      async function getStickyActionQuick() {
+        try {
+          // Prefer DB state; use best-effort in-memory fallback if available
+          const stDb = await getUserState(From);
+          const stMem = (globalThis?.globalState?.conversationState?.[shopId]) || null;
+          const st = stDb || stMem || null;
+          if (!st) return null;
+          switch (st.mode) {
+            case 'awaitingTransactionDetails': return st.data?.action ?? null;
+            case 'awaitingBatchOverride':      return 'sold';
+            case 'awaitingPurchaseExpiryOverride': return 'purchase';
+            default: return st.data?.action ?? null;
+          }
+        } catch { return null; }
+      }
+      try {
+        const stickyAction = await getStickyActionQuick();
+        if (stickyAction && looksLikeTxnLite(Body)) {
+          console.log(`[${requestId}] [sticky] mode active=${stickyAction} → forcing inventory parse`);
+          // Parse updates (AI first then rule fallback inside parseMultipleUpdates)
+          const parsedUpdates = parseMultipleUpdates(Body);
+          if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
+            console.log(`[${requestId}] [sticky] Parsed ${parsedUpdates.length} updates`);
+            const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+            // Single-sale confirmation (kept from your normal flow)
+            const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+            if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
+              const x = processed[0];
+              await sendSaleConfirmationOnce(
+                From,
+                detectedLanguage,
+                requestId,
+                {
+                  product: x.product,
+                  qty: x.quantity,
+                  unit: x.unitAfter ?? x.unit ?? '',
+                  pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+                  newQuantity: x.newQuantity
+                }
+              );
+              return res.send('<Response></Response>');
+            }
+            // Compose compact multi-line confirmation (same formatting as below)
+            const header = chooseHeader(processed.length, COMPACT_MODE, false);
+            let message = header;
+            let successCount = 0;
+            for (const r of processed) {
+              const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+              if (!rawLine) continue;
+              const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+              const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+              message += `${rawLine}${stockPart}\n`;
+              if (r.success) successCount++;
+            }
+            message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+            const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+            await sendMessageViaAPI(From, formattedResponse);
+            return res.send('<Response></Response>');
+          }
+          // If parse yields no updates, fall through to your normal logic
+          console.log(`[${requestId}] [sticky] No updates parsed; continuing with normal flow`);
+        }
+      } catch (e) {
+        console.warn(`[${requestId}] sticky short-circuit failed:`, e?.message);
+      }
 
-  // Add state check for price updates before the numeric check
+    // Add state check for price updates before the numeric check
     const currentState = await getUserState(From);
     if (currentState && currentState.mode === 'correction' && 
         currentState.data.correctionState.correctionType === 'price') {
