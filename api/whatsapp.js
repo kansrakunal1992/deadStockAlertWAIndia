@@ -131,6 +131,21 @@ function normalizeTwoBlockFormat(raw, languageCode) {
   return punct.test(s) ? s : (s + '.');
 }
 
+// Minimal helper: de-duplicate repeated bullet/example lines (case-insensitive)
+function dedupeBullets(text) {
+  try {
+    const lines = String(text ?? '').split(/\r?\n/);
+    const seen = new Set();
+    const out = [];
+    for (const ln of lines) {
+      const key = ln.trim().toLowerCase();
+      if (!key) { out.push(ln); continue; }
+      if (!seen.has(key)) { seen.add(key); out.push(ln); }
+    }
+    return out.join('\n');
+  } catch { return text; }
+}
+
 // ====== AI-backed language & intent detection (guarded, cached) ======
 const _aiDetectCache = new Map(); // key: text|heuristicLang -> {language,intent,ts}
 const AI_DETECT_TTL_MS = Number(process.env.AI_DETECT_TTL_MS ?? 5 * 60 * 1000); // 5 min
@@ -160,8 +175,9 @@ async function parseMultipleUpdates(reqOrText) {
   }
   const shopId = String(from).replace('whatsapp:', '');
   const updates = [];
-  const t = String(transcript || '').trim(); 
-  const userState = await getUserStateFromDB(shopId);
+  const t = String(transcript || '').trim();       
+  // Prefer DB state; use in-memory fallback if DB read is transiently null
+  const userState = (await getUserStateFromDB(shopId)) || globalState.conversationState[shopId] || null;
 
   // Standardize valid actions - use 'sold' consistently
   const VALID_ACTIONS = ['purchase', 'sold', 'remaining', 'returned'];
@@ -187,12 +203,14 @@ async function parseMultipleUpdates(reqOrText) {
   if (isReadOnlyQuery(t)) {
     console.log('[Parser] Read-only query detected; skipping update parsing.');
     return [];
-  }
-  // NEW: only attempt update parsing if message looks like a transaction
-  if (!looksLikeTransaction(t)) {
+  }  
+ // NEW: only attempt update parsing if message looks like a transaction
+ // Relax when we already have a sticky mode/pending action (consume verb-less lines)
+   if (!looksLikeTransaction(t) && !pendingAction) {
     console.log('[Parser] Not transaction-like; skipping update parsing.');
     return [];
   }
+        
   // Try AI-based parsing first  
   try {
     console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);  
@@ -245,7 +263,7 @@ async function parseMultipleUpdates(reqOrText) {
     console.warn(`[AI Parsing] Failed, falling back to rule-based parsing:`, error.message);
   }
   
-    
+  // --- Only if AI failed to produce valid updates, use rule-based parsing --- 
   // Fallback prompt if no action and no state       
     if (!userState) {
         try {
@@ -259,7 +277,23 @@ async function parseMultipleUpdates(reqOrText) {
         } catch (_) { /* noop */ }
         return [];
       }
-  
+      
+      // Simple parser for verb-less lines like: "milk 10 litres at 40/litre"
+      function parseSimpleWithoutVerb(s, actionHint) {
+        try {
+          const mQty = s.match(/(^|\s)(\d+(?:\.\d+)?)(?=\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces)\b)/i);
+          const mUnit = s.match(/\b(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces)\b/i);
+          const mPrice = s.match(/\b(?:at|@)\s*(\d+(?:\.\d+)?)(?:\s*\/\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces))?/i);
+          const idxQty = mQty ? s.indexOf(mQty[2]) : -1;
+          if (idxQty < 1 || !mUnit) return null;
+          const product = s.slice(0, idxQty).replace(/\bat\b$/i, '').trim();
+          const qty = parseFloat(mQty[2]);
+          const unitToken = mUnit[1].toLowerCase();
+          const price = mPrice ? parseFloat(mPrice[1]) : null;
+          return { action: actionHint || 'purchase', product, quantity: qty, unit: unitToken, pricePerUnit: price, expiry: null };
+        } catch { return null; }
+      }
+
   // Fallback to rule-based parsing ONLY if AI fails
   // Better sentence splitting to handle conjunctions    
   const sentences = String(transcript)
@@ -294,7 +328,20 @@ async function parseMultipleUpdates(reqOrText) {
             console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
           }      
           // Only translate if not already processed by AI
-          update.product = await translateProductName(update.product, 'rule-parsing');
+          update.product = await translateProductName(update.product, 'rule-parsing');                                               
+            } else if (pendingAction) {
+                      // Verb-less fallback: only when sticky mode exists AND AI has already failed
+                      const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
+                      const ACTION_MAP = { purchase:'purchase', buy:'purchase', bought:'purchase', sold:'sold', sale:'sold', return:'returned', returned:'returned' };
+                      const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
+                      const alt = parseSimpleWithoutVerb(trimmed, finalAction);
+                      if (alt) {
+                        alt.product = await translateProductName(alt.product, 'rule-parsing');
+                        if (isValidInventoryUpdate(alt)) {
+                          updates.push(alt);
+                          continue;
+                        }
+                      }
         }
         if (isValidInventoryUpdate(update)) {
           updates.push(update);
@@ -2019,10 +2066,10 @@ function _normLite(s) {
            await sendMessageViaAPI(from, hint);
            return true;
          }
-         await setUserState(from, 'awaitingTransactionDetails', { action: 'purchase' });
-         const msg = await t('Examples (purchase):\n• milk 10 ltr ₹60 exp +7d\n• दूध 10 लीटर ₹60 exp +7d', lang, 'txn-examples-purchase');
-         await sendMessageViaAPI(from, msg);
-         return true;
+         await setUserState(from, 'awaitingTransactionDetails', { action: 'purchase' });                                   
+        const msg0 = await t('Examples (purchase):\n• milk 10 ltr ₹60 exp +7d\n• दूध 10 लीटर ₹60 exp +7d', lang, 'txn-examples-purchase');
+        await sendMessageViaAPI(from, dedupeBullets(msg0));
+        return true;
    }
    if (payload === 'qr_sale') {       
     if (!activated) {
@@ -2030,9 +2077,13 @@ function _normLite(s) {
            await sendMessageViaAPI(from, hint);
            return true;
          }
-         await setUserState(from, 'awaitingTransactionDetails', { action: 'sold' });
+         await setUserState(from, 'awaitingTransactionDetails', { action: 'sold' });               
+        try {
+              const shopIdLocal = String(from).replace('whatsapp:', '');
+              globalState.conversationState[shopIdLocal] = { mode: 'awaitingTransactionDetails', data: { action: 'sold' }, ts: Date.now() };
+            } catch (_) {}
          const msg = await t('Examples (sale):\n• sugar 2 kg\n• doodh 3 ltr', lang, 'txn-examples-sale');
-         await sendMessageViaAPI(from, msg);
+         await sendMessageViaAPI(from, dedupeBullets(msg));
          return true;
    }
    if (payload === 'qr_return') {        
@@ -2041,9 +2092,13 @@ function _normLite(s) {
            await sendMessageViaAPI(from, hint);
            return true;
          }
-         await setUserState(from, 'awaitingTransactionDetails', { action: 'returned' });
+         await setUserState(from, 'awaitingTransactionDetails', { action: 'returned' });      
+         try {
+              const shopIdLocal = String(from).replace('whatsapp:', '');
+              globalState.conversationState[shopIdLocal] = { mode: 'awaitingTransactionDetails', data: { action: 'returned' }, ts: Date.now() };
+            } catch (_) {}
          const msg = await t('Examples (return):\n• Parle-G 3 packets\n• milk 1 liter', lang, 'txn-examples-return');
-         await sendMessageViaAPI(from, msg);
+         await sendMessageViaAPI(from, dedupeBullets(msg));
          return true;
    }
  
@@ -3407,14 +3462,15 @@ const lang = (language ?? 'en').toLowerCase();
 
 
 // ===== Access Gate & Onboarding =====
-async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
-  const shopId = String(From).replace('whatsapp:', '');        
-  let lang = (detectedLanguage ?? 'en').toLowerCase();
+async function ensureAccessOrOnboard(From, Body, detectedLanguage) {      
     try {
-      const pref = await getUserPreference(shopId);
-      if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-    } catch {}
-  const text = String(Body ?? '').trim().toLowerCase();
+        const shopId = String(From).replace('whatsapp:', '');
+        let lang = (detectedLanguage ?? 'en').toLowerCase();
+        try {
+          const pref = await getUserPreference(shopId);
+          if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+        } catch {}
+        const text = String(Body ?? '').trim().toLowerCase();
 
   // Fast path: "paid" confirmation (Hinglish + English variants)
   if (/(\bpaid\b|\bpayment done\b|\bpaydone\b|\bmaine pay kiya\b|\bpaid ho gaya\b)/i.test(text)) {
@@ -3456,8 +3512,14 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
     }
 
   // Active (trial or paid) → allow normal flows
-  return { allow: true, language: lang, upsellReason: 'none' };
-}
+  return { allow: true, language: lang, upsellReason: 'none' };    
+    } catch (e) {
+        console.warn('[access-gate] soft-fail', e?.message);
+        const lang = String(detectedLanguage ?? 'en').toLowerCase();
+        // Never block the request; proceed with main flow
+        return { allow: true, language: lang, upsellReason: 'soft_fail' };
+      }
+    }
 }
 
 
