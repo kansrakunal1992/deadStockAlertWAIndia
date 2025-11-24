@@ -11345,7 +11345,6 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   }
 }
 
-
 // Main module exports
 module.exports = async (req, res) => {
   const requestStart = Date.now();
@@ -11563,8 +11562,6 @@ module.exports = async (req, res) => {
     }
   }); // <- tips auto-stop here even on early returns
 };
-
-
 
 async function handleRequest(req, res, response, requestId, requestStart) {  
   try {
@@ -12361,35 +12358,12 @@ Reply with:
   res.send('<Response></Response>');
 }
 
+
 async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {
   console.log(`[${requestId}] Handling new interaction`);
   const shopId = From.replace('whatsapp:', '');
 
- // Check if user already has a plan assigned
-  const planInfo = await getUserPlan(shopId);
-  
-  // If no plan assigned, assign appropriate plan
-  if (!planInfo.plan || planInfo.plan === 'free_demo') {
-    // Check if this shop qualifies for first 50 plan
-    const isFirst50 = await isFirst50Shops(shopId);
-    
-    let plan = 'demo';
-    let trialEndDate = null;
-    
-    if (isFirst50) {
-      plan = 'demo';
-      // Set trial end date to 14 days from now
-      trialEndDate = new Date();
-      trialEndDate.setDate(trialEndDate.getDate() + 14);
-    }
-    
-    // Save the plan
-    await saveUserPlan(shopId, plan, trialEndDate);
-    
-    console.log(`Assigned plan: ${plan} to shop ${shopId}`);
-  }
-  
-   // ✅ Get user's language preference for personalized processing message
+  // ✅ Language
   let userLanguage = 'en';
   try {
     const userPref = await getUserPreference(shopId);
@@ -12399,147 +12373,138 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   } catch (error) {
     console.warn(`[${requestId}] Failed to get user preference:`, error.message);
   }
-  
-  // ✅ Send immediate "Processing..." response in user's language
+
+  // ✅ “Processing…” message
   try {
-    // Create processing message in native script + Roman transliteration
     const processingMessages = {
-      'hi': `आपके संदेश को संसाधित किया जा रहा है...`,
-      'bn': `আপনার বার্তা প্রক্রিয়া করা হচ্ছে...`,
-      'ta': `உங்கள் செய்தி செயலாக்கப்படுகிறது...`,
-      'te': `మీ సందేశం ప్రాసెస్ అవుతోంది...`,
-      'kn': `ನಿಮ್ಮ ಸಂದೇಶವನ್ನು ಪ್ರಕ್ರಿಯೆಗೊಳಿಸಲಾಗುತ್ತಿದೆ...`,
-      'gu': `તમારા સંદેશને પ્રક્રિયા કરવામાં આવે છે...`,
-      'mr': `तुमचा संदेश प्रक्रिया केला जात आहे...`,
-      'en': `Processing your message...`  // ✅ Only once for English
+      hi: `आपके संदेश को संसाधित किया जा रहा है...`,
+      bn: `আপনার বার্তা প্রক্রিয়াকরণ করা হচ্ছে...`,
+      ta: `உங்கள் செய்தி செயலாக்கப்படுகிறது...`,
+      te: `మీ సందేశాన్ని ప్రాసెస్ చేస్తోంది...`,
+      kn: `ನಿಮ್ಮ ಸಂದೇಶವನ್ನು ಸಂಸ್ಕರಿಸಲಾಗುತ್ತಿದೆ...`,
+      gu: `તમારા સંદેશને પ્રક્રિયા કરવામાં આવી રહ્યું છે...`,
+      mr: `तुमच्या संदेशाचे प्रक्रियाकरण होत आहे...`,
+      en: `Processing your message...`
     };
-    
     const processingMessage = processingMessages[userLanguage] || processingMessages['en'];
-    
     await sendMessageViaAPI(From, processingMessage);
-    
-    // ✅ Add 2-second delay before actual processing
     await new Promise(resolve => setTimeout(resolve, 2000));
-    
   } catch (error) {
     console.warn(`[${requestId}] Failed to send processing message:`, error.message);
   }
 
-  
-// NEW ✅: Detect language for this message; use it for command handlers & replies
+  // ✅ Detect/lock language variant (hi-latn, etc.)
   let detectedLanguage = userLanguage || 'en';
   try {
     detectedLanguage = await checkAndUpdateLanguage(Body || '', From, userLanguage, requestId);
   } catch (e) {
-    console.warn(
-      `[${requestId}] Language detection failed, defaulting to ${detectedLanguage}:`,
-      e.message
-    );
+    console.warn(`[${requestId}] Language detection failed, defaulting to ${detectedLanguage}:`, e.message);
   }
   console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`);
-   // --- Sticky-mode clamp: consume verb-less transaction lines BEFORE any normalize/router/QA ---
-      // Local helpers scoped to this handler; no external changes needed.
-      function looksLikeTxnLite(s) {
-        const t = String(s ?? '').toLowerCase();
-        const hasNum = /\d/.test(t);
-        const hasUnit = /\b(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes)\b/i.test(t);
-        const hasPrice = /\b(?:@|at)\s*\d+(?:\.\d+)?(?:\s*\/\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes))?/i.test(t)
-                       || /(?:₹|rs\.?|inr)\s*\d+(?:\.\d+)?/i.test(t);
-        // Verb-less acceptance: number + unit is sufficient in sticky mode; price is optional
-        return (hasNum && hasUnit) || (hasUnit && hasPrice);
-      }
-      async function getStickyActionQuick() {
-        try {
-          // Prefer DB state; use best-effort in-memory fallback if available
-          const stDb = await getUserState(From);
-          const stMem = (globalThis?.globalState?.conversationState?.[shopId]) || null;
-          const st = stDb || stMem || null;
-          if (!st) return null;
-          switch (st.mode) {
-            case 'awaitingTransactionDetails': return st.data?.action ?? null;
-            case 'awaitingBatchOverride':      return 'sold';
-            case 'awaitingPurchaseExpiryOverride': return 'purchase';
-            default: return st.data?.action ?? null;
-          }
-        } catch { return null; }
-      }
-      try {
-        const stickyAction = await getStickyActionQuick();
-        if (stickyAction && looksLikeTxnLite(Body)) {
-          console.log(`[${requestId}] [sticky] mode active=${stickyAction} → forcing inventory parse`);                
-          // COPILOT-PATCH-STICKY-PARSE-FROM
-             // Parse updates (AI first then rule fallback inside parseMultipleUpdates) with req-like shape
-              const parsedUpdates = parseMultipleUpdates({ From, Body });
-          if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
-            console.log(`[${requestId}] [sticky] Parsed ${parsedUpdates.length} updates`);
-            const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
-            // Single-sale confirmation (kept from your normal flow)
-            const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-            if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
-              const x = processed[0];
-              await sendSaleConfirmationOnce(
-                From,
-                detectedLanguage,
-                requestId,
-                {
-                  product: x.product,
-                  qty: x.quantity,
-                  unit: x.unitAfter ?? x.unit ?? '',
-                  pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
-                  newQuantity: x.newQuantity
-                }
-              );
-              return res.send('<Response></Response>');
-            }
-            // Compose compact multi-line confirmation (same formatting as below)
-            const header = chooseHeader(processed.length, COMPACT_MODE, false);
-            let message = header;
-            let successCount = 0;
-            for (const r of processed) {
-              const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
-              if (!rawLine) continue;
-              const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-              const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
-              message += `${rawLine}${stockPart}\n`;
-              if (r.success) successCount++;
-            }
-            message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-            const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-            await sendMessageViaAPI(From, formattedResponse);
-            return res.send('<Response></Response>');
-          }
-          // If parse yields no updates, fall through to your normal logic
-          console.log(`[${requestId}] [sticky] No updates parsed; continuing with normal flow`);
-        }
-      } catch (e) {
-        console.warn(`[${requestId}] sticky short-circuit failed:`, e?.message);
-      }
 
-    // Add state check for price updates before the numeric check
+  // ✅ Sticky-mode helpers (scoped to function)
+  function looksLikeTxnLite(s) {
+    const t = String(s ?? '').toLowerCase();
+    const hasNum = /\d/.test(t);
+    const hasUnit = /\b(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes)\b/i.test(t);
+    const hasPrice =
+      /\b(?:@|at)\s*\d+(?:\.\d+)?(?:\s*\/\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes))?/i.test(t) ||
+      /(?:₹|rs\.?|inr)\s*\d+(?:\.\d+)?/i.test(t);
+    return (hasNum && hasUnit) || (hasUnit && hasPrice);
+  }
+  async function getStickyActionQuick() {
+    try {
+      const stDb = await getUserState(From);
+      const stMem = (globalThis?.globalState?.conversationState?.[shopId]) || null;
+      const st = stDb || stMem || null;
+      if (!st) return null;
+      switch (st.mode) {
+        case 'awaitingTransactionDetails': return st.data?.action ?? null;
+        case 'awaitingBatchOverride': return 'sold';
+        case 'awaitingPurchaseExpiryOverride': return 'purchased';
+        default: return st.data?.action ?? null;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  // ✅ Sticky short-circuit: consume verb‑less txn lines BEFORE any QA/router
+  try {
+    const stickyAction = await getStickyActionQuick();
+    if (stickyAction && looksLikeTxnLite(Body)) {
+      console.log(`[${requestId}] [sticky] mode active=${stickyAction} → forcing inventory parse`);
+      // COPILOT-PATCH-STICKY-PARSE-FROM
+      const parsedUpdates = parseMultipleUpdates({ From, Body });
+      if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
+        console.log(`[${requestId}] [sticky] Parsed ${parsedUpdates.length} updates`);
+        const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+
+        // Single-sale confirmation
+        const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+        if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
+          const x = processed[0];
+          await sendSaleConfirmationOnce(
+            From,
+            detectedLanguage,
+            requestId,
+            {
+              product: x.product,
+              qty: x.quantity,
+              unit: x.unitAfter ?? x.unit ?? '',
+              pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+              newQuantity: x.newQuantity
+            }
+          );
+          return res.send('<Response></Response>');
+        }
+
+        // Multi-line confirmation
+        const header = chooseHeader(processed.length, COMPACT_MODE, false);
+        let message = header;
+        let successCount = 0;
+        for (const r of processed) {
+          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+          if (!rawLine) continue;
+          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+          message += `${rawLine}${stockPart}\n`;
+          if (r.success) successCount++;
+        }
+        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+        await sendMessageViaAPI(From, formattedResponse);
+        return res.send('<Response></Response>');
+      }
+      // Fall through if no updates parsed
+      console.log(`[${requestId}] [sticky] No updates parsed; continuing with normal flow`);
+    }
+  } catch (e) {
+    console.warn(`[${requestId}] sticky short-circuit failed:`, e?.message);
+  }
+
+  // ✅ Price correction state (unchanged)
+  try {
     const currentState = await getUserState(From);
-    if (currentState && currentState.mode === 'correction' && 
+    if (currentState &&
+        currentState.mode === 'correction' &&
         currentState.data.correctionState.correctionType === 'price') {
       try {
         const csRes = await getCorrectionState(shopId);
-        if (csRes && csRes.success && csRes.correctionState
-            && csRes.correctionState.correctionType === 'price') {
+        if (csRes && csRes.success && csRes.correctionState &&
+            csRes.correctionState.correctionType === 'price') {
           const priceValue = parseFloat(Body.trim());
           if (!Number.isNaN(priceValue) && priceValue > 0) {
-            // pendingUpdate can be an object or a JSON string - normalize it
             let pendingUpdate = csRes.correctionState.pendingUpdate;
             if (typeof pendingUpdate === 'string') {
               try { pendingUpdate = JSON.parse(pendingUpdate); } catch (_) {}
             }
-            // apply the price and process
-            const detectedLanguage = csRes.correctionState.detectedLanguage || userLanguage || 'en';
+            const detectedLanguageCorr = csRes.correctionState.detectedLanguage || userLanguage || 'en';
             const updated = { ...pendingUpdate, price: priceValue };
-            const results = await updateMultipleInventory(shopId, [updated], detectedLanguage);
-    
-            // clean up the correction record and any stale user state
-            try { await deleteCorrectionState(csRes.correctionState.id); } catch (_) {}
-            try { await clearUserState(From); } catch (_) {}
-    
-            // Build a short success/failure response
+            const results = await updateMultipleInventory(shopId, [updated], detectedLanguageCorr);
+            try { await deleteCorrectionState(csRes.correctionState.id); } catch (_){}
+            try { await clearUserState(From); } catch (_){}
+
             let msg = '✅ Update processed:\n\n';
             const ok = results[0] && results[0].success;
             if (ok) {
@@ -12549,7 +12514,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
             } else {
               msg += `• ${updated.product}: Error - ${results[0]?.error || 'Unknown error'}`;
             }
-            const formatted = await t(msg, detectedLanguage, requestId);
+            const formatted = await t(msg, detectedLanguageCorr, requestId);
             await sendMessageViaAPI(From, formatted);
             res.send('<Response></Response>');
             return;
@@ -12557,400 +12522,317 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         }
       } catch (e) {
         console.warn(`[${requestId}] Price state handling failed:`, e.message);
-        // continue with normal flow if handling failed
       }
     }
+  } catch (e) {
+    console.warn(`[${requestId}] Price state read failed:`, e.message);
+  }
 
-  // --- Fallback: numeric-only message treated as a price reply if a price correction exists ---
-   if (Body && /^\s*\d+(?:\.\d+)?\s*$/.test(Body)) {
-     try {
-       const csRes = await getCorrectionState(shopId);
-       if (csRes && csRes.success && csRes.correctionState
-           && csRes.correctionState.correctionType === 'price') {
-         const priceValue = parseFloat(Body.trim());
-         if (!Number.isNaN(priceValue) && priceValue > 0) {
-           // pendingUpdate can be an object or a JSON string - normalize it
-           let pendingUpdate = csRes.correctionState.pendingUpdate;
-           if (typeof pendingUpdate === 'string') {
-             try { pendingUpdate = JSON.parse(pendingUpdate); } catch (_) {}
-           }
-           // apply the price and process
-           const detectedLanguage = csRes.correctionState.detectedLanguage || userLanguage || 'en';
-           const updated = { ...pendingUpdate, price: priceValue };
-           const results = await updateMultipleInventory(shopId, [updated], detectedLanguage);
-   
-           // clean up the correction record and any stale user state
-           try { await deleteCorrectionState(csRes.correctionState.id); } catch (_) {}
-           try { await clearUserState(From); } catch (_) {}
-   
-           // Build a short success/failure response (no need to over-message)
-           let msg = '✅ Update processed:\n\n';
-           const ok = results[0] && results[0].success;
-           if (ok) {
-             const r = results[0];
-             const unitText = r.unit ? ` ${r.unit}` : '';
-             msg += `• ${r.product}: ${r.quantity}${unitText} ${r.action} (Stock: ${r.newQuantity}${unitText})`;
-           } else {
-             msg += `• ${updated.product}: Error - ${results[0]?.error || 'Unknown error'}`;
-           }
-           const formatted = await t(msg, detectedLanguage, requestId);
-           await sendMessageViaAPI(From, formatted);
-           res.send('<Response></Response>');
-           return;
-         }
-       }
-     } catch (e) {
-       console.warn(`[${requestId}] Numeric price fallback failed:`, e.message);
-       // continue with normal flow if fallback didn’t match
-     }
-   }
+  // ✅ Numeric-only price fallback (unchanged)
+  if (Body && /^\s*\d+(?:\.\d+)?\s*$/.test(Body)) {
+    try {
+      const csRes = await getCorrectionState(shopId);
+      if (csRes && csRes.success && csRes.correctionState &&
+          csRes.correctionState.correctionType === 'price') {
+        const priceValue = parseFloat(Body.trim());
+        if (!Number.isNaN(priceValue) && priceValue > 0) {
+          let pendingUpdate = csRes.correctionState.pendingUpdate;
+          if (typeof pendingUpdate === 'string') {
+            try { pendingUpdate = JSON.parse(pendingUpdate); } catch (_){}
+          }
+          const detectedLanguageCorr = csRes.correctionState.detectedLanguage || userLanguage || 'en';
+          const updated = { ...pendingUpdate, price: priceValue };
+          const results = await updateMultipleInventory(shopId, [updated], detectedLanguageCorr);
+          try { await deleteCorrectionState(csRes.correctionState.id); } catch (_){}
+          try { await clearUserState(From); } catch (_){}
 
-  // NEW ✅: Handle the "update price ..." command EARLY and safely pass detectedLanguage
+          let msg = '✅ Update processed:\n\n';
+          const ok = results[0] && results[0].success;
+          if (ok) {
+            const r = results[0];
+            const unitText = r.unit ? ` ${r.unit}` : '';
+            msg += `• ${r.product}: ${r.quantity}${unitText} ${r.action} (Stock: ${r.newQuantity}${unitText})`;
+          } else {
+            msg += `• ${updated.product}: Error - ${results[0]?.error || 'Unknown error'}`;
+          }
+          const formatted = await t(msg, detectedLanguageCorr, requestId);
+          await sendMessageViaAPI(From, formatted);
+          res.send('<Response></Response>');
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn(`[${requestId}] Numeric price fallback failed:`, e.message);
+    }
+  }
+
+  // ✅ Early price management command
   if (Body && /^\s*(update\s+price|price\s+update)\b/i.test(Body)) {
     try {
-      // Assumes you already computed `detectedLanguage` earlier in this function.
-      // If not, see “Heads‑up” below.
       await handlePriceUpdate(Body, From, detectedLanguage, requestId);
-      // Prevent fall-through / double responses
       return res.send('<Response></Response>');
     } catch (err) {
       console.error(`[${requestId}] Error in handlePriceUpdate:`, err.message);
-      const msg = await t(
-        'System error. Please try again with a clear message.',
-        detectedLanguage || 'en',
-        requestId
-      );
+      const msg = await t('System error. Please try again with a clear message.',
+        detectedLanguage || 'en', requestId);
       await sendMessageViaAPI(From, msg);
       return res.send('<Response></Response>');
     }
   }
 
-  
-  // Check for greetings
+  // ✅ Greeting detection & welcome flow (unchanged logic)
   if (Body) {
     const greetingLang = detectGreetingLanguage(Body);
     if (greetingLang) {
       console.log(`[${requestId}] Detected greeting in language: ${greetingLang}`);
-      
-      // Save user preference
-      const shopId = From.replace('whatsapp:', '');
       await saveUserPreference(shopId, greetingLang);
-      
-      
-      // Send INTERACTIVE welcome (Quick‑Reply + List‑Picker) using ContentSid templates
-            // Keep the rest of the function's behavior unchanged.
-            await sendWelcomeFlowLocalized(From, greetingLang, requestId);
-            // Minimal TwiML ack so Twilio is satisfied; avoid double text sends downstream.
-            try {
-              const twiml = new twilio.twiml.MessagingResponse();
-              twiml.message('');
-              res.type('text/xml').send(twiml.toString());
-            } catch (_) {
-              res.status(200).end();
-            }
-            return;
+      await sendWelcomeFlowLocalized(From, greetingLang, requestId);
+      try {
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message('');
+        res.type('text/xml').send(twiml.toString());
+      } catch (_) {
+        res.status(200).end();
+      }
+      return;
     }
   }
-  
-  // Handle voice messages
+
+  // ✅ Voice branch
   if (NumMedia && MediaUrl0 && (NumMedia !== '0' && NumMedia !== 0)) {
-    // Process voice asynchronously
     res.send('<Response><Message>Processing your voice message...</Message></Response>');
     processVoiceMessageAsync(MediaUrl0, From, requestId, null)
-      .catch(error => {
-        console.error(`[${requestId}] Error in async voice processing:`, error);
-      });
+      .catch(error => console.error(`[${requestId}] Error in async voice processing:`, error));
     return;
   }
-  
-      // Handle text messages
-      if (Body) {
-                
-        // ===== EARLY EXIT: AI orchestrator before any inventory parse =====
-            try {
-              const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
-              const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
-                const FORCE_INVENTORY = !!orch?.forceInventory;
-              // Question → answer & exit
-              if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
-                handledRequests.add(requestId);
-                const ans  = await composeAISalesAnswer(shopId, Body, langExact);
-                const msg0 = await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`);
-                const msg  = nativeglishWrap(msg0, langExact);
-                await sendMessageViaAPI(From, msg);
-                try {
-                  const isActivated = await isUserActivated(shopId);
-                  const buttonLang = langPinned.includes('-latn') ? langPinned.split('-')[0] : langPinned;
-                  await sendSalesQAButtons(From, buttonLang, isActivated);
-                } catch (e) {
-                  console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
-                }
-                return res.send('<Response></Response>');
-              }
-              // Read‑only normalized command → route & exit
-              if (!FORCE_INVENTORY && orch.normalizedCommand) {
-                handledRequests.add(requestId);
-                await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
-                return res.send('<Response></Response>');
-              }
-            } catch (e) {
-              console.warn(`[${requestId}] orchestrator early-exit error:`, e?.message);
-              // fall through gracefully
-            }
-        console.log(`[${requestId}] Attempting to parse as inventory update`);
-                
-        // First, try to parse as inventory update (higher priority)
-            const parsedUpdates = parseMultipleUpdates({ From, Body }); // pass req-like shape
-            if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
-          console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
-          
-          // Process the updates
-          const shopId = From.replace('whatsapp:', '');
-          const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
-          
-          
-          // Send results (INLINE-CONFIRM aware; single message)
-            const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-                        
-            // --- Single-sale confirmation (text #1): send ONE crisp message and return -
-              if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
-                const x = processed[0];
-                await sendSaleConfirmationOnce(
-                  From,
-                  detectedLanguage,
-                  requestId,
-                  {
-                    product: x.product,
-                    qty: x.quantity,
-                    unit: x.unitAfter ?? x.unit ?? '',
-                    pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
-                    newQuantity: x.newQuantity
-                  }
-                );
-                return;
-              }
 
-            const header = chooseHeader(processed.length, COMPACT_MODE, false);
-            let message = header;
-            let successCount = 0;
+  // ✅ Text branch
+  if (Body) {
+    // ===== EARLY EXIT: AI orchestrator before any inventory parse =====
+    try {
+      const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
+      const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
+      // COPILOT-PATCH-AIQA-GUARD-HNI-ENTRY
+      const FORCE_INVENTORY = !!orch?.forceInventory;
 
-            for (const r of processed) {
-              const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
-              if (!rawLine) continue;
-              const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-              const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
-              message += `${rawLine}${stockPart}\n`;
-              if (r.success) successCount++;
-            }
-
-            message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-
-            const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-            await sendMessageViaAPI(From, formattedResponse);
-
-          return res.send('<Response></Response>');
-        } else {
-        console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);                 
-                                  
+      // Question → answer & exit
+      if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
+        handledRequests.add(requestId);
+        const ans = await composeAISalesAnswer(shopId, Body, langExact);
+        const msg0 = await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`);
+        const msg = nativeglishWrap(msg0, langExact);
+        await sendMessageViaAPI(From, msg);
         try {
-              const stickyAction = await getStickyActionQuick(From);
-              const looksTxn = looksLikeTxnLite(Body);
-              if (stickyAction || looksTxn) {
-                console.log(`[${requestId}] [HNI] skipping quick-query in sticky/txn turn`);
-              } else {
-                const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
-                const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
-                if (handledQuick) {
-                  return res.send('<Response></Response>'); // reply already sent via API
-                }
-              }
-            } catch (e) {
-              console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
-            }
-  
-        // Check for price management commands
-        const lowerBody = Body.toLowerCase();
-        
-        if (lowerBody.includes('update price')) {
-          await handlePriceUpdate(Body, From, detectedLanguage, requestId);
-          return;
+          const isActivated = await isUserActivated(shopId);
+          const buttonLang = langExact.includes('-latn') ? langExact.split('-')[0] : langExact;
+          await sendSalesQAButtons(From, buttonLang, isActivated);
+        } catch (e) {
+          console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
         }
-        
-        if (lowerBody.includes('price list') || lowerBody.includes('prices')) {
-          await sendPriceList(From, detectedLanguage, requestId);
-          return;
-        }
-        
-                
-        // Try to parse as inventory update                  
-        // COPILOT-PATCH-TEXT-PARSE-FROM-2
-        const updates = parseMultipleUpdates({ From, Body });
+        return res.send('<Response></Response>');
+      }
 
-          if (Array.isArray(updates) && updates.length > 0) {
-          console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
-          const shopId = From.replace('whatsapp:', '');
-          
-          // Set user state to inventory mode
-          const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
-        
-          // NEW: resolve pending combined corrections (price+expiry) BEFORE routing
-          const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
-          if (handledCombined) {
-            safeTrackResponseTime(startTime, requestId);
-            // If your handler normally replies with TwiML, you can ACK with minimal TwiML here
-            // otherwise it's fine because we already sent via API.
-            try {
-              const twiml = new twilio.twiml.MessagingResponse();
-              twiml.message(''); // minimal ack
-              res.type('text/xml').send(twiml.toString());
-            } catch (_) {
-              res.status(200).end();
-            }
-            return;
+      // Read-only normalized command → route & exit
+      if (!FORCE_INVENTORY && orch.normalizedCommand) {
+        handledRequests.add(requestId);
+        await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
+        return res.send('<Response></Response>');
+      }
+    } catch (e) {
+      console.warn(`[${requestId}] orchestrator early-exit error:`, e?.message);
+      // fall through gracefully
+    }
+
+    console.log(`[${requestId}] Attempting to parse as inventory update`);
+
+    // First, try to parse as inventory update (higher priority)
+    // COPILOT-PATCH-HNI-PARSE-FROM
+    const parsedUpdates = parseMultipleUpdates({ From, Body }); // pass req-like object
+    if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
+      console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
+      const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+
+      const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+      if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
+        const x = processed[0];
+        await sendSaleConfirmationOnce(
+          From,
+          detectedLanguage,
+          requestId,
+          {
+            product: x.product,
+            qty: x.quantity,
+            unit: x.unitAfter ?? x.unit ?? '',
+            pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+            newQuantity: x.newQuantity
           }
-          
-          await setUserState(From, 'inventory', { updates, detectedLanguage });
-          
-          // Process the updates
-          const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-          // If every item is waiting for price, a prompt has already been sent.
-              if (allPendingPrice(results)) {
-                // Move user into 'correction' flow with price type so the next number goes to price handler.
-                try {
-                  await setUserState(From, 'correction', {
-                    correctionState: {
-                      correctionType: 'price',
-                      pendingUpdate: results[0],
-                      detectedLanguage,
-                      id: results[0]?.correctionId
-                    }
-                  });
-                } catch (_) {}
-                res.send('<Response></Response>');
-                return;
-              }
+        );
+        return;
+      }
 
-      
-    // NEW: short-circuit when unified price+expiry flow is pending for all items
+      const header = chooseHeader(processed.length, COMPACT_MODE, false);
+      let message = header;
+      let successCount = 0;
+      for (const r of processed) {
+        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+        if (!rawLine) continue;
+        const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+        const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+        message += `${rawLine}${stockPart}\n`;
+        if (r.success) successCount++;
+      }
+      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+      const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+      await sendMessageViaAPI(From, formattedResponse);
+      return res.send('<Response></Response>');
+    } else {
+      console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
+      // Only if not an inventory update, try quick queries
+      try {
+        // COPILOT-PATCH-QQ-GUARD-HNI
+        const stickyAction = await getStickyActionQuick(From);
+        const looksTxn = looksLikeTxnLite(Body);
+        if (stickyAction || looksTxn) {
+          console.log(`[${requestId}] [HNI] skipping quick-query in sticky/txn turn`);
+        } else {
+          const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
+          const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
+          if (handledQuick) {
+            return res.send('<Response></Response>'); // reply already sent via API
+          }
+        }
+      } catch (e) {
+        console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
+      }
+    }
+
+    // Price management commands
+    const lowerBody = Body.toLowerCase();
+    if (lowerBody.includes('update price')) {
+      await handlePriceUpdate(Body, From, detectedLanguage, requestId);
+      return;
+    }
+    if (lowerBody.includes('price list') || lowerBody.includes('prices')) {
+      await sendPriceList(From, detectedLanguage, requestId);
+      return;
+    }
+
+    // Try to parse as inventory update (second pass)
+    // COPILOT-PATCH-HNI-PARSE-FROM-SECOND
+    const updates = parseMultipleUpdates({ From, Body });
+    if (Array.isArray(updates) && updates.length > 0) {
+      console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
+      const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
+      if (handledCombined) {
+        try {
+          const twiml = new twilio.twiml.MessagingResponse();
+          twiml.message('');
+          res.type('text/xml').send(twiml.toString());
+        } catch (_){
+          res.status(200).end();
+        }
+        return;
+      }
+      await setUserState(From, 'inventory', { updates, detectedLanguage });
+      const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+
+      if (allPendingPrice(results)) {
+        try {
+          await setUserState(From, 'correction', {
+            correctionState: {
+              correctionType: 'price',
+              pendingUpdate: results[0],
+              detectedLanguage,
+              id: results[0]?.correctionId
+            }
+          });
+        } catch (_){}
+        res.send('<Response></Response>');
+        return;
+      }
+
       const allPendingUnified =
         Array.isArray(results) &&
         results.length > 0 &&
         results.every(r => r?.awaiting === 'price+expiry' || r?.needsUserInput === true);
       if (allPendingUnified) {
-        // The unified prompt was already sent from updateMultipleInventory(); just ACK Twilio
-        return res.send(response.toString());
+        // unified prompt already sent
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message('');
+        res.type('text/xml').send(twiml.toString());
+        return;
       }
-    
-      
-// INLINE-CONFIRM aware single message
-        const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-        const header = chooseHeader(processed.length, COMPACT_MODE, false);
-        let message = header;
-        let successCount = 0;
 
-        for (const r of processed) {
-          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
-          if (!rawLine) continue;
-          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
-          message += `${rawLine}${stockPart}\n`;
-          if (r.success) successCount++;
-        }
-
-        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`
-
-        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-        await sendMessageViaAPI(From, formattedResponse);
-      
-      // Clear state after processing
+      const processed2 = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+      const header2 = chooseHeader(processed2.length, COMPACT_MODE, false);
+      let message2 = header2;
+      let successCount2 = 0;
+      for (const r of processed2) {
+        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
+        if (!rawLine) continue;
+        const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+        const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+        message2 += `${rawLine}${stockPart}\n`;
+        if (r.success) successCount2++;
+      }
+      message2 += `\n✅ Successfully updated ${successCount2} of ${processed2.length} items`;
+      const formattedResponse2 = await t(message2.trim(), detectedLanguage, requestId);
+      await sendMessageViaAPI(From, formattedResponse2);
       await clearUserState(From);
-      
       res.send('<Response></Response>');
       return;
     }
   }
 
-  // In handleNewInteraction function, add this before the default response:
-
-// Handle summary commands
-if (Body) {
-  const lowerBody = Body.toLowerCase();
-  
-  // Check for summary commands
-  if (lowerBody.includes('summary')) {
-    console.log(`[${requestId}] Summary command detected: "${Body}"`);
-    
-    // Get user's preferred language
-    let userLanguage = 'en';
-    try {
-      const userPref = await getUserPreference(shopId);
-      if (userPref.success) {
-        userLanguage = userPref.language;
+  // ✅ Summary command handler (unchanged)
+  if (Body) {
+    const lowerBody = Body.toLowerCase();
+    if (lowerBody.includes('summary')) {
+      console.log(`[${requestId}] Summary command detected: "${Body}"`);
+      let prefLang = 'en';
+      try {
+        const userPref2 = await getUserPreference(shopId);
+        if (userPref2.success) {
+          prefLang = userPref2.language;
+        }
+      } catch (error) {
+        console.warn(`[${requestId}] Failed to get user preference:`, error.message);
       }
-    } catch (error) {
-      console.warn(`[${requestId}] Failed to get user preference:`, error.message);
+
+      if (lowerBody.includes('full')) {
+        let summarySent = false;
+        const generatingMessage = await t('🔍 Generating your detailed summary with insights... This may take a moment.', prefLang, requestId);
+        await sendMessageViaAPI(From, generatingMessage);
+        setTimeout(async () => {
+          if (!summarySent) {
+            const tip1 = await t('💡 Tip: Products with expiry dates under 7 days are 3x more likely to go unsold. Consider bundling or discounting them! Detailed summary being generated...', prefLang, requestId);
+            await sendMessageViaAPI(From, tip1);
+          }
+        }, 10000);
+        setTimeout(async () => {
+          if (!summarySent) {
+            const tip2 = await t('📦 Did you know? Low-stock alerts help prevent missed sales. Check your inventory weekly! Generating your summary right away...', prefLang, requestId);
+            await sendMessageViaAPI(From, tip2);
+          }
+        }, 30000);
+        const fullSummary = await generateFullScaleSummary(shopId, prefLang, requestId);
+        summarySent = true;
+        await sendMessageViaAPI(From, fullSummary);
+      } else {
+        const instantSummary = await generateInstantSummary(shopId, prefLang, requestId);
+        await sendMessageViaAPI(From, instantSummary);
+      }
+      res.send('<Response></Response>');
+      return;
     }
-    
-    // Determine summary type
-    if (lowerBody.includes('full')) {
-      // Full summary
-      // Flag to track if summary has been sent
-      let summarySent = false;
-      
-      // Send initial "processing" message
-      const generatingMessage = await t(
-        '🔍 Generating your detailed summary with insights... This may take a moment.',
-        userLanguage,
-        requestId
-      );
-      await sendMessageViaAPI(From, generatingMessage);
-      
-      // Schedule fun facts only if summary hasn't been sent
-      setTimeout(async () => {
-        if (!summarySent) {
-          const tip1 = await t(
-            '💡 Tip: Products with expiry dates under 7 days are 3x more likely to go unsold. Consider bundling or discounting them! Detailed summary being generated...',
-            userLanguage,
-            requestId
-          );
-          await sendMessageViaAPI(From, tip1);
-        }
-      }, 10000);
-      
-      setTimeout(async () => {
-        if (!summarySent) {
-          const tip2 = await t(
-            '📦 Did you know? Low-stock alerts help prevent missed sales. Check your inventory weekly! Generating your summary right away...',
-            userLanguage,
-            requestId
-          );
-          await sendMessageViaAPI(From, tip2);
-        }
-      }, 30000);
-      
-      // Generate and send full summary
-      const fullSummary = await generateFullScaleSummary(shopId, userLanguage, requestId);
-      summarySent = true;
-      await sendMessageViaAPI(From, fullSummary);
-      
-    } else {
-      // Instant summary
-      const instantSummary = await generateInstantSummary(shopId, userLanguage, requestId);
-      await sendMessageViaAPI(From, instantSummary);
-    }
-    
-    res.send('<Response></Response>');
-    return;
   }
-}
-  
-  // Default response for unrecognized input      
+
+  // ✅ Default response
   const defaultMessage = await t(
-     'Please send an inventory update like "10 Parle-G sold" or start with "Hello" for options.',
-     'en',
-     requestId
-   );
-  
+    'Please send an inventory update like "10 Parle-G sold" or start with "Hello" for options.',
+    'en',
+    requestId
+  );
   await sendMessageViaAPI(From, defaultMessage);
   res.send('<Response></Response>');
 }
