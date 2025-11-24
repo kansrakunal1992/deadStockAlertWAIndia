@@ -177,10 +177,10 @@ async function parseMultipleUpdates(reqOrText) {
   const updates = [];
   const t = String(transcript || '').trim();       
   // Prefer DB state; use in-memory fallback if DB read is transiently null
-  const userState = (await getUserStateFromDB(shopId)) || globalState.conversationState[shopId] || null;
-
-  // Standardize valid actions - use 'sold' consistently
-  const VALID_ACTIONS = ['purchase', 'sold', 'remaining', 'returned'];
+  const userState = (await getUserStateFromDB(shopId)) || globalState.conversationState[shopId] || null;    
+      
+  // Standardize valid actions (canonical: purchased, sold, returned)
+  const VALID_ACTIONS = ['purchased', 'sold', 'returned'];
   
   // Get pending action from user state if available    
   let pendingAction = null;
@@ -222,9 +222,9 @@ async function parseMultipleUpdates(reqOrText) {
           // Apply state override with validation            
           const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
           const ACTION_MAP = {                     
-            purchase: 'purchase',
-            buy: 'purchase',
-            bought: 'purchase',
+            purchase: 'purchased',
+            buy: 'purchased',
+            bought: 'purchased',
             sold: 'sold',
             sale: 'sold',
             return: 'returned',
@@ -233,7 +233,7 @@ async function parseMultipleUpdates(reqOrText) {
           
           const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
           
-          if (['purchase', 'sold', 'remaining', 'returned'].includes(finalAction)) {
+          if (['purchased', 'sold', 'returned'].includes(finalAction)) {
             update.action = finalAction;
             console.log(`[AI Parsing] Overriding AI action with normalized state action: ${update.action}`);
           } else {
@@ -321,7 +321,7 @@ async function parseMultipleUpdates(reqOrText) {
           
           const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
           
-          if (['purchase', 'sold', 'remaining', 'returned'].includes(finalAction)) {
+          if (['purchased', 'sold', 'returned'].includes(finalAction)) {
             update.action = finalAction;
             console.log(`[Rule Parsing] Overriding action with normalized state action: ${update.action}`);
           } else {
@@ -2114,9 +2114,13 @@ function _normLite(s) {
             try {
               const shopIdLocal = String(from).replace('whatsapp:', '');
               globalState.conversationState[shopIdLocal] = { mode: 'awaitingTransactionDetails', data: { action: 'purchase' }, ts: Date.now() };
-            } catch (_) { /* noop */ }
-        const msg0 = await t('Examples (purchase):\n• milk 10 ltr ₹60 exp +7d\n• दूध 10 लीटर ₹60 exp +7d', lang, 'txn-examples-purchase');
-        await sendMessageViaAPI(from, dedupeBullets(msg0));
+            } catch (_) { /* noop */ }              
+        // Send plain ASCII examples to avoid single-script clamp losses
+            const examplesPurchase =
+              'Examples (purchase):\n' +
+              '1) milk 10 ltr Rs60 exp +7d\n' +
+              '2) sugar 5 kg Rs80 exp +6m';
+            await sendMessageViaAPI(from, examplesPurchase);
         return true;
    }
    if (payload === 'qr_sale') {       
@@ -2129,9 +2133,12 @@ function _normLite(s) {
         try {
               const shopIdLocal = String(from).replace('whatsapp:', '');
               globalState.conversationState[shopIdLocal] = { mode: 'awaitingTransactionDetails', data: { action: 'sold' }, ts: Date.now() };
-            } catch (_) {}
-         const msg = await t('Examples (sale):\n• sugar 2 kg\n• doodh 3 ltr', lang, 'txn-examples-sale');
-         await sendMessageViaAPI(from, dedupeBullets(msg));
+            } catch (_) {}                 
+        const examplesSale =
+              'Examples (sale):\n' +
+              '1) sugar 2 kg\n' +
+              '2) milk 3 ltr';
+            await sendMessageViaAPI(from, examplesSale);
          return true;
    }
    if (payload === 'qr_return') {        
@@ -2144,9 +2151,12 @@ function _normLite(s) {
          try {
               const shopIdLocal = String(from).replace('whatsapp:', '');
               globalState.conversationState[shopIdLocal] = { mode: 'awaitingTransactionDetails', data: { action: 'returned' }, ts: Date.now() };
-            } catch (_) {}
-         const msg = await t('Examples (return):\n• Parle-G 3 packets\n• milk 1 liter', lang, 'txn-examples-return');
-         await sendMessageViaAPI(from, dedupeBullets(msg));
+            } catch (_) {}                
+        const examplesReturn =
+              'Examples (return):\n' +
+              '1) Parle-G 3 packets\n' +
+              '2) milk 1 ltr';
+            await sendMessageViaAPI(from, examplesReturn);
          return true;
    }
  
@@ -2174,7 +2184,7 @@ function _normLite(s) {
             let msg;
             try {                               
                 msg = await t(
-                                `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
+                                `${planNote}\nClick on 'Record Purchase/Sale/Return' button & then \nTry:\n• milk 2 ltr at 40/ltr exp +4d`,
                                 lang,
                                 `cta-trial-ok-${shopId}`
                             );
