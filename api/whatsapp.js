@@ -2025,7 +2025,11 @@ function _normLite(s) {
  
 // Map button taps / list selections to your existing quick-query router
  // Robust to multiple Twilio payload shapes + safe fallback
- async function handleInteractiveSelection(req) {
+ async function handleInteractiveSelection(req) {     
+// Global, minimal grace-cache to avoid stale plan reads immediately after trial activation
+const _recentActivations = (globalThis._recentActivations = globalThis._recentActivations || new Map()); // shopId -> ts(ms)
+const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
+
   const raw = req.body || {};      
   // Normalize "From" to the WhatsApp-prefixed format used by downstream readers
     const rawFrom =
@@ -2087,7 +2091,14 @@ function _normLite(s) {
   } catch (_) {}
     
   // --- 4B: Map localized ButtonText -> canonical payload IDs (EN + HI)
-    // Covers cases where Twilio doesn't send ButtonPayload but only ButtonText.
+    // Covers cases where Twilio doesn't send ButtonPayload but only ButtonText.         
+    // Helper: normalize any escaped/mangled newlines from translations/templates
+      function fixNewlines(str) {
+        if (!str) return str;
+        // Convert typical escape sequences back to real newlines; also trim weird artifacts.
+        return String(str).replace(/\\n/g, '\n').replace(/\r/g, '').replace(/[ \t]*\.\?\\n/g, '\n');
+      }
+    
     if (!payload && text) {
       const BTN_TEXT_MAP = [
         // Onboarding buttons
@@ -2110,7 +2121,13 @@ function _normLite(s) {
     try {
       const prefLP = await getUserPreference(shopId);
       if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();
-    } catch (_) {}     
+    } catch (_) {}
+         
+    // Optional helper: boolean activation check if available (preferred over raw plan reads)
+      async function _isActivated(shopIdNum) {
+        try { if (typeof isUserActivated === 'function') return !!(await isUserActivated(shopIdNum)); } catch (_) {}
+        return null; // let planInfo logic decide
+      }
             
     // Helpers (local to this handler):
       function isPlanActive(planInfo) {
@@ -2156,59 +2173,79 @@ function _normLite(s) {
     // Activation check for example gating + prompts
       let activated = false;
       let planInfo = null;
-      try {
+     let activatedDirect = null;
+      try {                  
+        // Preferred: fast boolean if available
+        activatedDirect = await _isActivated(shopIdTop);
         planInfo = await getUserPlan(shopIdTop);
-        activated = isPlanActive(planInfo);
+        activated = (activatedDirect === true) ? true : isPlanActive(planInfo);
       } catch (_) {}
       const plan = String(planInfo?.plan ?? '').toLowerCase();
       const end  = planInfo?.trialEnd ?? planInfo?.endDate ?? null;
       const isNewUser = !plan || plan === 'none';
-      const trialExpired = plan === 'trial' && end ? (new Date(end).getTime() < Date.now()) : false;
+      const trialExpired = plan === 'trial' && end ? (new Date(end).getTime() < Date.now()) : false;         
+     // Recent activation grace: treat as active for a short window after 'activate_trial'
+      const recentTs = _recentActivations.get(shopIdTop);
+      const isRecentlyActivated = !!recentTs && (Date.now() - recentTs < RECENT_ACTIVATION_MS);
+      const allowExamples = activated || isRecentlyActivated;
   
    // Quick‑Reply buttons (payload IDs are language‑independent)
    if (payload === 'qr_purchase') {                                     
-        await setStickyMode(from, 'purchased'); // always set sticky
-            if (activated) {
+        await setStickyMode(from, 'purchased'); // always set sticky                       
+            if (allowExamples) {
+                  // re-check activation right before send, to cope with very short DB lag
+                  try {
+                    const check = await _isActivated(shopIdTop);
+                    if (check !== true && !isRecentlyActivated) throw new Error('not-activated-yet');
+                  } catch (_) {}
               const examples = getStickyExamplesLocalized('purchased', lang);
-              await sendMessageViaAPI(from, examples);                        
+              await sendMessageViaAPI(from, fixNewlines(examples));                        
             } else {
-                  // NEW: Prompt for activation when plan not active (new or expired trial)
-                  const msg = isNewUser
+                  // NEW: Prompt for activation when plan not active (new or expired trial)                              
+            const msgRaw = isNewUser
                     ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
                     : trialExpired
                       ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nOr pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
                       : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
-                  await sendMessageViaAPI(from, msg);
+                  await sendMessageViaAPI(from, fixNewlines(msgRaw));
                 }
             return true;
    }
    if (payload === 'qr_sale') {                       
-        await setStickyMode(from, 'sold'); // always set sticky
-            if (activated) {
+        await setStickyMode(from, 'sold'); // always set sticky                      
+            if (allowExamples) {
+                  try {
+                    const check = await _isActivated(shopIdTop);
+                    if (check !== true && !isRecentlyActivated) throw new Error('not-activated-yet');
+                  } catch (_) {}
               const examples = getStickyExamplesLocalized('sold', lang);
-              await sendMessageViaAPI(from, examples);                        
-            } else {
-                  const msg = isNewUser
-                    ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
-                    : trialExpired
-                      ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nOr pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
-                      : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
-                  await sendMessageViaAPI(from, msg);
+              await sendMessageViaAPI(from, fixNewlines(examples));                   
+            } else {                                  
+                const msgRaw = isNewUser
+                        ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
+                        : trialExpired
+                          ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nOr pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+                          : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
+                      await sendMessageViaAPI(from, fixNewlines(msgRaw));
                 }
             return true;
    }
    if (payload === 'qr_return') {                         
-        await setStickyMode(from, 'returned'); // always set sticky
-            if (activated) {
-              const examples = getStickyExamplesLocalized('returned', lang);
-              await sendMessageViaAPI(from, examples);                    
-        } else {
-              const msg = isNewUser
-                ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
-                : trialExpired
-                  ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nOr pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
-                  : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
-              await sendMessageViaAPI(from, msg);
+        await setStickyMode(from, 'returned'); // always set sticky                        
+            if (allowExamples) {
+                  try {
+                    const check = await _isActivated(shopIdTop);
+                    if (check !== true && !isRecentlyActivated) throw new Error('not-activated-yet');
+                  } catch (_) {}
+                const examples = getStickyExamplesLocalized('returned', lang);
+                await sendMessageViaAPI(from, fixNewlines(examples));
+        } else {                          
+            const msgRaw = isNewUser
+                    ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
+                    : trialExpired
+                      ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nOr pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+                      : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
+                  await sendMessageViaAPI(from, fixNewlines(msgRaw));
             }
             return true;
    }
@@ -2218,7 +2255,7 @@ function _normLite(s) {
     // shopId/lang already prepared above; use activation gate too
         if (activated) {
           const msg = await t('✅ You already have access.', lang, `cta-trial-already-${shopId}`);
-          await sendMessageViaAPI(from, msg);
+          await sendMessageViaAPI(from, fixNewlines(msg));
           return true;
         }
     // Treat tap as explicit confirmation to start trial
@@ -2255,7 +2292,7 @@ function _normLite(s) {
             console.log('[trial-activated] sending ack message:', { to: from, msg });
     
             try {
-                const resp = await sendMessageViaAPI(from, msg);
+                const resp = await sendMessageViaAPI(from, fixNewlines(msg));
                 console.log('[trial-activated] ack send OK:', { sid: resp?.sid, to: from });                                
                 // ✅ NEW: Overwrite translation cache with clean text for future calls
                             async function overwriteTranslationCache(key, lang, text) {
@@ -2280,7 +2317,10 @@ function _normLite(s) {
                     data: err?.response?.data
                 });
             }
-            
+                    
+        // Mark recent activation to avoid false "not activated" prompts for next few seconds
+              try { _recentActivations.set(shopIdTop, Date.now()); } catch (_) {}
+                    
       // NEW: Immediately send activated menus (Quick-Reply + List-Picker)
           try {
             await ensureLangTemplates(lang);
