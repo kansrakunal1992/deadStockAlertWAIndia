@@ -2709,6 +2709,8 @@ async function sendOnboardingQR(shopId, lang) {
   if (contentSid) await sendContentTemplateQueuedOnce({ toWhatsApp: shopId, contentSid, requestId });
 }
 
+
+
 // Localized trial CTA text fallback (used only if Content send fails)
 function getTrialCtaText(lang) {
   const lc = String(lang || 'en').toLowerCase();
@@ -2899,16 +2901,70 @@ function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity
   return stockLine ? `${header}\n${stockLine}` : header;
 }
 
+// NEW: short-window duplicate message guard (3 seconds)
+// Prevents accidental double “Stock: …” echoes or repeated bodies from concurrent paths.
+const _recentSends = (globalThis._recentSends = globalThis._recentSends || new Map()); // key: from -> { body, at }
+function _isDuplicateBody(from, msg, windowMs = 3000) {
+  try {
+    const key = String(from);
+    const now = Date.now();
+    const prev = _recentSends.get(key);
+    if (prev && prev.body === msg && (now - prev.at) < windowMs) {
+      return true;
+    }
+    _recentSends.set(key, { body: msg, at: now });
+  } catch (_) {}
+  return false;
+}
+async function sendMessageDedup(From, msg) {
+  if (!msg) return;
+  const m = String(msg).trim();
+  if (_isDuplicateBody(From, m)) {
+    try { console.log('[dedupe] suppressed duplicate body for', From); } catch (_) {}
+    return;
+  }
+  await sendMessageViaAPI(From, m);
+}
+
 async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, info) {
   // Gate duplicates per request
   if (saleConfirmTracker.has(requestId)) return;
   saleConfirmTracker.add(requestId);
   const body = composeSaleConfirmation(info);
   const msg = await t(body, detectedLanguage ?? 'en', requestId);
-  await sendMessageViaAPI(From, msg);
+  await sendMessageDedup(From, msg);
 }
-// ----------------------------------------------------------------------------- 
 
+/**
+ * NEW: one-liner purchase confirmation (language-aware via t())
+ * Mirrors the sale confirmation, but for “purchased”.
+ */
+async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, payload) {
+  const {
+    product,
+    qty,
+    unit = '',
+    pricePerUnit = null,
+    newQuantity = null
+  } = payload || {};
+  const unitText = unit ? ` ${unit}` : '';
+  const priceText = (pricePerUnit !== null && pricePerUnit !== undefined && Number(pricePerUnit) > 0)
+    ? ` @ ₹${pricePerUnit}`
+    : '';
+  const stockText = (newQuantity !== null && newQuantity !== undefined)
+    ? ` (Stock: ${newQuantity}${unitText})`
+    : '';
+  const msgRaw = `✅ Purchased ${qty}${unitText} ${product}${priceText}${stockText}`;
+  const localized = await t(msgRaw, detectedLanguage ?? 'en', `${requestId}::purchase-once`);
+  await sendMessageDedup(From, localized);
+}
+
+function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity }) {
+  const unitText = unit ? ` ${unit}` : '';
+  const priceText = (Number(pricePerUnit) > 0) ? ` @ ₹${pricePerUnit}` : '';
+  const stockText = (newQuantity !== undefined) ? ` (Stock: ${newQuantity}${unitText})` : '';
+  return `✅ Sold ${qty}${unitText} ${product}${priceText}${stockText}`;
+}
 
 function chooseHeader(count, compact = true, isPrice = false) {
   if (compact) {
@@ -10748,29 +10804,28 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         
         // Process the updates
         const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
-        
-        
-// Send results (INLINE-CONFIRM aware; single message)
+                 
+        // === Single-update confirmation (sale OR purchase) ===
           const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-                  
-          // --- Single-sale confirmation (voice): send ONE crisp message and return ---
-            if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
-              const x = processed[0];
-              await sendSaleConfirmationOnce(
-                From,
-                detectedLanguage,
-                requestId,
-                {
-                  product: x.product,
-                  qty: x.quantity,
-                  unit: x.unitAfter ?? x.unit ?? '',
-                  // try common fields in your result object for per-unit price:
-                  pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
-                  newQuantity: x.newQuantity
-                }
-              );
+          if (processed.length === 1) {
+            const x = processed[0];
+            const act = String(x.action).toLowerCase();
+            const common = {
+              product: x.product,
+              qty: x.quantity,
+              unit: x.unitAfter ?? x.unit ?? '',
+              pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+              newQuantity: x.newQuantity
+            };
+            if (act === 'sold') {
+              await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);
               return;
             }
+            if (act === 'purchased') {
+              await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
+              return;
+            }
+          }
 
           const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
           let message = header;
@@ -10781,13 +10836,13 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
             if (!rawLine) continue;
             const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
             const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
-            message += `${rawLine}${stockPart}\n`;
+            message += `${String(rawLine).trim()}${stockPart}\n`;
             if (r.success) successCount++;
           }
 
           message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
           const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-          await sendMessageViaAPI(From, formattedResponse);
+          await sendMessageDedup(From, formattedResponse);
        return;
       }
     } catch (error) {
@@ -11308,29 +11363,29 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       
       // Process inventory updates here
       const shopId = From.replace('whatsapp:', '');
-      const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
-      
-      
-// Send results (INLINE-CONFIRM aware; single message)
-        const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+      const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);           
               
-      // --- Single-sale confirmation (text #1): send ONE crisp message and return -
-        if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
-          const x = processed[0];
-          await sendSaleConfirmationOnce(
-            From,
-            detectedLanguage,
-            requestId,
-            {
+      // === Single-update confirmation (sale OR purchase) ===
+          const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+          if (processed.length === 1) {
+            const x = processed[0];
+            const act = String(x.action).toLowerCase();
+            const common = {
               product: x.product,
               qty: x.quantity,
               unit: x.unitAfter ?? x.unit ?? '',
               pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
               newQuantity: x.newQuantity
+            };
+            if (act === 'sold') {
+              await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);
+              return;
             }
-          );
-          return;
-        }
+            if (act === 'purchased') {
+              await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
+              return;
+            }
+          }
 
         const header = chooseHeader(processed.length, COMPACT_MODE, false);
         let message = header;
@@ -11341,13 +11396,13 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           if (!rawLine) continue;
           const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
           const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
-          message += `${rawLine}${stockPart}\n`;
+          message += `${String(rawLine).trim()}${stockPart}\n`;
           if (r.success) successCount++;
         }
 
         message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
         const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-        await sendMessageViaAPI(From, formattedResponse);
+        await sendMessageDedup(From, formattedResponse);
           __handled = true;
      return;
     } else {
@@ -12658,25 +12713,30 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
         console.log(`[${requestId}] [sticky] Parsed ${parsedUpdates.length} updates`);
         const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
-
-        // Single-sale confirmation
-        const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-        if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
-          const x = processed[0];
-          await sendSaleConfirmationOnce(
-            From,
-            detectedLanguage,
-            requestId,
-            {
-              product: x.product,
-              qty: x.quantity,
-              unit: x.unitAfter ?? x.unit ?? '',
-              pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
-              newQuantity: x.newQuantity
-            }
-          );
+           
+    // === Single-update confirmation (sale OR purchase) ===
+      const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+      if (processed.length === 1) {
+        const x = processed[0];
+        const act = String(x.action).toLowerCase();
+        const common = {
+          product: x.product,
+          qty: x.quantity,
+          unit: x.unitAfter ?? x.unit ?? '',
+          pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+          newQuantity: x.newQuantity
+        };
+        if (act === 'sold') {
+          await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);
+          __handled = true;
           return res.send('<Response></Response>');
         }
+        if (act === 'purchased') {
+          await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
+          __handled = true;
+          return res.send('<Response></Response>');
+        }
+      }
 
         // Multi-line confirmation
         const header = chooseHeader(processed.length, COMPACT_MODE, false);
@@ -12687,14 +12747,14 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           if (!rawLine) continue;
           const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
           const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
-          message += `${rawLine}${stockPart}\n`;
+          message += `${String(rawLine).trim()}${stockPart}\n`;
           if (r.success) successCount++;
         }
         message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;               
         const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-                await sendMessageViaAPI(From, formattedResponse);
-                __handled = true;
-                return res.send('<Response></Response>');
+        await sendMessageDedup(From, formattedResponse);
+        __handled = true;
+        return res.send('<Response></Response>');
       }
       // Fall through if no updates parsed
       console.log(`[${requestId}] [sticky] No updates parsed; continuing with normal flow`);
