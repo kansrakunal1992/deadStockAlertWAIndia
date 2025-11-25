@@ -186,11 +186,11 @@ async function parseMultipleUpdates(reqOrText) {
   let pendingAction = null;
     if (userState) {
       if (userState.mode === 'awaitingTransactionDetails' && userState.data?.action) {
-        pendingAction = userState.data.action;              // purchase | sold | returned
+        pendingAction = userState.data.action;              // purchased | sold | returned
       } else if (userState.mode === 'awaitingBatchOverride') {
         pendingAction = 'sold';                             // still in SALE context
       } else if (userState.mode === 'awaitingPurchaseExpiryOverride') {
-        pendingAction = 'purchase';                         // still in PURCHASE context
+        pendingAction = 'purchased';                         // still in PURCHASED context
       }
       if (pendingAction) {
         console.log(`[parseMultipleUpdates] Using pending action from state: ${pendingAction}`);
@@ -223,6 +223,7 @@ async function parseMultipleUpdates(reqOrText) {
           const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
           const ACTION_MAP = {                     
             purchase: 'purchased',
+            purchased: 'purchased',
             buy: 'purchased',
             bought: 'purchased',
             sold: 'sold',
@@ -290,7 +291,7 @@ async function parseMultipleUpdates(reqOrText) {
           const qty = parseFloat(mQty[2]);
           const unitToken = mUnit[1].toLowerCase();
           const price = mPrice ? parseFloat(mPrice[1]) : null;
-          return { action: actionHint || 'purchase', product, quantity: qty, unit: unitToken, pricePerUnit: price, expiry: null };
+          return { action: actionHint || 'purchased', product, quantity: qty, unit: unitToken, pricePerUnit: price, expiry: null };
         } catch { return null; }
       }
 
@@ -310,9 +311,10 @@ async function parseMultipleUpdates(reqOrText) {
           // Apply state override for rule-based parsing too                    
           const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
           const ACTION_MAP = {                       
-            purchase: 'purchase',
-            buy: 'purchase',
-            bought: 'purchase',
+            purchase: 'purchased',
+            purchased: 'purchased',
+            buy: 'purchased',
+            bought: 'purchased',
             sold: 'sold',
             sale: 'sold',
             return: 'returned',
@@ -332,7 +334,7 @@ async function parseMultipleUpdates(reqOrText) {
             } else if (pendingAction) {
                       // Verb-less fallback: only when sticky mode exists AND AI has already failed
                       const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
-                      const ACTION_MAP = { purchase:'purchase', buy:'purchase', bought:'purchase', sold:'sold', sale:'sold', return:'returned', returned:'returned' };
+                      const ACTION_MAP = { purchase:'purchased', buy:'purchased', bought:'purchased', sold:'sold', sale:'sold', return:'returned', returned:'returned' };
                       const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
                       const alt = parseSimpleWithoutVerb(trimmed, finalAction);
                       if (alt) {
@@ -503,7 +505,7 @@ function composeDemoByLanguage(lang) {
         'Demo:',
         'User: sold milk 2 ltr',
         'Bot: ✅ Sold 2 ltr milk @ ₹? each — Stock: (updated)',
-        'User: purchase Parle-G 12 packets ₹10 exp +6m',
+        'User: purchased Parle-G 12 packets ₹10 exp +6m',
         'Bot: ✅ Purchased 12 packets Parle-G — Price: ₹10',
         '      Expiry: set to +6 months',
         'User: short summary',
@@ -1489,19 +1491,19 @@ function sanitizeProductRows(arr) {
 // ===== Localized single-word direct-set actions (switch instantly) =====
 const LOCAL_SET_WORDS = {
   // hi
-  'खरीद': 'purchase', 'बिक्री': 'sold', 'वापसी': 'returned',
+  'खरीद': 'purchased', 'बिक्री': 'sold', 'वापसी': 'returned',
   // bn
-  'ক্রয়': 'purchase', 'বিক্রি': 'sold', 'রিটার্ন': 'returned',
+  'ক্রয়': 'purchased', 'বিক্রি': 'sold', 'রিটার্ন': 'returned',
   // ta
-  'கொள்முதல்': 'purchase', 'விற்பனை': 'sold', 'ரிட்டர்ன்': 'returned',
+  'கொள்முதல்': 'purchased', 'விற்பனை': 'sold', 'ரிட்டர்ன்': 'returned',
   // te
-  'కొనుగోలు': 'purchase', 'అమ్మకం': 'sold', 'రిటర్న్': 'returned',
+  'కొనుగోలు': 'purchased', 'అమ్మకం': 'sold', 'రిటర్న్': 'returned',
   // kn
-  'ಖರೀದಿ': 'purchase', 'ಮಾರಾಟ': 'sold', 'ರಿಟರ್ನ್': 'returned',
+  'ಖರೀದಿ': 'purchased', 'ಮಾರಾಟ': 'sold', 'ರಿಟರ್ನ್': 'returned',
   // mr
-  'खरेदी': 'purchase', 'विक्री': 'sold', 'परत': 'returned',
+  'खरेदी': 'purchased', 'विक्री': 'sold', 'परत': 'returned',
   // gu
-  'ખરીદી': 'purchase', 'વેચાણ': 'sold', 'રીટર્ન': 'returned'
+  'ખરીદી': 'purchased', 'વેચાણ': 'sold', 'રીટર્ન': 'returned'
 };
 
 // Accept one-word localized switch triggers or direct-set actions
@@ -1556,7 +1558,8 @@ async function setStickyMode(from, actionOrWord) {
 
 // ===== LOCALIZED FOOTER TAG: append «<MODE_BADGE> • <SWITCH_WORD>» to every message =====
 async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
-  try {        
+  try {
+    // NOTE: badge will be shown only if the user is activated (paid or trial & not expired)
     // Marker to opt-out of footer for specific messages (onboarding/upsell)
         const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
         if (String(text).startsWith(NO_FOOTER_MARKER)) {
@@ -1567,9 +1570,26 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
 
     const shopId = String(from).replace('whatsapp:', '');
     
-// 1) Read current state and derive the *effective* action used for footer
+
+    // 1) Activation gate: only show badge if plan is active
+        let activated = false;
+        try {
+          if (typeof isUserActivated === 'function') {
+            activated = !!(await isUserActivated(shopId));
+          } else if (typeof getUserPlan === 'function') {
+            const planInfo = await getUserPlan(shopId);
+            const plan = String(planInfo?.plan ?? '').toLowerCase();
+            const end  = planInfo?.trialEnd ?? planInfo?.endDate ?? null;
+            const expired = (plan === 'trial' && end)
+              ? (new Date(end).getTime() < Date.now())
+              : false;
+            activated = (plan === 'paid') || (plan === 'trial' && !expired);
+          }
+        } catch (_) { /* best-effort only */ }
+    
+    // 2) Read current state and derive the *effective* action used for footer
     const state = await getUserStateFromDB(shopId);
-    let action = null; // 'purchase' | 'sold' | 'returned' | null
+    let action = null; // canonical: 'purchased' | 'sold' | 'returned' | null
     if (state) {
       switch (state.mode) {
         case 'awaitingTransactionDetails':
@@ -1582,12 +1602,15 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
         case 'awaitingPurchaseExpiryOverride':
         case 'awaitingPriceExpiry':
           // Purchase flows (price/expiry capture & quick override)
-          action = 'purchase';
+          action = 'purchased';
           break;
         default:
           action = state.data?.action ?? null;
       }
     }
+      
+    // Normalize to canonical forms (handles legacy 'purchase' → 'purchased')
+    if (action === 'purchase') action = 'purchased';    
 
     // 2) Resolve language to use: prefer saved user preference; else detected hint; else 'en'
     let lang = String(detectedLanguageHint || 'en').toLowerCase();
@@ -1595,17 +1618,22 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
       const pref = await getUserPreference(shopId);
       if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
     } catch (_) { /* ignore */ }
-
-    // 3) Build badge in user language
-    const badge = getModeBadge(action, lang);        // e.g., 'बिक्री', 'விற்பனை', 'SALE'
-    const switchWord = getSwitchWordFor(lang);       // e.g., 'मोड', 'மோட்', 'mode'
-    const tag = `«${badge} • ${switchWord}»`;
+        
+    // 4) If not activated, or effective action is none, do NOT append badge
+        const isNone = !action || String(action).trim().length === 0;
+        if (!activated || isNone) return String(text);
+    
+        // Build badge in user language
+        const badge = getModeBadge(action, lang);        // e.g., 'बिक्री', 'விற்பனை', 'SALE'
+        const switchWord = getSwitchWordFor(lang);       // e.g., 'मोड', 'மோட்', 'mode'
+        const tag = `«${badge} • ${switchWord}»`;
 
     // 4) Append on a new line; keep WA length constraints safe
     return text.endsWith('\n') ? (text + tag) : (text + '\n' + tag);
   } catch {
-    // Fallback if anything fails
-    return text + '\n«NONE • mode»';
+    
+    // Fallback: never show a NONE badge; return the text as-is
+    return String(text ?? '');
   }
 }
 
@@ -2901,6 +2929,17 @@ function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity
   return stockLine ? `${header}\n${stockLine}` : header;
 }
 
+// === Support link (from environment) ===
+// Falls back to wa.link if env isn't set.
+const SUPPORT_WHATSAPP_LINK = String(process.env.WHATSAPP_LINK || 'https://wa.link/6q3ol7');
+
+// Append one-line support footer to all user-visible messages
+function appendSupportFooter(msg) {
+  const base = String(msg ?? '').trim();
+  const line = `For any help, kindly reach out to AI.Saamagrii support at ${SUPPORT_WHATSAPP_LINK}`;
+  return base ? `${base}\n\n${line}` : line;
+}
+
 // NEW: short-window duplicate message guard (3 seconds)
 // Prevents accidental double “Stock: …” echoes or repeated bodies from concurrent paths.
 const _recentSends = (globalThis._recentSends = globalThis._recentSends || new Map()); // key: from -> { body, at }
@@ -2918,12 +2957,13 @@ function _isDuplicateBody(from, msg, windowMs = 3000) {
 }
 async function sendMessageDedup(From, msg) {
   if (!msg) return;
-  const m = String(msg).trim();
-  if (_isDuplicateBody(From, m)) {
+  // Append footer line using env var; dedupe on the final body
+  const withFooter = appendSupportFooter(String(msg).trim());
+  if (_isDuplicateBody(From, withFooter)) {
     try { console.log('[dedupe] suppressed duplicate body for', From); } catch (_) {}
     return;
   }
-  await sendMessageViaAPI(From, m);
+  await sendMessageViaAPI(From, withFooter);
 }
 
 async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, info) {
@@ -3194,7 +3234,7 @@ async function sendDemoTranscriptOnce(From, lang, rid = 'cta-demo') {
     'Demo:',
     'User: sold milk 2 ltr',
     'Bot: ✅ Sold 2 ltr milk @ ₹? each — Stock: (updated)',
-    'User: purchase Parle-G 12 packets ₹10 exp +6m',
+    'User: purchased Parle-G 12 packets ₹10 exp +6m',
     'Bot: ✅ Purchased 12 packets Parle-G — Price: ₹10',
     '      Expiry: set to +6 months',
     'User: short summary',
@@ -3307,12 +3347,12 @@ function getLocalizedOnboarding(lang = 'en') {
 function getLocalizedQAFallback(lang = 'en') {
   switch (String(lang).toLowerCase()) {
     case 'hi':
-      return `ठीक है! WhatsApp पर स्टॉक/एक्सपायरी ऑटोमेट करें; लो‑स्टॉक अलर्ट भी मिलेंगे。\nउदाहरण: sold milk 2 ltr • purchase Parle‑G 12 packets ₹10 exp +6m • short summary`;    
+      return `ठीक है! WhatsApp पर स्टॉक/एक्सपायरी ऑटोमेट करें; लो‑स्टॉक अलर्ट भी मिलेंगे。\nउदाहरण: sold milk 2 ltr • purchased Parle‑G 12 packets ₹10 exp +6m • short summary`;    
     case 'hi-latn':
     // Roman Hindi fallback when AI is unavailable or detects Hinglish
-      return `Theek hai! WhatsApp par stock/expiry automate karo; low‑stock alerts milenge.\nUdaharan: sold milk 2 ltr • purchase Parle‑G 12 packets ₹10 exp +6m • short summary`;
+      return `Theek hai! WhatsApp par stock/expiry automate karo; low‑stock alerts milenge.\nUdaharan: sold milk 2 ltr • purchased Parle‑G 12 packets ₹10 exp +6m • short summary`;
     default:
-      return `Automate stock & expiry on WhatsApp; get low‑stock alerts.\nTry: sold milk 2 ltr • purchase Parle‑G 12 packets ₹10 exp +6m • short summary`;
+      return `Automate stock & expiry on WhatsApp; get low‑stock alerts.\nTry: sold milk 2 ltr • purchased Parle‑G 12 packets ₹10 exp +6m • short summary`;
   }
 }
 
@@ -3378,7 +3418,7 @@ const lang = (language ?? 'en').toLowerCase();
   const DOMAIN_MAP = {
     mobile: {
       rx: /\b(mobile|mobiles|phone|smart ?phone|accessor(y|ies)|charger|earpho(ne|nes)|tempered\s?glass|cover|case)\b/i,
-      examples: ['sold cover 2 pieces', 'purchase charger 10 pieces ₹120', 'stock earphones'],
+      examples: ['sold cover 2 pieces', 'purchased charger 10 pieces ₹120', 'stock earphones'],
       benefits: {
         'hi-latn': 'Aapki mobile shop ke liye: stock/expiry auto-update, low-stock alerts (covers, chargers, earphones), smart reorder tips.',
         hi: 'आपकी मोबाइल शॉप के लिए: स्टॉक/एक्सपायरी ऑटो‑अपडेट, लो‑स्टॉक अलर्ट (कवर, चार्जर, ईयरफ़ोन), स्मार्ट री‑ऑर्डर सुझाव।'
@@ -3386,7 +3426,7 @@ const lang = (language ?? 'en').toLowerCase();
     },
     garments: {
       rx: /\b(garment|garments|kapde|clothes|apparel|shirts?|t[- ]?shirts?|jeans|kurta|salwar|saree|dress|hoodie|sweater|size|xl|l|m|s|xxl)\b/i,
-      examples: ['sold t-shirt L 3 pieces', 'purchase jeans 12 pieces ₹550', 'stock saree'],
+      examples: ['sold t-shirt L 3 pieces', 'purchased jeans 12 pieces ₹550', 'stock saree'],
       benefits: {
         'hi-latn': 'Kapdon ke liye: SKU/size tracking, low-stock alerts (sizes), fast reorder tips, daily summary.',
         hi: 'कपड़ों के लिए: SKU/साइज़ ट्रैकिंग, लो‑स्टॉक अलर्ट (साइज़), तेज री‑ऑर्डर सुझाव, दैनिक सारांश।'
@@ -3394,7 +3434,7 @@ const lang = (language ?? 'en').toLowerCase();
     },
     pickle: {
       rx: /\b(pickle|achaar|aachar|factory|batch|jar|bottle)\b/i,
-      examples: ['sold mango pickle 5 bottles', 'purchase lemon pickle 20 jars ₹80 exp +6m', 'batches mango pickle'],
+      examples: ['sold mango pickle 5 bottles', 'purchased lemon pickle 20 jars ₹80 exp +6m', 'batches mango pickle'],
       benefits: {
         'hi-latn': 'Achar/pickle ke liye: batch & expiry tracking, low-stock alerts, smart reorder tips, daily summaries.',
         hi: 'अचार/पिकल के लिए: बैच व एक्सपायरी ट्रैकिंग, लो‑स्टॉक अलर्ट, स्मार्ट री‑ऑर्डर सुझाव, दैनिक सारांश।'
@@ -3650,7 +3690,7 @@ const lang = (language ?? 'en').toLowerCase();
         if (lang === 'hi-latn') {
           if (topic === 'pricing') {
             if (pricingFlavor === 'inventory_pricing') {
-              return `Inventory item ka rate set/dekhne ke liye entry me ₹rate likho: "purchase Parle-G 12 packets ₹10", ya "prices" command use karo.`;
+              return `Inventory item ka rate set/dekhne ke liye entry me ₹rate likho: "purchased Parle-G 12 packets ₹10", ya "prices" command use karo.`;
             } else {
               return `Free trial ${TRIAL_DAYS} din ka hai; uske baad ₹${PAID_PRICE_INR}/month. Payment Paytm ${PAYTM_NUMBER} par ya link se ho sakta hai.`;
             }
@@ -3669,7 +3709,7 @@ const lang = (language ?? 'en').toLowerCase();
                   return `Daily fayda: stock/expiry auto-update, low-stock alerts, smart reorder tips. Aaj ka "short summary" bhi milta hai.`;
           }
           if (topic === 'capabilities') {
-            return `WhatsApp par stock update, expiry tracking, aur summaries. Bas "sold milk 2 ltr" ya "purchase Parle-G 12 packets ₹10 exp +6m" type karo.`;
+            return `WhatsApp par stock update, expiry tracking, aur summaries. Bas "sold milk 2 ltr" ya "purchased Parle-G 12 packets ₹10 exp +6m" type karo.`;
           }
         }
         return getLocalizedQAFallback(lang);
@@ -3774,7 +3814,7 @@ function markNudged(shopId) {
 async function composeNudge(shopId, language, hours = NUDGE_HOURS) {
   const base =
     `🟢 It’s been ${hours}+ hours since you used Saamagrii.AI.\n` +
-    `Try a quick entry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m\n` +
+    `Try a quick entry:\n• sold milk 2 ltr\n• purchased Parle-G 12 packets ₹10 exp +6m\n` +
     `Or type “mode” to switch context.`;
   // translate & single-script sanitize
   return await t(base, language ?? 'en', `nudge-${shopId}-${hours}`);
@@ -4392,7 +4432,7 @@ async function sendNativeglishDemo(From, lang, requestId) {
   const demo = [
     '🎬 Demo (उदाहरण):',
     '• sold milk 2 ltr — स्टॉक auto-update',
-    '• purchase Parle-G 12 packets ₹10 — exp +6m',
+    '• purchased Parle-G 12 packets ₹10 — exp +6m',
     '• return 1 packet — instant add-back',
     'Try: "short summary" / "छोटा सारांश"'
   ].join('\n');     
@@ -4858,7 +4898,7 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
           return true;
         }
         if (switchCmd.set) {
-          await setStickyMode(From, switchCmd.set); // purchase | sold | returned
+          await setStickyMode(From, switchCmd.set); // purchased | sold | returned
           await sendMessageViaAPI(
             From,
             await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`)
@@ -5303,9 +5343,9 @@ async function normalizeCommandText(text, detectedLanguage = 'en', requestId = '
 }
 
 const EXAMPLE_PURCHASE_EN = [
-  'Examples (purchase):',
+  'Examples (purchased):',
   '• bought milk 10 liters @60 exp 20-09',
-  '• purchase Parle-G 12 packets ₹10 exp +6m',
+  '• purchased Parle-G 12 packets ₹10 exp +6m',
   '• khareeda doodh 5 ltr ₹58 expiry 25/09/2025'
 ].join('\n');
 
@@ -7363,14 +7403,14 @@ async function validateTranscript(transcript, requestId) {
       return `${product} ${qty} ${unit} बेचा`;
     });
     // Pattern 3: Product followed by "बचा" and then purchase action
-    fixedTranscript = fixedTranscript.replace(/([a-zA-Z\s]+)\s+बचा\s+.*?(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)/gi, (match, product, purchase) => {
-      console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${product} बेचा, ${purchase}"`);
-      return `${product} बेचा, ${purchase}`;
+    fixedTranscript = fixedTranscript.replace(/([a-zA-Z\s]+)\s+बचा\s+.*?(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)/gi, (match, product, purchased) => {
+      console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${product} बेचा, ${purchased}"`);
+      return `${product} बेचा, ${purchased}`;
     });
     // Pattern 4: Purchase action followed by product and "बचा"
-    fixedTranscript = fixedTranscript.replace(/(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)\s+([a-zA-Z\s]+)\s+बचा/gi, (match, purchase, product) => {
-      console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${purchase} ${product}, बेचा ${product}"`);
-      return `${purchase} ${product}, बेचा ${product}`;
+    fixedTranscript = fixedTranscript.replace(/(खरीदा|खरीदे|लिया|खरीदी|bought|purchased|buy)\s+([a-zA-Z\s]+)\s+बचा/gi, (match, purchased, product) => {
+      console.log(`[${requestId}] Fixed mispronunciation: "${match}" → "${purchased} ${product}, बेचा ${product}"`);
+      return `${purchased} ${product}, बेचा ${product}`;
     });
     // Pattern 5: Simple "बचा" at the end of a sentence with a product
     fixedTranscript = fixedTranscript.replace(/([a-zA-Z\s]+)\s+बचा[.!?]*$/gi, (match, product) => {
@@ -7624,7 +7664,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             await saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
               batchId: batchResult?.id ?? null,
               product,
-              action: 'purchase',
+              action: 'purchased',
               purchaseDateISO,
               currentExpiryISO: expiryToUse ?? null,
               createdAtISO: new Date().toISOString(),
@@ -7939,7 +7979,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                  await saveUserStateToDB(shopId, 'awaitingBatchOverride', {
                    saleRecordId: salesResult.id,
                    product,
-                   action: 'purchase',
+                   action: 'purchased',
                    unit: update.unit,
                    quantity: Math.abs(update.quantity),
                    oldCompositeKey: selectedBatchCompositeKey,
@@ -11139,7 +11179,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
        
     // --- EARLY: handle 'mode' / localized mode switch -------------------
         try {
-          const found = parseModeSwitchLocalized(Body); // supports: 'mode', 'mode <purchase|sale|return>', localized words
+          const found = parseModeSwitchLocalized(Body); // supports: 'mode', 'mode <purchased|sale|return>', localized words
           if (found) {
             const shopId = From.replace('whatsapp:', '');
             let lang = 'en';
@@ -11150,7 +11190,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     
             if (found.set) {
               // Direct-set: instantly switch sticky mode
-              await setStickyMode(From, found.set); // 'purchase' | 'sold' | 'returned'
+              await setStickyMode(From, found.set); // 'purchased' | 'sold' | 'returned'
               const badge = getModeBadge(found.set, lang);
               const ack   = await t(`✓ ${badge} mode set.\nType product line or press buttons.`, lang, `${requestId}::mode-set`);
               // Resurface Purchase/Sale/Return quick-reply buttons (best-effort)
