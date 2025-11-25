@@ -787,7 +787,7 @@ async function getStickyActionQuick(from) {
     switch (st.mode) {
       case 'awaitingTransactionDetails': return st.data?.action ?? null;
       case 'awaitingBatchOverride':      return 'sold';
-      case 'awaitingPurchaseExpiryOverride': return 'purchase';
+      case 'awaitingPurchaseExpiryOverride': return 'purchased';
       default: return st.data?.action ?? null;
     }
   } catch { return null; }
@@ -1523,15 +1523,35 @@ function parseModeSwitchLocalized(text) {
 }
 
 // Normalize and persist sticky mode
-async function setStickyMode(from, actionOrWord) {
-  const map = {
-    purchase: 'purchase', buy: 'purchase', bought: 'purchase',
-    sale: 'sold', sell: 'sold', sold: 'sold',
-    return: 'returned', returned: 'returned'
-  };
-  const norm = (map[actionOrWord] || actionOrWord || '').toLowerCase();
-  const finalAction = ['purchase', 'sold', 'returned'].includes(norm) ? norm : 'purchase';
-  await setUserState(from, 'awaitingTransactionDetails', { action: finalAction });
+async function setStickyMode(from, actionOrWord) {      
+    // Normalize WhatsApp identifier to the same format readers use downstream.
+      const waFrom = String(from || '');
+      const normalizedFrom = waFrom.startsWith('whatsapp:')
+        ? waFrom
+        : `whatsapp:${waFrom.replace(/^whatsapp:/, '')}`;
+    
+      // Store canonical actions exactly as downstream validators and parsers expect.
+      const map = {
+        purchase: 'purchased', buy: 'purchased', bought: 'purchased',
+        sale: 'sold', sell: 'sold', sold: 'sold',
+        return: 'returned', returned: 'returned'
+      };
+      const norm = (map[actionOrWord] ?? actionOrWord ?? '').toLowerCase();
+      const finalAction = ['purchased','sold','returned'].includes(norm) ? norm : 'purchased';
+    
+      // Persist to DB (shopId derived inside setUserState) under mode expected by sticky parsers.
+      await setUserState(normalizedFrom, 'awaitingTransactionDetails', { action: finalAction });
+      try { console.log('[state] sticky set', { from: normalizedFrom, action: finalAction }); } catch (_) {}
+    
+      // Best-effort in‑memory mirror (optional)
+      try {
+        const shopIdLocal = String(normalizedFrom).replace('whatsapp:', '');
+        globalState.conversationState[shopIdLocal] = {
+          mode: 'awaitingTransactionDetails',
+          data: { action: finalAction },
+          ts: Date.now()
+        };
+      } catch (_) { /* noop */ }
 }
 
 // ===== LOCALIZED FOOTER TAG: append «<MODE_BADGE> • <SWITCH_WORD>» to every message =====
@@ -2006,9 +2026,16 @@ function _normLite(s) {
 // Map button taps / list selections to your existing quick-query router
  // Robust to multiple Twilio payload shapes + safe fallback
  async function handleInteractiveSelection(req) {
-  const raw = req.body || {};
-  const from = raw.From;     
-  const shopIdTop = String(from ?? '').replace('whatsapp:', '');
+  const raw = req.body || {};      
+  // Normalize "From" to the WhatsApp-prefixed format used by downstream readers
+    const rawFrom =
+    raw.From ?? raw.from ??
+    (raw.WaId ? `whatsapp:${raw.WaId}` : null);
+    const from = rawFrom && String(rawFrom).startsWith('whatsapp:')
+       ? String(rawFrom)
+       : `whatsapp:${String(rawFrom ?? '').replace(/^whatsapp:/, '')}`;
+     const shopIdTop = String(from ?? '').replace('whatsapp:', '');
+     
     // STEP 12: 3s duplicate‑tap guard (per shop + payload)
     const _recentTaps = (globalThis._recentTaps ||= new Map()); // shopId -> { payload, at }
     function _isDuplicateTap(shopId, payload, windowMs = 3000) {
@@ -2084,71 +2111,106 @@ function _normLite(s) {
       const prefLP = await getUserPreference(shopId);
       if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();
     } catch (_) {}     
-    // COPILOT-PATCH-ACTIVATION-CHECK-QR
-      let activated = false;
-      try {
-        const planInfo = await getUserPlan(shopIdTop);
+            
+    // Helpers (local to this handler):
+      function isPlanActive(planInfo) {
         const plan = String(planInfo?.plan ?? '').toLowerCase();
-        activated = (plan === 'trial' || plan === 'paid');
-      } catch {}
+        const end = planInfo?.trialEnd ?? planInfo?.endDate ?? null;
+        const isExpired = (() => {
+          if (!end) return true;
+          const d = new Date(end);
+          return Number.isNaN(d.getTime()) ? true : (d.getTime() < Date.now());
+        })();
+        return plan === 'paid' || (plan === 'trial' && !isExpired);
+      }
+      function getStickyExamplesLocalized(action, langCode) {
+        const L = String(langCode || 'en').toLowerCase();
+        const isHinglish = L === 'hi-latn' || /hi-?latn/.test(L);
+        const isHindi    = !isHinglish && (L === 'hi');
+        const isMarathi  = L === 'mr';
+        const isEnglish  = L === 'en' || (!isHindi && !isHinglish && !isMarathi);
+        const key = isEnglish ? 'en' : (isHindi ? 'hi' : (isHinglish ? 'hilatn' : (isMarathi ? 'mr' : 'en')));
+        const map = {
+          purchased: {
+            en:     'Examples (purchase):\n• milk 10 ltr @60/ltr exp +7d\n• sugar 5 kg @80/kg exp +6m',
+            hi:     'उदाहरण (खरीद):\n• दूध 10 लीटर @60/लीटर एक्सपायरी +7 दिन\n• चीनी 5 किलो @80/किलो एक्सपायरी +6 माह',
+            hilatn: 'Udaharan (Kharid):\n• doodh 10 liter @60/liter expiry +7 din\n• cheeni 5 kilo @80/kilo expiry +6 mahine',
+            mr:     'उदाहरण (खरेदी):\n• दूध 10 लि. @60/लि. कालावधी +7 दिवस\n• साखर 5 कि. @80/कि. कालावधी +6 महिने'
+          },
+          sold: {
+            en:     'Examples (sale):\n• sugar 2 kg\n• milk 3 ltr',
+            hi:     'उदाहरण (बिक्री):\n• चीनी 2 किलो\n• दूध 3 लीटर',
+            hilatn: 'Udaharan (Bikri):\n• cheeni 2 kilo\n• doodh 3 liter',
+            mr:     'उदाहरण (विक्री):\n• साखर 2 कि.\n• दूध 3 लि.'
+          },
+          returned: {
+            en:     'Examples (return):\n• Parle-G 3 packets\n• milk 1 ltr',
+            hi:     'उदाहरण (रिटर्न):\n• पार्ले-जी 3 पैकेट\n• दूध 1 लीटर',
+            hilatn: 'Udaharan (Return):\n• Parle-G 3 packet\n• doodh 1 liter',
+            mr:     'उदाहरण (रिटर्न):\n• पार्ले-जी 3 पाकिटे\n• दूध 1 लि.'
+          }
+        };
+        return map[action]?.[key] ?? map['purchased'].en;
+      }
+          
+    // Activation check for example gating + prompts
+      let activated = false;
+      let planInfo = null;
+      try {
+        planInfo = await getUserPlan(shopIdTop);
+        activated = isPlanActive(planInfo);
+      } catch (_) {}
+      const plan = String(planInfo?.plan ?? '').toLowerCase();
+      const end  = planInfo?.trialEnd ?? planInfo?.endDate ?? null;
+      const isNewUser = !plan || plan === 'none';
+      const trialExpired = plan === 'trial' && end ? (new Date(end).getTime() < Date.now()) : false;
   
    // Quick‑Reply buttons (payload IDs are language‑independent)
-   if (payload === 'qr_purchase') {         
-    // 4C: If not activated (Q&A/onboarding context), soft-hint instead of entering flow
-         if (!activated) {
-           const hint = await t('ℹ️ To record a transaction, send a message like “purchase sugar 5 kg” or “sold milk 2 ltr”.', lang, 'txn-hint-purchase');
-           await sendMessageViaAPI(from, hint);
-           return true;
-         }
-         await setUserState(from, 'awaitingTransactionDetails', { action: 'purchased' });                 
-         // In-memory sticky mode fallback (align with sale/return branches)
-            try {
-              const shopIdLocal = String(from).replace('whatsapp:', '');
-              globalState.conversationState[shopIdLocal] = { mode: 'awaitingTransactionDetails', data: { action: 'purchased' }, ts: Date.now() };
-            } catch (_) { /* noop */ }              
-        // Send plain ASCII examples to avoid single-script clamp losses
-            const examplesPurchase =
-              'Examples (purchase):\n' +
-              '1) milk 10 ltr Rs60 exp +7d\n' +
-              '2) sugar 5 kg Rs80 exp +6m';
-            await sendMessageViaAPI(from, examplesPurchase);
-        return true;
+   if (payload === 'qr_purchase') {                                     
+        await setStickyMode(from, 'purchased'); // always set sticky
+            if (activated) {
+              const examples = getStickyExamplesLocalized('purchased', lang);
+              await sendMessageViaAPI(from, examples);                        
+            } else {
+                  // NEW: Prompt for activation when plan not active (new or expired trial)
+                  const msg = isNewUser
+                    ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
+                    : trialExpired
+                      ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nOr pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+                      : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
+                  await sendMessageViaAPI(from, msg);
+                }
+            return true;
    }
-   if (payload === 'qr_sale') {       
-    if (!activated) {
-           const hint = await t('ℹ️ To record a transaction, send a message like “sold milk 2 ltr” or “purchase sugar 5 kg”.', lang, 'txn-hint-sale');
-           await sendMessageViaAPI(from, hint);
-           return true;
-         }
-         await setUserState(from, 'awaitingTransactionDetails', { action: 'sold' });               
-        try {
-              const shopIdLocal = String(from).replace('whatsapp:', '');
-              globalState.conversationState[shopIdLocal] = { mode: 'awaitingTransactionDetails', data: { action: 'sold' }, ts: Date.now() };
-            } catch (_) {}                 
-        const examplesSale =
-              'Examples (sale):\n' +
-              '1) sugar 2 kg\n' +
-              '2) milk 3 ltr';
-            await sendMessageViaAPI(from, examplesSale);
-         return true;
+   if (payload === 'qr_sale') {                       
+        await setStickyMode(from, 'sold'); // always set sticky
+            if (activated) {
+              const examples = getStickyExamplesLocalized('sold', lang);
+              await sendMessageViaAPI(from, examples);                        
+            } else {
+                  const msg = isNewUser
+                    ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
+                    : trialExpired
+                      ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nOr pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+                      : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
+                  await sendMessageViaAPI(from, msg);
+                }
+            return true;
    }
-   if (payload === 'qr_return') {        
-    if (!activated) {
-           const hint = await t('ℹ️ To record a transaction, send a message like “return Parle-G 3 packets” or “return milk 1 liter”.', lang, 'txn-hint-return');
-           await sendMessageViaAPI(from, hint);
-           return true;
-         }
-         await setUserState(from, 'awaitingTransactionDetails', { action: 'returned' });      
-         try {
-              const shopIdLocal = String(from).replace('whatsapp:', '');
-              globalState.conversationState[shopIdLocal] = { mode: 'awaitingTransactionDetails', data: { action: 'returned' }, ts: Date.now() };
-            } catch (_) {}                
-        const examplesReturn =
-              'Examples (return):\n' +
-              '1) Parle-G 3 packets\n' +
-              '2) milk 1 ltr';
-            await sendMessageViaAPI(from, examplesReturn);
-         return true;
+   if (payload === 'qr_return') {                         
+        await setStickyMode(from, 'returned'); // always set sticky
+            if (activated) {
+              const examples = getStickyExamplesLocalized('returned', lang);
+              await sendMessageViaAPI(from, examples);                    
+        } else {
+              const msg = isNewUser
+                ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
+                : trialExpired
+                  ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nOr pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+                  : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
+              await sendMessageViaAPI(from, msg);
+            }
+            return true;
    }
  
   // --- NEW: Activate Trial Plan ---
