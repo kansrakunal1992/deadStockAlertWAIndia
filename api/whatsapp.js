@@ -2056,7 +2056,7 @@ function _normLite(s) {
 // ensureLangTemplates/getLangSids (contentCache.js) and sendContentTemplate (whatsappButtons).
 // (Anchors for these helpers exist in your file and modules)  // keep as comment
 const _paidCtaThrottle = new Map(); // shopId -> lastSentMs
-const PAID_CTA_THROTTLE_MS = Number(process.env.PAID_CTA_THROTTLE_MS ?? (0.5 * 60 * 1000)); // 30 seconds gap
+const PAID_CTA_THROTTLE_MS = Number(process.env.PAID_CTA_THROTTLE_MS ?? (2 * 60 * 1000)); // 2 minutes throttle
 async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en') {
   try {
     const shopId = String(from ?? '').replace('whatsapp:', '');
