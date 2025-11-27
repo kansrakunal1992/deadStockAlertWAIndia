@@ -3243,11 +3243,6 @@ async function sendSalesQAButtons(From, lang, isActivated) {
         console.warn('[qa-buttons] quickReply send failed', { status: e?.response?.status, data: e?.response?.data });
       }
     }
-    // Then add a compact Demo/Help CTA line (text) to keep momentum        
-    // Use localized minimal Help/Demo CTA; avoid English-only fallbacks
-      const ctaEn = 'Reply “Demo” to see a quick walkthrough; “Help” for support & contact.';
-      const cta = await t(ctaEn, lang, 'qa-buttons-cta'); // will localize via deterministic DICT above if MT missing
-    await sendMessageQueued(From, cta);
   } catch (e) {
     console.warn('[qa-buttons] orchestration failed:', e?.message);
   }
@@ -4316,7 +4311,7 @@ function scheduleAiAnswer(shopId, From, text, lang, requestId) {
                   msg = getLocalizedQAFallback(last.lastLang);
                   if (DEBUG_QA_SANITIZE) { try { console.log('[qa] broken detected → fallback len=%d', msg.length); } catch {} }
                 }
-                await sendMessageQueued(From, msg);        
+                await sendMessageDedup(From, msg);        
         // Store the turn in DB
         try { await appendTurn(shopId, last.lastText, msg, inferTopic(last.lastText)); } catch (_) {}
       } finally { aiDebounce.delete(key); }
