@@ -2050,6 +2050,56 @@ function _normLite(s) {
     .trim();
 }
 
+// ===== Last-day OR post-expiry paid CTA (lightweight, button-only) =====
+// Shows a single-button "Activate Paid Plan" card AFTER each interaction, but throttled.
+// It uses existing helpers: getUserPlan/getUserPreference (database.js),
+// ensureLangTemplates/getLangSids (contentCache.js) and sendContentTemplate (whatsappButtons).
+// (Anchors for these helpers exist in your file and modules)  // keep as comment
+const _paidCtaThrottle = new Map(); // shopId -> lastSentMs
+const PAID_CTA_THROTTLE_MS = Number(process.env.PAID_CTA_THROTTLE_MS ?? (0.5 * 60 * 1000)); // 30 seconds gap
+async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en') {
+  try {
+    const shopId = String(from ?? '').replace('whatsapp:', '');
+    // Plan info from Airtable via database.js:getUserPlan
+    const planInfo = await getUserPlan(shopId); // { plan, trialEndDate } (trialEndDate is Date)
+    const plan = String(planInfo?.plan ?? '').toLowerCase();
+    const trialEnd = planInfo?.trialEndDate ?? null;
+    const now = Date.now();
+    const isPaid = (plan === 'paid');
+    const isTrialActiveLastDay =
+      (plan === 'trial' && trialEnd && (trialEnd.getTime() > now) && (trialEnd.getTime() - now <= 24 * 60 * 60 * 1000));
+    const isTrialExpired = (plan === 'trial' && trialEnd && (trialEnd.getTime() <= now));
+    const isNotActivated = (!plan || plan === 'demo' || plan === 'free_demo' || plan === 'free_demo_first_50');
+    // Show CTA if: last day of trial OR trial expired OR not activated (and not already paid)
+    if (isPaid || !(isTrialActiveLastDay || isTrialExpired || isNotActivated)) return;
+    // Gentle throttle so we don't overwhelm
+    const last = _paidCtaThrottle.get(shopId) ?? 0;
+    if (now - last < PAID_CTA_THROTTLE_MS) return;
+    // Resolve language from preference
+    let lang = String(langHint ?? 'en').toLowerCase();
+    try {
+      const pref = await getUserPreference(shopId);
+      if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+    } catch (_) {}
+    // Ensure content bundle and pick Paid CTA ContentSid
+    await ensureLangTemplates(lang);
+    const sids = getLangSids(lang);
+    const paidSid = sids?.paidCtaSid ?? '';
+    if (paidSid) {
+      // Place AFTER your main reply in the thread
+      await new Promise(r => setTimeout(r, 250));
+      await sendContentTemplate({ toWhatsApp: shopId, contentSid: paidSid });
+      _paidCtaThrottle.set(shopId, now);
+      // Stamp LastTrialReminder (optional analytics)
+      try {
+        const prefRow = await getUserPreference(shopId);
+        if (prefRow?.id) await setTrialReminderSent(prefRow.id);
+      } catch (_) {}
+    }
+  } catch (e) {
+    console.warn('[paid-cta] skip:', e?.message);
+  }
+}
  
 // Map button taps / list selections to your existing quick-query router
  // Robust to multiple Twilio payload shapes + safe fallback
@@ -2707,57 +2757,6 @@ const PAYMENT_LINK  = String(process.env.PAYMENT_LINK  ?? '<payment_link>');
 
 // NEW: Trial CTA ContentSid (Quick-Reply template)
 const TRIAL_CTA_SID = String(process.env.TRIAL_CTA_SID ?? '').trim();
-
-// ===== Last-day OR post-expiry paid CTA (lightweight, button-only) =====
-// Shows a single-button "Activate Paid Plan" card AFTER each interaction, but throttled.
-// It uses existing helpers: getUserPlan/getUserPreference (database.js),
-// ensureLangTemplates/getLangSids (contentCache.js) and sendContentTemplate (whatsappButtons).
-// (Anchors for these helpers exist in your file and modules)  // keep as comment
-const _paidCtaThrottle = new Map(); // shopId -> lastSentMs
-const PAID_CTA_THROTTLE_MS = Number(process.env.PAID_CTA_THROTTLE_MS ?? (0.5 * 60 * 1000)); // 30 seconds gap
-async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en') {
-  try {
-    const shopId = String(from ?? '').replace('whatsapp:', '');
-    // Plan info from Airtable via database.js:getUserPlan
-    const planInfo = await getUserPlan(shopId); // { plan, trialEndDate } (trialEndDate is Date)
-    const plan = String(planInfo?.plan ?? '').toLowerCase();
-    const trialEnd = planInfo?.trialEndDate ?? null;
-    const now = Date.now();
-    const isPaid = (plan === 'paid');
-    const isTrialActiveLastDay =
-      (plan === 'trial' && trialEnd && (trialEnd.getTime() > now) && (trialEnd.getTime() - now <= 24 * 60 * 60 * 1000));
-    const isTrialExpired = (plan === 'trial' && trialEnd && (trialEnd.getTime() <= now));
-    const isNotActivated = (!plan || plan === 'demo' || plan === 'free_demo' || plan === 'free_demo_first_50');
-    // Show CTA if: last day of trial OR trial expired OR not activated (and not already paid)
-    if (isPaid || !(isTrialActiveLastDay || isTrialExpired || isNotActivated)) return;
-    // Gentle throttle so we don't overwhelm
-    const last = _paidCtaThrottle.get(shopId) ?? 0;
-    if (now - last < PAID_CTA_THROTTLE_MS) return;
-    // Resolve language from preference
-    let lang = String(langHint ?? 'en').toLowerCase();
-    try {
-      const pref = await getUserPreference(shopId);
-      if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-    } catch (_) {}
-    // Ensure content bundle and pick Paid CTA ContentSid
-    await ensureLangTemplates(lang);
-    const sids = getLangSids(lang);
-    const paidSid = sids?.paidCtaSid ?? '';
-    if (paidSid) {
-      // Place AFTER your main reply in the thread
-      await new Promise(r => setTimeout(r, 250));
-      await sendContentTemplate({ toWhatsApp: shopId, contentSid: paidSid });
-      _paidCtaThrottle.set(shopId, now);
-      // Stamp LastTrialReminder (optional analytics)
-      try {
-        const prefRow = await getUserPreference(shopId);
-        if (prefRow?.id) await setTrialReminderSent(prefRow.id);
-      } catch (_) {}
-    }
-  } catch (e) {
-    console.warn('[paid-cta] skip:', e?.message);
-  }
-}
 
 // === NEW: Onboarding benefits video (default URL; per-language fallbacks optional) ===
 // You provided: https://kansrakunal1992.github.io/deadStockAlertWAIndia/Saamagrii.AI_ व्यापार बढ़ाएं.mp4
