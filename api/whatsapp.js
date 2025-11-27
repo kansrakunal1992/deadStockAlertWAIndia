@@ -2998,6 +2998,17 @@ function formatResultLine(r, compact = true, includeStockPart = true) {
   return `• ${r.product}: ${qty} ${unit} ${act}${stockPart} ${tail}`.trim();
 }
 
+function composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity }) {
+  const unitText  = unit ? ` ${unit}` : '';
+  const priceText = (Number(pricePerUnit) > 0)
+    ? ` at ₹${Number(pricePerUnit).toFixed(2)}/${unit}`
+    : '';
+  const stockText = (newQuantity !== undefined && newQuantity !== null)
+    ? ` (Stock: ${newQuantity}${unitText})`
+    : '';
+  return `📦 Purchased ${Math.abs(qty)}${unitText} ${product}${priceText}${stockText}`;
+}
+
 // --- Single-sale confirmation (compose & send once) --------------------------
 const saleConfirmTracker = new Set();
 
@@ -3065,22 +3076,18 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, info)
  * Mirrors the sale confirmation, but for “purchased”.
  */
 async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, payload) {
-  const {
+ const {
     product,
     qty,
     unit = '',
     pricePerUnit = null,
     newQuantity = null
   } = payload || {};
-  const unitText = unit ? ` ${unit}` : '';
-  const priceText = (pricePerUnit !== null && pricePerUnit !== undefined && Number(pricePerUnit) > 0)
-    ? ` @ ₹${pricePerUnit}`
-    : '';
-  const stockText = (newQuantity !== null && newQuantity !== undefined)
-    ? ` (Stock: ${newQuantity}${unitText})`
-    : '';
-  const msgRaw = `✅ Purchased ${qty}${unitText} ${product}${priceText}${stockText}`;
-  const localized = await t(msgRaw, detectedLanguage ?? 'en', `${requestId}::purchase-once`);
+
+  // Build the one-line head via composer (emoji + unit/price/stock)
+  const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
+  const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
+  const localized = await t(body, detectedLanguage ?? 'en', `${requestId}::purchase-once`);
   await sendMessageDedup(From, localized);
 }
 
