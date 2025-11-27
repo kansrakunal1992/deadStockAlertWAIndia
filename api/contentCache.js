@@ -183,7 +183,7 @@ const LIST_LABELS = {
    bn: { body: 'Saamagrii.AI ৩ দিন ফ্রি ট্রাই করুন', button: 'ট্রায়াল প্ল্যান সক্রিয় করুন' }
  };
  const ACTIVATE_PAID_LABELS = {
-   en: { body: 'Upgrade to paid for uninterrupted access', button: 'Activate Paid Plan' },
+   en: { body: 'Upgrade to paid plan for uninterrupted access', button: 'Activate Paid Plan' },
    hi: { body: 'निरंतर सेवा हेतु पेड प्लान सक्रिय करें', button: 'पेड प्लान सक्रिय करें' },
    gu: { body: 'નિરંતર સેવા માટે પેઈડ પ્લાન સક્રિય કરો', button: 'પેઈડ પ્લાન સક્રિય કરો' },
    ta: { body: 'தொடர்ச்சி சேவைக்கு Paid Plan செயல்படுத்தவும்', button: 'Paid Plan செயல்படுத்து' },
