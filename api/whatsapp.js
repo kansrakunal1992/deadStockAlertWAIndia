@@ -2373,8 +2373,11 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
             // Diagnostic logging before send
             console.log('[trial-activated] sending ack message:', { to: from, msg });
     
-            try {
-                const resp = await sendMessageViaAPI(from, fixNewlines(msg));
+            try {                                
+                // Prevent single-script clamp from collapsing this multi-line ack
+                const NO_CLAMP_MARKER = '<!NO_CLAMP!>';
+                const resp = await sendMessageViaAPI(from, fixNewlines(NO_CLAMP_MARKER + msg));
+
                 console.log('[trial-activated] ack send OK:', { sid: resp?.sid, to: from });                                
                 // ✅ NEW: Overwrite translation cache with clean text for future calls
                             async function overwriteTranslationCache(key, lang, text) {
@@ -3861,13 +3864,13 @@ function markNudged(shopId) {
   writeNudgeTracker(state);
 }
 
-async function composeNudge(shopId, language, hours = NUDGE_HOURS) {
-  const base =
-    `🟢 It’s been ${hours}+ hours since you used Saamagrii.AI.\n` +
-    `Try a quick entry:\n• sold milk 2 ltr\n• purchased Parle-G 12 packets ₹10 exp +6m\n` +
-    `Or type “mode” to switch context.`;
-  // translate & single-script sanitize
-  return await t(base, language ?? 'en', `nudge-${shopId}-${hours}`);
+async function composeNudge(shopId, language, hours = NUDGE_HOURS) {      
+    const NO_CLAMP_MARKER = '<!NO_CLAMP!>';
+      const base =
+        NO_CLAMP_MARKER +
+        `🟢 It’s been ${hours}+ hours since you used Saamagrii.AI.\n` +
+        `Try a quick entry:\n• sold milk 2 ltr\n• purchased Parle-G 12 packets ₹10 exp +6m\n` +
+        `Or type “mode” to switch context.`;
 }
 
 async function sendInactivityNudges() {
@@ -10864,7 +10867,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           handledRequests.add(requestId);
           const ans = await composeAISalesAnswer(shopId, cleanTranscript, langExact);
           const msg = await t(ans, langExact, `${requestId}::sales-qa-voice`);
-          await sendMessageViaAPI(From, msg);                  
+          await sendMessageDedup(From, msg);                  
           try {
                   const isActivated = await isUserActivated(shopId);
                   const buttonLang = langPinned.includes('-latn') ? langPinned.split('-')[0] : langPinned;
@@ -11429,7 +11432,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           const ans  = await composeAISalesAnswer(shopId, Body, langExact);
           const msg0 = await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`);
           const msg  = nativeglishWrap(msg0, langExact);
-          await sendMessageViaAPI(From, msg);
+          await sendMessageDedup(From, msg);
             __handled = true;
           try {
               const isActivated = await isUserActivated(shopId);
@@ -11800,7 +11803,7 @@ module.exports = async (req, res) => {
          const ans = await composeAISalesAnswer(shopId, Body, langPinned);
          const msg0 = await tx(ans, langPinned, From, Body, `${requestId}::sales-qa`);
          const msg  = nativeglishWrap(msg0, langPinned);
-         await sendMessageQueued(From, msg);
+         await sendMessageDedup(From, msg);
         __handled = true;
          try {
                   const isActivated = await isUserActivated(shopId);
@@ -13016,7 +13019,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         const ans = await composeAISalesAnswer(shopId, Body, langExact);
         const msg0 = await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`);
         const msg = nativeglishWrap(msg0, langExact);
-        await sendMessageViaAPI(From, msg);
+        await sendMessageDedup(From, msg);
         try {
           const isActivated = await isUserActivated(shopId);
           const buttonLang = langExact.includes('-latn') ? langExact.split('-')[0] : langExact;
