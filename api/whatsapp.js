@@ -2125,7 +2125,6 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
       const now = Date.now();
       if (prev && prev.payload === payload && (now - prev.at) < windowMs) return true;
       _recentTaps.set(shopId, { payload, at: now });
-      try { await maybeShowPaidCTAAfterInteraction(from, lang); } catch (_) {} // possible error line 27 Nov 2025
       return false;
     }
 
