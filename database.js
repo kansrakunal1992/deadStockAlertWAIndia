@@ -1776,7 +1776,7 @@ async function getTrialsExpiringBefore(thresholdISO) {
       id: r.id,
       shopId: r.fields.ShopID,
       trialEnd: r.fields.TrialEndDate ?? null,
-      lastReminder: r.fields.LastTrialReminder ?? null
+      lastReminder: r.fields.LastTrialReminder ?? r.fields.LastReminder ?? null
     }));
   } catch (error) {
     logError(context, error);
@@ -1794,9 +1794,24 @@ async function setTrialReminderSent(recordId, whenISO = new Date().toISOString()
       data: { fields: { LastTrialReminder: whenISO } }
     }, context);
     return { success: true };
-  } catch (error) {
-    logError(context, error);
-    return { success: false, error: error.message };
+  } catch (error) {     
+  // If this base doesn't have LastTrialReminder yet, retry with legacy LastReminder
+      const type = error?.response?.data?.error?.type;
+      if (String(type).includes('UNKNOWN_FIELD_NAME')) {
+        try {
+          await airtableUserPreferencesRequest({
+            method: 'patch',
+            url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${USER_PREFERENCES_TABLE_NAME}/${recordId}`,
+            data: { fields: { LastReminder: whenISO } }
+          }, context + '::fallback');
+          return { success: true, fallback: 'LastReminder' };
+        } catch (e2) {
+          logError(context + '::fallback', e2);
+          return { success: false, error: e2.message };
+        }
+      }
+      logError(context, error);
+      return { success: false, error: error.message };
   }
 }
 
