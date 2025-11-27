@@ -3031,7 +3031,7 @@ const SUPPORT_WHATSAPP_LINK = String(process.env.WHATSAPP_LINK || 'https://wa.li
 // Append one-line support footer to all user-visible messages
 function appendSupportFooter(msg) {
   const base = String(msg ?? '').trim();
-  const line = `For any help, kindly reach out to AI.Saamagrii support at ${SUPPORT_WHATSAPP_LINK}`;
+  const line = `For any help, kindly reach out to Saamagrii.AI support at ${SUPPORT_WHATSAPP_LINK}. Type "mode" to switch between Purchase/Sale/Return mode.`;
   return base ? `${base}\n\n${line}` : line;
 }
 
