@@ -7579,20 +7579,27 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           const invAfter = await getProductInventory(shopId, product);
           const unitText = update.unit ? ` ${update.unit}` : '';
           const newQty = invAfter?.quantity ?? result?.newQuantity;
-          const u = invAfter?.unit ?? result?.unit ?? update.unit;            
-          const compact = COMPACT_MODE
-                    ? `↩️ Returned ${Math.abs(update.quantity)} ${u ?? ''} ${product}. Stock: ${newQty ?? ''} ${u ?? ''}`.trim()
-                    : `↩️ Return processed — ${product}: +${Math.abs(update.quantity)} ${u ?? ''}`.trim()
-                        + (newQty !== undefined ? ` (Stock: ${newQty} ${u ?? ''})` : '');
-          const message = await t(compact, languageCode, 'return-ok');
-          await sendMessageViaAPI(`whatsapp:${shopId}`, message);
+          const u = invAfter?.unit ?? result?.unit ?? update.unit;                             
+        // Build a single emoji-style confirmation line; let the caller aggregate & send.
+                  const unitText2  = u ? ` ${u}` : '';
+                  const stockText2 = (newQty !== undefined && newQty !== null)
+                    ? ` (Stock: ${newQty}${unitText2})`
+                    : '';
+                  confirmTextLine = `↩️ Returned ${Math.abs(update.quantity)}${unitText2} ${product}${stockText2}`;
         } catch (e) {
           console.warn(`[Update ${shopId} - ${product}] Return failed:`, e.message);
         }
+                
         results.push({
-          product, quantity: Math.abs(update.quantity), unit: update.unit, action: 'returned',
-          success: !!result?.success, newQuantity: result?.newQuantity, unitAfter: result?.unit
-        });
+                  product,
+                  quantity: Math.abs(update.quantity),
+                  unit: update.unit,
+                  action: 'returned',
+                  success: !!result?.success,
+                  newQuantity: result?.newQuantity,
+                  unitAfter: result?.unit,
+                  inlineConfirmText: confirmTextLine // hand to aggregator; no direct send here
+                });
               
         // --- Gamify toast for successful return ---
                 try {
