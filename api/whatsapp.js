@@ -2176,6 +2176,24 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
         // Convert typical escape sequences back to real newlines; also trim weird artifacts.
         return String(str).replace(/\\n/g, '\n').replace(/\r/g, '').replace(/[ \t]*\.\?\\n/g, '\n');
       }
+         
+    // --- NEW: send examples with a localized "Processing your message…" ack + single footer tag
+      async function sendExamplesWithAck(from, lang, examplesText, requestId = 'examples') {
+        try {
+          // Localized short banner (consistent across modes)
+          const ackRaw = getStaticLabel('ack', lang);
+          const ack = await t(ackRaw, lang, `${requestId}::ack`);
+          await sendMessageViaAPI(from, ack);
+        } catch (_) { /* non-blocking */ }
+        try {
+          // Tag examples with the localized footer exactly once
+          const tagged = await tagWithLocalizedMode(from, fixNewlines(examplesText), lang);
+          await sendMessageViaAPI(from, tagged);
+        } catch (e) {
+          // Fallback: still send examples if tagging fails
+          await sendMessageViaAPI(from, fixNewlines(examplesText));
+        }
+      }
     
     if (!payload && text) {
       const BTN_TEXT_MAP = [
@@ -2277,7 +2295,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                     if (check !== true && !isRecentlyActivated) throw new Error('not-activated-yet');
                   } catch (_) {}
               const examples = getStickyExamplesLocalized('purchased', lang);
-              await sendMessageViaAPI(from, fixNewlines(examples));                        
+              await sendExamplesWithAck(from, lang, examples, `qr-purchase-${shopIdTop}`);                        
             } else {
                   // NEW: Prompt for activation when plan not active (new or expired trial)                              
             const msgRaw = isNewUser
@@ -2298,7 +2316,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                     if (check !== true && !isRecentlyActivated) throw new Error('not-activated-yet');
                   } catch (_) {}
               const examples = getStickyExamplesLocalized('sold', lang);
-              await sendMessageViaAPI(from, fixNewlines(examples));                   
+              await sendExamplesWithAck(from, lang, examples, `qr-sale-${shopIdTop}`);              
             } else {                                  
                 const msgRaw = isNewUser
                         ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
@@ -2318,7 +2336,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                     if (check !== true && !isRecentlyActivated) throw new Error('not-activated-yet');
                   } catch (_) {}
                 const examples = getStickyExamplesLocalized('returned', lang);
-                await sendMessageViaAPI(from, fixNewlines(examples));
+                await sendExamplesWithAck(from, lang, examples, `qr-return-${shopIdTop}`);
         } else {                          
             const msgRaw = isNewUser
                     ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
