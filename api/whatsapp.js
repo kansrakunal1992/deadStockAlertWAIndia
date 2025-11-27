@@ -3864,13 +3864,26 @@ function markNudged(shopId) {
   writeNudgeTracker(state);
 }
 
-async function composeNudge(shopId, language, hours = NUDGE_HOURS) {      
-    const NO_CLAMP_MARKER = '<!NO_CLAMP!>';
-      const base =
-        NO_CLAMP_MARKER +
-        `🟢 It’s been ${hours}+ hours since you used Saamagrii.AI.\n` +
-        `Try a quick entry:\n• sold milk 2 ltr\n• purchased Parle-G 12 packets ₹10 exp +6m\n` +
-        `Or type “mode” to switch context.`;
+async function composeNudge(shopId, language, hours = NUDGE_HOURS) {
+  // Prevent single-script clamping for multi-line bodies
+  const NO_CLAMP_MARKER = '<!NO_CLAMP!>';
+  const base =
+    NO_CLAMP_MARKER +
+    `🟢 It’s been ${hours}+ hours since you used Saamagrii.AI.\n` +
+    `Try a quick entry:\n• sold milk 2 ltr\n• purchased Parle-G 12 packets ₹10 exp +6m\n` +
+    `Or type “mode” to switch context.`;
+  // Resilient translation: always fall back to base
+  let msg;
+  try {
+    msg = await t(base, language ?? 'en', `nudge-${shopId}-${hours}`);
+  } catch (_) {
+    msg = base;
+  }
+  // Length guard: if translation is short/empty (e.g., "none", "Try:"), use base
+  if (!msg || String(msg).trim().length < 20) {
+    msg = base;
+  }
+  return msg;
 }
 
 async function sendInactivityNudges() {
@@ -3887,9 +3900,16 @@ async function sendInactivityNudges() {
       try {
         const pref = await getUserPreference(shopId);
         if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-      } catch {}
-      const msg = await composeNudge(shopId, lang, NUDGE_HOURS);
-      await sendMessageViaAPI(`whatsapp:${shopId}`, msg);
+      } catch {}             
+      let msg = await composeNudge(shopId, lang, NUDGE_HOURS);
+          if (!msg) {
+            // Absolute fallback (shouldn't trigger if composeNudge is healthy)
+            msg =
+              `🟢 It’s been ${NUDGE_HOURS}+ hours since you used Saamagrii.AI.\n` +
+              `Try a quick entry:\n• sold milk 2 ltr\n• purchased Parle-G 12 packets ₹10 exp +6m\n` +
+              `Or type “mode” to switch context.`;
+          }
+       await sendMessageViaAPI(`whatsapp:${shopId}`, msg);
       markNudged(shopId);
       console.log(`[nudge] sent to ${shopId} (LastUsed=${u.lastUsed ?? '—'})`);
       // tiny delay to avoid rate limits
