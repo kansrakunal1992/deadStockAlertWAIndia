@@ -2075,6 +2075,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
       const now = Date.now();
       if (prev && prev.payload === payload && (now - prev.at) < windowMs) return true;
       _recentTaps.set(shopId, { payload, at: now });
+      try { await maybeShowPaidCTAAfterInteraction(from, lang); } catch (_) {} // possible error line 27 Nov 2025
       return false;
     }
 
@@ -2237,7 +2238,8 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                       : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
                   await sendMessageViaAPI(from, fixNewlines(msgRaw));
                 }
-            return true;
+       try { await maybeShowPaidCTAAfterInteraction(from, lang); } catch (_) {}     
+       return true;
    }
    if (payload === 'qr_sale') {                       
         await setStickyMode(from, 'sold'); // always set sticky                      
@@ -2256,7 +2258,8 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                           : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
                       await sendMessageViaAPI(from, fixNewlines(msgRaw));
                 }
-            return true;
+       try { await maybeShowPaidCTAAfterInteraction(from, lang); } catch (_) {}
+       return true;
    }
    if (payload === 'qr_return') {                         
         await setStickyMode(from, 'returned'); // always set sticky                        
@@ -2275,7 +2278,8 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                       : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
                   await sendMessageViaAPI(from, fixNewlines(msgRaw));
             }
-            return true;
+       try { await maybeShowPaidCTAAfterInteraction(from, lang); } catch (_) {}     
+       return true;
    }
  
   // --- NEW: Activate Trial Plan ---
@@ -2284,6 +2288,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
         if (activated) {
           const msg = await t('✅ You already have access.', lang, `cta-trial-already-${shopId}`);
           await sendMessageViaAPI(from, fixNewlines(msg));
+          try { await maybeShowPaidCTAAfterInteraction(from, lang); } catch (_) {}
           return true;
         }
     // Treat tap as explicit confirmation to start trial
@@ -2411,6 +2416,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
       lang, `cta-paid-${shopId}`
     );
     await sendMessageViaAPI(from, msg);
+    try { await maybeShowPaidCTAAfterInteraction(from, lang); } catch (_) {}
     return true;
   }
 
@@ -2701,6 +2707,57 @@ const PAYMENT_LINK  = String(process.env.PAYMENT_LINK  ?? '<payment_link>');
 
 // NEW: Trial CTA ContentSid (Quick-Reply template)
 const TRIAL_CTA_SID = String(process.env.TRIAL_CTA_SID ?? '').trim();
+
+// ===== Last-day OR post-expiry paid CTA (lightweight, button-only) =====
+// Shows a single-button "Activate Paid Plan" card AFTER each interaction, but throttled.
+// It uses existing helpers: getUserPlan/getUserPreference (database.js),
+// ensureLangTemplates/getLangSids (contentCache.js) and sendContentTemplate (whatsappButtons).
+// (Anchors for these helpers exist in your file and modules)  // keep as comment
+const _paidCtaThrottle = new Map(); // shopId -> lastSentMs
+const PAID_CTA_THROTTLE_MS = Number(process.env.PAID_CTA_THROTTLE_MS ?? (0.5 * 60 * 1000)); // 30 seconds gap
+async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en') {
+  try {
+    const shopId = String(from ?? '').replace('whatsapp:', '');
+    // Plan info from Airtable via database.js:getUserPlan
+    const planInfo = await getUserPlan(shopId); // { plan, trialEndDate } (trialEndDate is Date)
+    const plan = String(planInfo?.plan ?? '').toLowerCase();
+    const trialEnd = planInfo?.trialEndDate ?? null;
+    const now = Date.now();
+    const isPaid = (plan === 'paid');
+    const isTrialActiveLastDay =
+      (plan === 'trial' && trialEnd && (trialEnd.getTime() > now) && (trialEnd.getTime() - now <= 24 * 60 * 60 * 1000));
+    const isTrialExpired = (plan === 'trial' && trialEnd && (trialEnd.getTime() <= now));
+    const isNotActivated = (!plan || plan === 'demo' || plan === 'free_demo' || plan === 'free_demo_first_50');
+    // Show CTA if: last day of trial OR trial expired OR not activated (and not already paid)
+    if (isPaid || !(isTrialActiveLastDay || isTrialExpired || isNotActivated)) return;
+    // Gentle throttle so we don't overwhelm
+    const last = _paidCtaThrottle.get(shopId) ?? 0;
+    if (now - last < PAID_CTA_THROTTLE_MS) return;
+    // Resolve language from preference
+    let lang = String(langHint ?? 'en').toLowerCase();
+    try {
+      const pref = await getUserPreference(shopId);
+      if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+    } catch (_) {}
+    // Ensure content bundle and pick Paid CTA ContentSid
+    await ensureLangTemplates(lang);
+    const sids = getLangSids(lang);
+    const paidSid = sids?.paidCtaSid ?? '';
+    if (paidSid) {
+      // Place AFTER your main reply in the thread
+      await new Promise(r => setTimeout(r, 250));
+      await sendContentTemplate({ toWhatsApp: shopId, contentSid: paidSid });
+      _paidCtaThrottle.set(shopId, now);
+      // Stamp LastTrialReminder (optional analytics)
+      try {
+        const prefRow = await getUserPreference(shopId);
+        if (prefRow?.id) await setTrialReminderSent(prefRow.id);
+      } catch (_) {}
+    }
+  } catch (e) {
+    console.warn('[paid-cta] skip:', e?.message);
+  }
+}
 
 // === NEW: Onboarding benefits video (default URL; per-language fallbacks optional) ===
 // You provided: https://kansrakunal1992.github.io/deadStockAlertWAIndia/Saamagrii.AI_ व्यापार बढ़ाएं.mp4
@@ -10821,13 +10878,16 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                   await sendSalesQAButtons(From, buttonLang, isActivated);
                 } catch (e) {
                   console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
-                }
-          return;
+                }                  
+        // PAID-CTA: show activation card after the Q&A reply (throttled)
+        try { await maybeShowPaidCTAAfterInteraction(From, langExact); } catch (_) {}
+        return;
         }
         // Read‑only normalized command → route & exit
         if (!FORCE_INVENTORY && orch.normalizedCommand) {
           handledRequests.add(requestId);
           await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-voice`);
+          try { await maybeShowPaidCTAAfterInteraction(From, langExact); } catch (_) {}
           return;
         }
       } catch (e) {
@@ -10859,10 +10919,12 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
             };
             if (act === 'sold') {
               await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);
+              try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
               return;
             }
             if (act === 'purchased') {
               await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
+              try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
               return;
             }
           }
@@ -10883,6 +10945,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
           const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
           await sendMessageDedup(From, formattedResponse);
+          try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
        return;
       }
     } catch (error) {
@@ -10962,6 +11025,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         from: process.env.TWILIO_WHATSAPP_NUMBER,
         to: From
       });
+      try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
       return;
     } else {
       console.log(`[${requestId}] [5.5] High confidence (${confidence}), proceeding without confirmation...`);
@@ -11011,6 +11075,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
             from: process.env.TWILIO_WHATSAPP_NUMBER,
             to: From
           });
+          try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
           return;
         }
         
@@ -11071,6 +11136,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           from: process.env.TWILIO_WHATSAPP_NUMBER,
           to: From
         });
+        try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
       }
     }
   } catch (error) {
@@ -11379,13 +11445,15 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
             } catch (e) {
               console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
             }
+            try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
           return;
         }
         // Read‑only normalized command → route & exit
         if (!FORCE_INVENTORY && orch.normalizedCommand) {
           handledRequests.add(requestId);
           await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
-            __handled = true;
+          __handled = true;
+          try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
           return;
         }
       } catch (e) {
@@ -11443,7 +11511,8 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
         const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
         await sendMessageDedup(From, formattedResponse);
-          __handled = true;
+        __handled = true;
+        try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
      return;
     } else {
       console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);          
@@ -11514,6 +11583,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         from: process.env.TWILIO_WHATSAPP_NUMBER,
         to: From
       });
+      try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
       return;
     }
     
@@ -11581,6 +11651,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         } else {
           const translatedMessage = await t(defaultMessage, detectedLanguage, requestId);
           await sendMessageViaAPI(From, translatedMessage);
+          try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
         }
       }
     
@@ -11595,6 +11666,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       from: process.env.TWILIO_WHATSAPP_NUMBER,
       to: From
     });
+    try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
   }
 }
 
@@ -11744,6 +11816,7 @@ module.exports = async (req, res) => {
                 } catch (e) {
                   console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
                 }
+           try { await maybeShowPaidCTAAfterInteraction(From, langPinned); } catch (_) {}
          // minimal TwiML ack
          const twiml = new twilio.twiml.MessagingResponse();
          twiml.message('');
@@ -11756,7 +11829,8 @@ module.exports = async (req, res) => {
        if (!FORCE_INVENTORY && orch.normalizedCommand) {
          handledRequests.add(requestId);
          await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm`);
-           __handled = true;
+         __handled = true;
+         try { await maybeShowPaidCTAAfterInteraction(From, langPinned); } catch (_) {}
          const twiml = new twilio.twiml.MessagingResponse();
          twiml.message('');
          res.type('text/xml');
@@ -11871,7 +11945,15 @@ module.exports = async (req, res) => {
         __handled = true;
         return;
       }
-  }); // <- tips auto-stop here even on early returns
+  }); // <- tips auto-stop here even on early returns        
+  // FINAL SAFETY: if we reached here without earlier returns, show CTA once more.
+      try {
+        const waFrom =
+          (req?.body?.From && String(req.body.From).startsWith('whatsapp:'))
+            ? req.body.From
+            : `whatsapp:${String(req?.body?.WaId ?? '').replace(/^whatsapp:/, '')}`;
+        await maybeShowPaidCTAAfterInteraction(waFrom, detectedLanguage);
+      } catch (_) {}
 };
 
 async function handleRequest(req, res, response, requestId, requestStart) {  
@@ -12950,6 +13032,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
         }               
         __handled = true;
+        try { await maybeShowPaidCTAAfterInteraction(From, langExact); } catch (_) {}
         return res.send('<Response></Response>');
       }
 
@@ -12958,6 +13041,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         handledRequests.add(requestId);
         await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);                
         __handled = true;
+        try { await maybeShowPaidCTAAfterInteraction(From, langExact); } catch (_) {}
         return res.send('<Response></Response>');
       }
     } catch (e) {
@@ -13007,6 +13091,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
          await sendMessageViaAPI(From, formattedResponse);
          __handled = true;
+        try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
          return res.send('<Response></Response>');
     } else {
       console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
@@ -13108,6 +13193,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       await clearUserState(From);
         __handled = true;
       res.send('<Response></Response>');
+      try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
       return;
     }
   }
@@ -13151,6 +13237,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         await sendMessageViaAPI(From, instantSummary);
       }
       res.send('<Response></Response>');
+      try { await maybeShowPaidCTAAfterInteraction(From, prefLang); } catch (_) {}
       return;
     }
   }
@@ -13170,6 +13257,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           await sendMessageViaAPI(From, defaultMessage);
         }
         res.send('<Response></Response>');
+        try { await maybeShowPaidCTAAfterInteraction(From, 'en'); } catch (_) {}
       }
 }
 
