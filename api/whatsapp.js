@@ -2982,8 +2982,14 @@ function formatResultLine(r, compact = true, includeStockPart = true) {
       : '';
   const act = capitalize(r.action ?? '');
   if (compact) {
-    if (r.success) {
-      const symbol = r.action === 'returned' ? '↩️' : '✅';
+    if (r.success) {          
+    // Unified symbol map for actions
+      const SYMBOLS = {
+        purchased: '📦',
+        sold:      '🛒',
+        returned:  '↩️'
+      };
+      const actionLc = String(r.action ?? '').toLowerCase();
       return `${symbol} ${act} ${qty} ${unit} ${r.product}${stockPart}`.trim();
     }
     return `❌ ${r.product} — ${r.error ?? 'Error'}`;
@@ -2996,13 +3002,15 @@ function formatResultLine(r, compact = true, includeStockPart = true) {
 const saleConfirmTracker = new Set();
 
 function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity }) {
-  const total = Number.isFinite(pricePerUnit) ? (pricePerUnit * Math.abs(qty)) : null;
-  const priceTxt = Number.isFinite(pricePerUnit)
-    ? `@ ₹${pricePerUnit} each — Total: ₹${total}`
-    : `@ ₹? each`;
-  const header = `✅ Sold ${Math.abs(qty)} ${unit} ${product} ${priceTxt}`.trim();
-  const stockLine = Number.isFinite(newQuantity) ? `Stock: ${newQuantity} ${unit}` : '';
-  return stockLine ? `${header}\n${stockLine}` : header;
+  const unitText  = unit ? ` ${unit}` : '';
+  const priceText = (Number(pricePerUnit) > 0)
+    ? ` at ₹${Number(pricePerUnit).toFixed(2)}/${unit}`
+    : '';
+  const stockText = (newQuantity !== undefined && newQuantity !== null)
+    ? ` (Stock: ${newQuantity}${unitText})`
+    : '';
+  // Use 🛒 for sold (parallel to ↩️ for returned and 📦 for purchased)
+  return `🛒 Sold ${Math.abs(qty)}${unitText} ${product}${priceText}${stockText}`;
 }
 
 // === Support link (from environment) ===
@@ -3046,8 +3054,9 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, info)
   // Gate duplicates per request
   if (saleConfirmTracker.has(requestId)) return;
   saleConfirmTracker.add(requestId);
-  const body = composeSaleConfirmation(info);
-  const msg = await t(body, detectedLanguage ?? 'en', requestId);
+  const head = composeSaleConfirmation(info);
+  const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
+  const msg = await t(body, detectedLanguage ?? 'en', `${requestId}::sale-once`);
   await sendMessageDedup(From, msg);
 }
 
@@ -3073,13 +3082,6 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
   const msgRaw = `✅ Purchased ${qty}${unitText} ${product}${priceText}${stockText}`;
   const localized = await t(msgRaw, detectedLanguage ?? 'en', `${requestId}::purchase-once`);
   await sendMessageDedup(From, localized);
-}
-
-function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity }) {
-  const unitText = unit ? ` ${unit}` : '';
-  const priceText = (Number(pricePerUnit) > 0) ? ` @ ₹${pricePerUnit}` : '';
-  const stockText = (newQuantity !== undefined) ? ` (Stock: ${newQuantity}${unitText})` : '';
-  return `✅ Sold ${qty}${unitText} ${product}${priceText}${stockText}`;
 }
 
 function chooseHeader(count, compact = true, isPrice = false) {
@@ -10019,7 +10021,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
           baseMessage += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
           
           const formattedResponse = await t(baseMessage, detectedLanguage, requestId);
-          await sendMessageViaAPI(from, formattedResponse);
+          await sendMessageDedup(from, formattedResponse);
         }
         
         // Debug: Log final totals
@@ -12620,7 +12622,7 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
 
       message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
       const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-      await sendMessageViaAPI(From, formattedResponse);
+      await sendMessageDedup(From, formattedResponse);
     
     // Clean up
     await deleteCorrectionState(originalCorrectionId);
@@ -12718,7 +12720,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
         message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
 
         const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-        await sendMessageViaAPI(From, formattedResponse);
+        await sendMessageDedup(From, formattedResponse);
     
     // Clear state after processing
     await clearUserState(From);
@@ -13130,7 +13132,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       }
       message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;             
       const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-         await sendMessageViaAPI(From, formattedResponse);
+         await sendMessageDedup(From, formattedResponse);
          __handled = true;
         try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
          return res.send('<Response></Response>');
@@ -13230,7 +13232,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       }
       message2 += `\n✅ Successfully updated ${successCount2} of ${processed2.length} items`;
       const formattedResponse2 = await t(message2.trim(), detectedLanguage, requestId);
-      await sendMessageViaAPI(From, formattedResponse2);
+      await sendMessageDedup(From, formattedResponse2);
       await clearUserState(From);
         __handled = true;
       res.send('<Response></Response>');
@@ -13368,7 +13370,7 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
       message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`
       
       const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-      await sendMessageViaAPI(From, formattedResponse);
+      await sendMessageDedup(From, formattedResponse);
     
     // Clear state after processing
     await clearUserState(From);
@@ -13458,7 +13460,7 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
           
           // FIX: Send via WhatsApp API instead of synchronous response
           const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-          await sendMessageViaAPI(From, formattedResponse);
+          await sendMessageDedup(From, formattedResponse);
         
         // Clear state after processing
         await clearUserState(From);
@@ -13658,7 +13660,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
                 message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
       
                 const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-                await sendMessageViaAPI(From, formattedResponse);
+                await sendMessageDedup(From, formattedResponse);
       
                 // Clear state after processing
                 await clearUserState(From);
@@ -13847,7 +13849,7 @@ const header = chooseHeader(processed.length, COMPACT_MODE, false);
 
       message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
       const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-      await sendMessageViaAPI(From, formattedResponse);
+      await sendMessageDedup(From, formattedResponse);
     
     // Clear state after processing
     await clearUserState(From);
