@@ -5200,20 +5200,23 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
 
   // Allow 'mode' / localized switch words during the override window too.
   // If user wants to switch context, clear this short-lived state and act.
-  const switchCmd = parseModeSwitchLocalized(Body);
-  if (switchCmd) {
-    await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
-    return true;
-    }
-    if (switchCmd.set) {
-      await setStickyMode(From, switchCmd.set);
-      await sendMessageViaAPI(
-        From,
-        await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`)
-      );
-      return true;
-    }
-  }
+  const switchCmd = parseModeSwitchLocalized(Body);      
+    if (switchCmd) {
+        // Optional: clear this short-lived override state when user switches context
+        try { await deleteUserStateFromDB(state.id); } catch (_) {}
+        if (switchCmd.ask) {
+          await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
+          return true;
+        }
+        if (switchCmd.set) {
+          await setStickyMode(From, switchCmd.set);
+          await sendMessageViaAPI(
+            From,
+            await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`)
+          );
+          return true;
+        }
+      }
   // Keep current
   if (txt === 'ok' || txt === 'okay') {        
     //if (state?.mode !== 'awaitingTransactionDetails') {
@@ -11346,7 +11349,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       return;
     }
        
-    // --- EARLY: handle 'mode' / localized mode switch -------------------
+    // --- EARLY: handle 'mode' / localized mode switch -------------------                
         try {
           const found = parseModeSwitchLocalized(Body); // supports: 'mode', 'mode <purchased|sale|return>', localized words
           if (found) {
@@ -11355,12 +11358,11 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
             try {
               const pref = await getUserPreference(shopId);
               if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-            } catch { /* noop */ }            
-                                               
+            } catch { /* noop */ }
             await sendWelcomeFlowLocalized(From, lang, requestId);
-            return true;                        
-            }
-             } catch (_) { /* noop */ }
+            return true;
+          }
+        } catch (_) { /* noop */ }
     
             if (found.set) {
               // Direct-set: instantly switch sticky mode
@@ -11832,17 +11834,16 @@ module.exports = async (req, res) => {
   // Language detection (also persists preference)
   const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);  
   
-  // --- EARLY: 'mode' / localized switch for plain text (webhook level) ---
+  // --- EARLY: 'mode' / localized switch for plain text (webhook level) ---        
     try {
-        const found = Body && parseModeSwitchLocalized(Body);
-        if (found) {
-          const shopId = String(From).replace('whatsapp:', '');
-          let langPinned = String(detectedLanguage || 'en').toLowerCase();
-                                     
-          await sendWelcomeFlowLocalized(From, langPinned, requestId);
-              return true;
-              }
-           } catch (_) { /* noop */ }
+      const found = Body && parseModeSwitchLocalized(Body);
+      if (found) {
+        const shopId = String(From).replace('whatsapp:', '');
+        let langPinned = String(detectedLanguage || 'en').toLowerCase();
+        await sendWelcomeFlowLocalized(From, langPinned, requestId);
+        return true; // STOP: do not fall through
+      }
+    } catch (_) { /* noop */ }
     
   // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====
    try {
