@@ -11382,7 +11382,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               return; // STOP: do not fall into inventory parsing
             }
           }
-        } catch { /* ignore and continue */ }
+         catch { /* ignore and continue */ }
       
     let isGreeting = false;
     let greetingLang = 'en';
