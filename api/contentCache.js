@@ -17,6 +17,18 @@ const AUTH_TOKEN  = process.env.AUTH_TOKEN  || process.env.TWILIO_AUTH_TOKEN;
 const CONTENT_API_URL = 'https://content.twilio.com/v1/Content';
 const TTL_MS = 24 * 60 * 60 * 1000; // refresh daily
 
+// --- NEW: Paid confirmation labels (<=20 chars title) ---
+const PAID_CONFIRM_LABELS = {
+  en: { body: 'Already completed the payment?', button: 'Paid' },
+  hi: { body: 'भुगतान पूरा किया?', button: 'Paid' },
+  gu: { body: 'ચુકવણી થઇ ગઈ?', button: 'Paid' },
+  ta: { body: 'பணம் செலுத்திவிட்டீர்களா?', button: 'Paid' },
+  te: { body: 'చెల్లింపు పూర్తయిందా?', button: 'Paid' },
+  kn: { body: 'ಪಾವತಿ ಪೂರ್ಣವೇ?', button: 'Paid' },
+  mr: { body: 'पेमेंट झाले का?', button: 'Paid' },
+  bn: { body: 'পেমেন্ট সম্পন্ন?', button: 'Paid' }
+};
+
 if (!ACCOUNT_SID || !AUTH_TOKEN) {
    throw new Error('Missing ACCOUNT_SID or AUTH_TOKEN');
  }
@@ -329,6 +341,29 @@ async function createActivatePaidCTAForLang(lang) {
   return data.sid;
 }
 
+// --- NEW: Builder for the single-button "Paid" confirm ---
+async function createPaidConfirmCTAForLang(lang) {
+  const base = normalizeLangForContent(lang);
+  const l = PAID_CONFIRM_LABELS[base] ?? PAID_CONFIRM_LABELS.en;
+  const payload = {
+    friendly_name: `saamagrii_paid_confirm_${base}_${Date.now()}`,
+    language: 'en',
+    types: {
+      'twilio/quick-reply': {
+        body: l.body,
+        actions: [
+          { type: 'QUICK_REPLY', title: clampTitle(l.button), id: 'confirm_paid' }
+        ]
+      }
+    }
+  };
+  const { data } = await axios.post(CONTENT_API_URL, payload, {
+    auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
+  });
+  console.log(`[contentCache] Created Paid-Confirm for ${lang}: ContentSid=${data.sid}`);
+  return data.sid;
+}
+
 // lang -> { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, ts }
 const sidsByLang = new Map();
 
@@ -346,6 +381,7 @@ const language = normalizeLangForContent(lang);
     listPickerSid : created?.listPickerSid || null,
     trialCtaSid   : created?.trialCtaSid   || null,
     paidCtaSid    : created?.paidCtaSid    || null,
+    paidConfirmSid: created?.paidConfirmSid ?? null,
     onboardingQrSid: created?.onboardingQrSid ?? null,
     ts            : Date.now()
   };
@@ -362,6 +398,7 @@ function getLangSids(lang) {
      listPickerSid : null,
      trialCtaSid   : null,
      paidCtaSid    : null,
+     paidConfirmSid: null,
      onboardingQrSid: null
    };
 }
@@ -379,16 +416,20 @@ async function actuallyCreateOrFetchTemplates(language) {
   // Trial/Paid CTAs and Onboarding QR are independent; errors shouldn't block menus
   let trialCtaSid = null, paidCtaSid = null;
   let onboardingQrSid = null;
+  let paidConfirmSid = null;
   try { trialCtaSid = await createActivateTrialCTAForLang(language); } catch (e) {
     console.warn('[contentCache] Trial CTA create failed:', e?.response?.data || e?.message);
   }
   try { paidCtaSid = await createActivatePaidCTAForLang(language); } catch (e) {
     console.warn('[contentCache] Paid CTA create failed:', e?.response?.data || e?.message);
-  }    
+  }  
+  try { paidConfirmSid = await createPaidConfirmCTAForLang(language); } catch (e) {
+      console.warn('[contentCache] Paid-Confirm CTA create failed:', e?.response?.data ?? e?.message);
+    }
   try { onboardingQrSid = await createOnboardingQuickReplyForLang(language); } catch (e) {
       console.warn('[contentCache] Onboarding QR create failed:', e?.response?.data ?? e?.message);
     }
-  return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, onboardingQrSid };
+  return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, onboardingQrSid, paidConfirmSid };
 }
 
 module.exports = { ensureLangTemplates, getLangSids };
