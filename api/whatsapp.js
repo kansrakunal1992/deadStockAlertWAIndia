@@ -2495,7 +2495,6 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
    
   // --- NEW: Activate Paid Plan ---     
   if (payload === 'activate_paid') {
-          
     // Show paywall; activation only after user replies "paid"
          // IMPORTANT: use RAW markers so clamp/footer logic can detect them.
          const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
