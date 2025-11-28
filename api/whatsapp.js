@@ -2495,20 +2495,31 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
    
   // --- NEW: Activate Paid Plan ---     
   if (payload === 'activate_paid') {
-      // Show paywall; activation only after user replies "paid"
-      const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
-      const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+          
+    // Show paywall; activation only after user replies "paid"
+         // IMPORTANT: use RAW markers so clamp/footer logic can detect them.
+         const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
+         const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
     
       // Compose the 3-line paywall body
       const body =
         `To activate the paid plan, pay ₹${PAID_PRICE_INR} via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\n` +
-        `Or pay at: ${PAYMENT_LINK}\nClick on "paid" after payment ✅`;
-    
-      // Localize, then prefix BOTH markers so clamps & footer are bypassed for THIS message
-      const localized = await t(body, lang, `cta-paid-${shopId}`);
-      const msg = NO_CLAMP_MARKER + NO_FOOTER_MARKER + localized;
-    
-      await sendMessageViaAPI(from, msg);
+        `Or pay at: ${PAYMENT_LINK}\nClick on "paid" after payment ✅`;        
+          
+    // Put BOTH markers INSIDE the string given to t(...),
+         // so enforceSingleScriptSafe() and tagWithLocalizedMode() skip clamp/footer.
+         const localized = await t(
+           NO_CLAMP_MARKER + NO_FOOTER_MARKER + body,
+           lang,
+           `cta-paid-${shopId}`
+         );
+         // Normalize any escaped newlines before sending
+         const fixNewlines = s =>
+           String(s)
+             .replace(/\/n/g, '\n')   // forward-slash n -> newline
+             .replace(/\\r/g, '')     // drop CRs
+             .replace(/\\n/g, '\n');  // literal backslash-n -> newline
+         await sendMessageViaAPI(from, fixNewlines(localized));
     
       // NEW: Immediately surface single-button "Paid" quick-reply (unchanged)
       try {
