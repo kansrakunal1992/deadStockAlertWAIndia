@@ -3272,7 +3272,17 @@ async function sendSalesQAButtons(From, lang, isActivated) {
       } catch (e) {
         console.warn('[qa-buttons] quickReply send failed', { status: e?.response?.status, data: e?.response?.data });
       }
-    }
+    }         
+    // NEW: Always follow with Inventory Query List-Picker (Short Summary, Low Stock, Expiring, Sales Today/Week, etc.)
+      // This ensures that when the user types "mode" (or any localized equivalent), they see both
+      // transaction actions AND inventory queries together.
+      if (sids?.listPickerSid) {
+        try {
+          await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid });
+        } catch (e) {
+          console.warn('[qa-buttons] listPicker send failed', { status: e?.response?.status, data: e?.response?.data });
+        }
+      }
   } catch (e) {
     console.warn('[qa-buttons] orchestration failed:', e?.message);
   }
