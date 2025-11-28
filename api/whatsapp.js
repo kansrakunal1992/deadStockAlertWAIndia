@@ -2493,16 +2493,24 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
     return true;
   }
    
-  // --- NEW: Activate Paid Plan ---
+  // --- NEW: Activate Paid Plan ---     
   if (payload === 'activate_paid') {
-    // Show paywall; activation only after user replies "paid"
-    const msg = await t(
-      `To activate the paid plan, pay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\n`
-      + `Or pay at: ${PAYMENT_LINK}\nClick on "paid" after payment ✅`,
-      lang, `cta-paid-${shopId}`
-    );
-    await sendMessageViaAPI(from, msg);      
-    // NEW: Immediately surface single-button "Paid" quick-reply
+      // Show paywall; activation only after user replies "paid"
+      const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
+      const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+    
+      // Compose the 3-line paywall body
+      const body =
+        `To activate the paid plan, pay ₹${PAID_PRICE_INR} via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\n` +
+        `Or pay at: ${PAYMENT_LINK}\nClick on "paid" after payment ✅`;
+    
+      // Localize, then prefix BOTH markers so clamps & footer are bypassed for THIS message
+      const localized = await t(body, lang, `cta-paid-${shopId}`);
+      const msg = NO_CLAMP_MARKER + NO_FOOTER_MARKER + localized;
+    
+      await sendMessageViaAPI(from, msg);
+    
+      // NEW: Immediately surface single-button "Paid" quick-reply (unchanged)
       try {
         await ensureLangTemplates(lang);
         const sids = getLangSids(lang);
@@ -2512,9 +2520,10 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
       } catch (e) {
         console.warn('[activate_paid] paidConfirm send failed', e?.response?.status, e?.response?.data);
       }
-    try { await maybeShowPaidCTAAfterInteraction(from, lang); } catch (_) {}
-    return true;
-  }
+    
+      try { await maybeShowPaidCTAAfterInteraction(from, lang); } catch (_) {}
+      return true;
+    }
 
 // NEW: Handle taps on the single-button "Paid" quick-reply
 if (payload === 'confirm_paid') {
