@@ -11347,42 +11347,60 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       });
       
       return;
-    }
-       
-    // --- EARLY: handle 'mode' / localized mode switch -------------------                
+    }      
+    
+    // --- EARLY: handle 'mode' / localized mode switch --------------------------
+    let found;        // ensure availability outside try
+    let lang = 'en';  // default
+    
+    try {
+      found = parseModeSwitchLocalized(Body); // supports: 'mode', 'mode <purchased|sale|return>', localized words
+    
+      if (found) {
+        const shopId = From.replace('whatsapp:', '');
+    
+        // best-effort: read user pref for language
         try {
-          const found = parseModeSwitchLocalized(Body); // supports: 'mode', 'mode <purchased|sale|return>', localized words
-          if (found) {
-            const shopId = From.replace('whatsapp:', '');
-            let lang = 'en';
-            try {
-              const pref = await getUserPreference(shopId);
-              if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-            } catch { /* noop */ }
-            await sendWelcomeFlowLocalized(From, lang, requestId);
-            return true;
+          const pref = await getUserPreference(shopId);
+          if (pref?.success && pref.language) {
+            lang = String(pref.language).toLowerCase();
           }
         } catch (_) { /* noop */ }
     
-            if (found.set) {
-              // Direct-set: instantly switch sticky mode
-              await setStickyMode(From, found.set); // 'purchased' | 'sold' | 'returned'
-              const badge = getModeBadge(found.set, lang);
-              const ack   = await t(`✓ ${badge} mode set.\nType product line or press buttons.`, lang, `${requestId}::mode-set`);
-              // Resurface Purchase/Sale/Return quick-reply buttons (best-effort)
-              try {
-                await ensureLangTemplates(lang);
-                const sids = getLangSids(lang);
-                if (sids?.quickReplySid) {
-                  await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
-                }
-              } catch { /* best effort only */ }
-              await sendMessageViaAPI(From, await tagWithLocalizedMode(From, ack, lang));
-              handledRequests.add(requestId);
-              return; // STOP: do not fall into inventory parsing
-            }
-          }
-         catch { /* ignore and continue */ }
+        // If user only asked to open "mode" UX (no direct set), show welcome flow and exit
+        if (!found.set) {
+          await sendWelcomeFlowLocalized(From, lang, requestId);
+          return true;
+        }
+      }
+    } catch (_) { /* noop: continue to next paths */ }
+    
+    // If a direct mode set was detected, apply it and exit early
+    if (found?.set) {
+      const shopId = From.replace('whatsapp:', '');
+    
+      await setStickyMode(From, found.set); // 'purchased' | 'sold' | 'returned'
+    
+      const badge = getModeBadge(found.set, lang);
+      const ack = await t(
+        `✓ ${badge} mode set.\nType product line or press buttons.`,
+        lang,
+        `${requestId}::mode-set`
+      );
+    
+      // Resurface Purchase/Sale/Return quick-reply buttons (best effort)
+      try {
+        await ensureLangTemplates(lang);
+        const sids = getLangSids(lang);
+        if (sids?.quickReplySid) {
+          await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
+        }
+      } catch (_) { /* best effort only */ }
+    
+      await sendMessageViaAPI(From, await tagWithLocalizedMode(From, ack, lang));
+      handledRequests.add(requestId);
+      return; // STOP: do not fall into inventory parsing
+    }
       
     let isGreeting = false;
     let greetingLang = 'en';
@@ -11758,6 +11776,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage); } catch (_) {}
   }
 }
+
 
 // Main module exports
 module.exports = async (req, res) => {
