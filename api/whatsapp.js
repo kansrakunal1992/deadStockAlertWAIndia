@@ -1517,8 +1517,31 @@ function parseModeSwitchLocalized(text) {
   const isSingle = !/\s/.test(singleWord);
   const inFallbacks = SWITCH_FALLBACKS.some(x => String(x).toLowerCase() === singleWord);
   if (isSingle && inFallbacks) return { ask: true };
+  
+  // Direct-set in English/Hinglish phrases (purchase/sale/return)
+      // Normalize common verbs → canonical actions used by sticky mode
+      // purchase → 'purchased', sale/sold → 'sold', return → 'returned'
+      const DIRECT_SET_MAP = {
+        purchased: /\b(purchase|purchased|buy|bought)\b/i,
+        sold: /\b(sale|sell|sold)\b/i,
+        returned: /\b(return|returned)\b/i
+      };
+      for (const [act, rx] of Object.entries(DIRECT_SET_MAP)) {
+        if (rx.test(t)) return { set: act };
+      }
+    
+      // Direct-set via localized one-word labels (LOCAL_SET_WORDS map is defined earlier)
+      try {
+        const lc = (LOCAL_SET_WORDS && typeof LOCAL_SET_WORDS === 'object') ? LOCAL_SET_WORDS : null;
+        if (lc) {
+          // exact single-word match to any localized label
+          const hit = Object.keys(lc).find(k => k.toLowerCase() === singleWord);
+          if (hit) return { set: lc[hit] }; // returns 'purchased' | 'sold' | 'returned'
+        }
+      } catch (_) { /* noop */ }
+    
+      // Mode phrases that still imply "ask" (open menu)
 
-  // Phrase contains switch hint: open options
   const containsFallback = SWITCH_FALLBACKS.some(x => t.includes(String(x).toLowerCase())); 
   if (containsFallback) return { ask: true };
   return null;
@@ -2482,14 +2505,46 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
     // Show paywall; activation only after user replies "paid"
     const msg = await t(
       `To activate the paid plan, pay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\n`
-      + `Or pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`,
+      + `Or pay at: ${PAYMENT_LINK}\nClick on "paid" after payment ✅`,
       lang, `cta-paid-${shopId}`
     );
-    await sendMessageViaAPI(from, msg);
+    await sendMessageViaAPI(from, msg);      
+    // NEW: Immediately surface single-button "Paid" quick-reply
+      try {
+        await ensureLangTemplates(lang);
+        const sids = getLangSids(lang);
+        if (sids?.paidConfirmSid) {
+          await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.paidConfirmSid });
+        }
+      } catch (e) {
+        console.warn('[activate_paid] paidConfirm send failed', e?.response?.status, e?.response?.data);
+      }
     try { await maybeShowPaidCTAAfterInteraction(from, lang); } catch (_) {}
     return true;
   }
 
+// NEW: Handle taps on the single-button "Paid" quick-reply
+if (payload === 'confirm_paid') {
+  const shopId = String(from).replace('whatsapp:', '');
+  const langPref = (await getUserPreference(shopId))?.language?.toLowerCase() ?? 'en';
+  const ack = await t(
+    'Thanks! We will verify the payment shortly. If not activated in a minute, please tap “Paid” again.',
+    langPref, `confirm-paid-${shopId}`
+  );
+  await sendMessageViaAPI(from, ack);
+  // Re-surface the button for convenience
+  try {
+    await ensureLangTemplates(langPref);
+    const sids = getLangSids(langPref);
+    if (sids?.paidConfirmSid) {
+      await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.paidConfirmSid });
+    }
+  } catch (e) {
+    console.warn('[confirm_paid] re-send failed', e?.response?.status, e?.response?.data);
+  }
+  return true;
+}
+     
   // List‑Picker selections → route using user's saved language preference
     let lpLang = 'en';
     try {
@@ -5003,9 +5058,36 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
       const switchCmd = parseModeSwitchLocalized(Body);
       if (switchCmd) {
         try { await deleteUserStateFromDB(state.id); } catch (_) {}
-        if (switchCmd.ask) {
-          await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
-          return true;
+        if (switchCmd.ask) {          
+        // INLINE: send both Quick-Reply and List-Picker (activation gated)
+              const toNumber = String(From).replace('whatsapp:', '');
+              let lang = String(detectedLanguage || 'en').toLowerCase();
+              try {
+                const pref = await getUserPreference(toNumber);
+                if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+              } catch { /* noop */ }
+              // Activation gate
+              let isActivated = false;
+              try {
+                const planInfo = await getUserPlan(toNumber);
+                const plan = String(planInfo?.plan ?? '').toLowerCase();
+                isActivated = (plan === 'trial' || plan === 'paid');
+              } catch { /* noop */ }
+              await ensureLangTemplates(lang);
+              const sids = getLangSids(lang);
+              if (!isActivated) {
+                const onboardingSid = String(process.env.ONBOARDING_QR_SID ?? '').trim() || sids?.onboardingQrSid;
+                if (onboardingSid) await sendContentTemplate({ toWhatsApp: toNumber, contentSid: onboardingSid });
+                else {
+                  const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+                  const txt = getTrialCtaText(lang);
+                  await sendMessageQueued(From, NO_FOOTER_MARKER + await t(txt, lang, 'mode-onboard-fallback'));
+                }
+                return true;
+              }
+              if (sids?.quickReplySid) { try { await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.quickReplySid }); } catch (e) { console.warn('[mode/override] quickReply failed', { status: e?.response?.status, data: e?.response?.data }); } }
+              if (sids?.listPickerSid) { try { await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid }); } catch (e) { console.warn('[mode/override] listPicker failed', { status: e?.response?.status, data: e?.response?.data }); } }
+              return true;
         }
         if (switchCmd.set) {
           await setStickyMode(From, switchCmd.set); // purchased | sold | returned
@@ -5155,9 +5237,36 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   const switchCmd = parseModeSwitchLocalized(Body);
   if (switchCmd) {
     try { await deleteUserStateFromDB(state.id); } catch (_) {}
-    if (switchCmd.ask) {
-      await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
-      return true;
+    if (switchCmd.ask) {      
+    // INLINE: send both Quick-Reply and List-Picker (activation gated)
+          const toNumber = String(From).replace('whatsapp:', '');
+          let lang = String(detectedLanguage || 'en').toLowerCase();
+          try {
+            const pref = await getUserPreference(toNumber);
+            if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+          } catch { /* noop */ }
+          // Activation gate
+          let isActivated = false;
+          try {
+            const planInfo = await getUserPlan(toNumber);
+            const plan = String(planInfo?.plan ?? '').toLowerCase();
+            isActivated = (plan === 'trial' || plan === 'paid');
+          } catch { /* noop */ }
+          await ensureLangTemplates(lang);
+          const sids = getLangSids(lang);
+          if (!isActivated) {
+            const onboardingSid = String(process.env.ONBOARDING_QR_SID ?? '').trim() || sids?.onboardingQrSid;
+            if (onboardingSid) await sendContentTemplate({ toWhatsApp: toNumber, contentSid: onboardingSid });
+            else {
+              const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+              const txt = getTrialCtaText(lang);
+              await sendMessageQueued(From, NO_FOOTER_MARKER + await t(txt, lang, 'mode-onboard-fallback'));
+            }
+            return true;
+          }
+          if (sids?.quickReplySid) { try { await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.quickReplySid }); } catch (e) { console.warn('[mode/override] quickReply failed', { status: e?.response?.status, data: e?.response?.data }); } }
+          if (sids?.listPickerSid) { try { await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid }); } catch (e) { console.warn('[mode/override] listPicker failed', { status: e?.response?.status, data: e?.response?.data }); } }
+          return true;
     }
     if (switchCmd.set) {
       await setStickyMode(From, switchCmd.set);
@@ -6077,12 +6186,39 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
   {
     const switchCmd = parseModeSwitchLocalized(text);
     if (switchCmd) {
-      if (switchCmd.ask) {                                      
-            if (await shouldWelcomeNow(shopId, text)) {
-            await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
-            return true;
-                  }
-                  // If welcome was shown recently, do nothing here; fall through to other handlers.
+      if (switchCmd.ask) {                                                         
+        if (await shouldWelcomeNow(shopId, text)) {
+                await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
+                return true;
+              }
+              // Welcome suppressed → still show both menus inline
+              const toNumber = String(From).replace('whatsapp:', '');
+              let lang = String(detectedLanguage || 'en').toLowerCase();
+              try {
+                const pref = await getUserPreference(toNumber);
+                if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+              } catch { /* noop */ }
+              let isActivated = false;
+              try {
+                const planInfo = await getUserPlan(toNumber);
+                const plan = String(planInfo?.plan ?? '').toLowerCase();
+                isActivated = (plan === 'trial' || plan === 'paid');
+              } catch { /* noop */ }
+              await ensureLangTemplates(lang);
+              const sids = getLangSids(lang);
+              if (!isActivated) {
+                const onboardingSid = String(process.env.ONBOARDING_QR_SID ?? '').trim() || sids?.onboardingQrSid;
+                if (onboardingSid) await sendContentTemplate({ toWhatsApp: toNumber, contentSid: onboardingSid });
+                else {
+                  const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+                  const txt = getTrialCtaText(lang);
+                  await sendMessageQueued(From, NO_FOOTER_MARKER + await t(txt, lang, 'mode-onboard-fallback'));
+                }
+                return true;
+              }
+              if (sids?.quickReplySid) { try { await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.quickReplySid }); } catch (e) { console.warn('[mode/suppressed-welcome] quickReply failed', { status: e?.response?.status, data: e?.response?.data }); } }
+              if (sids?.listPickerSid) { try { await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid }); } catch (e) { console.warn('[mode/suppressed-welcome] listPicker failed', { status: e?.response?.status, data: e?.response?.data }); } }
+              return true;
       }
       if (switchCmd.set) {
         await setStickyMode(From, switchCmd.set);
@@ -6652,9 +6788,30 @@ try{
   {
     const switchCmd = parseModeSwitchLocalized(text);
     if (switchCmd) {
-      if (switchCmd.ask) {
-        await sendWelcomeFlowLocalized(From, detectedLanguage ?? 'en', requestId);
-        return true;
+      if (switchCmd.ask) {              
+        const toNumber = String(From).replace('whatsapp:', '');
+              let lang = String(detectedLanguage || 'en').toLowerCase();
+              try {
+                const pref = await getUserPreference(toNumber);
+                if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+              } catch { /* noop */ }
+              let isActivated = false;
+              try {
+                const planInfo = await getUserPlan(toNumber);
+                const plan = String(planInfo?.plan ?? '').toLowerCase();
+                isActivated = (plan === 'trial' || plan === 'paid');
+              } catch { /* noop */ }
+              await ensureLangTemplates(lang);
+              const sids = getLangSids(lang);
+              if (!isActivated) {
+                const onboardingSid = String(process.env.ONBOARDING_QR_SID ?? '').trim() || sids?.onboardingQrSid;
+                if (onboardingSid) await sendContentTemplate({ toWhatsApp: toNumber, contentSid: onboardingSid });
+                else { const NO_FOOTER_MARKER = '<!NO_FOOTER!>'; const txt = getTrialCtaText(lang); await sendMessageQueued(From, NO_FOOTER_MARKER + await t(txt, lang, 'mode-onboard-fallback')); }
+                return true;
+              }
+              if (sids?.quickReplySid) { try { await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.quickReplySid }); } catch (e) { console.warn('[mode/plain] quickReply failed', { status: e?.response?.status, data: e?.response?.data }); } }
+              if (sids?.listPickerSid) { try { await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid }); } catch (e) { console.warn('[mode/plain] listPicker failed', { status: e?.response?.status, data: e?.response?.data }); } }
+              return true;
       }
       if (switchCmd.set) {
         await setStickyMode(From, switchCmd.set);
@@ -11312,7 +11469,28 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
             try {
               const pref = await getUserPreference(shopId);
               if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-            } catch { /* noop */ }
+            } catch { /* noop */ }            
+                        
+            if (found.ask) {
+                  let isActivated = false;
+                  try {
+                    const planInfo = await getUserPlan(shopId);
+                    const plan = String(planInfo?.plan ?? '').toLowerCase();
+                    isActivated = (plan === 'trial' || plan === 'paid');
+                  } catch { /* noop */ }
+                  await ensureLangTemplates(lang);
+                  const sids = getLangSids(lang);
+                  if (!isActivated) {
+                    const onboardingSid = String(process.env.ONBOARDING_QR_SID ?? '').trim() || sids?.onboardingQrSid;
+                    if (onboardingSid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: onboardingSid });
+                    else { const NO_FOOTER_MARKER = '<!NO_FOOTER!>'; const txt = getTrialCtaText(lang); await sendMessageQueued(From, NO_FOOTER_MARKER + await t(txt, lang, 'mode-onboard-fallback')); }
+                  } else {
+                    if (sids?.quickReplySid) { try { await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid }); } catch (e) { console.warn('[mode/early] quickReply failed', { status: e?.response?.status, data: e?.response?.data }); } }
+                    if (sids?.listPickerSid) { try { await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.listPickerSid }); } catch (e) { console.warn('[mode/early] listPicker failed', { status: e?.response?.status, data: e?.response?.data }); } }
+                  }
+                  // Optional dedupe/apology guard
+                  try { handledRequests.add(requestId); } catch { /* noop */ }
+                }
     
             if (found.set) {
               // Direct-set: instantly switch sticky mode
@@ -11811,6 +11989,26 @@ module.exports = async (req, res) => {
         if (found) {
           const shopId = String(From).replace('whatsapp:', '');
           let langPinned = String(detectedLanguage || 'en').toLowerCase();
+                    
+        if (found.ask) {
+              let isActivated = false;
+              try {
+                const planInfo = await getUserPlan(shopId);
+                const plan = String(planInfo?.plan ?? '').toLowerCase();
+                isActivated = (plan === 'trial' || plan === 'paid');
+              } catch { /* noop */ }
+              await ensureLangTemplates(langPinned);
+              const sids = getLangSids(langPinned);
+              if (!isActivated) {
+                const onboardingSid = String(process.env.ONBOARDING_QR_SID ?? '').trim() || sids?.onboardingQrSid;
+                if (onboardingSid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: onboardingSid });
+                else { const NO_FOOTER_MARKER = '<!NO_FOOTER!>'; const txt = getTrialCtaText(langPinned); await sendMessageQueued(From, NO_FOOTER_MARKER + await t(txt, langPinned, 'mode-onboard-fallback')); }
+              } else {
+                if (sids?.quickReplySid) { try { await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid }); } catch (e) { console.warn('[mode/early-2] quickReply failed', { status: e?.response?.status, data: e?.response?.data }); } }
+                if (sids?.listPickerSid) { try { await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.listPickerSid }); } catch (e) { console.warn('[mode/early-2] listPicker failed', { status: e?.response?.status, data: e?.response?.data }); } }
+              }
+              try { handledRequests.add(requestId); } catch { /* noop */ }
+            }
                        
     // NEW: Button-only switching → DO NOT set mode here.
               // Show pre-existing localized switch hint + Quick-Reply buttons; user stays in NONE until a button tap.
