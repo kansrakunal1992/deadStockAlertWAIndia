@@ -51,6 +51,63 @@ const INVENTORY_CACHE_TTL = 5 * 60 * 1000;               // 5 minutes
 const PRODUCT_CACHE_TTL = 60 * 60 * 1000;                // 1 hour
 const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+// === Feature flag: ENABLE_STREAK_MESSAGES (inline helper; no imports) ===
+let __FLAGS_CACHE; // per-file cache
+
+function __toBool(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+}
+
+function __isStreakEnabled() {
+  if (__FLAGS_CACHE && typeof __FLAGS_CACHE.enableStreak === 'boolean') {
+    return __FLAGS_CACHE.enableStreak;
+  }
+  const raw = process.env.ENABLE_STREAK_MESSAGES;
+  const enabled = __toBool(raw);
+  try {
+    console.log('[flags] ENABLE_STREAK_MESSAGES =', raw ?? '(unset)', '→', enabled ? 'ON' : 'OFF');
+  } catch (_) {}
+  __FLAGS_CACHE = { enableStreak: enabled };
+  return enabled;
+}
+// === End flag helper ===
+
+// --- Gamified streak nudge (gated; safe to leave even if counters aren't live) ---
+async function maybeSendStreakMessage(From, lang = 'en', tag = 'streak') {
+  // Double gate: respect env flag here too
+  if (!__isStreakEnabled()) return false;
+
+  try {
+    const shopId = String(From || '').replace('whatsapp:', '');
+
+    // Optional: respect your 15s grace after trial activation (you set this in activateTrialFlow)
+    const recent = globalThis._recentActivations?.get?.(shopId);
+    if (recent && Date.now() - recent < 15000) return false;
+
+    // Try your own counters if available; otherwise do nothing
+    let count = null;
+    if (typeof getUserStreakInfo === 'function') {
+      const info = await getUserStreakInfo(shopId); // expected shape: {count, qualified}
+      count = info?.count;
+      if (info && info.qualified === false) return false;
+    }
+    // If no counters exist yet, quietly skip
+    if (!Number.isFinite(count) || count < 1) return false;
+
+    const msg = await t(
+      `🔥 Streak ${count}! Keep it going—log today’s update to reach ${count + 1}.`,
+      lang,
+      `${tag}::${shopId}`
+    );
+    await sendMessageViaAPI(From, msg);
+    return true;
+  } catch (e) {
+    console.warn('[streak] failed:', e?.message);
+    return false;
+  }
+}
+
 // [UNIQ:ORCH-VAR-LOCK-001] Variant lock & Sales-QA cache helpers
 // ============================================================================
 // Keep exact language variant (e.g., 'hi-latn') instead of normalizing to 'hi'
@@ -2478,7 +2535,11 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                       : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
                   await sendMessageViaAPI(from, fixNewlines(msgRaw));
                 }
-       try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}     
+       try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}                    
+        // STREAK (interactive: purchase/sale/return): gated
+        if (__isStreakEnabled()) {
+          try { await maybeSendStreakMessage(from, lang, `${requestId}::streak-qr-${shopId}`); } catch (_) {}
+        }
        return true;
    }
    if (payload === 'qr_sale') {                       
@@ -2498,7 +2559,11 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                           : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
                       await sendMessageViaAPI(from, fixNewlines(msgRaw));
                 }
-       try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}
+       try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}               
+        // STREAK (interactive: purchase/sale/return): gated
+        if (__isStreakEnabled()) {
+          try { await maybeSendStreakMessage(from, lang, `${requestId}::streak-qr-${shopId}`); } catch (_) {}
+        }
        return true;
    }
    if (payload === 'qr_return') {                         
@@ -2518,7 +2583,11 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                       : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
                   await sendMessageViaAPI(from, fixNewlines(msgRaw));
             }
-       try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}     
+       try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}                    
+        // STREAK (interactive: purchase/sale/return): gated
+        if (__isStreakEnabled()) {
+          try { await maybeSendStreakMessage(from, lang, `${requestId}::streak-qr-${shopId}`); } catch (_) {}
+        }
        return true;
    }
  
@@ -11199,14 +11268,22 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                   console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
                 }                  
         // PAID-CTA: show activation card after the Q&A reply (throttled)
-        try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}
+        try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}                    
+        // STREAK (voice Q&A): gated by ENABLE_STREAK_MESSAGES
+        if (__isStreakEnabled()) {
+          try { await maybeSendStreakMessage(From, langExact, `${requestId}::streak-qa-voice`); } catch (_) {}
+        }
         return;
         }
         // Read‑only normalized command → route & exit
         if (!FORCE_INVENTORY && orch.normalizedCommand) {
           handledRequests.add(requestId);
           await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-voice`);
-          try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}
+          try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}                        
+          // STREAK (voice normalized command): gated
+            if (__isStreakEnabled()) {
+              try { await maybeSendStreakMessage(From, langExact, `${requestId}::streak-norm-voice`); } catch (_) {}
+            }
           return;
         }
       } catch (e) {
@@ -11238,13 +11315,21 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
             };
             if (act === 'sold') {
               await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);
-              try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}
+              try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}                               
+              // STREAK (voice sale): gated
+                if (__isStreakEnabled()) {
+                  try { await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-sale-voice`); } catch (_) {}
+                }
               return;
             }
             if (act === 'purchased') {
               await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
-              try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}
-              return;
+              try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}                             
+              // STREAK (voice purchase): gated
+                if (__isStreakEnabled()) {
+                  try { await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-purchase-voice`); } catch (_) {}
+                }
+                return;
             }
           }
 
@@ -11787,7 +11872,11 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
             } catch (e) {
               console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
             }
-            try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
+            try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}                        
+            // STREAK (text Q&A): gated
+            if (__isStreakEnabled()) {
+              try { await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-qa-text`); } catch (_) {}
+            }
           return;
         }
         // Read‑only normalized command → route & exit
@@ -11795,7 +11884,11 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           handledRequests.add(requestId);
           await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
           __handled = true;
-          try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
+          try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}          
+          // STREAK (text normalized command): gated
+            if (__isStreakEnabled()) {
+              try { await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-norm-text`); } catch (_) {}
+            }
           return;
         }
       } catch (e) {
@@ -11828,11 +11921,17 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               newQuantity: x.newQuantity
             };
             if (act === 'sold') {
-              await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);
+              await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);                                
+              if (__isStreakEnabled()) {
+                  try { await maybeSendStreakMessage(from, lang, `${requestId}::streak-qr-${shopId}`); } catch (_) {}
+                }
               return;
             }
             if (act === 'purchased') {
               await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
+              if (__isStreakEnabled()) {
+                  try { await maybeSendStreakMessage(from, lang, `${requestId}::streak-qr-${shopId}`); } catch (_) {}
+                }
               return;
             }
           }
@@ -13230,12 +13329,22 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         };
         if (act === 'sold') {
           await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);
-          __handled = true;
+          __handled = true;              
+        if (__isStreakEnabled()) {
+            try {
+              await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-sticky-sale`);
+            } catch (_) {}
+          }
           return res.send('<Response></Response>');
         }
         if (act === 'purchased') {
           await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
-          __handled = true;
+          __handled = true;                    
+            if (__isStreakEnabled()) {
+                try {
+                  await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-sticky-purchase`);
+                } catch (_) {}
+              }
           return res.send('<Response></Response>');
         }
       }
