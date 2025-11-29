@@ -3510,26 +3510,68 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       hasAny = !!(today?.totalSales || inv?.totalValue || (inv?.lowStock||[]).length);
     } catch (_) {}
     if (!hasAny) {
-      await sendTagged('📊 Short Summary — Aaj abhi koi transaction nahi hua.\nTip: “sold milk 2 ltr” try karo.');
+      await sendTagged('📊 Short Summary — Aaj abhi koi transaction nahi hua.\n💡 Tip: “sold milk 2 ltr” try karo.');
       return true;
-    }
+    } 
     
     const lines = [];
+        // 1) Sales today (amount + optional orders/items)
         try {
           const s = await getTodaySalesSummary(shopId);
-          if (s?.totalSales) lines.push(`Sales Today: ₹${s.totalSales}`);
+          if (s?.totalSales) {
+            const amt = Number(s.totalSales).toFixed(0);
+            const orders = (s?.orders ?? s?.bills ?? s?.count ?? null);
+            const items  = (s?.itemsSold ?? null);
+            const tail   = orders ? ` • ${orders} orders` : (items ? ` • ${items} items` : '');
+            lines.push(`🧾 Sales Today: ₹${amt}${tail}`);
+          }
+          // Optional: vs yesterday (compact)
+          try {
+            const y = await getSalesSummaryPeriod(shopId, 'yesterday'); // already imported
+            if (y?.totalSales && s?.totalSales) {
+              const diff = Number(s.totalSales) - Number(y.totalSales);
+              const sign = diff === 0 ? '＝' : (diff > 0 ? '📈' : '📉');
+              lines.push(`↔️ vs Yesterday: ${sign} ₹${Math.abs(diff).toFixed(0)}`);
+            }
+          } catch (_) { /* soft-fail */ }
         } catch (_){}
+    
+        // 2) Low stock with quantity + unit for context
         try {
           const lRaw = await getLowStockProducts(shopId) || [];
-          const l = sanitizeProductRows(lRaw); // Airtable rows → { name, quantity, unit }
-          if (l.length) lines.push(`Low Stock: ${ l.slice(0,5).map(x => x.name).join(', ') }`);
+          const l = sanitizeProductRows(lRaw); // → { name, quantity, unit }
+          if (l.length) {
+            const lowList = l.slice(0,5).map(x => {
+              const qty = Number(x.quantity ?? 0);
+              const unit = String(x.unit ?? '').trim();
+              return qty ? `${x.name} (${qty}${unit ? ' ' + unit : ''})` : x.name;
+            }).join(', ');
+            lines.push(`🟠 Low Stock: ${lowList}`);
+          }
         } catch(_){}
+    
+        // 3) Expiring soon (7 days) with days left if available
         try {
           const eRaw = await getExpiringProducts(shopId, 7) || [];
-          const e = sanitizeProductRows(eRaw);
-          if (e.length) lines.push(`Expiring Soon: ${ e.slice(0,5).map(x => x.name).join(', ') }`);
+          const e = sanitizeProductRows(eRaw); // fields may include expiry; we just render names here
+          if (e.length) {
+            // attempt to read daysLeft if your rows carry it (defensive)
+            const fmt = (r) => {
+              const days = r?.fields?.DaysLeft ?? r?.daysLeft ?? null;
+              return Number.isFinite(days) ? `${r.name} (${days}d)` : r.name;
+            };
+            const expList = e.slice(0,5).map(fmt).join(', ');
+            lines.push(`⏳ Expiring Soon: ${expList}`);
+          }
         } catch(_){}
-    const body = `📊 Short Summary\n${lines.join('\n') || '—'}`;
+    
+        // 4) Next actions hint when there is anything actionable
+        const actionable = lines.some(l => /^🟠 Low Stock:/i.test(l) || /^⏳ Expiring Soon:/i.test(l));
+        if (actionable) {
+          lines.push(`➡️ Next actions: • reorder suggestions • prices • stock value`);
+        }
+    
+        const body = `📊 Short Summary\n${lines.join('\n') || '—'}`;
     await sendTagged(body);
     return true;
   }
@@ -5941,28 +5983,80 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
               await sendTagged(prompt);
               return true;
             }
-    
-            if (cmd === 'short summary') {
-              // Build concise snapshot (data-backed)
-              let hasAny = false;
-              try {
-                const today = await getTodaySalesSummary(shopId);
-                const inv = await getInventorySummary(shopId);
-                hasAny = !!(today?.totalSales || inv?.totalValue || (inv?.lowStock ?? []).length);
-              } catch (_) {}
-              if (!hasAny) {
-                await sendTagged('📊 Short Summary — Aaj abhi koi transaction nahi hua.\nTip: “sold milk 2 ltr” try karo.');
-                return true;
-              }
-              const lines = [];
-              try { const s = await getTodaySalesSummary(shopId); if (s?.totalSales) lines.push(`Sales Today: ₹${s.totalSales}`); } catch (_) {}
-              try { const l = await getLowStockProducts(shopId) ?? []; if (l.length) lines.push(`Low Stock: ${l.slice(0,5).map(x=>x.product).join(', ')}`); } catch (_) {}
-              try { const e = await getExpiringProducts(shopId, 7) ?? []; if (e.length) lines.push(`Expiring Soon: ${e.slice(0,5).map(x=>x.product).join(', ')}`); } catch (_) {}
-              const body = `📊 Short Summary\n${lines.join('\n') || '—'}`;
-              await sendTagged(body);
-              return true;
-            }
-    
+              
+        if (cmd === 'short summary') {
+                      // Build concise snapshot (data-backed)
+                      let hasAny = false;
+                      try {
+                       const today = await getTodaySalesSummary(shopId);
+                        const inv = await getInventorySummary(shopId);
+                        hasAny = !!(today?.totalSales || inv?.totalValue || (inv?.lowStock ?? []).length);
+                      } catch (_) {}
+                      if (!hasAny) {
+                        await sendTagged('📊 Short Summary — Aaj abhi koi transaction nahi hua.\n💡 Tip: “sold milk 2 ltr” try karo.');
+                        return true;
+                      }
+                      const lines = [];
+                      // 1) Sales today (amount + optional orders/items)
+                      try {
+                        const s = await getTodaySalesSummary(shopId);
+                        if (s?.totalSales) {
+                          const amt = Number(s.totalSales).toFixed(0);
+                          const orders = (s?.orders ?? s?.bills ?? s?.count ?? null);
+                          const items  = (s?.itemsSold ?? null);
+                          const tail   = orders ? ` • ${orders} orders` : (items ? ` • ${items} items` : '');
+                          lines.push(`🧾 Sales Today: ₹${amt}${tail}`);
+                        }
+                        // Optional: vs yesterday (compact)
+                        try {
+                          const y = await getSalesSummaryPeriod(shopId, 'yesterday');
+                          if (y?.totalSales && s?.totalSales) {
+                            const diff = Number(s.totalSales) - Number(y.totalSales);
+                            const sign = diff === 0 ? '＝' : (diff > 0 ? '📈' : '📉');
+                            lines.push(`↔️ vs Yesterday: ${sign} ₹${Math.abs(diff).toFixed(0)}`);
+                          }
+                        } catch (_) { /* soft-fail */ }
+                      } catch (_){}
+        
+                      // 2) Low stock with quantity + unit for context
+                      try {
+                        const lRaw = await getLowStockProducts(shopId) ?? [];
+                        const l = sanitizeProductRows(lRaw); // Airtable rows → { name, quantity, unit }
+                        if (l.length) {
+                          const lowList = l.slice(0,5).map(x => {
+                            const qty = Number(x.quantity ?? 0);
+                            const unit = String(x.unit ?? '').trim();
+                            return qty ? `${x.name} (${qty}${unit ? ' ' + unit : ''})` : x.name;
+                          }).join(', ');
+                          lines.push(`🟠 Low Stock: ${lowList}`);
+                        }
+                      } catch (_){}
+        
+                      // 3) Expiring soon (7 days) with days left if available
+                      try {
+                        const eRaw = await getExpiringProducts(shopId, 7) ?? [];
+                        const e = sanitizeProductRows(eRaw);
+                        if (e.length) {
+                          const fmt = (r) => {
+                            const days = r?.fields?.DaysLeft ?? r?.daysLeft ?? null;
+                            return Number.isFinite(days) ? `${r.name} (${days}d)` : r.name;
+                          };
+                          const expList = e.slice(0,5).map(fmt).join(', ');
+                          lines.push(`⏳ Expiring Soon: ${expList}`);
+                        }
+                      } catch (_){}
+        
+                      // 4) Next actions when actionable
+                      const actionable = lines.some(l => /^🟠 Low Stock:/i.test(l) || /^⏳ Expiring Soon:/i.test(l));
+                      if (actionable) {
+                        lines.push(`➡️ Next actions: • reorder suggestions • prices • stock value`);
+                      }
+        
+                      const body = `📊 Short Summary\n${lines.join('\n') || '—'}`;
+                      await sendTagged(body);
+                      return true;
+                    }
+
             if (cmd === 'full summary') {
               try {
                 const insights = await generateFullScaleSummary(shopId, _lang, `qq-full-${shopId}`);
