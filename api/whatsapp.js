@@ -3584,6 +3584,145 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     }
     return true;
   }
+    // -------------------------------
+      // NEW: Low Stock (compact list)
+      // -------------------------------
+      if (cmd === 'low stock') {
+        try {
+          const rows = sanitizeProductRows(await getLowStockProducts(shopId) ?? []);
+          if (!rows.length) {
+            await sendTagged('🟢 Low Stock — No alerts right now.');
+            return true;
+          }
+          const list = rows.slice(0, 8).map(r => {
+            const q = Number(r.quantity ?? 0);
+            const u = String(r.unit ?? '').trim();
+            return q ? `${r.name} (${q}${u ? ' ' + u : ''})` : r.name;
+          }).join(', ');
+          await sendTagged(`🟠 Low Stock\n${list}`);
+        } catch (_) {
+          await sendTagged('🟠 Low Stock — snapshot unavailable. Try again in a minute.');
+        }
+        return true;
+      }
+    
+      // --------------------------------------
+      // NEW: Reorder Suggestions (velocity-based)
+      // --------------------------------------
+      if (cmd === 'reorder suggestions') {
+        try {
+          const sug = await getReorderSuggestions(shopId) ?? [];
+          if (!sug.length) {
+            await sendTagged('📦 Reorder — No items need attention right now.');
+            return true;
+          }
+          const lines = sug.slice(0, 8).map(s => {
+            const name = s.name ?? s.fields?.Product ?? '—';
+            const qty  = s.reorderQty ?? s.fields?.ReorderQty ?? null;
+            const unit = s.unit ?? s.fields?.Units ?? '';
+            const lead = s.leadDays ?? s.fields?.LeadDays ?? null;
+            const saf  = s.safetyQty ?? s.fields?.SafetyQty ?? null;
+            const part = [
+              qty ? `${qty}${unit ? ' ' + unit : ''}` : null,
+              lead ? `${lead}d lead` : null,
+              saf ? `+${saf} safety` : null
+            ].filter(Boolean).join(' • ');
+            return part ? `• ${name}: ${part}` : `• ${name}`;
+          }).join('\n');
+          await sendTagged(`📦 Reorder Suggestions\n${lines}`);
+        } catch (_) {
+          await sendTagged('📦 Reorder — snapshot unavailable. Try later.');
+        }
+        return true;
+      }
+    
+      // -----------------------------------
+      // NEW: Expiring (0/7/30 days window)
+      // -----------------------------------
+      if (cmd === 'expiring 0' || cmd === 'expiring 7' || cmd === 'expiring 30') {
+        const days = cmd.endsWith('0') ? 0 : cmd.endsWith('7') ? 7 : 30;
+        try {
+          const rows = sanitizeProductRows(await getExpiringProducts(shopId, days) ?? []);
+          if (!rows.length) {
+            await sendTagged(`⏳ Expiring ${days} — None.`);
+            return true;
+          }
+          const fmt = (r) => {
+            const d = r?.fields?.DaysLeft ?? r?.daysLeft ?? null;
+            return Number.isFinite(d) ? `${r.name} (${d}d)` : r.name;
+          };
+          const list = rows.slice(0, 10).map(fmt).join(', ');
+          await sendTagged(`⏳ Expiring ${days}\n${list}`);
+        } catch (_) {
+          await sendTagged(`⏳ Expiring ${days} — snapshot unavailable.`);
+        }
+        return true;
+      }
+    
+      // -----------------------------------
+      // NEW: Sales (today / week / month)
+      // -----------------------------------
+      if (cmd === 'sales today' || cmd === 'sales week' || cmd === 'sales month') {
+        const period = cmd.replace('sales ', ''); // today|week|month
+        try {
+          const s = await getSalesSummaryPeriod(shopId, period);
+          if (!s?.totalSales) {
+            await sendTagged(`🧾 Sales ${capitalize(period)} — ₹0`);
+            return true;
+          }
+          const amt   = Number(s.totalSales).toFixed(0);
+          const orders = (s?.orders ?? s?.bills ?? s?.count ?? null);
+          const items  = (s?.itemsSold ?? null);
+          const tail   = orders ? ` • ${orders} orders` : (items ? ` • ${items} items` : '');
+          await sendTagged(`🧾 Sales ${capitalize(period)}\n₹${amt}${tail}`);
+        } catch (_) {
+          await sendTagged(`🧾 Sales ${capitalize(period)} — snapshot unavailable.`);
+        }
+        return true;
+      }
+    
+      // -------------------------------------------------
+      // NEW: Top 5 Products Month (alias: top products month)
+      // -------------------------------------------------
+      if (cmd === 'top 5 products month' || cmd === 'top products month') {
+        try {
+          const top = await getTopSellingProductsForPeriod(shopId, 'month') ?? [];
+          if (!top.length) {
+            await sendTagged('🏆 Top Products (Month) — No data yet.');
+            return true;
+          }
+          const lines = top.slice(0, 5).map((t, i) => {
+            const name = t.name ?? t.fields?.Product ?? '—';
+            const qty  = t.qty ?? t.fields?.Qty ?? t.itemsSold ?? null;
+            return qty ? `${i+1}. ${name} (${qty})` : `${i+1}. ${name}`;
+          }).join('\n');
+          await sendTagged(`🏆 Top Products — Month\n${lines}`);
+        } catch (_) {
+          await sendTagged('🏆 Top Products — snapshot unavailable.');
+        }
+        return true;
+      }
+    
+      // --------------------------------------------
+      // NEW: Inventory Value / Stock Value / Summary
+      // --------------------------------------------
+      if (cmd === 'value summary' || cmd === 'inventory value' || cmd === 'stock value') {
+        try {
+          const inv = await getInventorySummary(shopId);
+          const total = Number(inv?.totalValue ?? 0).toFixed(0);
+          const items = Number(inv?.totalItems ?? inv?.count ?? 0);
+          const lowCt = Number(inv?.lowStock?.length ?? 0);
+          const lines = [
+            `💰 Total Value: ₹${total}`,
+            items ? `📦 Items: ${items}` : null,
+            `🟠 Low Stock Alerts: ${lowCt}`
+          ].filter(Boolean).join('\n');
+          await sendTagged(lines || '💰 Inventory Value — No data yet.');
+        } catch (_) {
+          await sendTagged('💰 Inventory Value — snapshot unavailable.');
+        }
+        return true;
+      }
   return false;
 }
 
