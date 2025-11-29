@@ -1,6 +1,11 @@
 const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
+// ---------------------------------------------------------------------------
+// NEW: Trial length constant (fallback to 7 days if env not set)
+// ---------------------------------------------------------------------------
+// Placed near the top to be available to onboarding flow
+const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 7);
 const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
@@ -2163,6 +2168,17 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
   try { markWelcomed(toNumber); } catch {}
 }
 
+// ---------------------------------------------------------------------------
+// NEW: tiny newline normalizer used where translators may emit literal "\n"
+// ---------------------------------------------------------------------------
+function fixNewlines1(str) {
+  return String(str ?? '')
+    .replace(/\\n/g, '\n')     // unescape literal \n
+    .replace(/\r/g, '')        // drop any stray CRs
+    .replace(/[ \t]*\n/g, '\n')// trim leading spaces before LF
+    .trimEnd();                // avoid trailing whitespace
+}
+
 // Replace English labels with "native (English)" anywhere they appear
 // Single-script rendering: replace labels to native OR keep English only; never mix.
 function renderNativeglishLabels(text, languageCode) {
@@ -2323,29 +2339,51 @@ async function handleTrialOnboardingStep(From, text, lang = 'en') {
     return true;
   }
   if (step === 'address') {
-    data.address = String(text ?? '').trim();
-    // Persist details BEFORE activation
-    await upsertAuthUserDetails(shopId, {
-      name: data.name,
-      gstin: data.gstin,
-      address: data.address,
-      phone: shopId
-    });
-    // Start trial now (with details)
-    const start = await startTrialForAuthUser(shopId, TRIAL_DAYS, {
-      name: data.name, gstin: data.gstin, address: data.address, phone: shopId
-    });        
+    data.address = String(text ?? '').trim();        
+    // -----------------------------------------------------------------------
+        // Persist details BEFORE activation (guarded: do not throw if helper missing)
+        // -----------------------------------------------------------------------
+        if (typeof upsertAuthUserDetails === 'function') {
+          try {
+            await upsertAuthUserDetails(shopId, {
+              name: data.name,
+              gstin: data.gstin,
+              address: data.address,
+              phone: shopId
+            });
+          } catch (e) {
+            console.warn('[trial-onboard] upsertAuthUserDetails failed:', e?.message);
+          }
+        } else {
+          console.warn('[trial-onboard] upsertAuthUserDetails is not defined — skipping');
+        }
+    
+        // -----------------------------------------------------------------------
+        // Start trial now (guarded): proceed even if helper is unavailable
+        // -----------------------------------------------------------------------
+        if (typeof startTrialForAuthUser === 'function') {
+          try {
+            await startTrialForAuthUser(shopId, TRIAL_DAYS, {
+              name: data.name, gstin: data.gstin, address: data.address, phone: shopId
+            });
+          } catch (e) {
+            console.warn('[trial-onboard] startTrialForAuthUser failed:', e?.message);
+          }
+        } else {
+          console.warn('[trial-onboard] startTrialForAuthUser is not defined — skipping');
+        }
+       
     // ✅ Clear by shopId (safe no-op if your delete uses record id; otherwise add a DB helper to delete by key)
-    try { await clearUserState(shopId); } catch {}        
-    // Use NO_FOOTER sentinel and restore "Try: examples" line
-        const NO_FOOTER_MARKER = '<!NO_FOOTER!>'; // use raw form to avoid HTML-escape issues
-        const msg = await t(
-          `${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
-          `Try:\n• short summary\n• price list\n• "10 Parle-G sold at 11/packet"`,
-          lang,
-          `trial-onboard-done-${shopId}`
-        );
-    await sendMessageViaAPI(From, msg);
+    try { await clearUserState(shopId); } catch {}            
+    // -----------------------------------------------------------------------
+        // Send activation message WITHOUT clamp & WITHOUT footer to avoid truncation
+        // -----------------------------------------------------------------------
+        const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+        const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
+        let msgRaw = `${NO_CLAMP_MARKER}${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
+                     `Try:\n• short summary\n• price list\n• "10 Parle-G sold at 11/packet"`;
+        const msgTranslated = await t(msgRaw, lang, `trial-onboard-done-${shopId}`);
+        await sendMessageViaAPI(From, fixNewlines1(msgTranslated));
     try {
       await ensureLangTemplates(lang);
       const sids = getLangSids(lang);
@@ -2359,6 +2397,17 @@ async function handleTrialOnboardingStep(From, text, lang = 'en') {
   }
   return false;
 }
+
+// ---------------------------------------------------------------------------
+// (Optional) Defensive shims: never throw if helpers are absent during rollout
+// ---------------------------------------------------------------------------
+if (typeof globalThis.upsertAuthUserDetails !== 'function') {
+  globalThis.upsertAuthUserDetails = async () => ({ success: false });
+}
+if (typeof globalThis.startTrialForAuthUser !== 'function') {
+  globalThis.startTrialForAuthUser = async () => ({ success: false });
+}
+
 // --- typed path now begins capture (no immediate activation)
 async function activateTrialFlow(From, lang = 'en') {
   const shopId = String(From).replace('whatsapp:', '');
@@ -11015,7 +11064,7 @@ async function sendMessageViaAPI(to, body) {
     console.log(`[sendMessageViaAPI] Message length: ${String(body).length} characters`);
           
     // --- Honor NO_FOOTER sentinel (single and multi-part paths) ---
-        const NO_FOOTER_RX = /^\s*!NO_FOOTER!\s*/i;
+        const NO_FOOTER_RX = /^\s*(?:!NO_FOOTER!|<!NO_FOOTER!>|&lt;!NO_FOOTER!&gt;)\s*/i;
         const noFooter = NO_FOOTER_RX.test(String(body));
         const bodyStripped = String(body).replace(NO_FOOTER_RX, '');
 
