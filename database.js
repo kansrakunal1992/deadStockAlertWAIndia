@@ -1964,17 +1964,13 @@ async function deactivateUser(shopId) {
 // Get today's sales summary
 async function getTodaySalesSummary(shopId) {
   const context = `Get Today Sales Summary ${shopId}`;
-  try {
-    // Get today's date in ISO format
-    const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
-    
-    // Format dates for Airtable formula
-    const startStr = startOfDay.toISOString();
-    const endStr = endOfDay.toISOString();
-    
-    const filterFormula = `AND({ShopID} = '${shopId}', {Quantity} < 0, IS_AFTER({SaleDate}, "${startStr}"), IS_BEFORE({SaleDate}, "${endStr}"))`;
+  try {    
+    // Timezone-safe Airtable formula: treat 'today' in Asia/Kolkata (IST)
+        const filterFormula = `AND(
+          {ShopID} = '${shopId}',
+          {Quantity} < 0,
+          IS_SAME(SET_TIMEZONE({SaleDate}, 'Asia/Kolkata'), TODAY(), 'day')
+        )`;
     
     const result = await airtableSalesRequest({
       method: 'get',
@@ -2205,10 +2201,15 @@ async function getSalesDataForPeriod(shopId, startDate, endDate) {
   try {
     // Format dates for Airtable formula
     const startStr = startDate.toISOString();
-    const endStr = endDate.toISOString();
-    
-    const filterFormula = `AND({ShopID} = '${shopId}', {Quantity} < 0, IS_AFTER({SaleDate}, "${startStr}"), IS_BEFORE({SaleDate}, "${endStr}"))`;
-    
+    const endStr = endDate.toISOString();      
+        
+    const filterFormula = `AND(
+          {ShopID} = '${shopId}',
+          {Quantity} < 0,
+          IS_AFTER(SET_TIMEZONE({SaleDate}, 'Asia/Kolkata'), DATETIME_PARSE(\"${startStr}\")),
+          IS_BEFORE(SET_TIMEZONE({SaleDate}, 'Asia/Kolkata'), DATETIME_PARSE(\"${endStr}\"))
+        )`;
+  
     const result = await airtableSalesRequest({
       method: 'get',
       params: {
