@@ -7957,7 +7957,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                   unitAfter: result?.unit,
                   inlineConfirmText: confirmTextLine // hand to aggregator; no direct send here
                 });
-              
+              if (__isStreakEnabled()) {
         // --- Gamify toast for successful return ---
                 try {
                   if (result?.success) {
@@ -7965,7 +7965,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                     const toast = await t(composeGamifyToast({ action: update.action, gs: gam.snapshot, newlyAwarded: gam.newlyAwarded }), languageCode, 'gamify-toast');
                     await sendMessageViaAPI(`whatsapp:${shopId}`, toast);
                   }
-                } catch (e) { console.warn('[gamify] toast failed:', e.message); }
+                } catch (e) { console.warn('[gamify] toast failed:', e.message); }}
         
         continue; // Move to next update
       }
@@ -8140,13 +8140,13 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             totalValue: finalPrice * Math.abs(update.quantity),
             inlineConfirmText: confirmTextLine
           });
-          
+          if (__isStreakEnabled()) {
           // --- Gamify toast for successful purchase ---
                 try {
                   const gam = updateGamifyState(String(shopId), update.action);
                   const toast = await t(composeGamifyToast({ action: update.action, gs: gam.snapshot, newlyAwarded: gam.newlyAwarded }), languageCode, 'gamify-toast');
                   await sendMessageViaAPI(`whatsapp:${shopId}`, toast);
-                } catch (e) { console.warn('[gamify] toast failed:', e.message); }
+                } catch (e) { console.warn('[gamify] toast failed:', e.message); }}
 
           continue; // done with purchase branch
         }
@@ -8539,7 +8539,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           + `salePrice=${enriched.salePrice ?? '-'}, `
           + `totalValue=${enriched.totalValue}`
         );
-             
+           if (__isStreakEnabled()) {  
         // --- Gamify toast for successful non-return branch (purchase handled earlier; sale here) ---
         try {
           if (result && result.success) {
@@ -8547,7 +8547,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             const toast = await t(composeGamifyToast({ action: update.action, gs: gam.snapshot, newlyAwarded: gam.newlyAwarded }), languageCode, 'gamify-toast');
             await sendMessageViaAPI(`whatsapp:${shopId}`, toast);
           }
-        } catch (e) { console.warn('[gamify] toast failed:', e.message); }
+        } catch (e) { console.warn('[gamify] toast failed:', e.message); }}
         results.push(enriched);
       
     } catch (error) {
