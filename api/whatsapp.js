@@ -1982,22 +1982,21 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
              const ONBOARDING_QR_SID = String(process.env.ONBOARDING_QR_SID || '').trim();
                                           
             // 0) INTRO (AI onboarding benefits) — FIRST
-                try {                                                                        
-                    // Compose then translate intro — use per-shop cacheKey to avoid stale blended output
-                          const introKey = `welcome-intro::${toNumber}::${String(detectedLanguage).toLowerCase()}`;
-                          let introText = await t(
-                            await composeAIOnboarding(detectedLanguage),
-                            detectedLanguage ?? 'en',
-                            introKey
-                          );
-                          // Replace hardcoded "Start Trial" with the actual localized button label,
-                          // then re-sanitize after replacement to enforce single-script output.
-                        const startTrialLabel = getStaticLabel('startTrialBtn', detectedLanguage);                                                
-                        introText = introText.replace(/"Start Trial"/g, `"${startTrialLabel}"`);
-                        introText = sanitizeAfterReplace(introText, detectedLanguage ?? 'en');                        
-                        // Suppress footer for onboarding promo
-                            const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
-                            await sendMessageQueued(From, NO_FOOTER_MARKER + introText);
+                try {                                                                                                          
+                // Compose then translate intro — use per-shop cacheKey
+                      const introKey = `welcome-intro::${toNumber}::${String(detectedLanguage).toLowerCase()}`;
+                      const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+                      let introText = await t(
+                        NO_FOOTER_MARKER + (await composeAIOnboarding(detectedLanguage)),
+                        detectedLanguage ?? 'en',
+                        introKey
+                      );
+                      // Replace hardcoded "Start Trial" with localized label, then sanitize
+                      const startTrialLabel = getStaticLabel('startTrialBtn', detectedLanguage);
+                      introText = introText.replace(/"Start Trial"/g, `"${startTrialLabel}"`);
+                      introText = sanitizeAfterReplace(introText, detectedLanguage ?? 'en');
+                      // Marker already consumed; send clean text
+                      await sendMessageQueued(From, introText);
                   await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons           
                           // >>> NEW: Send benefits video AFTER intro, BEFORE buttons (once per session gate already applies)
                           try {
@@ -2048,15 +2047,16 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
              }
       
              // 3) Text fallback if neither option worked
-             if (!sent) {                               
+             if (!sent) {                                                               
                 // If buttons couldn't be sent, still send a compact CTA AFTER intro
-                      const ctaText = getTrialCtaText(detectedLanguage ?? 'en');                                     
-                // Suppress footer for trial CTA text fallback
-                    const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
-                    await sendMessageQueued(
-                      From,
-                      NO_FOOTER_MARKER + await t(ctaText, detectedLanguage ?? 'en', 'welcome-gate')
-                    );
+                      const ctaText = getTrialCtaText(detectedLanguage ?? 'en');
+                      const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+                      const ctaLocalized = await t(
+                        NO_FOOTER_MARKER + ctaText,
+                        detectedLanguage ?? 'en',
+                        'welcome-gate'
+                      );
+                      await sendMessageQueued(From, ctaLocalized);
              }
         try { markWelcomed(toNumber); } catch {}
              return; // still skip menus until activation
@@ -2481,18 +2481,21 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                 await saveUserPlan(shopId, 'trial', trialEnd);
               } catch (e) {
                 console.warn('[trial-mirror] saveUserPlan failed:', e?.message);
-              }
+              }                        
             const planNote = `🎉 Trial activated for ${TRIAL_DAYS} days!`;
-            let msg;
-            try {                               
-                msg = await t(
-                                `${planNote}\n•Click on 'Record Purchase/Sale/Return' button & then \nTry:\n• milk 2 ltr at 40/ltr exp +4d`,
-                                lang,
-                                `cta-trial-ok-${shopId}`
-                            );
-            } catch (e) {
-                console.warn('[trial-activated] translation failed:', e.message);
-            }
+                  let msg;
+                  try {
+                    // Move the marker *inside* t(...) so clamp sees and strips it
+                    const NO_CLAMP_MARKER = '<!NO_CLAMP!>';
+                    msg = await t(
+                      NO_CLAMP_MARKER +
+                        `${planNote}\n•Click on 'Record Purchase/Sale/Return' button & then \nTry:\n• milk 2 ltr at 40/ltr exp +4d`,
+                      lang,
+                      `cta-trial-ok-${shopId}`
+                    );
+                  } catch (e) {
+                    console.warn('[trial-activated] translation failed:', e.message);
+                  }
                        
             // ✅ Guard: skip cache if suspiciously short (e.g., "Try:")
                     if (!msg || msg.trim().length < 20 || /^none$/i.test(msg.trim())) {
@@ -2505,8 +2508,8 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
     
             try {                                
                 // Prevent single-script clamp from collapsing this multi-line ack
-                const NO_CLAMP_MARKER = '<!NO_CLAMP!>';
-                const resp = await sendMessageViaAPI(from, fixNewlines(NO_CLAMP_MARKER + msg));
+                // Marker already consumed by t(...); send the clean text
+                const resp = await sendMessageViaAPI(from, fixNewlines(msg));
 
                 console.log('[trial-activated] ack send OK:', { sid: resp?.sid, to: from });                                
                 // ✅ NEW: Overwrite translation cache with clean text for future calls
