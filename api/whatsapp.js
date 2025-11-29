@@ -3547,7 +3547,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
                     lines.push(`↔️ vs Yesterday: ${sign} ₹${Math.abs(diff).toFixed(0)}`);
                   }
                 } catch (_) { /* soft-fail */ }
-        }
+        } catch (_){}
       
         // 2) Low stock with quantity + unit for context        
         try {
