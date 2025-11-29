@@ -4317,17 +4317,43 @@ function scheduleTrialExpiryReminders() {
 // Write tracker into writable dir (A)
 const GAMIFY_TRACK_FILE = path.join(STATE_DIR, 'gamify_tracker.json');
 
+/**
+ * When streak messages are OFF, pretend the tracker is empty.
+ * This prevents downstream "gamify" flows from sending anything.
+ */
 function readGamify() {
-  try {          
-      if (!fs.existsSync(GAMIFY_TRACK_FILE)) { console.log('[gamify] tracker missing:', GAMIFY_TRACK_FILE); return {}; }
-      const data = fs.readFileSync(GAMIFY_TRACK_FILE, 'utf8'); return JSON.parse(data);
+  try {
+    // Gate: if streak/gamify is OFF, return empty immediately
+    if (typeof __isStreakEnabled === 'function' && !__isStreakEnabled()) {
+      // Optional: single diagnostic line
+      console.log('[gamify] read ignored: streak OFF');
+      return {};
+    }
+
+    if (!fs.existsSync(GAMIFY_TRACK_FILE)) {
+      console.log('[gamify] tracker missing:', GAMIFY_TRACK_FILE);
+      return {};
+    }
+    const data = fs.readFileSync(GAMIFY_TRACK_FILE, 'utf8');
+    return JSON.parse(data);
   } catch (e) {
     console.warn('[gamify] read failed:', e.message);
     return {};
   }
 }
+
+/**
+ * When streak messages are OFF, do not write or create the tracker file.
+ * Returns false to indicate no persistence while feature is disabled.
+ */
 function writeGamify(state) {
   try {
+    // Gate: if streak/gamify is OFF, do nothing
+    if (typeof __isStreakEnabled === 'function' && !__isStreakEnabled()) {
+      console.log('[gamify] write skipped: streak OFF');
+      return false;
+    }
+
     fs.writeFileSync(GAMIFY_TRACK_FILE, JSON.stringify(state, null, 2));
     console.log('[gamify] tracker write OK:', GAMIFY_TRACK_FILE);
     return true;
@@ -4336,6 +4362,7 @@ function writeGamify(state) {
     return false;
   }
 }
+
 // IST helpers
 function todayIST() {
   const now = new Date();
