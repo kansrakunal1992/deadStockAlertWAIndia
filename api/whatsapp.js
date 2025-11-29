@@ -7042,9 +7042,9 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
 }
   return false; // not a quick query
 }
+}
 
 // -------- NEW: Quick-query command handlers (8 core queries) --------
-
 function parsePeriodKeyword(txt) {
   const t = (txt || '').toLowerCase().trim();
   if (t.includes('today') || t === 'day') return 'day';
