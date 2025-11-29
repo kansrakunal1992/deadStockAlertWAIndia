@@ -3252,8 +3252,11 @@ function enforceSingleScript(out, lang) {
       ? text.replace(/[^\x00-\x7F₹\s.,@:%/\-\+\*\!?'"\(\)\u2013\u2014]/g, '')
       : text.replace(/[a-zA-Z]/g, '');
   }
-  if (english || roman) {
-    return text.replace(/[^\x00-\x7F₹\s.,@:%/\-\+\*\!?'"\(\)\u2013\u2014]/g, '');
+  if (english || roman) {   
+    // Allow emoji blocks + ₹ in English/Roman outputs
+     // Ranges: Misc Symbols, Emoticons, Dingbats, Transport & Map, Supplemental Symbols & Pictographs, Symbols & Pictographs, Symbols & Pictographs Extended
+     const ALLOW = /[^\x00-\x7F₹\\s.,@:%/\\-\\+\\*\\!?'\"\\(\\)\\u2013\\u2014\\u2600-\\u27BF\\u1F300-\\u1F6FF\\u1F900-\\u1F9FF\\u1FA70-\\u1FAFF]/g;
+     return text.replace(ALLOW, '');
   }
   return text;
 }
@@ -3504,10 +3507,10 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
 
   if (cmd === 'short summary') {
     let hasAny = false;
-    try {
-      const today = await getTodaySalesSummary(shopId);
-      const inv   = await getInventorySummary(shopId);
-      hasAny = !!(today?.totalSales || inv?.totalValue || (inv?.lowStock||[]).length);
+    try {              
+        const today = await getTodaySalesSummary(shopId);
+        const inv   = await getInventorySummary(shopId);
+        hasAny = !!(today?.totalValue || inv?.totalValue || (inv?.lowStock||[]).length);
     } catch (_) {}
     if (!hasAny) {
       await sendTagged('📊 Short Summary — Aaj abhi koi transaction nahi hua.\n💡 Tip: “sold milk 2 ltr” try karo.');
@@ -3516,12 +3519,12 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     
     const lines = [];
         // 1) Sales today (amount + optional orders/items)
-        try {
-          const s = await getTodaySalesSummary(shopId);
-          if (s?.totalSales) {
-            const amt = Number(s.totalSales).toFixed(0);
+        try {                      
+            const s = await getTodaySalesSummary(shopId);
+               if (s?.totalValue) {
+            const amt = Number(s.totalValue).toFixed(0);
             const orders = (s?.orders ?? s?.bills ?? s?.count ?? null);
-            const items  = (s?.itemsSold ?? null);
+            const items  = (s?.totalItems ?? null);
             const tail   = orders ? ` • ${orders} orders` : (items ? ` • ${items} items` : '');
             lines.push(`🧾 Sales Today: ₹${amt}${tail}`);
           }
@@ -3674,7 +3677,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
           }
           const amtStr = amt.toFixed(0);
           const orders = (s?.orders ?? s?.bills ?? s?.count ?? null);
-          const items  = (s?.itemsSold ?? null);
+          const items  = (s?.totalItems ?? null);
           const tail   = orders ? ` • ${orders} orders` : (items ? ` • ${items} items` : '');
           await sendTagged(`🧾 Sales ${capitalize(period)}\n₹${amt}${tail}`);
         } catch (_) {
@@ -6128,10 +6131,10 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
         if (cmd === 'short summary') {
                       // Build concise snapshot (data-backed)
                       let hasAny = false;
-                      try {
-                       const today = await getTodaySalesSummary(shopId);
-                        const inv = await getInventorySummary(shopId);
-                        hasAny = !!(today?.totalSales || inv?.totalValue || (inv?.lowStock ?? []).length);
+                      try {                                               
+                        const today = await getTodaySalesSummary(shopId);
+                        const inv   = await getInventorySummary(shopId);
+                        hasAny = !!(today?.totalValue || inv?.totalValue || (inv?.lowStock||[]).length);
                       } catch (_) {}
                       if (!hasAny) {
                         await sendTagged('📊 Short Summary — Aaj abhi koi transaction nahi hua.\n💡 Tip: “sold milk 2 ltr” try karo.');
@@ -6139,12 +6142,12 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
                       }
                       const lines = [];
                       // 1) Sales today (amount + optional orders/items)
-                      try {
+                      try {                                                
                         const s = await getTodaySalesSummary(shopId);
-                        if (s?.totalSales) {
-                          const amt = Number(s.totalSales).toFixed(0);
+                           if (s?.totalValue) {
+                             const amt = Number(s.totalValue).toFixed(0);
                           const orders = (s?.orders ?? s?.bills ?? s?.count ?? null);
-                          const items  = (s?.itemsSold ?? null);
+                          const items  = (s?.totalItems ?? null);
                           const tail   = orders ? ` • ${orders} orders` : (items ? ` • ${items} items` : '');
                           lines.push(`🧾 Sales Today: ₹${amt}${tail}`);
                         }
