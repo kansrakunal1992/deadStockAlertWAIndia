@@ -12598,15 +12598,15 @@ async function handleRequest(req, res, response, requestId, requestStart) {
       return;
     }
             
-    // 2. Get current user state (normalize to shopId — no "whatsapp:")
-        const shopId = String(From ?? '').replace('whatsapp:', '');
-        console.log(`[${requestId}] Checking state for ${shopId} in database...`);
+    // 2. Get current user state (normalize to shopIdState — no "whatsapp:")
+        const shopIdState = String(From ?? '').replace('whatsapp:', '');
+        console.log(`[${requestId}] Checking state for ${shopIdState} in database...`);
         // Use the DB-backed helper; fallback to shim if needed
         const currentState = (typeof getUserStateFromDB === 'function')
-            ? await getUserStateFromDB(shopId)
-            : await getUserState(shopId);
+            ? await getUserStateFromDB(shopIdState)
+            : await getUserState(shopIdState);
         console.log(
-          `[${requestId}] Current state for ${shopId}:`,
+          `[${requestId}] Current state for ${shopIdState}:`,
           currentState ? currentState.mode : 'none'
         );
     
