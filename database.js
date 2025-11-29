@@ -1707,10 +1707,55 @@ async function getAuthUserRecord(shopId) {
   }
 }
 
-// === NEW: start (or restart) a trial for this user ===
-async function startTrialForAuthUser(shopId, days = TRIAL_DAYS) {
-  const context = `Start Trial ${shopId}`;
+// --- [NEW ANCHOR: AuthUsers Onboarding Upsert] -----------------------------------------
+// Upsert Name, GSTIN (optional), Address, Phone, CreatedDate BEFORE starting trial
+async function upsertAuthUserDetails(shopId, { name, gstin = null, address = '', phone = null } = {}) {
+  const context = `Upsert AuthUser Details ${shopId}`;
   try {
+    const nowISO = new Date().toISOString();
+    const record = await getAuthUserRecord(shopId);
+    const fields = {
+      ShopID: shopId,
+      Name: String(name ?? '').trim(),
+      Address: String(address ?? '').trim(),
+      Phone: String(phone ?? shopId ?? '').trim(),
+      CreatedDate: nowISO,
+      ...(gstin && String(gstin).trim().toLowerCase() !== 'skip' ? { GSTIN: String(gstin).trim() } : {})
+    };
+    if (record) {
+      await airtableRequest({
+        method: 'patch',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}/${record.id}`,
+        data: { fields }
+      }, `${context} - Patch`);
+      return { success: true, id: record.id, action: 'updated' };
+    }
+    const created = await airtableRequest({
+      method: 'post',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`,
+      data: { fields }
+    }, `${context} - Create`);
+    return { success: true, id: created.id, action: 'created' };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
+// === NEW: start (or restart) a trial for this user ===
+// === [UPDATED SIGNATURE] allow optional details captured during onboarding ===
+async function startTrialForAuthUser(shopId, days = TRIAL_DAYS, details = null) {
+  const context = `Start Trial ${shopId}`;
+  try {    
+    // 0) If onboarding details were provided, persist them first
+        if (details && typeof upsertAuthUserDetails === 'function') {
+          await upsertAuthUserDetails(shopId, {
+            name: details.name,
+            gstin: details.gstin,
+            address: details.address,
+            phone: details.phone ?? shopId
+          });
+        }
     const now = new Date();
     const end = new Date(now); end.setDate(end.getDate() + Number(days ?? 3));
     const existing = await getAuthUserRecord(shopId);
@@ -2968,5 +3013,6 @@ module.exports = {
   saveUserPlan, 
   getUserPlan, 
   isFirst50Shops, 
-  isFeatureAvailable
+  isFeatureAvailable,
+  upsertAuthUserDetails
 };
