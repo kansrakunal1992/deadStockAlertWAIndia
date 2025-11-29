@@ -2293,8 +2293,8 @@ function _isSkipGST(s) {
 async function beginTrialOnboarding(From, lang = 'en') {
   const shopId = String(From).replace('whatsapp:', '');
   // ✅ Always store by shopId (without "whatsapp:") to match DB readers
-  await setUserState(shopId, 'onboarding_trial_capture', { step: 'name', collected: {};
-  const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+  await setUserState(shopId, 'onboarding_trial_capture', { step: 'name', collected: {}
+  let NO_FOOTER_MARKER = '<!NO_FOOTER!>';
   const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `trial-onboard-name-${shopId}`);
   await sendMessageViaAPI(From, askName);
 }
