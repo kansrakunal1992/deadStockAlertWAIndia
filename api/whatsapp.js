@@ -3510,7 +3510,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     try {              
         const today = await getTodaySalesSummary(shopId);
         const inv   = await getInventorySummary(shopId);
-        hasAny = !!(today?.totalValue || inv?.totalValue || (inv?.lowStock||[]).length);
+        hasAny = !!(today?.totalSales || today?.totalValue || inv?.totalValue || (inv?.lowStock || []).length);
     } catch (_) {}
     if (!hasAny) {
       await sendTagged('📊 Short Summary — Aaj abhi koi transaction nahi hua.\n💡 Tip: “sold milk 2 ltr” try karo.');
@@ -3519,39 +3519,51 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     
     const lines = [];
         // 1) Sales today (amount + optional orders/items)
-        try {                      
-            const s = await getTodaySalesSummary(shopId);
-               if (s?.totalValue) {
-            const amt = Number(s.totalValue).toFixed(0);
-            const orders = (s?.orders ?? s?.bills ?? s?.count ?? null);
-            const items  = (s?.totalItems ?? null);
-            const tail   = orders ? ` • ${orders} orders` : (items ? ` • ${items} items` : '');
-            lines.push(`🧾 Sales Today: ₹${amt}${tail}`);
-          }
-          // Optional: vs yesterday (compact)
-          try {
-            const y = await getSalesSummaryPeriod(shopId, 'yesterday'); // already imported
-            if (y?.totalSales && s?.totalSales) {
-              const diff = Number(s.totalSales) - Number(y.totalSales);
-              const sign = diff === 0 ? '＝' : (diff > 0 ? '📈' : '📉');
-              lines.push(`↔️ vs Yesterday: ${sign} ₹${Math.abs(diff).toFixed(0)}`);
-            }
-          } catch (_) { /* soft-fail */ }
+      let todaySummary = null;
+        try {                                              
+            todaySummary = await getTodaySalesSummary(shopId);
+                  const amtNum = Number(todaySummary?.totalSales ?? todaySummary?.totalValue ?? 0);
+                  if (amtNum > 0) {
+                    const amt    = Math.round(amtNum);
+                    const orders = (todaySummary?.orders ?? todaySummary?.bills ?? todaySummary?.count ?? null);
+                    const items  = (todaySummary?.totalItems ?? null);
+                    const tail   = orders ? ` • ${orders} orders` : (items ? ` • ${items} items` : '');
+                    lines.push(`🧾 Sales Today: ₹${amt}${tail}`);
+                  } else {
+                    // Friendlier zero-case (avoid misleading ₹0 if local tz differs)
+                    lines.push(`🧾 Sales Today: no recorded sales yet (IST).`);
+                  }
+                } catch (_) { /* soft-fail */ }
+            
+                // Optional: vs yesterday (compact, aligns on totalSales)
+                try {
+                  const y = await getSalesSummaryPeriod(shopId, 'yesterday');
+                  if (
+                    y && Number.isFinite(Number(y.totalSales)) &&
+                    todaySummary && Number.isFinite(Number(todaySummary.totalSales))
+                  ) {
+                    const diff = Number(todaySummary.totalSales) - Number(y.totalSales);
+                    const sign = diff === 0 ? '＝' : (diff > 0 ? '📈' : '📉');
+                    lines.push(`↔️ vs Yesterday: ${sign} ₹${Math.abs(diff).toFixed(0)}`);
+                  }
+                } catch (_) { /* soft-fail */ }
         } catch (_){}
     
-        // 2) Low stock with quantity + unit for context
+        // 2) Low stock with quantity + unit for context        
         try {
-          const lRaw = await getLowStockProducts(shopId) || [];
-          const l = sanitizeProductRows(lRaw); // → { name, quantity, unit }
-          if (l.length) {
-            const lowList = l.slice(0,5).map(x => {
-              const qty = Number(x.quantity ?? 0);
-              const unit = String(x.unit ?? '').trim();
-              return qty ? `${x.name} (${qty}${unit ? ' ' + unit : ''})` : x.name;
-            }).join(', ');
-            lines.push(`🟠 Low Stock: ${lowList}`);
-          }
-        } catch(_){}
+              const raw = await getLowStockProducts(shopId) ?? [];
+              const l   = sanitizeProductRows(raw); // → { name, quantity, unit }
+              if (l.length) {
+                const MAX = 8;
+                const lowList = l.slice(0, MAX).map(x => {
+                  const qty  = Number(x.quantity ?? 0);
+                  const unit = String(x.unit ?? '').trim();
+                  return qty ? `${x.name} (${qty}${unit ? ' ' + unit : ''})` : x.name;
+                });
+                const more = l.length > MAX ? ` • +${l.length - MAX} more` : '';
+                lines.push(`🟠 Low Stock: ${lowList.join(', ')}${more}`);
+              }
+            } catch (_) { /* soft-fail */ }
     
         // 3) Expiring soon (7 days) with days left if available
         try {
@@ -3579,14 +3591,242 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     return true;
   }
   if (cmd === 'full summary') {
-    try {
-      const insights = await generateFullScaleSummary(shopId, lang, `qq-full-${shopId}`);
-      await sendTagged(insights);
+    try {      
+    let insights = await generateFullScaleSummary(shopId, lang, `qq-full-${shopId}`);
+          // Optional: decorate common section headers with icons (non-destructive)
+          insights = String(insights)
+            .replace(/^Sales\b/m,           '🧾 Sales')
+            .replace(/^Low Stock\b/m,       '🟠 Low Stock')
+            .replace(/^Expiring Soon\b/m,   '⏳ Expiring Soon')
+            .replace(/^Insights\b/m,        '💡 Insights');
+          const decorated = insights?.startsWith('📊') ? insights : `📊 Full Summary\n${insights}`;
+          await sendTagged(decorated);
     } catch (_) {
       await sendTagged('📊 Full Summary — snapshot unavailable. Try: “short summary”.');
     }
     return true;
   }
+
+    // (Optional) Friendlier standalone Expiring commands (0/7/30) — enable if desired
+      if (cmd === 'expiring 30' || cmd === 'expiring 7' || cmd === 'expiring 0') {
+        const days = cmd.endsWith('30') ? 30 : (cmd.endsWith('7') ? 7 : 0);
+        try {
+          const raw  = await getExpiringProducts(shopId, days) ?? [];
+          const rows = sanitizeProductRows(raw);
+          if (!rows.length) { await sendTagged(`⏳ Expiring ${days}\nNo items are expiring in ${days} days. ✅`); return true; }
+          const fmt = r => {
+            const d = r?.fields?.DaysLeft ?? r?.daysLeft ?? null;
+            return Number.isFinite(d) ? `${r.name} (${d}d)` : r.name;
+          };
+          const MAX = 8, list = rows.slice(0, MAX).map(fmt), more = rows.length > MAX ? ` • +${rows.length - MAX} more` : '';
+          await sendTagged(`⏳ Expiring ${days}\n${list.join(', ')}${more}`);
+          return true;
+        } catch (_) { await sendTagged(`⏳ Expiring ${days} — couldn’t fetch now. Try later.`); return true; }
+      }
+        
+    // =========================
+      // Utility commands (canonical)
+      // =========================
+      // 1) PRODUCTS: list / paging / search
+      // Accepts:
+      //   • "products" | "list products" → page 1
+      //   • "products page N" | "list products N" → page N
+      //   • "products search <term>" | "search products <term>"
+      {
+        const mList = cmd.match(/^list\s+products(?:\s+(\d+))?$/i) || cmd.match(/^products(?:\s+page\s+(\d+))?$/i);
+        const mSearch = cmd.match(/^(?:products\s+search|search\s+products)\s+(.+)$/i);
+        if (mList || mSearch) {
+          const PAGE_SIZE = 25;
+          const page = mList ? Math.max(1, parseInt(mList[1] ?? '1', 10)) : 1;
+          const query = mSearch ? mSearch[1].trim() : '';
+          const list = await getCurrentInventory(shopId);
+          const map = new Map(); // name lc → {name, qty, unit}
+          for (const r of list) {
+            const name = r?.fields?.Product?.trim();
+            if (!name) continue;
+            const qty  = r?.fields?.Quantity ?? 0;
+            const unit = r?.fields?.Units ?? 'pieces';
+            map.set(name.toLowerCase(), { name, qty, unit });
+          }
+          let items = Array.from(map.values());
+          if (query) {
+            const q = query.toLowerCase();
+            items = items.filter(x => x.name.toLowerCase().includes(q));
+          }
+          items.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
+          const total = items.length;
+          const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+          const pageSafe = Math.min(page, totalPages);
+          const start = (pageSafe - 1) * PAGE_SIZE;
+          const pageItems = items.slice(start, start + PAGE_SIZE);
+    
+          let header = query
+            ? `🧾 Products matching “${query}” — ${pageItems.length} of ${total}`
+            : `🧾 Products — Page ${pageSafe}/${totalPages} — ${pageItems.length} of ${total}`;
+          if (total === 0) {
+            const msg0 = await tx(`${header}\nNo products found.`, lang, From, cmd, `qq-products-${shopId}`);
+            const msg = await tagWithLocalizedMode(From, msg0, lang);
+            await sendMessageViaAPI(From, msg);
+            return true;
+          }
+          const lines = pageItems.map(p => `• ${p.name} — ${p.qty} ${p.unit}`);
+          let body = `${header}\n\n${lines.join('\n')}`;
+          if (!query && pageSafe < totalPages) {
+            body += `\n\n➡️ Next page: "products ${pageSafe+1}"`;
+          } else if (query && pageSafe < totalPages) {
+            body += `\n\n➡️ Next page: "products ${pageSafe+1}" (repeat the search term)`;
+          }
+          body += `\n🔎 Search: "products search <term>"`;
+          await sendTagged(body);
+          return true;
+        }
+      }
+    
+      // 2) PRICES: needing update (paged)
+      // Accepts: "prices" | "price updates" | "stale prices" | with optional "page N"
+      {
+        const mPrice = cmd.match(/^(?:prices|price\s*updates|stale\s*prices)(?:\s+(?:page\s+)?(\d+))?$/i);
+        if (mPrice) {
+          const page = mPrice[1] ? parseInt(mPrice[1], 10) : 1;
+          const out = await sendPriceUpdatesPaged(From, lang, `qq-prices-${shopId}`, page);
+          if (out) await sendTagged(out);
+          return true;
+        }
+      }
+    
+      // 3) STOCK for product (single-product lookup)
+      // Accepts: "stock <product>" | "inventory <product>" | "qty <product>"
+      {
+        const mStock = cmd.match(/^(?:stock|inventory|qty)\s+(.+)$/i);
+        if (mStock) {
+          const rawQuery = mStock[1].trim().replace(/[?।。.!,;:\u0964\u0965]+$/u, '');
+          const product = await translateProductName(rawQuery, `qq-stock-${shopId}`);
+          try {
+            const exact = await getProductInventory(shopId, product);
+            if (exact?.success) {
+              const qty = exact.quantity ?? 0;
+              const unit = exact.unit ?? 'pieces';
+              await sendTagged(`📦 Stock — ${product}: ${qty} ${unit}`);
+              return true;
+            }
+          } catch (e) {
+            console.warn(`[qq-stock] getProductInventory failed:`, e?.message);
+          }
+          // Fuzzy fallback
+          try {
+            const list = await getCurrentInventory(shopId);
+            const norm = s => String(s ?? '').toLowerCase().trim();
+            const qN = norm(product);
+            let best = null, bestScore = 0;
+            for (const r of list) {
+              const name = r?.fields?.Product;
+              if (!name) continue;
+              const n = norm(name);
+              if (!n || !qN) continue;
+              let score = 0;
+              if (n === qN) score = 3;
+              else if (n.includes(qN) || qN.includes(n)) score = 2;
+              else {
+                const qw = qN.split(/\s+/).filter(w => w.length > 2);
+                const nw = n.split(/\s+/).filter(w => w.length > 2);
+                const overlap = qw.filter(w => nw.includes(w)).length;
+                if (overlap > 0) score = 1;
+              }
+              if (score > bestScore) { bestScore = score; best = r; }
+            }
+            let message;
+            if (!best) {
+              message = `📦 ${rawQuery}: not found in inventory.`;
+            } else {
+              const qty = best?.fields?.Quantity ?? 0;
+              const unit = best?.fields?.Units ?? 'pieces';
+              const name = best?.fields?.Product ?? product;
+              message = `📦 Stock — ${name}: ${qty} ${unit}`;
+            }
+            await sendTagged(message);
+            return true;
+          } catch (e) {
+            console.warn(`[qq-stock] Fallback list scan failed:`, e?.message);
+            await sendTagged(`📦 ${rawQuery}: not found in inventory.`);
+            return true;
+          }
+        }
+      }
+    
+      // 4) Batches per product (purchase & expiry)
+      // Accepts: "batches <product>" | "expiry <product>"
+      {
+        const mBatch = cmd.match(/^(?:batches?|expiry)\s+(.+)$/i);
+        if (mBatch) {
+          const rawQuery = mBatch[1].trim().replace(/[?।。.!,;:\u0964\u0965]+$/u, '');
+          const product = await translateProductName(rawQuery, `qq-batches-${shopId}`);
+          // Prefer helper returning remaining batches
+          try {
+            const exact = await getBatchesForProductWithRemaining(shopId, product);
+            if (Array.isArray(exact) && exact.length > 0) {
+              const lines = exact.map(b => {
+                const q  = b.quantity ?? b.fields?.Quantity ?? 0;
+                const u  = b.unit ?? b.fields?.Units ?? 'pieces';
+                const pd = b.purchaseDate ?? b.fields?.PurchaseDate ?? null;
+                const ed = b.expiryDate   ?? b.fields?.ExpiryDate   ?? null;
+                return `• ${q} ${u}\n Bought: ${formatDateForDisplay(pd ?? '—')}\n Expiry: ${formatDateForDisplay(ed ?? '—')}`;
+              }).join('\n');
+              let message = `📦 Batches — ${product}:\n${lines}`;
+              const soon = exact.filter(b => (b.expiryDate ?? b.fields?.ExpiryDate) &&
+                daysBetween(new Date(b.expiryDate ?? b.fields?.ExpiryDate), new Date()) <= 7);
+              if (soon.length) message += `\n\n💡 ${soon.length} batch(es) expiring ≤7 days — clear with FIFO/discounts.`;
+              await sendTagged(message);
+              return true;
+            }
+          } catch (e) {
+            console.warn(`[qq-batches] exact fetch failed:`, e?.message);
+          }
+          // Fuzzy fallback
+          try {
+            const all = await getBatchRecords(shopId, product);
+            const valid = all.filter(b => !!b?.fields?.Product && (b.fields.Quantity ?? 0) > 0);
+            const norm = s => String(s ?? '').toLowerCase().trim();
+            const qN = norm(product);
+            const scored = valid.map(b => {
+              const n = norm(b.fields.Product);
+              let score = 0;
+              if (n === qN) score = 3;
+              else if (n.includes(qN) || qN.includes(n)) score = 2;
+              else {
+                const qw = qN.split(/\s+/).filter(w => w.length > 2);
+                const nw = n.split(/\s+/).filter(w => w.length > 2);
+                const overlap = qw.filter(w => nw.includes(w)).length;
+                if (overlap > 0) score = 1;
+              }
+              return { score, rec: b };
+            }).sort((a,b) => b.score - a.score);
+            const topName = scored.length ? scored[0].rec.fields.Product : null;
+            const active = valid.filter(b => b.fields.Product === topName);
+            let message;
+            if (!active.length) {
+              message = `📦 No active batches found for ${rawQuery}.`;
+            } else {
+              const lines = active.map(b => {
+                const q  = b.fields.Quantity ?? 0;
+                const u  = b.fields.Units ?? 'pieces';
+                const pd = b.fields.PurchaseDate ? formatDateForDisplay(b.fields.PurchaseDate) : '—';
+                const ed = b.fields.ExpiryDate   ? formatDateForDisplay(b.fields.ExpiryDate)   : '—';
+                return `• ${q} ${u}\n Bought: ${pd}\n Expiry: ${ed}`;
+              }).join('\n');
+              message = `📦 Batches — ${topName ?? product}:\n${lines}`;
+              const soon = active.filter(b => b.fields.ExpiryDate && daysBetween(new Date(b.fields.ExpiryDate), new Date()) <= 7);
+              if (soon.length) message += `\n\n💡 ${soon.length} batch(es) expiring ≤7 days — clear with FIFO/discounts.`;
+            }
+            await sendTagged(message);
+            return true;
+          } catch (e) {
+            console.warn(`[qq-batches] fallback failed:`, e?.message);
+            await sendTagged(`📦 No active batches found for ${rawQuery}.`);
+            return true;
+          }
+        }
+      }
+
     // -------------------------------
       // NEW: Low Stock (compact list)
       // -------------------------------
@@ -6057,7 +6297,7 @@ function _norm(s) { return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,''
 // ====== Raw-body quick-query wrapper (de-duplicated) =========================
 // IMPORTANT: The canonical command router is `handleQuickQueryEN(cmd, From, lang, source)`.
 // This wrapper orchestrates the raw text once, then routes any normalized command
-// to the canonical router (no self-recursion).
+// to the canonical router (no self-recursion). It does *not* format inventory outputs.
 async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();    
@@ -6070,7 +6310,8 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
     _orch = await applyAIOrchestration(text, From, _lang, requestId);
     _lang = _orch.language ?? _lang;
   } catch (_) { /* best-effort */ }
-
+    
+// ---------- Q&A branch remains local; inventory/summary delegates to canonical -----
   // If orchestrator classified it as a QUESTION, answer and exit.
   if (_orch.isQuestion === true || _orch.kind === 'question') {
     handledRequests.add(requestId); // prevent late apologies in this cycle
@@ -6088,7 +6329,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
     return true;
   }
 
-  // If AI produced a normalized read-only command (summary/list/etc.), route it and exit.
+  // If AI produced a normalized read-only command (summary/list/etc.), route to canonical and exit.
   if (_orch.normalizedCommand) {   
     handledRequests.add(requestId);
         const normalized = String(_orch.normalizedCommand).trim().toLowerCase();
@@ -6105,144 +6346,20 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
           const MAX_ALIAS_DEPTH = Number(process.env.MAX_ALIAS_DEPTH ?? 1);
 
         const tooDeep = aliasDepth >= MAX_ALIAS_DEPTH;
-        // Helper: direct dispatch for summary commands with activation gate
-        const dispatchSummaryInline = async (cmd) => {
-          try {
-            const planInfo = await getUserPlan(shopId);
-            const plan = String(planInfo?.plan ?? '').toLowerCase();
-            const activated = (plan === 'trial' || plan === 'paid');
-    
-            const sendTagged = async (body) => {
-              const msg0 = await tx(body, _lang, From, cmd, `qq-${cmd}-${shopId}`);
-              const msg = await tagWithLocalizedMode(From, msg0, _lang);
-              await sendMessageViaAPI(From, msg);
-            };
-    
-            if (!activated) {
-              const prompt = await t(
-                'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
-                _lang,
-                `cta-summary-${shopId}`
-              );
-              await sendTagged(prompt);
-              return true;
-            }
-              
-        if (cmd === 'short summary') {
-                      // Build concise snapshot (data-backed)
-                      let hasAny = false;
-                      try {                                               
-                        const today = await getTodaySalesSummary(shopId);
-                        const inv   = await getInventorySummary(shopId);
-                        hasAny = !!(today?.totalValue || inv?.totalValue || (inv?.lowStock||[]).length);
-                      } catch (_) {}
-                      if (!hasAny) {
-                        await sendTagged('📊 Short Summary — Aaj abhi koi transaction nahi hua.\n💡 Tip: “sold milk 2 ltr” try karo.');
-                        return true;
-                      }
-                      const lines = [];
-                      // 1) Sales today (amount + optional orders/items)
-                      try {                                                
-                        const s = await getTodaySalesSummary(shopId);
-                           if (s?.totalValue) {
-                             const amt = Number(s.totalValue).toFixed(0);
-                          const orders = (s?.orders ?? s?.bills ?? s?.count ?? null);
-                          const items  = (s?.totalItems ?? null);
-                          const tail   = orders ? ` • ${orders} orders` : (items ? ` • ${items} items` : '');
-                          lines.push(`🧾 Sales Today: ₹${amt}${tail}`);
-                        }
-                        // Optional: vs yesterday (compact)
-                        try {
-                          const y = await getSalesSummaryPeriod(shopId, 'yesterday');
-                          if (y?.totalSales && s?.totalSales) {
-                            const diff = Number(s.totalSales) - Number(y.totalSales);
-                            const sign = diff === 0 ? '＝' : (diff > 0 ? '📈' : '📉');
-                            lines.push(`↔️ vs Yesterday: ${sign} ₹${Math.abs(diff).toFixed(0)}`);
-                          }
-                        } catch (_) { /* soft-fail */ }
-                      } catch (_){}
-        
-                      // 2) Low stock with quantity + unit for context
-                      try {
-                        const lRaw = await getLowStockProducts(shopId) ?? [];
-                        const l = sanitizeProductRows(lRaw); // Airtable rows → { name, quantity, unit }
-                        if (l.length) {
-                          const lowList = l.slice(0,5).map(x => {
-                            const qty = Number(x.quantity ?? 0);
-                            const unit = String(x.unit ?? '').trim();
-                            return qty ? `${x.name} (${qty}${unit ? ' ' + unit : ''})` : x.name;
-                          }).join(', ');
-                          lines.push(`🟠 Low Stock: ${lowList}`);
-                        }
-                      } catch (_){}
-        
-                      // 3) Expiring soon (7 days) with days left if available
-                      try {
-                        const eRaw = await getExpiringProducts(shopId, 7) ?? [];
-                        const e = sanitizeProductRows(eRaw);
-                        if (e.length) {
-                          const fmt = (r) => {
-                            const days = r?.fields?.DaysLeft ?? r?.daysLeft ?? null;
-                            return Number.isFinite(days) ? `${r.name} (${days}d)` : r.name;
-                          };
-                          const expList = e.slice(0,5).map(fmt).join(', ');
-                          lines.push(`⏳ Expiring Soon: ${expList}`);
-                        }
-                      } catch (_){}
-        
-                      // 4) Next actions when actionable
-                      const actionable = lines.some(l => /^🟠 Low Stock:/i.test(l) || /^⏳ Expiring Soon:/i.test(l));
-                      if (actionable) {
-                        lines.push(`➡️ Next actions: • reorder suggestions • prices • stock value`);
-                      }
-        
-                      const body = `📊 Short Summary\n${lines.join('\n') || '—'}`;
-                      await sendTagged(body);
-                      return true;
-                    }
-
-            if (cmd === 'full summary') {
-              try {
-                const insights = await generateFullScaleSummary(shopId, _lang, `qq-full-${shopId}`);
-                await sendTagged(insights);
-              } catch (_) {
-                await sendTagged('📊 Full Summary — snapshot unavailable. Try: “short summary”.');
-              }
-              return true;
-            }
-          } catch (e) {
-            console.warn(`[${requestId}] inline summary dispatch failed:`, e?.message);
-          }
-          // Fallback: do not recurse further; stop here
-          return true;
-        };
+               
+        // Helper: delegate normalized command to canonical handler
+            const delegate = async (cmd, srcTag) =>
+              await handleQuickQueryEN(cmd, From, _lang, `${requestId}${srcTag}`);
     
         // Avoid infinite loops: inline dispatch for summaries, or stop if depth exceeded
         if (sameCommand || tooDeep) {
-          if (normalized === 'short summary' || normalized === 'full summary') {
-            return await dispatchSummaryInline(normalized);
-          }
-          // If not a summary, stop recursion to avoid loops
-          return true;
-        }
-                    
+                  
+        // Always delegate (single hop) to canonical to keep single message style
+              return await delegate(normalized, '::ai-norm');
+                                    
         // Safe single hop: route once to canonical command router
-        return await handleQuickQueryEN(_orch.normalizedCommand, From, _lang, `${requestId}:alias-raw`);
+            return await delegate(_orch.normalizedCommand, ':alias-raw');
   }
-      
-    // (Fix) Remove undefined 'orchestrated' and use _orch consistently
-     // (Fix) Ensure languagePinned is defined before use
-     if (_orch.normalizedCommand) {
-       try {
-         const languagePinned = (_orch.language ?? (detectedLanguage ?? 'en')).toLowerCase();                 
-        // Route to canonical command router (no recursion into this wrapper)
-         await handleQuickQueryEN(_orch.normalizedCommand, From, languagePinned, `${requestId}::ai-norm`);
-         handledRequests.add(requestId);
-         return true;
-       } catch (e) {
-         console.warn('[router] ai-normalized command failed, falling back:', e?.message);
-       }
-     }
 
   // Question detection: prefer orchestrator; if null, use legacy detector.
   // This makes Q&A win BEFORE welcome, while gating (ensureAccessOrOnboard) remains non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)           
@@ -6352,8 +6469,8 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
         if (FULL_FALLBACK.some(rx  => rx.test(text))) return 'full summary';
         return null;
       })();
-      if (normalized) {              
-        // Route to canonical command router (normalized alias)
+      if (normalized) {                              
+        // Route to canonical command router (normalized alias) — single source of truth
         await handleQuickQueryEN(normalized, From, detectedLanguage, `${requestId}:alias-raw`);
         handledRequests.add(requestId);
         return true;
@@ -6802,304 +6919,87 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
       return true;
     }
 
-// 0) Inventory value (BEFORE any "stock <product>" matching)
-    // Accepts: "inventory value", "stock value", "value summary",
-    //          "total/overall/grand/gross inventory|stock value|valuation"
-    if (/^\s*(?:(?:(?:total|overall|grand(?:\s*total)?|gross)\s+)?(?:inventory|stock)\s*(?:value|valuation)|value\s*summary)\s*$/i.test(text)) {
-    const inv = await getInventorySummary(shopId);
-    let message = `📦 Inventory Summary:\n• Unique products: ${inv.totalProducts}\n• Total value: ₹${(inv.totalValue ?? 0).toFixed(2)}`;
-    if ((inv.totalPurchaseValue ?? 0) > 0) message += `\n• Total cost: ₹${inv.totalPurchaseValue.toFixed(2)}`;
-    if ((inv.topCategories ?? []).length > 0) {
-      message += `\n\n📁 By Category:\n` +
-        inv.topCategories.map((c,i)=>`${i+1}. ${c.name}: ₹${c.value.toFixed(2)} (${c.productCount} items)`).join('\n');
-    }
-    const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageQueued(From, msg);
-    await scheduleUpsell(gate?.upsellReason);
-    return true;
-  }
-
-
-// 0.5) List products (with optional page or search)
-  //   - "products" | "list products"           => page 1
-  //   - "products 2" | "list products 2"       => page 2
-  //   - "products page 3"                      => page 3
-  //   - "products search maggi"                => search
-  //   - "search products maggi"                => search
-  let pm = text.match(/^\s*(?:products|list\s+products)(?:\s+(?:page\s+)?(\d+))?\s*$/i);
-  let sm = text.match(/^\s*(?:products\s+search|search\s+products)\s+(.+)\s*$/i);
-  if (pm || sm) {
-    const PAGE_SIZE = 25;
-    const page = pm ? Math.max(1, parseInt(pm[1] || '1', 10)) : 1;
-    const query = sm ? sm[1].trim() : '';
-    // Fetch inventory for this shop
-    const list = await getCurrentInventory(shopId);
-    // Build unique items map (use last non-empty qty/unit)
-    const map = new Map();
-    for (const r of list) {
-      const name = r?.fields?.Product?.trim();
-      if (!name) continue;
-      const qty  = r?.fields?.Quantity ?? 0;
-      const unit = r?.fields?.Units || 'pieces';
-      map.set(name.toLowerCase(), { name, qty, unit });
-    }
-    let items = Array.from(map.values());
-    // Optional search
-    if (query) {
-      const q = query.toLowerCase();
-      items = items.filter(x => x.name.toLowerCase().includes(q));
-    }
-    // Sort: by name (case-insensitive)
-    items.sort((a,b) => a.name.localeCompare(b.name, undefined, {sensitivity:'base'}));
-    // Paging
-    const total = items.length;
-    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-    const pageSafe = Math.min(page, totalPages);
-    const start = (pageSafe - 1) * PAGE_SIZE;
-    const pageItems = items.slice(start, start + PAGE_SIZE);
-    // Build message
-    let header = query
-      ? `🧾 Products matching “${query}” — ${pageItems.length} of ${total}`
-      : `🧾 Products — Page ${pageSafe}/${totalPages} — ${pageItems.length} of ${total}`;
+    // 0) Inventory value (BEFORE any "stock <product>" matching)
+        // Accepts: "inventory value", "stock value", "value summary",
+        //          "total/overall/grand/gross inventory|stock value|valuation"
         
-    if (total === 0) {
-        const msg0 = await t(`${header}\nNo products found.`, detectedLanguage, requestId);
-        await sendMessageQueued(From, msg0);
-        await scheduleUpsell(gate?.upsellReason);
+    if (/^\s*(?:(?:(?:total|overall|grand(?:\s*total)?|gross)\s+)?(?:inventory|stock)\s*(?:value|valuation)|value\s*summary)\s*$/i.test(text)) {
+       await handleQuickQueryEN('value summary', From, detectedLanguage, `${requestId}::alias-inv-value`);
+       handledRequests.add(requestId);
+       return true;
+     }
+      
+    // 0.5) List products (page/search) → canonical delegate
+    {
+      const pm = text.match(/^\s*(?:products|list\s+products)(?:\s+(?:page\s+)?(\d+))?\s*$/i);
+      const sm = text.match(/^\s*(?:products\s+search|search\s+products)\s+(.+)\s*$/i);
+      if (pm) {
+        const page = pm[1] ? parseInt(pm[1], 10) : 1;
+        const cmdCanon = page > 1 ? `products page ${page}` : `products`;
+        await handleQuickQueryEN(cmdCanon, From, detectedLanguage, `${requestId}::alias-products`);
+        handledRequests.add(requestId);
         return true;
       }
-
-    const lines = pageItems.map(p => `• ${p.name} — ${p.qty} ${p.unit}`);
-    let message = `${header}\n\n${lines.join('\n')}`;
-    if (!query && pageSafe < totalPages) {
-      message += `\n\n➡️ Next page: "products ${pageSafe+1}"`;
-    } else if (query && pageSafe < totalPages) {
-      message += `\n\n➡️ Next page: "products ${pageSafe+1}" (repeat the search term)`;
+      if (sm) {
+        const term = sm[1].trim();
+        await handleQuickQueryEN(`products search ${term}`, From, detectedLanguage, `${requestId}::alias-products-search`);
+        handledRequests.add(requestId);
+        return true;
+      }
     }
-    message += `\n🔎 Search: "products search <term>"`;
-    const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageQueued(From, msg);
-    await scheduleUpsell(gate?.upsellReason);
-    return true;
-  }
 
-  // Prices needing update (paged): "prices", "prices 2", "price updates", "stale prices"
-let pricePage = text.match(/^\s*(?:prices|price\s*updates|stale\s*prices)(?:\s+(?:page\s+)?(\d+))?\s*$/i);
-if (pricePage) {
-  const page = pricePage[1] ? parseInt(pricePage[1], 10) : 1;    
-  const out = await sendPriceUpdatesPaged(From, detectedLanguage, requestId, page);
-   if (out) {
-     await sendMessageQueued(From, out);
-     await scheduleUpsell(gate?.upsellReason);
-   }
-   return true;
-}
-
+    // Prices needing update (paged): "prices", "prices 2", "price updates", "stale prices"
+    {
+      const pricePage = text.match(/^\s*(?:prices|price\s*updates|stale\s*prices)(?:\s+(?:page\s+)?(\d+))?\s*$/i);
+      if (pricePage) {
+        const page = pricePage[1] ? parseInt(pricePage[1], 10) : 1;
+        const cmdCanon = page > 1 ? `prices page ${page}` : `prices`;
+        await handleQuickQueryEN(cmdCanon, From, detectedLanguage, `${requestId}::alias-prices`);
+        handledRequests.add(requestId);
+        return true;
+      }
+    }
   
-// 1) Stock for product
-  // Guard: don't let "inventory value/valuation/value summary" slip into stock branch
-  let m = text.match(/^(?:stock|inventory|qty)\s+(?!value\b|valuation\b|summary\b)(.+)$/i);
-
-  if (m) {
-    // Clean tail punctuation like "?", "!" etc.
-    const rawQuery = m[1].trim().replace(/[?।。.!,;:\u0964\u0965]+$/u, '');
-    const product = await translateProductName(rawQuery, requestId + ':qq-stock');
-
-    // --- Precise DB lookup first (preferred) ---
-    try {
-      const exact = await getProductInventory(shopId, product);
-      if (exact?.success) {
-        const qty  = exact.quantity ?? 0;
-        const unit = exact.unit || 'pieces';
-        const message = `📦 Stock — ${product}: ${qty} ${unit}`;
-        const msg = await t(message, detectedLanguage, requestId);
-        await sendMessageQueued(From, msg);
-        await scheduleUpsell(gate?.upsellReason);
+    // 1) Stock for product
+    // Guard: don't let "inventory value/valuation/value summary" slip into stock branch  
+    {
+      const m = text.match(/^(?:stock|inventory|qty)\s+(.+)$/i);
+      if (m) {
+        const raw = m[1].trim();
+        await handleQuickQueryEN(`stock ${raw}`, From, detectedLanguage, `${requestId}::alias-stock`);
+        handledRequests.add(requestId);
         return true;
       }
-    } catch (e) {
-      console.warn(`[${requestId}] getProductInventory failed:`, e?.message);
     }
 
-    // --- Fallback: fuzzy scan of full inventory (only if available) ---
-    try {
-      const list = await getCurrentInventory(shopId);
-      const qN = _norm(product);
-      let best = null, bestScore = 0;
-      for (const r of list) {
-        const name = r?.fields?.Product;
-        if (!name) continue; // ignore blank names to avoid "undefined"
-        const n = _norm(name);
-        if (!n || !qN) continue;
-        let score = 0;
-        if (n === qN) score = 3;                                   // exact
-        else if (n.includes(qN) || qN.includes(n)) score = 2;      // substring
-        else {
-          const qw = qN.split(/\s+/).filter(w => w.length > 2);
-          const nw = n.split(/\s+/).filter(w => w.length > 2);
-          const overlap = qw.filter(w => nw.includes(w)).length;
-          if (overlap > 0) score = 1;                              // token overlap
-        }
-        if (score > bestScore) { bestScore = score; best = r; }
-      }
-      let message;
-      if (!best) {
-        message = `📦 ${rawQuery}: not found in inventory.`;
-      } else {
-        const qty  = best?.fields?.Quantity ?? 0;
-        const unit = best?.fields?.Units || 'pieces';
-        const name = best?.fields?.Product || product;
-        message = `📦 Stock — ${name}: ${qty} ${unit}`;
-      }
-      const msg = await t(message, detectedLanguage, requestId);
-      await sendMessageQueued(From, msg);
-      await scheduleUpsell(gate?.upsellReason);
-      return true;
-    } catch (e) {
-      console.warn(`[${requestId}] Fallback list scan failed:`, e?.message);
-      const msg = await t(
-        `📦 ${rawQuery}: not found in inventory.`,
-        detectedLanguage,
-        requestId
-      );
-      await sendMessageQueued(From, msg);
-      await scheduleUpsell(gate?.upsellReason);
-      return true;
-    }
-  }
-
-
-  // 2) Low stock / Stockout    
-  if (/^(?:low\s*stock|stockout|out\s*of\s*stock)$/.test(text)) {
-     let low = await getLowStockProducts(shopId, 5);
-     low = sanitizeProductRows(low);
-    const all = await getCurrentInventory(shopId);
-    const out = all.filter(r => (r.fields.Quantity ?? 0) <= 0).map(r => ({
-      name: r.fields.Product, unit: r.fields.Units || 'pieces'
-    }));
-    let message = `⚠️ Low & Stockout:\n`;
-    if (low.length === 0 && out.length === 0) message += `Everything looks good.`;
-    else {
-      if (low.length) message += `\nLow stock (≤5):\n` + low.map(p=>`• ${p.name}: ${p.quantity} ${p.unit}`).join('\n');
-      if (out.length) message += `\n\nOut of stock:\n` + out.map(p=>`• ${p.name}`).join('\n');
-      message += `\n\n💡 Advice: Prioritize ordering low-stock items first.`;
-    }
-    const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageQueued(From, msg);
-    await scheduleUpsell(gate?.upsellReason);
-    return true;
-  }
-
+    // 2) Low stock / Stockout    
+    if (/^(?:low\s*stock|stockout|out\s*of\s*stock)$/i.test(text)) {
+       await handleQuickQueryEN('low stock', From, detectedLanguage, `${requestId}::alias-low`);
+       handledRequests.add(requestId);
+       return true;
+     }
   
-// 3) Batches for product (purchase & expiry)
-  m = text.match(/^(?:batches?|expiry)\s+(.+)$/i);
-  if (m) {
-   const rawQuery = m[1].trim().replace(/[?।。.!,;:\u0964\u0965]+$/u, '');
-    const product = await translateProductName(rawQuery, requestId + ':qq-batches');
-
-    // --- Exact helper first ---
-    try {
-      // Prefer the helper that returns only remaining batches for a product
-      const exact = await getBatchesForProductWithRemaining(shopId, product);
-      if (Array.isArray(exact) && exact.length > 0) {
-        const lines = exact.map(b => {
-          const q  = b.quantity ?? b.fields?.Quantity ?? 0;
-          const u  = b.unit || b.fields?.Units || 'pieces';
-          const pd = b.purchaseDate || b.fields?.PurchaseDate || null;
-          const ed = b.expiryDate   || b.fields?.ExpiryDate   || null;
-          return `• ${q} ${u} | Bought: ${formatDateForDisplay(pd || '—')} | Expiry: ${formatDateForDisplay(ed || '—')}`;
-        }).join('\n');
-        let message = `📦 Batches — ${product}:\n${lines}`;
-        const soon = exact.filter(b => (b.expiryDate || b.fields?.ExpiryDate) &&
-                        daysBetween(new Date(b.expiryDate || b.fields?.ExpiryDate), new Date()) <= 7);
-        if (soon.length) message += `\n\n💡 ${soon.length} batch(es) expiring ≤7 days — clear with FIFO/discounts.`;
-        const msg = await t(message, detectedLanguage, requestId);
-        await sendMessageQueued(From, msg);
-        await scheduleUpsell(gate?.upsellReason);
+    // 3) Batches for product (purchase & expiry)      
+    {
+      const m = text.match(/^(?:batches?|expiry)\s+(.+)$/i);
+      if (m) {
+        const raw = m[1].trim();
+        await handleQuickQueryEN(`batches ${raw}`, From, detectedLanguage, `${requestId}::alias-batches`);
+        handledRequests.add(requestId);
         return true;
       }
-    } catch (e) {
-      console.warn(`[${requestId}] getBatchesForProductWithRemaining failed:`, e?.message);
     }
 
-    // --- Safe fuzzy fallback ---
-    try {
-      const all = await getBatchRecords(shopId, product);
-      // Filter valid product-named records; group by product to pick a best match
-      const valid = all.filter(b => !!b?.fields?.Product && (b.fields.Quantity ?? 0) > 0);
-      const qN = _norm(product);
-      const scored = valid.map(b => {
-        const n = _norm(b.fields.Product);
-        let score = 0;
-        if (n === qN) score = 3;
-        else if (n.includes(qN) || qN.includes(n)) score = 2;
-        else {
-          const qw = qN.split(/\s+/).filter(w => w.length > 2);
-          const nw = n.split(/\s+/).filter(w => w.length > 2);
-          const overlap = qw.filter(w => nw.includes(w)).length;
-          if (overlap > 0) score = 1;
-        }
-        return { score, rec: b };
-      }).sort((a,b) => b.score - a.score);
-
-      const topName = scored.length ? scored[0].rec.fields.Product : null;
-      const active = valid.filter(b => b.fields.Product === topName);
-      let message;
-      if (!active.length) {
-        message = `📦 No active batches found for ${rawQuery}.`;
-      } else {
-        const lines = active.map(b => {
-          const q  = b.fields.Quantity ?? 0;
-          const u  = b.fields.Units || 'pieces';
-          const pd = b.fields.PurchaseDate ? formatDateForDisplay(b.fields.PurchaseDate) : '—';
-          const ed = b.fields.ExpiryDate   ? formatDateForDisplay(b.fields.ExpiryDate)   : '—';
-          return `• ${q} ${u} | Bought: ${pd} | Expiry: ${ed}`;
-        }).join('\n');
-        message = `📦 Batches — ${topName || product}:\n${lines}`;
-        const soon = active.filter(b => b.fields.ExpiryDate && daysBetween(new Date(b.fields.ExpiryDate), new Date()) <= 7);
-        if (soon.length) message += `\n\n💡 ${soon.length} batch(es) expiring ≤7 days — clear with FIFO/discounts.`;
-      }
-      const msg = await t(message, detectedLanguage, requestId);
-      await sendMessageQueued(From, msg);
-      await scheduleUpsell(gate?.upsellReason);
-      return true;
-    } catch (e) {
-      console.warn(`[${requestId}] Fallback batches scan failed:`, e?.message);
-      const msg = await t(
-        `📦 No active batches found for ${rawQuery}.`,
-        detectedLanguage,
-        requestId
-      );
-      await sendMessageQueued(From, msg);
-      await scheduleUpsell(gate?.upsellReason);
-      return true;
-    }
-  }
-
-  // 4) Expiring soon
-  // Allow "expiring 0" for already-expired items
-  m = text.match(/^expiring(?:\s+(\d+))?$/i);
-  if (m) {
-    const days = m[1] !== undefined ? Math.max(0, parseInt(m[1], 10)) : 30; // allow 0
-    const exp = await getExpiringProducts(shopId, days);
-    const header = days === 0
-      ? `❌ Already expired:`
-      : `⏰ Expiring in next ${days} day(s):`;
-    let message = `${header}\n`;
-    if (!exp.length) message += days === 0 ? `No expired items.` : `No items found.`;
-    else {
-      message += exp
-        .map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`)
-        .join('\n');
-      message += days === 0
-        ? `\n\n💡 Move expired stock off-shelf and create a return-to-supplier note if applicable.`
-        : `\n\n💡 Move to eye‑level, bundle, or mark‑down 5–15%.`;
-    }
-    const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageQueued(From, msg);
-    await scheduleUpsell(gate?.upsellReason);
-    return true;
-  }
+      // 4) Expiring soon
+      // Allow "expiring 0" for already-expired items         
+        m = text.match(/^expiring(?:\s+(\d+))?$/i);
+         if (m) {
+           const days = m[1] !== undefined ? Math.max(0, parseInt(m[1], 10)) : 30;
+           const exactCmd = days === 0 ? 'expiring 0' : (days <= 7 ? 'expiring 7' : 'expiring 30');
+           await handleQuickQueryEN(exactCmd, From, detectedLanguage, `${requestId}::alias-expiring`);
+           handledRequests.add(requestId);
+           return true;
+         }
 
   // 5) Sales (today|week|month)
   m = text.match(/^sales\s+(today|this\s*week|week|this\s*month|month)$/i);
@@ -7132,37 +7032,12 @@ if (pricePage) {
     return true;
   }
 
-  // 7) Reorder suggestions (simple velocity heuristic)
-  if (/^reorder(\s+suggestions?)?$|^what\s+should\s+i\s+reorder$/i.test(text)) {
-    // last 30 days sales velocity
-    const now = new Date(); const start = new Date(now); start.setDate(now.getDate()-30);
-    const sales = await getSalesDataForPeriod(shopId, start, now);
-    const inv = await getCurrentInventory(shopId);
-    const soldMap = new Map();
-    for (const r of (sales.records || [])) {
-      const p = r.fields.Product; const q = Math.abs(r.fields.Quantity ?? 0);
-      if (!p) continue; soldMap.set(p, (soldMap.get(p)||0)+q);
-    }
-    const days = 30, lead=3, safety=2;
-    const suggestions = [];
-    for (const r of inv) {
-      const name = r.fields.Product; const unit = r.fields.Units || 'pieces';
-      const current = r.fields.Quantity ?? 0; const sold = soldMap.get(name) || 0;
-      const daily = sold/days;
-      const coverNeeded = (lead+safety)*daily;
-      const reorderQty = Math.max(0, Math.ceil(coverNeeded - current));
-      if (reorderQty > 0) suggestions.push({name, unit, current, daily: Number(daily.toFixed(2)), reorderQty});
-    }
-    suggestions.sort((a,b)=> (b.reorderQty-a.reorderQty) || (b.daily-a.daily));
-    let message = `📋 Reorder Suggestions (30d, lead ${lead}d + safety ${safety}d):\n`;
-    message += suggestions.length
-      ? suggestions.slice(0,10).map(s=>`• ${s.name}: stock ${s.current} ${s.unit}, ~${s.daily}/day → reorder ~${s.reorderQty} ${singularize(s.unit)}`).join('\n')
-      : 'No urgent reorders detected.';
-    const msg = await t(message, detectedLanguage, requestId);
-    await sendMessageQueued(From, msg);
-    await scheduleUpsell(gate?.upsellReason);
-    return true;
-  }  
+    // 7) Reorder suggestions (simple velocity heuristic)     
+    if (/^(?:reorder(?:\s+suggestions)?|what\s+should\s+i\s+reorder)$/i.test(text)) {
+       await handleQuickQueryEN('reorder suggestions', From, detectedLanguage, `${requestId}::alias-reorder`);
+       handledRequests.add(requestId);
+       return true;
+     }
 } finally {
   // No local stop; centralized wrapper handles stopping.
 }
@@ -10424,22 +10299,29 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
 
     // --- HARD GUARD: treat summary phrases as commands, not inventory updates
     const shopId = from.replace('whatsapp:', '');
-    const intent = resolveSummaryIntent(transcript);
+    const intent = resolveSummaryIntent(transcript);        
     if (intent === 'short summary') {
-      const msg = await generateInstantSummary(shopId, detectedLanguage, requestId);
-      // send via API to avoid Twilio body-length issues; then ack Twilio
-      await sendMessageViaAPI(from, msg);
-      response.message('✅ Short summary sent.');
+      await handleQuickQueryEN(
+        'short summary',
+        from,
+        _safeLang(orch?.language, detectedLanguage, 'en'),
+        `${requestId}::voice-summary`
+      );
       handledRequests.add(requestId);
+      response.message('✅ Short summary sent.');
       return res.send(response.toString());
     }
     if (intent === 'full summary') {
-      await processShopSummary(shopId); // Sends Nativeglish itself
-      response.message('✅ Full summary sent.');
+      await handleQuickQueryEN(
+        'full summary',
+        from,
+        _safeLang(orch?.language, detectedLanguage, 'en'),
+        `${requestId}::voice-summary`
+      );
       handledRequests.add(requestId);
+      response.message('✅ Full summary sent.');
       return res.send(response.toString());
-    }       
-
+    }
         
     // ===== EARLY EXIT: AI orchestrator on confirmed transcript =====
       try {
@@ -11869,18 +11751,25 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         } catch (_) { /* soft-fail: continue */ }
     
     // === FRONT-DOOR SUMMARY GUARD (text path) ===
-    const intentAtEntry = resolveSummaryIntent(Body);
+    const intentAtEntry = resolveSummaryIntent(Body);        
     if (intentAtEntry === 'short summary') {
-      const shopId = From.replace('whatsapp:', '');
-      const msg = await generateInstantSummary(shopId, conversationState?.language || 'en', requestId);
-      await sendMessageViaAPI(From, msg);
+      await handleQuickQueryEN(
+        'short summary',
+        From,
+        (conversationState?.language || 'en'),
+        `${requestId}::text-summary`
+      );
       return;
     }
     if (intentAtEntry === 'full summary') {
-      const shopId = From.replace('whatsapp:', '');
-      await processShopSummary(shopId); // sends itself (now Nativeglish via dailySummary.js patch)
+      await handleQuickQueryEN(
+        'full summary',
+        From,
+        (conversationState?.language || 'en'),
+        `${requestId}::text-summary`
+      );
       return;
-    }   
+    } 
     
     // Check for common greetings with improved detection
     const lowerBody = Body.toLowerCase();
