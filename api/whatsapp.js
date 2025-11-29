@@ -1028,6 +1028,92 @@ function isResetMessage(text) {
   });
 }
 
+// === Guard: detect "start trial" intent in all supported languages ===
+function isStartTrialIntent(text) {
+  const s = String(text || '').trim();
+  if (!s) return false;
+
+  // --- English (exact + common phrasings) ---
+  const enExact = /^(start trial|start my trial|begin trial|free trial|activate trial|trial|start|try now)$/i;
+  const enContains =
+    /(want|wanna|would like|please|pls|plz|need|start|begin|activate)\s+(the\s+)?(free\s+)?trial/i.test(s) ||
+    /\btrial\b.*\b(start|begin|activate)\b/i.test(s) ||
+    /\bstart\b.*\btrial\b/i.test(s);
+
+  // --- Hinglish (Roman Hindi) ---
+  const hiLatn =
+    /\b(trial\s*(shuru|start|chalu)|mujhe\s*trial\s*chahiye|trial\s*karna\s*hai|trial\s*(please|pls|plz))\b/i.test(s);
+
+  // --- Hindi (Devanagari) ---
+  const hiNative =
+    /(ट्रायल)\s*(शुरू|शुरू करें|चालू|आरंभ)\b/.test(s) ||
+    /मुझे\s*ट्रायल\s*चाहिए/.test(s) ||
+    /ट्रायल\s*करना\s*है/.test(s);
+
+  // --- Bengali (native + roman) ---
+  const bnNative =
+    /(ট্র(?:া|া)য়াল)\s*(শুরু(?:\s*করুন)?|চালু)\b/.test(s) ||
+    /আমি\s*ট্র(?:া|া)য়াল\s*চাই/.test(s) ||
+    /(ট্র(?:া|া)য়াল)\s*করতে\s*চাই/.test(s);
+  const bnLatn =
+    /\b(trial\s*(shuru\s*korun|chalu)|ami\s*trial\s*chai|trial\s*korte\s*chai)\b/i.test(s);
+
+  // --- Tamil (native + roman) ---
+  const taNative =
+    /(ட்ரயல்)\s*(தொடங்கவும்|தொடங்கு|ஆரம்பம்)\b/.test(s) ||
+    /எனக்கு\s*ட்ரயல்\s*வேண்டும்/.test(s) ||
+    /(ட்ரயல்)\s*செய்ய\s*வேண்டும்/.test(s);
+  const taLatn =
+    /\b(trial\s*(todangavum|todangu|arambam)|trial\s*venum|trial\s*seyya\s*venum)\b/i.test(s);
+
+  // --- Telugu (native + roman) ---
+  const teNative =
+    /(ట్రయల్)\s*(ప్రారంభించండి|స్టార్ట్)\b/.test(s) ||
+    /నాకు\s*ట్రయల్\s*కావాలి/.test(s) ||
+    /(ట్రయల్)\s*చేయాలి/.test(s);
+  const teLatn =
+    /\b(trial\s*(prarambhinchandi|start)|naaku\s*trial\s*kaavali|trial\s*cheyaali)\b/i.test(s);
+
+  // --- Kannada (native + roman) ---
+  const knNative =
+    /(ಟ್ರಯಲ್)\s*(ಪ್ರಾರಂಭಿಸಿ|ಶುರು)\b/.test(s) ||
+    /ನನಗೆ\s*ಟ್ರಯಲ್\s*ಬೇಕು/.test(s) ||
+    /(ಟ್ರಯಲ್)\s*ಮಾಡಬೇಕು/.test(s);
+  const knLatn =
+    /\b(trial\s*(prarambhisi|shuru)|nanage\s*trial\s*beku|trial\s*maadabeku)\b/i.test(s);
+
+  // --- Marathi (native + roman) ---
+  const mrNative =
+    /(ट्रायल)\s*(सुरू\s*करा|सुरू)\b/.test(s) ||
+    /मला\s*ट्रायल\s*हवी/.test(s) ||
+    /(ट्रायल)\s*करायची\s*आहे/.test(s);
+  const mrLatn =
+    /\b(trial\s*suru\s*kara|mala\s*trial\s*havi)\b/i.test(s);
+
+  // --- Gujarati (native + roman) ---
+  const guNative =
+    /(ટ્રાયલ)\s*(શરૂ\s*કરો|શરૂ)\b/.test(s) ||
+    /મને\s*ટ્રાયલ\s*જોઈએ/.test(s) ||
+    /(ટ્રાયલ)\s*કરવું\s*છે/.test(s);
+  const guLatn =
+    /\b(trial\s*sharu\s*karo|mane\s*trial\s*joie[e]?|trial\s*karvu\s*chhe)\b/i.test(s);
+
+  // Legacy numeric quick-code you already accept
+  const numeric1 = /^\s*1\s*$/i.test(s);
+
+  return (
+    enExact.test(s) || enContains ||
+    hiLatn || hiNative ||
+    bnNative || bnLatn ||
+    taNative || taLatn ||
+    teNative || teLatn ||
+    knNative || knLatn ||
+    mrNative || mrLatn ||
+    guNative || guLatn ||
+    numeric1
+  );
+}
+
 // --- Question intent detector (AI-backed when uncertain) ---
 async function looksLikeQuestion(text, lang = 'en') {
   const t = String(text ?? '').trim().toLowerCase();
@@ -3873,8 +3959,6 @@ const lang = (language ?? 'en').toLowerCase();
   }
 }
 
-
-
 // ===== Access Gate & Onboarding =====
 async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
   try {
@@ -3893,6 +3977,24 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
       }
       return { allow: true, language: lang, upsellReason: 'paid_verification_failed' };
     }
+          
+    // --- NEW GUARD: typed "start trial" intent (all supported languages) ---
+        // Only trigger when user is NOT already activated (paid or active trial).
+        // This does not affect the existing button flow (payload === 'activate_trial').
+        try {
+          const planInfo = await getUserPlan(shopId);
+          const plan = String(planInfo?.plan ?? '').toLowerCase();
+          const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
+          const isActivated =
+            (plan === 'paid') ||
+            (plan === 'trial' && (!trialEnd || Date.now() <= trialEnd.getTime()));
+          if (!isActivated && isStartTrialIntent(Body)) {
+            // Reuse the same activation steps you use in the button path
+            await activateTrialFlow(From, lang);
+            return { allow: true, language: lang, upsellReason: 'trial_started' };
+          }
+        } catch { /* soft-fail: continue to normal onboarding */ }
+
     // Lookup record in AuthUsers
     const rec = await getAuthUserRecord(shopId);
     if (!rec) {
