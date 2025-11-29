@@ -2975,7 +2975,8 @@ const {
   getReorderSuggestions,
   getCurrentInventory,
   applySaleWithReconciliation,
-  reattributeSaleToBatch
+  reattributeSaleToBatch,
+  upsertAuthUserDetails
 } = require('../database');
 
 // --- No-op fallback for builds where cleanupCaches isn't bundled
