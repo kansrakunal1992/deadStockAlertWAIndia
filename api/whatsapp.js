@@ -2214,8 +2214,69 @@ async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en', opts = {}
 }
  
 // Map button taps / list selections to your existing quick-query router
- // Robust to multiple Twilio payload shapes + safe fallback
-async function handleInteractiveSelection(req) {     
+// === ACTIVATION: typed "start trial" unified flow ============================
+async function activateTrialFlow(From, lang = 'en') {
+  const shopId = String(From).replace('whatsapp:', '');
+  // If already active, acknowledge and exit
+  try {
+    const planInfo = await getUserPlan(shopId);
+    const plan = String(planInfo?.plan ?? '').toLowerCase();
+    const end  = planInfo?.trialEndDate ?? planInfo?.trialEnd ?? null;
+    const active = (plan === 'paid') || (plan === 'trial' && end && new Date(end).getTime() > Date.now());
+    if (active) {
+      const msg = await t('✅ You already have access.', lang, `cta-trial-already-${shopId}`);
+      await sendMessageViaAPI(From, msg);
+      return { success: true, already: true };
+    }
+  } catch { /* continue */ }
+
+  // Start trial
+  const start = await startTrialForAuthUser(shopId, TRIAL_DAYS);
+  if (!start?.success) {
+    const msg = await t('Sorry, we couldn’t start your trial right now. Please try again.', lang, `cta-trial-fail-${shopId}`);
+    await sendMessageViaAPI(From, msg);
+    return { success: false };
+  }
+
+  // Mirror into UserPlan for consistent gating
+  try {
+    const trialEnd = new Date();
+    trialEnd.setDate(trialEnd.getDate() + TRIAL_DAYS);
+    await saveUserPlan(shopId, 'trial', trialEnd);
+  } catch (e) {
+    console.warn('[trial-mirror] saveUserPlan failed:', e?.message);
+  }
+
+  // Ack + examples
+  const planNote = `🎉 Trial activated for ${TRIAL_DAYS} days!`;
+  let ack = await t(
+    `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
+    lang,
+    `cta-trial-ok-${shopId}`
+  );
+  if (!ack || ack.trim().length < 20) {
+    ack = `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`;
+  }
+  await sendMessageViaAPI(From, ack);
+
+  // Menus: Quick-Reply + List-Picker
+  try {
+    await ensureLangTemplates(lang);
+    const sids = getLangSids(lang);
+    if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
+    if (sids?.listPickerSid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.listPickerSid });
+  } catch (e) {
+    console.warn('[trial-activated] menu orchestration failed', e?.response?.status, e?.response?.data);
+  }
+
+  // Short grace to avoid immediate "not activated" prompts
+  try { (globalThis._recentActivations = globalThis._recentActivations ?? new Map()).set(shopId, Date.now()); } catch {}
+  return { success: true };
+}
+
+// Map button taps / list selections to your existing quick‑query router
+// Robust to multiple Twilio payload shapes + safe fallback
+async function handleInteractiveSelection(req) {
 // Global, minimal grace-cache to avoid stale plan reads immediately after trial activation
 const _recentActivations = (globalThis._recentActivations = globalThis._recentActivations || new Map()); // shopId -> ts(ms)
 const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
@@ -2722,6 +2783,7 @@ function _editDistance(a, b) {
   }
   return dp[m][n];
 }
+    
 function _near(a, b, max=2) { return _editDistance(a, b) <= max; }
 
 // --- Fuzzy resolver: exact alias -> fuzzy regex/synonyms -> edit-distance over key tokens
@@ -11105,10 +11167,10 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                 _safeLang(orch.language, detectedLanguage, 'en'),
                 `${requestId}::terminal-voice`
               );
-              return true;
+              return;
             }
             if (_aliasDepth(requestId) >= MAX_ALIAS_DEPTH) {
-              return true;
+              return;
             }
             return await handleQuickQueryEN(
               orch.normalizedCommand,
@@ -11131,7 +11193,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           await sendMessageDedup(From, msg);                  
           try {
                   const isActivated = await isUserActivated(shopId);
-                  const buttonLang = langPinned.includes('-latn') ? langPinned.split('-')[0] : langPinned;
+                  const buttonLang = langExact.includes('-latn') ? langExact.split('-')[0] : langExact; // FIX: use langExact in voice path
                   await sendSalesQAButtons(From, buttonLang, isActivated);
                 } catch (e) {
                   console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
@@ -11213,7 +11275,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     try {
         // Skip quick-query normalization when we're in sticky/txn context
         // or when the voice transcript looks transaction-like (qty+unit+price).
-        const stickyAction = await getStickyActionQuick(From);
+        const stickyAction = await getStickyActionQuick(); // closure version
         const looksTxn = looksLikeTxnLite(cleanTranscript);
         if (stickyAction || looksTxn) {
           console.log(`[${requestId}] [voice] skipping quick-query in sticky/txn turn`);
@@ -11799,7 +11861,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           
     // Only if not an inventory update AND NOT in sticky/txn context, try quick queries
       try {
-        const stickyAction = await getStickyActionQuick(From);
+        const stickyAction = await getStickyActionQuick();
         const looksTxn = looksLikeTxnLite(Body);
         if (stickyAction || looksTxn) {
           console.log(`[${requestId}] Skipping quick-query routing in sticky/txn turn`);                
@@ -11942,7 +12004,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               
     // Only send the generic default if nothing else handled AND it is not a sticky/transaction turn
       if (!__handled) {
-        const stickyAction3 = await getStickyActionQuick(From);
+        const stickyAction3 = await getStickyActionQuick();
         const looksTxn3 = looksLikeTxnLite(Body);
         if (stickyAction3 || looksTxn3) {
           console.log(`[${requestId}] Suppressing generic default in sticky/txn turn [text]`);
@@ -12221,7 +12283,7 @@ module.exports = async (req, res) => {
         //  - start-trial intent is present (typed), or
         //  - gate already decided onboarding/trial, or
         //  - sticky/txn context
-        const stickyAction = await getStickyActionQuick(From);
+        const stickyAction = await getStickyActionQuick();
         const looksTxn = looksLikeTxnLite(Body);
         const trialIntent = isStartTrialIntent(Body);
         let suppressByGate = false;
@@ -13420,9 +13482,9 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         const looksTxn = looksLikeTxnLite(Body);
         if (stickyAction || looksTxn) {
           console.log(`[${requestId}] [HNI] skipping quick-query in sticky/txn turn`);
-        } else {
-          const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
-          const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
+        } else {                     
+            const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
+            const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
           if (handledQuick) {
               __handled = true;
             return res.send('<Response></Response>'); // reply already sent via API
@@ -13562,7 +13624,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       
     // Only send generic default if nothing else handled AND we're not in sticky/txn context
       if (!__handled) {
-        const stickyAction3 = await getStickyActionQuick(From);
+        const stickyAction3 = await getStickyActionQuick();
         const looksTxn3 = looksLikeTxnLite(Body);
         if (stickyAction3 || looksTxn3) {
           console.log(`[${requestId}] Suppressing generic default in sticky/txn turn`);
