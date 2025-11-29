@@ -241,7 +241,7 @@ async function parseMultipleUpdates(reqOrText) {
       if (userState && userState.mode === 'onboarding_trial_capture') {
         try {
           const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'trial-capture');
-          await handleTrialOnboardingStep(from ?? `whatsapp:${shopId}`, transcript, langHint);
+          await handleTrialOnboardingStep(from || `whatsapp:${shopId}`, transcript, langHint);
         } catch (e) {
           console.warn('[onboard-capture] step failed:', e?.message);
         }
@@ -2289,23 +2289,27 @@ function _isSkipGST(s) {
   const t = String(s ?? '').trim().toLowerCase();
   return ['skip','na','n/a','not available','none','no gst','no'].includes(t);
 }
+
 async function beginTrialOnboarding(From, lang = 'en') {
   const shopId = String(From).replace('whatsapp:', '');
-  await setUserState(From, 'onboarding_trial_capture', { step: 'name', collected: {} });
+  // ✅ Always store by shopId (without "whatsapp:") to match DB readers
+  await setUserState(shopId, 'onboarding_trial_capture', { step: 'name', collected: {}
   const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
   const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `trial-onboard-name-${shopId}`);
   await sendMessageViaAPI(From, askName);
 }
+
 async function handleTrialOnboardingStep(From, text, lang = 'en') {
   const shopId = String(From).replace('whatsapp:', '');
-  const state = await getUserStateFromDB(shopId);
+  // ✅ Read by the same key we used to write
+  const state = await getUserStateFromDB(shopId);  
   if (!state || state.mode !== 'onboarding_trial_capture') return false;
   const data = state.data?.collected ?? {};
   const step = state.data?.step ?? 'name';
   const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
   if (step === 'name') {
     data.name = String(text ?? '').trim();
-    await setUserState(From, 'onboarding_trial_capture', { step: 'gstin', collected: data });
+    await setUserState(shopId, 'onboarding_trial_capture', { step: 'gstin', collected: data });
     const askGstin = await t(NO_FOOTER_MARKER + 'Enter your *GSTIN* (type *skip* if not available).', lang, `trial-onboard-gstin-${shopId}`);
     await sendMessageViaAPI(From, askGstin);
     return true;
@@ -2313,7 +2317,7 @@ async function handleTrialOnboardingStep(From, text, lang = 'en') {
   if (step === 'gstin') {
     const raw = String(text ?? '').trim();
     data.gstin = _isSkipGST(raw) ? null : raw;
-    await setUserState(From, 'onboarding_trial_capture', { step: 'address', collected: data });
+    await setUserState(shopId, 'onboarding_trial_capture', { step: 'address', collected: data });
     const askAddr = await t(NO_FOOTER_MARKER + 'Please share your *Shop Address* (area, city).', lang, `trial-onboard-address-${shopId}`);
     await sendMessageViaAPI(From, askAddr);
     return true;
@@ -2330,8 +2334,9 @@ async function handleTrialOnboardingStep(From, text, lang = 'en') {
     // Start trial now (with details)
     const start = await startTrialForAuthUser(shopId, TRIAL_DAYS, {
       name: data.name, gstin: data.gstin, address: data.address, phone: shopId
-    });
-    try { await deleteUserStateFromDB(state.id); } catch {}
+    });        
+    // ✅ Clear by shopId (safe no-op if your delete uses record id; otherwise add a DB helper to delete by key)
+    try { await clearUserState(shopId); } catch {}
     const msg = await t(`🎉 Trial activated for ${TRIAL_DAYS} days!`, lang, `trial-onboard-done-${shopId}`);
     await sendMessageViaAPI(From, msg);
     try {
