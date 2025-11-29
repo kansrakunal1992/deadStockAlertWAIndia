@@ -10109,7 +10109,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     
     // --- NEW: global reset (works in any context) ---
         if (isResetMessage(transcript)) {
-          try { await clearUserState(from); } catch (_) {}
+          try { await clearUserState(shopId); } catch (_) {}
           await sendSystemMessage(`✅ Reset. I’ve cleared any active steps.`, from, detectedLanguage, requestId, response);
           handledRequests.add(requestId);
           return res.send(response.toString());
@@ -10187,8 +10187,9 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
     const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
     
       if (allPendingPrice(results)) {
-        try {
-          await setUserState(from, 'correction', {
+        try {              
+        const shopIdLocal = String(from ?? '').replace('whatsapp:', '');
+        await setUserState(shopIdLocal, 'correction', {
             correctionState: {
               correctionType: 'price',
               pendingUpdate: results[0],
@@ -11362,7 +11363,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       console.log(`[${requestId}] [5.5] Low confidence (${confidence}), requesting confirmation...`);
       
       // FIX: Set confirmation state before sending the request
-      await setUserState(From, 'confirmation', {
+      await setUserState(shopId, 'confirmation', {
         pendingTranscript: cleanTranscript,
         detectedLanguage,
         confidence,
@@ -11411,7 +11412,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
           
           // FIX: Set confirmation state before sending the request
-          await setUserState(From, 'confirmation', {
+          await setUserState(shopId, 'confirmation', {
             pendingTranscript: cleanTranscript,
             detectedLanguage,
             confidence: 1.0, // High confidence since we're confirming product
@@ -11609,7 +11610,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
         
         // FIX: Set correction state
-        await setUserState(From, 'correction', {
+        await setUserState(shopId, 'correction', {
           correctionState: {
             correctionType,
             pendingUpdate: pending.update,
@@ -11972,7 +11973,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       console.log(`[${requestId}] Found ${unknownProducts.length} unknown products, requesting confirmation`);
       
       // FIX: Set confirmation state before sending the request
-      await setUserState(From, 'confirmation', {
+      await setUserState(shopId, 'confirmation', {
         pendingTranscript: Body,
         detectedLanguage,
         confidence: 1.0, // High confidence since we're confirming product
@@ -12194,6 +12195,24 @@ module.exports = async (req, res) => {
         }
       } catch { /* best-effort; continue */ }
   
+    // 🔒 Front-door guard: if user is in onboarding capture, consume turn here
+      try {
+        const shopIdCheck = String(From).replace('whatsapp:', '');
+        const s = (typeof getUserStateFromDB === 'function')
+          ? await getUserStateFromDB(shopIdCheck)
+          : await getUserState(shopIdCheck);
+        if (s && s.mode === 'onboarding_trial_capture') {
+          const langForStep = String(detectedLanguage ?? 'en').toLowerCase();
+          await handleTrialOnboardingStep(From, Body, langForStep);
+          const twiml = new twilio.twiml.MessagingResponse();
+          twiml.message('');
+          res.type('text/xml');
+          resp.safeSend(200, twiml.toString());
+          safeTrackResponseTime(requestStart, requestId);
+          return;
+        }
+      } catch (_) { /* continue */ }
+
   // --- EARLY: 'mode' / localized switch for plain text (webhook level) ---        
     try {
       const found = Body && parseModeSwitchLocalized(Body);
@@ -12564,15 +12583,15 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     // 1. Handle explicit reset commands FIRST (highest priority)
     if (isResetMessage(Body)) {
       console.log(`[${requestId}] Explicit reset command detected: "${Body}"`);
-      
-      // Clear ALL states
-      await clearUserState(From);
-      if (globalState.conversationState && globalState.conversationState[From]) {
-        delete globalState.conversationState[From];
-      }
-      if (globalState.pendingProductUpdates && globalState.pendingProductUpdates[From]) {
-        delete globalState.pendingProductUpdates[From];
-      }
+                
+    // Clear ALL states (normalize to shopId)
+     await clearUserState(shopId);
+     if (globalState.conversationState && globalState.conversationState[shopId]) {
+       delete globalState.conversationState[shopId];
+     }
+     if (globalState.pendingProductUpdates && globalState.pendingProductUpdates[shopId]) {
+       delete globalState.pendingProductUpdates[shopId];
+     }
       
       // Clear correction state from database
       try {
@@ -12609,8 +12628,24 @@ async function handleRequest(req, res, response, requestId, requestStart) {
           `[${requestId}] Current state for ${shopIdState}:`,
           currentState ? currentState.mode : 'none'
         );
-    
-    // 3. Handle based on current state
+           
+    // 3. EARLY GUARD: trial-onboarding capture → consume this turn and STOP
+     if (currentState && currentState.mode === 'onboarding_trial_capture') {
+       try {
+         const langForStep = await detectLanguageWithFallback(String(Body ?? ''), From, requestId);
+         await handleTrialOnboardingStep(From, String(Body ?? ''), String(langForStep ?? 'en').toLowerCase());
+       } catch (e) {
+         console.warn(`[${requestId}] onboarding capture step error:`, e?.message);
+       }
+       // Minimal TwiML ack; reply already sent via API
+       try {
+         const twiml = new twilio.twiml.MessagingResponse();
+         twiml.message('');
+         res.type('text/xml').send(twiml.toString());
+       } catch (_) { /* best-effort */ }
+       return; // 🔒 Do not run greeting/AI/welcome or inventory parsing in this turn
+     }
+     // 4. Handle based on current state
     if (currentState) {
       switch (currentState.mode) {
         case 'greeting':
@@ -12828,7 +12863,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
       
       if (updateResult.success) {
         // Update user state
-        await setUserState(From, 'correction', {
+        await setUserState(shopId, 'correction', {
           correctionState: {
             ...correctionState,
             correctionType: newCorrectionType,
@@ -13066,7 +13101,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
     
     if (allPendingPrice(results)) {
         try {
-          await setUserState(From, 'correction', {
+          await setUserState(shopID, 'correction', {
             correctionState: {
               correctionType: 'price',
               pendingUpdate: results[0],
@@ -13136,7 +13171,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
       const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
       
       if (saveResult.success) {
-        await setUserState(From, 'correction', {
+        await setUserState(shopID, 'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -13184,6 +13219,21 @@ Reply with:
 async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {
   console.log(`[${requestId}] Handling new interaction`);
   const shopId = From.replace('whatsapp:', '');
+   
+  // 🔒 Early guard: if trial-onboarding capture is active, consume & stop
+     try {
+       const s = (typeof getUserStateFromDB === 'function')
+          ? await getUserStateFromDB(shopId)
+          : await getUserState(shopId);
+        if (s && s.mode === 'onboarding_trial_capture') {
+          const langForStep = await detectLanguageWithFallback(String(Body ?? ''), From, requestId);
+          await handleTrialOnboardingStep(From, String(Body ?? ''), String(langForStep ?? 'en').toLowerCase());
+          const twiml = new twilio.twiml.MessagingResponse();
+          twiml.message('');
+          res.type('text/xml').send(twiml.toString());
+          return;
+        }
+      } catch (_) { /* continue normal flow */ }
     
   // Track whether this request has produced a final user-facing response
   let __handled = false;
@@ -13258,9 +13308,12 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     return (hasNum && hasUnit) || (hasUnit && hasPrice);
   }
   async function getStickyActionQuick() {
-    try {
-      const stDb = await getUserState(From);
-      const stMem = (globalThis?.globalState?.conversationState?.[shopId]) || null;
+    try {        
+    // ✅ read state by shopId (same key used to store/read)
+          const stDb = (typeof getUserStateFromDB === 'function')
+            ? await getUserStateFromDB(shopId)
+            : await getUserState(shopId);
+          const stMem = (globalThis?.globalState?.conversationState?.[shopId]) ?? null;
       const st = stDb || stMem || null;
       if (!st) return null;
       switch (st.mode) {
@@ -13344,9 +13397,11 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     console.warn(`[${requestId}] sticky short-circuit failed:`, e?.message);
   }
 
-  // ✅ Price correction state (unchanged)
-  try {
-    const currentState = await getUserState(From);
+  // ✅ Price correction state (unchanged)      
+    try {
+       const currentState = (typeof getUserStateFromDB === 'function')
+         ? await getUserStateFromDB(shopId)
+         : await getUserState(shopId);
     if (currentState &&
         currentState.mode === 'correction' &&
         currentState.data.correctionState.correctionType === 'price') {
@@ -13604,12 +13659,12 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         return;
       }
       }
-      await setUserState(From, 'inventory', { updates, detectedLanguage });
+      await setUserState(shopId, 'inventory', { updates, detectedLanguage });
       const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
 
       if (allPendingPrice(results)) {
         try {
-          await setUserState(From, 'correction', {
+          await setUserState(shopID, 'correction', {
             correctionState: {
               correctionType: 'price',
               pendingUpdate: results[0],
@@ -13937,7 +13992,7 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
         
         // Set correction state
-        await setUserState(From, 'correction', {
+        await setUserState(shopId, 'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -13987,7 +14042,7 @@ Reply with:
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id} (fallback)`);
         
         // Set correction state
-        await setUserState(From, 'correction', {
+        await setUserState(shopID, 'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -14137,7 +14192,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
         
         // Set correction state
-        await setUserState(From, 'correction', {
+        await setUserState(shopID, 'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -14191,7 +14246,7 @@ Reply with:
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id} (fallback)`);
         
         // Set correction state
-        await setUserState(From, 'correction', {
+        await setUserState(shopID, 'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -14284,7 +14339,7 @@ const header = chooseHeader(processed.length, COMPACT_MODE, false);
       console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
       
       // Set correction state
-      await setUserState(From, 'correction', {
+      await setUserState(shopID, 'correction', {
         correctionState: {
           correctionType: 'selection',
           pendingUpdate: update,
