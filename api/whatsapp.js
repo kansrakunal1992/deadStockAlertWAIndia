@@ -234,8 +234,20 @@ async function parseMultipleUpdates(reqOrText) {
   const updates = [];
   const t = String(transcript || '').trim();       
   // Prefer DB state; use in-memory fallback if DB read is transiently null
-  const userState = (await getUserStateFromDB(shopId)) || globalState.conversationState[shopId] || null;    
-      
+  const userState = (await getUserStateFromDB(shopId)) || globalState.conversationState[shopId] || null;      
+  
+  // --- [NEW EARLY EXIT: trial-onboarding capture] ---------------------------------
+  // If user is in onboarding flow, consume this message and do not parse as inventory
+      if (userState && userState.mode === 'onboarding_trial_capture') {
+        try {
+          const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'trial-capture');
+          await handleTrialOnboardingStep(from ?? `whatsapp:${shopId}`, transcript, langHint);
+        } catch (e) {
+          console.warn('[onboard-capture] step failed:', e?.message);
+        }
+        return []; // nothing to parse downstream
+      }
+    
   // Standardize valid actions (canonical: purchased, sold, returned)
   const VALID_ACTIONS = ['purchased', 'sold', 'returned'];
   
@@ -2272,13 +2284,76 @@ async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en', opts = {}
  
 // Map button taps / list selections to your existing quick-query router
 // === ACTIVATION: typed "start trial" unified flow ============================
+// --- [NEW HELPERS & FLOW: begin capture BEFORE activation] ---------------------------
+function _isSkipGST(s) {
+  const t = String(s ?? '').trim().toLowerCase();
+  return ['skip','na','n/a','not available','none','no gst','no'].includes(t);
+}
+async function beginTrialOnboarding(From, lang = 'en') {
+  const shopId = String(From).replace('whatsapp:', '');
+  await setUserState(From, 'onboarding_trial_capture', { step: 'name', collected: {} });
+  const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+  const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `trial-onboard-name-${shopId}`);
+  await sendMessageViaAPI(From, askName);
+}
+async function handleTrialOnboardingStep(From, text, lang = 'en') {
+  const shopId = String(From).replace('whatsapp:', '');
+  const state = await getUserStateFromDB(shopId);
+  if (!state || state.mode !== 'onboarding_trial_capture') return false;
+  const data = state.data?.collected ?? {};
+  const step = state.data?.step ?? 'name';
+  const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+  if (step === 'name') {
+    data.name = String(text ?? '').trim();
+    await setUserState(From, 'onboarding_trial_capture', { step: 'gstin', collected: data });
+    const askGstin = await t(NO_FOOTER_MARKER + 'Enter your *GSTIN* (type *skip* if not available).', lang, `trial-onboard-gstin-${shopId}`);
+    await sendMessageViaAPI(From, askGstin);
+    return true;
+  }
+  if (step === 'gstin') {
+    const raw = String(text ?? '').trim();
+    data.gstin = _isSkipGST(raw) ? null : raw;
+    await setUserState(From, 'onboarding_trial_capture', { step: 'address', collected: data });
+    const askAddr = await t(NO_FOOTER_MARKER + 'Please share your *Shop Address* (area, city).', lang, `trial-onboard-address-${shopId}`);
+    await sendMessageViaAPI(From, askAddr);
+    return true;
+  }
+  if (step === 'address') {
+    data.address = String(text ?? '').trim();
+    // Persist details BEFORE activation
+    await upsertAuthUserDetails(shopId, {
+      name: data.name,
+      gstin: data.gstin,
+      address: data.address,
+      phone: shopId
+    });
+    // Start trial now (with details)
+    const start = await startTrialForAuthUser(shopId, TRIAL_DAYS, {
+      name: data.name, gstin: data.gstin, address: data.address, phone: shopId
+    });
+    try { await deleteUserStateFromDB(state.id); } catch {}
+    const msg = await t(`🎉 Trial activated for ${TRIAL_DAYS} days!`, lang, `trial-onboard-done-${shopId}`);
+    await sendMessageViaAPI(From, msg);
+    try {
+      await ensureLangTemplates(lang);
+      const sids = getLangSids(lang);
+      if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
+      if (sids?.listPickerSid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.listPickerSid });
+    } catch (e) {
+      console.warn('[trial-onboard] menu orchestration failed', e?.response?.status, e?.response?.data);
+    }
+    try { (globalThis._recentActivations = globalThis._recentActivations ?? new Map()).set(shopId, Date.now()); } catch {}
+    return true;
+  }
+  return false;
+}
+// --- typed path now begins capture (no immediate activation)
 async function activateTrialFlow(From, lang = 'en') {
   const shopId = String(From).replace('whatsapp:', '');
-  // If already active, acknowledge and exit
   try {
     const planInfo = await getUserPlan(shopId);
     const plan = String(planInfo?.plan ?? '').toLowerCase();
-    const end  = planInfo?.trialEndDate ?? planInfo?.trialEnd ?? null;
+    const end = planInfo?.trialEndDate ?? planInfo?.trialEnd ?? null;
     const active = (plan === 'paid') || (plan === 'trial' && end && new Date(end).getTime() > Date.now());
     if (active) {
       const msg = await t('✅ You already have access.', lang, `cta-trial-already-${shopId}`);
@@ -2286,49 +2361,8 @@ async function activateTrialFlow(From, lang = 'en') {
       return { success: true, already: true };
     }
   } catch { /* continue */ }
-
-  // Start trial
-  const start = await startTrialForAuthUser(shopId, TRIAL_DAYS);
-  if (!start?.success) {
-    const msg = await t('Sorry, we couldn’t start your trial right now. Please try again.', lang, `cta-trial-fail-${shopId}`);
-    await sendMessageViaAPI(From, msg);
-    return { success: false };
-  }
-
-  // Mirror into UserPlan for consistent gating
-  try {
-    const trialEnd = new Date();
-    trialEnd.setDate(trialEnd.getDate() + TRIAL_DAYS);
-    await saveUserPlan(shopId, 'trial', trialEnd);
-  } catch (e) {
-    console.warn('[trial-mirror] saveUserPlan failed:', e?.message);
-  }
-
-  // Ack + examples
-  const planNote = `🎉 Trial activated for ${TRIAL_DAYS} days!`;
-  let ack = await t(
-    `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`,
-    lang,
-    `cta-trial-ok-${shopId}`
-  );
-  if (!ack || ack.trim().length < 20) {
-    ack = `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`;
-  }
-  await sendMessageViaAPI(From, ack);
-
-  // Menus: Quick-Reply + List-Picker
-  try {
-    await ensureLangTemplates(lang);
-    const sids = getLangSids(lang);
-    if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
-    if (sids?.listPickerSid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.listPickerSid });
-  } catch (e) {
-    console.warn('[trial-activated] menu orchestration failed', e?.response?.status, e?.response?.data);
-  }
-
-  // Short grace to avoid immediate "not activated" prompts
-  try { (globalThis._recentActivations = globalThis._recentActivations ?? new Map()).set(shopId, Date.now()); } catch {}
-  return { success: true };
+  await beginTrialOnboarding(From, lang);
+  return { success: true, startedCapture: true };
 }
 
 // Map button taps / list selections to your existing quick‑query router
@@ -2592,116 +2626,16 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
    }
  
   // --- NEW: Activate Trial Plan ---
-  if (payload === 'activate_trial') {       
-    // shopId/lang already prepared above; use activation gate too
-        if (activated) {
-          const msg = await t('✅ You already have access.', lang, `cta-trial-already-${shopId}`);
-          await sendMessageViaAPI(from, fixNewlines(msg));
-          try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: true }); } catch (_) {}
-          return true;
-        }
-    // Treat tap as explicit confirmation to start trial
-        
-    const start = await startTrialForAuthUser(shopId, TRIAL_DAYS);
-        if (start.success) {                 
-        // Mirror plan into UserPlan so all activation checks succeed consistently
-              try {
-                const trialEnd = new Date();
-                trialEnd.setDate(trialEnd.getDate() + TRIAL_DAYS);
-                await saveUserPlan(shopId, 'trial', trialEnd);
-              } catch (e) {
-                console.warn('[trial-mirror] saveUserPlan failed:', e?.message);
-              }                        
-            const planNote = `🎉 Trial activated for ${TRIAL_DAYS} days!`;
-                  let msg;
-                  try {
-                    // Move the marker *inside* t(...) so clamp sees and strips it
-                    const NO_CLAMP_MARKER = '<!NO_CLAMP!>';
-                    msg = await t(
-                      NO_CLAMP_MARKER +
-                        `${planNote}\n•Click on 'Record Purchase/Sale/Return' button & then \nTry:\n• milk 2 ltr at 40/ltr exp +4d`,
-                      lang,
-                      `cta-trial-ok-${shopId}`
-                    );
-                  } catch (e) {
-                    console.warn('[trial-activated] translation failed:', e.message);
-                  }
-                       
-            // ✅ Guard: skip cache if suspiciously short (e.g., "Try:")
-                    if (!msg || msg.trim().length < 20 || /^none$/i.test(msg.trim())) {
-                        console.warn('[trial-activated] cache value too short or invalid, using fallback');
-                        msg = `${planNote}\nClick on 'Record Purchase/Sale/Return' button & then \nTry:\n• milk 2 ltr at 40/ltr exp +4d`;
-                    }
-    
-            // Diagnostic logging before send
-            console.log('[trial-activated] sending ack message:', { to: from, msg });
-    
-            try {                                
-                // Prevent single-script clamp from collapsing this multi-line ack
-                // Marker already consumed by t(...); send the clean text
-                const resp = await sendMessageViaAPI(from, fixNewlines(msg));
-
-                console.log('[trial-activated] ack send OK:', { sid: resp?.sid, to: from });                                
-                // ✅ NEW: Overwrite translation cache with clean text for future calls
-                            async function overwriteTranslationCache(key, lang, text) {
-                                try {
-                                    await upsertTranslationEntry({ key, lang, text });
-                                    console.log(`[cache-update] Overwritten key=${key}, lang=${lang}`);
-                                } catch (e) {
-                                    console.error('[cache-update] Failed:', e.message);
-                                }
-                            }
-                
-                            await overwriteTranslationCache(
-                                `cta-trial-ok-${shopId}`,
-                                lang,
-                                `${planNote}\nTry:\n• sold milk 2 ltr\n• purchase Parle-G 12 packets ₹10 exp +6m`
-                            );
-            } catch (err) {
-                console.error('[trial-activated] ack send FAILED:', {
-                    error: err?.message,
-                    code: err?.code,
-                    status: err?.status,
-                    data: err?.response?.data
-                });
+  if (payload === 'activate_trial') {                  
+        // --- NEW: start onboarding capture; do NOT activate yet
+            if (activated) {
+              const msg = await t('✅ You already have access.', lang, `cta-trial-already-${shopId}`);
+              await sendMessageViaAPI(from, fixNewlines(msg));
+              try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: true }); } catch {}
+              return true;
             }
-                    
-        // Mark recent activation to avoid false "not activated" prompts for next few seconds
-              try { _recentActivations.set(shopIdTop, Date.now()); } catch (_) {}
-                    
-      // NEW: Immediately send activated menus (Quick-Reply + List-Picker)
-          try {
-            await ensureLangTemplates(lang);
-            const sids = getLangSids(lang);
-            // Purchase/Sale/Return Quick-Reply
-            if (sids?.quickReplySid) {
-              try {
-                const r1 = await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
-                console.log('[trial-activated] quickReply OK', { sid: r1?.sid, to: shopId });
-              } catch (e) {
-                console.warn('[trial-activated] quickReply FAIL', { status: e?.response?.status, data: e?.response?.data, to: shopId });
-              }
-            }
-            // Inventory List-Picker
-            if (sids?.listPickerSid) {
-              try {
-                const r2 = await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.listPickerSid });
-                console.log('[trial-activated] listPicker OK', { sid: r2?.sid, to: shopId });
-              } catch (e) {
-                console.warn('[trial-activated] listPicker FAIL', { status: e?.response?.status, data: e?.response?.data, to: shopId });
-              }
-            }
-          } catch (e) {
-            console.warn('[trial-activated] menu orchestration failed', { status: e?.response?.status, data: e?.response?.data });
-          }      
-    } else {
-      const msg = await t(
-        `Sorry, we couldn't start your trial right now. Please try again.`,
-        lang, `cta-trial-fail-${shopId}`
-      );
-      await sendMessageViaAPI(from, msg);
-    }
-    return true;
+            await beginTrialOnboarding(from, lang);
+            return true;
   }
   
   // --- NEW: Demo button ---
