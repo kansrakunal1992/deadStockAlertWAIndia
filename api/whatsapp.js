@@ -2336,8 +2336,15 @@ async function handleTrialOnboardingStep(From, text, lang = 'en') {
       name: data.name, gstin: data.gstin, address: data.address, phone: shopId
     });        
     // ✅ Clear by shopId (safe no-op if your delete uses record id; otherwise add a DB helper to delete by key)
-    try { await clearUserState(shopId); } catch {}
-    const msg = await t(`🎉 Trial activated for ${TRIAL_DAYS} days!`, lang, `trial-onboard-done-${shopId}`);
+    try { await clearUserState(shopId); } catch {}        
+    // Use NO_FOOTER sentinel and restore "Try: examples" line
+        const NO_FOOTER_MARKER = '<!NO_FOOTER!>'; // use raw form to avoid HTML-escape issues
+        const msg = await t(
+          `${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
+          `Try:\n• short summary\n• price list\n• "10 Parle-G sold at 11/packet"`,
+          lang,
+          `trial-onboard-done-${shopId}`
+        );
     await sendMessageViaAPI(From, msg);
     try {
       await ensureLangTemplates(lang);
