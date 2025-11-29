@@ -3513,10 +3513,22 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       await sendTagged('📊 Short Summary — Aaj abhi koi transaction nahi hua.\nTip: “sold milk 2 ltr” try karo.');
       return true;
     }
+    
     const lines = [];
-    try { const s = await getTodaySalesSummary(shopId); if (s?.totalSales) lines.push(`Sales Today: ₹${s.totalSales}`); } catch (_){}
-    try { const l = await getLowStockProducts(shopId) || []; if (l.length) lines.push(`Low Stock: ${l.slice(0,5).map(x=>x.product).join(', ')}`);} catch(_){}
-    try { const e = await getExpiringProducts(shopId, 7) || []; if (e.length) lines.push(`Expiring Soon: ${e.slice(0,5).map(x=>x.product).join(', ')}`);} catch(_){}
+        try {
+          const s = await getTodaySalesSummary(shopId);
+          if (s?.totalSales) lines.push(`Sales Today: ₹${s.totalSales}`);
+        } catch (_){}
+        try {
+          const lRaw = await getLowStockProducts(shopId) || [];
+          const l = sanitizeProductRows(lRaw); // Airtable rows → { name, quantity, unit }
+          if (l.length) lines.push(`Low Stock: ${ l.slice(0,5).map(x => x.name).join(', ') }`);
+        } catch(_){}
+        try {
+          const eRaw = await getExpiringProducts(shopId, 7) || [];
+          const e = sanitizeProductRows(eRaw);
+          if (e.length) lines.push(`Expiring Soon: ${ e.slice(0,5).map(x => x.name).join(', ') }`);
+        } catch(_){}
     const body = `📊 Short Summary\n${lines.join('\n') || '—'}`;
     await sendTagged(body);
     return true;
