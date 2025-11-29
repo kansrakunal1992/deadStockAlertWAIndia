@@ -3638,9 +3638,10 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     
       // -----------------------------------
       // NEW: Expiring (0/7/30 days window)
-      // -----------------------------------
-      if (cmd === 'expiring 0' || cmd === 'expiring 7' || cmd === 'expiring 30') {
-        const days = cmd.endsWith('0') ? 0 : cmd.endsWith('7') ? 7 : 30;
+      // -----------------------------------          
+    if (cmd === 'expiring 0' || cmd === 'expiring 7' || cmd === 'expiring 30') {
+      // Exact-match to avoid "30" being misread as ending with "0"
+      const days = (cmd === 'expiring 0') ? 0 : (cmd === 'expiring 7') ? 7 : 30;
         try {
           const rows = sanitizeProductRows(await getExpiringProducts(shopId, days) ?? []);
           if (!rows.length) {
@@ -3665,12 +3666,13 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       if (cmd === 'sales today' || cmd === 'sales week' || cmd === 'sales month') {
         const period = cmd.replace('sales ', ''); // today|week|month
         try {
-          const s = await getSalesSummaryPeriod(shopId, period);
-          if (!s?.totalSales) {
-            await sendTagged(`🧾 Sales ${capitalize(period)} — ₹0`);
+          const s = await getSalesSummaryPeriod(shopId, period);                    
+          const amt = Number(s?.totalValue ?? 0);
+              if (!amt) {
+                await sendTagged(`🧾 Sales ${capitalize(period)} — ₹0`);
             return true;
           }
-          const amt   = Number(s.totalSales).toFixed(0);
+          const amtStr = amt.toFixed(0);
           const orders = (s?.orders ?? s?.bills ?? s?.count ?? null);
           const items  = (s?.itemsSold ?? null);
           const tail   = orders ? ` • ${orders} orders` : (items ? ` • ${items} items` : '');
@@ -3685,9 +3687,9 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       // NEW: Top 5 Products Month (alias: top products month)
       // -------------------------------------------------
       if (cmd === 'top 5 products month' || cmd === 'top products month') {
-        try {
-          const top = await getTopSellingProductsForPeriod(shopId, 'month') ?? [];
-          if (!top.length) {
+        try {                  
+        const { top = [] } = await getTopSellingProductsForPeriod(shopId, 'month');
+        if (!top || top.length === 0) {
             await sendTagged('🏆 Top Products (Month) — No data yet.');
             return true;
           }
