@@ -12597,14 +12597,18 @@ async function handleRequest(req, res, response, requestId, requestStart) {
       res.send('<Response></Response>');
       return;
     }
-    
-    // 2. Get current user state        
-    console.log(`[${requestId}] Checking state for ${From} in database...`);
-      // Use the DB-backed helper; avoids ReferenceError and aligns with other state calls            
-      const currentState = (typeof getUserStateFromDB === 'function')
-          ? await getUserStateFromDB(From)
-          : await getUserState(From); // fallback to shim if needed
-    console.log(`[${requestId}] Current state for ${From}:`, currentState ? currentState.mode : 'none');
+            
+    // 2. Get current user state (normalize to shopId — no "whatsapp:")
+        const shopId = String(From ?? '').replace('whatsapp:', '');
+        console.log(`[${requestId}] Checking state for ${shopId} in database...`);
+        // Use the DB-backed helper; fallback to shim if needed
+        const currentState = (typeof getUserStateFromDB === 'function')
+            ? await getUserStateFromDB(shopId)
+            : await getUserState(shopId);
+        console.log(
+          `[${requestId}] Current state for ${shopId}:`,
+          currentState ? currentState.mode : 'none'
+        );
     
     // 3. Handle based on current state
     if (currentState) {
@@ -12702,7 +12706,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
     
     // Clear correction state
     await deleteCorrectionState(correctionState.id);
-    await clearUserState(From);
+    await clearUserState(shopId);
     
     const exitMessage = await t(
       'Correction cancelled. You can start fresh with a new inventory update.',
@@ -12729,7 +12733,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
 
     if (results[0].success) {
     await deleteCorrectionState(correctionState.id);
-    await clearUserState(From);
+    await clearUserState(shopId);
   
     const result = results[0];
     const unitText = result.unit ? ` ${result.unit}` : '';
@@ -12908,7 +12912,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
     
     if (isValidInput) {
       // Move to confirmation state
-      await setUserState(From, 'confirmation', {
+      await setUserState(shopId, 'confirmation', {
         correctedUpdate,
         detectedLanguage: correctionState.detectedLanguage,
         originalCorrectionId: correctionState.id
@@ -12955,7 +12959,7 @@ Is this correct? Reply with "yes" or "no".`,
 
 async function handleConfirmationState(Body, From, state, requestId, res) {
   console.log(`[${requestId}] Handling confirmation state with input: "${Body}"`);
-  
+       
   const { correctedUpdate, detectedLanguage, originalCorrectionId } = state.data;
   const shopId = From.replace('whatsapp:', '');
   
@@ -12986,7 +12990,7 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
             }
           );
           // Clear state after sending the single confirmation
-          await clearUserState(From);
+          await clearUserState(shopId);
           return;
         }
         // --------------------------------------------------------------------------
@@ -13009,7 +13013,7 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
     
     // Clean up
     await deleteCorrectionState(originalCorrectionId);
-    await clearUserState(From);
+    await clearUserState(shopId);
     
   } else if (noVariants.includes(Body.toLowerCase())) {
     // Go back to correction selection
@@ -13026,7 +13030,7 @@ Reply with:
     
     // Update correction state back to selection
     await saveCorrectionState(shopId, 'selection', correctedUpdate, detectedLanguage);
-    await setUserState(From, 'correction', {
+    await setUserState(shopId, 'correction', {
       correctionState: {
         correctionType: 'selection',
         pendingUpdate: correctedUpdate,
