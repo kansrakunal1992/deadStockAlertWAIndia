@@ -10988,8 +10988,17 @@ async function googleTranscribe(flacBuffer, requestId) {
   }
 }
 
-// Function to send WhatsApp message via Twilio API (for async responses)
+// --- Minimal outbound sanitizer: strip NO_FOOTER sentinel ---
+function sanitizeOutboundMessage(text) {
+  let s = String(text ?? '');
+  // strip common variants at the start (raw / html-escaped)
+  s = s.replace(/^\s*!NO_FOOTER!\s*/i, '');
+  s = s.replace(/^\s*<!NO_FOOTER!>\s*/i, '');
+  s = s.replace(/^\s*&lt;!NO_FOOTER!&gt;\s*/i, '');
+  return s;
+}
 
+// Function to send WhatsApp message via Twilio API (for async responses)
 async function sendMessageViaAPI(to, body) {
   try {
     const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
@@ -10997,6 +11006,11 @@ async function sendMessageViaAPI(to, body) {
 
     console.log(`[sendMessageViaAPI] Preparing to send message to: ${formattedTo}`);
     console.log(`[sendMessageViaAPI] Message length: ${String(body).length} characters`);
+          
+    // --- Honor NO_FOOTER sentinel (single and multi-part paths) ---
+        const NO_FOOTER_RX = /^\s*!NO_FOOTER!\s*/i;
+        const noFooter = NO_FOOTER_RX.test(String(body));
+        const bodyStripped = String(body).replace(NO_FOOTER_RX, '');
 
     // Twilio hard limit for WhatsApp (exceeding returns Error 21617)
     // Ref: https://www.twilio.com/docs/api/errors/21617, https://help.twilio.com/articles/360033806753
@@ -11067,12 +11081,14 @@ async function sendMessageViaAPI(to, body) {
         console.warn('[activate-cta] failed to append CTA:', ctaErr.message);
       }
     };
-    
-    // If the message fits, tag once and send
-    if (String(body).length <= MAX_LENGTH) {
-      const tagged = await tagWithLocalizedMode(formattedTo, body, 'en');
+            
+    // If the message fits, (conditionally) tag and send
+        if (bodyStripped.length <= MAX_LENGTH) {
+          const finalText = noFooter
+            ? bodyStripped                       // do NOT tag footer
+            : await tagWithLocalizedMode(formattedTo, bodyStripped, 'en');
       const message = await client.messages.create({
-        body: tagged,
+        body: finalText,
         from: process.env.TWILIO_WHATSAPP_NUMBER,
         to: formattedTo
       });
@@ -11084,7 +11100,7 @@ async function sendMessageViaAPI(to, body) {
     // Multi-part path:
     // First split roughly, then re-split each part with exact room for the
     // "(Part i of n)" suffix and (only on the last part) the footer.
-    let parts = smartSplit(body, MAX_LENGTH - 14); // provisional
+    let parts = smartSplit(bodyStripped, MAX_LENGTH - 14); // provisional
     const final = [];
     for (let i = 0; i < parts.length; i++) {
       const isLast = i === parts.length - 1;
@@ -11099,11 +11115,11 @@ async function sendMessageViaAPI(to, body) {
     const messageSids = [];
     for (let i = 0; i < final.length; i++) {
       const isLast = i === final.length - 1;
-      let text = final[i] + PART_SUFFIX(i + 1, final.length);
-      // Append footer ONLY on the last part
-      if (isLast) {
-        text = await tagWithLocalizedMode(formattedTo, text, 'en');
-      }
+      let text = final[i] + PART_SUFFIX(i + 1, final.length);       
+    // Append footer ONLY on the last part — unless NO_FOOTER was requested
+          if (isLast && !noFooter) {
+            text = await tagWithLocalizedMode(formattedTo, text, 'en');
+          }
 
       console.log(`[sendMessageViaAPI] Sending part ${i+1}/${final.length} (${text.length} chars)`);
       const message = await client.messages.create({
