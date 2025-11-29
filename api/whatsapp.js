@@ -11413,7 +11413,24 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
 async function processTextMessageAsync(Body, From, requestId, conversationState) {
   try {
     console.log(`[${requestId}] [1] Parsing text message: "${Body}"`);
-      let __handled = false;
+    let __handled = false;
+    
+    // --- EARLY GUARD: typed "start trial" intent (same behavior as the button) ---
+        try {
+          const shopId = From.replace('whatsapp:', '');
+          const planInfo = await getUserPlan(shopId);
+          const plan = String(planInfo?.plan ?? '').toLowerCase();
+          const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
+          const isActivated =
+            (plan === 'paid') ||
+            (plan === 'trial' && (!trialEnd || Date.now() <= trialEnd.getTime()));
+          if (!isActivated && isStartTrialIntent(Body)) {
+            await activateTrialFlow(From, (conversationState?.language ?? 'en').toLowerCase());
+            try { await maybeShowPaidCTAAfterInteraction(From, (conversationState?.language ?? 'en'), { trialIntentNow: true }); } catch {}
+            handledRequests.add(requestId); // suppress late parse-error/apology
+            return; // exit early, like the "Start Trial" button
+          }
+        } catch (_) { /* soft-fail: continue */ }
     
     // === FRONT-DOOR SUMMARY GUARD (text path) ===
     const intentAtEntry = resolveSummaryIntent(Body);
@@ -11785,19 +11802,37 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         const stickyAction = await getStickyActionQuick(From);
         const looksTxn = looksLikeTxnLite(Body);
         if (stickyAction || looksTxn) {
-          console.log(`[${requestId}] Skipping quick-query routing in sticky/txn turn`);
+          console.log(`[${requestId}] Skipping quick-query routing in sticky/txn turn`);                
         } else {
-          const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
-          const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
-          if (handledQuick) {
+            const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
+            // If normalization produced "start trial", do NOT route as a quick query—activate now.
+            if (/^start\s+trial$/i.test(String(normalized))) {
+              const shopId = From.replace('whatsapp:', '');
+              try {
+                const planInfo = await getUserPlan(shopId);
+                const plan = String(planInfo?.plan ?? '').toLowerCase();
+                const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
+                const isActivated = (plan === 'paid') || (plan === 'trial' && (!trialEnd || Date.now() <= trialEnd.getTime()));
+                if (!isActivated) {
+                  await activateTrialFlow(From, (detectedLanguage ?? 'en').toLowerCase());
+                  try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: true }); } catch {}
+                  __handled = true;
+                  handledRequests.add(requestId);
+                  return;
+                }
+              } catch (_) { /* continue to normal routing if any error */ }
+            }
+            const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
+            if (handledQuick) {
               __handled = true;
-            handledRequests.add(requestId);
+              handledRequests.add(requestId);
               return;
-          }
+            }
+          }              
+        } catch (e) {
+          // Harden against accidental undefined references in quick-query helpers
+          console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
         }
-      } catch (e) {
-        console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
-      }
     }
     
 
