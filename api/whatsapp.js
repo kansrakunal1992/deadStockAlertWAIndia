@@ -13094,7 +13094,27 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   } catch (e) {
     console.warn(`[${requestId}] Language detection failed, defaulting to ${detectedLanguage}:`, e.message);
   }
-  console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`);
+  console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`);        
+  // --- EARLY GUARD: typed "start trial" intent (handles plain text like "I want to start trial")
+  // Trigger BEFORE sticky-mode, parsing, or AI orchestration to mirror the Start Trial button behavior.
+      try {
+        const planInfo = await getUserPlan(shopId);
+        const plan = String(planInfo?.plan ?? '').toLowerCase();
+        const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
+        const isActivated =
+          (plan === 'paid') ||
+          (plan === 'trial' && (!trialEnd || Date.now() <= trialEnd.getTime()));
+        // Robust intent check: function detector OR simple normalized regex
+        const lc = String(Body ?? '').toLowerCase();
+        const typedTrial = isStartTrialIntent(Body) || /\bstart\s+trial\b/.test(lc);
+        if (!isActivated && typedTrial) {
+          await activateTrialFlow(From, (detectedLanguage ?? 'en').toLowerCase());
+          // Suppress CTA in the same turn; mark handled to prevent late apologies
+          try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: true }); } catch {}
+          handledRequests.add(requestId);
+          return res.send('<Response></Response>');
+        }
+      } catch (_) { /* soft-fail: continue */ }
     
   // ✅ Sticky-mode helpers (scoped to function)
   function looksLikeTxnLite(s) {
@@ -13308,23 +13328,6 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
 
   // ✅ Text branch
   if (Body) {      
-    // --- Typed "start trial" guard (plain text) ---
-        // Only trigger when user is NOT already activated (paid or active trial).
-        try {
-          const planInfo = await getUserPlan(shopId);
-          const plan = String(planInfo?.plan ?? '').toLowerCase();
-          const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
-          const isActivated =
-            (plan === 'paid') ||
-            (plan === 'trial' && (!trialEnd || Date.now() <= trialEnd.getTime()));
-          if (!isActivated && isStartTrialIntent(Body)) {
-            await activateTrialFlow(From, (detectedLanguage ?? 'en').toLowerCase());
-            try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: true }); } catch {}
-            handledRequests.add(requestId);
-            return res.send('<Response></Response>');
-          }
-        } catch { /* noop; continue */ }
-
     // ===== EARLY EXIT: AI orchestrator before any inventory parse =====
     try {
       const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
