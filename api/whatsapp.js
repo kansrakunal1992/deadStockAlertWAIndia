@@ -5,7 +5,7 @@ const axios = require('axios');
 // NEW: Trial length constant (fallback to 7 days if env not set)
 // ---------------------------------------------------------------------------
 // Placed near the top to be available to onboarding flow
-const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 7);
+const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 3);
 const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
@@ -3062,7 +3062,6 @@ const DEBUG_QA_SANITIZE = String(process.env.DEBUG_QA_SANITIZE ?? 'false').toLow
 // ===== Paywall / Trial / Links (env-driven) =====
 const PAYTM_NUMBER = String(process.env.PAYTM_NUMBER ?? '9013283687');
 const PAYTM_NAME   = String(process.env.PAYTM_NAME   ?? 'Saamagrii.AI Support Team');
-const TRIAL_DAYS   = Number(process.env.TRIAL_DAYS   ?? 3);
 const PAID_PRICE_INR = Number(process.env.PAID_PRICE_INR ?? 11);
 const INLINE_PAYTM_IN_PRICING = String(process.env.INLINE_PAYTM_IN_PRICING ?? 'false').toLowerCase() === 'true';
 const WHATSAPP_LINK = String(process.env.WHATSAPP_LINK ?? 'https://wa.link/6q3ol7');
