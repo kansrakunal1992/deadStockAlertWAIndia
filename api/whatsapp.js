@@ -3883,18 +3883,29 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       // NEW: Low Stock (compact list)
       // -------------------------------
       if (cmd === 'low stock') {
-        try {
-          const rows = sanitizeProductRows(await getLowStockProducts(shopId) ?? []);
-          if (!rows.length) {
-            await sendTagged('🟢 Low Stock — No alerts right now.');
-            return true;
-          }
-          const list = rows.slice(0, 8).map(r => {
-            const q = Number(r.quantity ?? 0);
-            const u = String(r.unit ?? '').trim();
-            return q ? `${r.name} (${q}${u ? ' ' + u : ''})` : r.name;
-          }).join(', ');
-          await sendTagged(`🟠 Low Stock\n${list}`);
+        try {                     
+            const rows = sanitizeProductRows(await getLowStockProducts(shopId) ?? []);
+                const count = rows.length;
+                if (!count) {
+                  await sendTagged('🟢 Low Stock — No alerts right now.');
+                  return true;
+                }
+                // Structured, formal rendering: header + one bullet per item
+                const LINES_MAX = 10;
+                const items = rows.slice(0, LINES_MAX).map((r) => {
+                  const q = Number(r.quantity ?? 0);
+                  const u = String(r.unit ?? '').trim();
+                  const qty = q ? `${q}${u ? ' ' + u : ''}` : '';
+                  return qty ? `• ${r.name} — ${qty}` : `• ${r.name}`;
+                });
+                const moreTail = count > LINES_MAX ? `\n• +${count - LINES_MAX} more` : '';
+                const header = `🟠 Low Stock — ${count} ${count === 1 ? 'item' : 'items'}`;
+                const body   = `${header}\n${items.join('\n')}${moreTail}\n\n➡️ Action: check reorder suggestions or review prices.`;
+                // Prevent clamp from trimming the header: prefix NO_CLAMP_MARKER
+                const NO_CLAMP_MARKER = globalThis.NO_CLAMP_MARKER || '[[NO_CLAMP]]';
+                const safeBody = `${NO_CLAMP_MARKER}${body}`;
+                // Route via dedup path to append footer & normalize numerals
+                await sendMessageDedup(shopId, safeBody);
         } catch (_) {
           await sendTagged('🟠 Low Stock — snapshot unavailable. Try again in a minute.');
         }
@@ -3905,28 +3916,36 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       // NEW: Reorder Suggestions (velocity-based)
       // --------------------------------------
       if (cmd === 'reorder suggestions') {
-        try {
-          const sug = await getReorderSuggestions(shopId) ?? [];
-          if (!sug.length) {
-            await sendTagged('📦 Reorder — No items need attention right now.');
-            return true;
-          }
-          const lines = sug.slice(0, 8).map(s => {
-            const name = s.name ?? s.fields?.Product ?? '—';
-            const qty  = s.reorderQty ?? s.fields?.ReorderQty ?? null;
-            const unit = s.unit ?? s.fields?.Units ?? '';
-            const lead = s.leadDays ?? s.fields?.LeadDays ?? null;
-            const saf  = s.safetyQty ?? s.fields?.SafetyQty ?? null;
-            const part = [
-              qty ? `${qty}${unit ? ' ' + unit : ''}` : null,
-              lead ? `${lead}d lead` : null,
-              saf ? `+${saf} safety` : null
-            ].filter(Boolean).join(' • ');
-            return part ? `• ${name}: ${part}` : `• ${name}`;
-          }).join('\n');
-          await sendTagged(`📦 Reorder Suggestions\n${lines}`);
+        try {         
+            const sug = await getReorderSuggestions(shopId) ?? [];
+                const count = sug.length;
+                if (!count) {
+                  await sendTagged('📦 Reorder Suggestions — No items need attention right now.');
+                  return true;
+                }
+                const LINES_MAX = 10;
+                const lines = sug.slice(0, LINES_MAX).map(s => {
+                  const name = s.name ?? s.fields?.Product ?? '—';
+                  const qty  = s.reorderQty ?? s.fields?.ReorderQty ?? null;
+                  const unit = s.unit ?? s.fields?.Units ?? '';
+                  const lead = s.leadDays ?? s.fields?.LeadDays ?? null;
+                  const saf  = s.safetyQty ?? s.fields?.SafetyQty ?? null;
+                  const base = qty ? `${qty}${unit ? ' ' + unit : ''}` : null;
+                  const ctx  = [ lead ? `${lead}d lead` : null, saf ? `+${saf} safety` : null ]
+                    .filter(Boolean)
+                    .join(', ');
+                  if (base && ctx) return `• ${name} — ${base} (${ctx})`;
+                  if (base)        return `• ${name} — ${base}`;
+                  return `• ${name}`;
+                }).join('\n');
+                const moreTail = count > LINES_MAX ? `\n• +${count - LINES_MAX} more` : '';
+                const header = `📦 Reorder Suggestions — ${count} ${count === 1 ? 'item' : 'items'}`;
+                const body   = `${header}\n${lines}${moreTail}\n\n➡️ Action: place purchase orders for suggested quantities.`;
+                const NO_CLAMP_MARKER = globalThis.NO_CLAMP_MARKER || '[[NO_CLAMP]]';
+                const safeBody = `${NO_CLAMP_MARKER}${body}`;
+                await sendMessageDedup(shopId, safeBody);
         } catch (_) {
-          await sendTagged('📦 Reorder — snapshot unavailable. Try later.');
+          await sendTagged('📦 Reorder Suggestions — snapshot unavailable. Try later.');
         }
         return true;
       }
