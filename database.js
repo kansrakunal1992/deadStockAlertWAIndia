@@ -2790,24 +2790,64 @@ async function getReorderSuggestions(shopId, { days = 30, leadTimeDays = 3, safe
       if (!p) continue;
       soldMap.set(p, (soldMap.get(p) ?? 0) + q);
     }
-    const dayCount = Math.max(1, Math.round((now - start) / (24 * 60 * 60 * 1000)));
+    const dayCount = Math.max(1, Math.round((now - start) / (24 * 60 * 60 * 1000)));        
     const suggestions = [];
-    for (const rec of (inventoryRecords ?? [])) {
-      const product = rec.fields.Product;
-      const currentQty = rec.fields.Quantity ?? 0;
-      const unit = rec.fields.Units ?? 'pieces';
-      const soldQty = soldMap.get(product) ?? 0;
-      const dailyRate = soldQty / dayCount; // avg per day
-      if (dailyRate < minDailyRate && currentQty > 0) continue; // very slow movers skip
-      const coverNeeded = (leadTimeDays + safetyDays) * dailyRate;
-      const reorderQty = Math.max(0, Math.ceil(coverNeeded - currentQty));
-      if (reorderQty > 0) {
-        suggestions.push({ name: product, unit, currentQty, dailyRate: Number(dailyRate.toFixed(2)), reorderQty });
-      }
-    }
-    // Sort by (reorderQty descending, dailyRate descending)
+    
+        // Tunables: more forgiving defaults for general retail
+        const MIN_DAILY_RATE = Math.min(0.05, minDailyRate ?? 0.05); // don’t skip too aggressively
+        const BUFFER_DAYS = 2;                                      // extra beyond lead+safety
+        const TARGET_COVER_DAYS = leadTimeDays + safetyDays + BUFFER_DAYS;
+        const MIN_QTY_PER_ORDER = 1;     // floor
+        const ROUND_TO_PACK_SIZE = 1;    // set to e.g., 6, 12, 24 if packs/cartons
+    
+        for (const rec of (inventoryRecords ?? [])) {
+          const product = rec.fields.Product;
+          const currentQty = Number(rec.fields.Quantity ?? 0);
+          const unit = rec.fields.Units ?? 'pieces';
+          const soldQty = Number(soldMap.get(product) ?? 0);
+          const dailyRate = soldQty / dayCount; // avg per day
+    
+          // Ignore truly dormant items (no movement & plenty stock)
+          if (dailyRate < MIN_DAILY_RATE && currentQty > 0) continue;
+    
+          const effectiveRate = Math.max(dailyRate, MIN_DAILY_RATE / 2); // tiny epsilon to compute cover
+          const daysCover = currentQty / effectiveRate; // how many days current stock lasts
+          if (daysCover >= TARGET_COVER_DAYS) continue; // enough cover; skip
+    
+          // Order so that projected cover reaches TARGET_COVER_DAYS
+          const deficitDays = TARGET_COVER_DAYS - daysCover; // > 0
+          const rawQty = deficitDays * effectiveRate;
+          let reorderQty = Math.ceil(rawQty);
+    
+          // Apply floors and pack rounding
+          reorderQty = Math.max(reorderQty, MIN_QTY_PER_ORDER);
+          if (ROUND_TO_PACK_SIZE > 1) {
+            reorderQty = Math.ceil(reorderQty / ROUND_TO_PACK_SIZE) * ROUND_TO_PACK_SIZE;
+          }
+    
+          if (reorderQty > 0) {
+            suggestions.push({
+              name: product,
+              unit,
+              currentQty,
+              dailyRate: Number(dailyRate.toFixed(2)),
+              daysCover: Number(daysCover.toFixed(1)),
+              targetCoverDays: TARGET_COVER_DAYS,
+              reorderQty
+            });
+          }
+        }
+
+    // Sort by (reorderQty descending, dailyRate descending)   
     suggestions.sort((a, b) => (b.reorderQty - a.reorderQty) || (b.dailyRate - a.dailyRate));
-    return { success: true, suggestions, days, leadTimeDays, safetyDays };
+        return {
+          success: true,
+          suggestions,
+          days,
+          leadTimeDays,
+          safetyDays,
+          targetCoverDays: TARGET_COVER_DAYS
+        };
   } catch (error) {
     logError(context, error);
     return { success: false, error: error.message, suggestions: [] };
