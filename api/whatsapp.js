@@ -3355,7 +3355,7 @@ function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity
 const SUPPORT_WHATSAPP_LINK = String(process.env.WHATSAPP_LINK || 'https://wa.link/6q3ol7');
 
 // Append one-line support footer to all user-visible messages (language/script aware)
-function appendSupportFooter(msg, from) {
+async function appendSupportFooter(msg, from) {
   const base = String(msg ?? '').trim();
   // Resolve language preference (best-effort)
   let lang = 'en';
@@ -3400,7 +3400,7 @@ function _isDuplicateBody(from, msg, windowMs = 3000) {
 async function sendMessageDedup(From, msg) {
   if (!msg) return;
   // Append language-aware footer; dedupe on the final normalized body
-      const withFooter = appendSupportFooter(String(msg).trim(), From);
+      const withFooter = await appendSupportFooter(String(msg).trim(), From);
       const finalBody = normalizeNumeralsToLatin(withFooter);
       if (_isDuplicateBody(From, finalBody)) {
     try { console.log('[dedupe] suppressed duplicate body for', From); } catch (_) {}
