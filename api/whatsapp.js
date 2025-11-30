@@ -166,11 +166,11 @@ function normalizeTwoBlockFormat(raw, languageCode) {
   const L = String(languageCode ?? 'en').toLowerCase();
   const romanOnly = shouldUseRomanOnly(L);
   let s = String(raw ?? '')
-    .replace(/[`"<>\[\]\\]/g, '')
+    .replace(/[\`"<>\[\]\\]/g, '')
     .replace(/\n\s*\n\s*\n/g, '\n\n')
     .trim();
   const punct = /[.!?]$/;
-  // De-echo: drop exact duplicate lines and bilingual echoes
+  // De-echo: drop duplicates
   const lines = s.split(/\n+/).map(l => l.trim()).filter(Boolean);
   const uniq = [];
   const seen = new Set();
@@ -178,20 +178,11 @@ function normalizeTwoBlockFormat(raw, languageCode) {
     const key = l.toLowerCase();
     if (!seen.has(key)) { uniq.push(l); seen.add(key); }
   }
-  s = uniq.join('\n');      
-  // Hard single-script selection
-      const nonAscii = /[^\x00-\x7F]/;
-      const blocks = s.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
-      if (romanOnly) {
-        const kept = blocks.filter(p => !nonAscii.test(p)).join('\n\n') || s;
-        s = kept;
-      } else {
-        const kept = blocks.filter(p => nonAscii.test(p)).join('\n\n') || s;
-        s = kept;
-      }
-      if (!punct.test(s)) s += '.';
-      return normalizeNumeralsToLatin(s);
-  return punct.test(s) ? s : (s + '.');
+  s = uniq.join('\n');
+  // Single-script: prefer script-aware clamp, then ensure final punctuation
+  s = clampToSingleScript(s, languageCode);
+  if (!punct.test(s)) s += '.';
+  return normalizeNumeralsToLatin(s);
 }
 
 // Minimal helper: de-duplicate repeated bullet/example lines (case-insensitive)
@@ -1579,6 +1570,49 @@ const SWITCH_FALLBACKS = [
   // Gujarati
   'મોડ', 'બદલો'
 ];
+
+// ============================================================================
+// ===== Unicode-script clamp (single-script rendering) ========================
+// ============================================================================
+
+/**
+ * clampToSingleScript(text, lang)
+ * Keep only characters that belong to the allowed script for the target lang.
+ * - For Roman targets (en, *-latn): keep Latin (incl. diacritics), emoji, ₹, numbers, punctuation.
+ * - For native Indic targets (hi/bn/ta/te/kn/mr/gu): keep that script, emoji, ₹, numbers, punctuation.
+ */
+function clampToSingleScript(text, lang) {
+  const s = String(text ?? '');
+  const L = String(lang ?? 'en').toLowerCase();
+
+  // Allowed scripts per language
+  const SCRIPT_RX = {
+    // Roman targets (Latin script)
+    roman: /[\p{Script=Latin}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
+    // Native Indic targets
+    hi: /[\p{Script=Devanagari}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
+    mr: /[\p{Script=Devanagari}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
+    bn: /[\p{Script=Bengali}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
+    ta: /[\p{Script=Tamil}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
+    te: /[\p{Script=Telugu}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
+    kn: /[\p{Script=Kannada}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
+    gu: /[\p{Script=Gujarati}\p{Symbol}\p{Number}\p{Punctuation}\s]/u
+  };
+
+  // Map ₹ explicitly into Symbols row; it already matches \p{Symbol}, kept here for clarity.
+  // Decide target: roman for en/*-latn, else native map
+  const isRomanTarget = /-latn$/.test(L) || L === 'en';
+  const rx = isRomanTarget ? SCRIPT_RX.roman : (SCRIPT_RX[L] ?? SCRIPT_RX.roman);
+
+  // Filter-per-char against allowed script
+  const kept = [...s].filter(ch => rx.test(ch)).join('');
+
+  // Normalize newlines (keep compact 2LFs max), trim tail
+  return kept
+    .replace(/\r?\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 // ===== Language detection re-entry guard + explicit tokens =====
 const _langDetectInFlight = new Set(); // from (whatsapp:+91...) -> boolean
@@ -3257,39 +3291,10 @@ function isRomanTarget(lang) {
  *  - Inline sanitization keeps ₹, numerals & common punctuations.
  */
 
+
 function enforceSingleScript(out, lang) {
-  // Original clamp (kept for comprehensive handling).
   if (!SINGLE_SCRIPT_MODE) return out;
-  const L = String(lang ?? 'en').toLowerCase();
-  const roman = isRomanTarget(L);
-  const english = (L === 'en');
-  const text = String(out ?? '');
-  const normalized = text.replace(/\r?\n/g, '\n').replace(/\n{1,}/g, '\n\n');
-  const parts = normalized.split(/\n\s*\n/);
-  const nonAscii = /[^\x00-\x7F]/;
-  if (parts.length >= 2) {
-    if (english || roman) {
-      const kept = parts.filter(p => !nonAscii.test(p)).join('\n\n');
-      return kept || parts.join('\n\n');
-    } else {
-      const kept = parts.filter(p => nonAscii.test(p)).join('\n\n');
-      return kept || parts[0];
-    }
-  }
-  const hasAscii = /[a-zA-Z]/.test(text);
-  const hasNonAscii = nonAscii.test(text);
-  if (hasAscii && hasNonAscii) {
-    return (english || roman)
-      ? text.replace(/[^\x00-\x7F₹\s.,@:%/\-\+\*\!?'"\(\)\u2013\u2014]/g, '')
-      : text.replace(/[a-zA-Z]/g, '');
-  }
-  if (english || roman) {   
-    // Allow emoji blocks + ₹ in English/Roman outputs
-     // Ranges: Misc Symbols, Emoticons, Dingbats, Transport & Map, Supplemental Symbols & Pictographs, Symbols & Pictographs, Symbols & Pictographs Extended
-     const ALLOW = /[^\x00-\x7F₹\\s.,@:%/\\-\\+\\*\\!?'\"\\(\\)\\u2013\\u2014\\u2600-\\u27BF\\u1F300-\\u1F6FF\\u1F900-\\u1F9FF\\u1FA70-\\u1FAFF]/g;
-     return text.replace(ALLOW, '');
-  }
-  return text;
+  return clampToSingleScript(out, lang);
 }
 
 // === Compact/Verbose message helpers (inline; no new files) ===
@@ -3525,6 +3530,9 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     const msg = await tagWithLocalizedMode(From, msg0, lang);
     await sendMessageViaAPI(From, msg);
   };
+    
+// Helper to opt-out of clamp for specific header+emoji bodies
+const noClamp = (s) => `${NO_CLAMP_MARKER}${s}`;
               
     // -- Early activation gate for ANY inventory command (same defense as summaries)
       //    This prevents DB lookups for unactivated users and shows the same CTA prompt.
@@ -3671,7 +3679,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
             return Number.isFinite(d) ? `${r.name} (${d}d)` : r.name;
           };
           const MAX = 8, list = rows.slice(0, MAX).map(fmt), more = rows.length > MAX ? ` • +${rows.length - MAX} more` : '';
-          await sendTagged(`⏳ Expiring ${days}\n${list.join(', ')}${more}`);
+          await sendTagged(noClamp(`⏳ Expiring ${days} — None.`));
           return true;
         } catch (_) { await sendTagged(`⏳ Expiring ${days} — couldn’t fetch now. Try later.`); return true; }
       }
@@ -3967,9 +3975,9 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
             return Number.isFinite(d) ? `${r.name} (${d}d)` : r.name;
           };
           const list = rows.slice(0, 10).map(fmt).join(', ');
-          await sendTagged(`⏳ Expiring ${days}\n${list}`);
+          await sendTagged(noClamp(`⏳ Expiring ${days}\n${list}`));
         } catch (_) {
-          await sendTagged(`⏳ Expiring ${days} — snapshot unavailable.`);
+          await sendTagged(noClamp(`⏳ Expiring ${days} — snapshot unavailable.`));
         }
         return true;
       }
@@ -3983,16 +3991,16 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
           const s = await getSalesSummaryPeriod(shopId, period);                    
           const amt = Number(s?.totalValue ?? 0);
               if (!amt) {
-                await sendTagged(`🧾 Sales ${capitalize(period)} — ₹0`);
+                await sendTagged(noClamp(`🧾 Sales ${capitalize(period)} — ₹0`));
             return true;
           }
           const amtStr = amt.toFixed(0);
           const orders = (s?.orders ?? s?.bills ?? s?.count ?? null);
           const items  = (s?.totalItems ?? null);
           const tail   = orders ? ` • ${orders} orders` : (items ? ` • ${items} items` : '');
-          await sendTagged(`🧾 Sales ${capitalize(period)}\n₹${amt}${tail}`);
+          await sendTagged(noClamp(`🧾 Sales ${capitalize(period)}\n₹${amt}${tail}`));
         } catch (_) {
-          await sendTagged(`🧾 Sales ${capitalize(period)} — snapshot unavailable.`);
+          await sendTagged(noClamp(`🧾 Sales ${capitalize(period)} — snapshot unavailable.`));
         }
         return true;
       }
@@ -4004,7 +4012,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
         try {                  
         const { top = [] } = await getTopSellingProductsForPeriod(shopId, 'month');
         if (!top || top.length === 0) {
-            await sendTagged('🏆 Top Products (Month) — No data yet.');
+            await sendTagged(noClamp('🏆 Top Products (Month) — No data yet.'));
             return true;
           }
           const lines = top.slice(0, 5).map((t, i) => {
@@ -4012,9 +4020,9 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
             const qty  = t.qty ?? t.fields?.Qty ?? t.itemsSold ?? null;
             return qty ? `${i+1}. ${name} (${qty})` : `${i+1}. ${name}`;
           }).join('\n');
-          await sendTagged(`🏆 Top Products — Month\n${lines}`);
+          await sendTagged(noClamp(`🏆 Top Products — Month\n${lines}`));
         } catch (_) {
-          await sendTagged('🏆 Top Products — snapshot unavailable.');
+          await sendTagged(noClamp('🏆 Top Products — snapshot unavailable.'));
         }
         return true;
       }
@@ -4033,9 +4041,9 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
             items ? `📦 Items: ${items}` : null,
             `🟠 Low Stock Alerts: ${lowCt}`
           ].filter(Boolean).join('\n');
-          await sendTagged(lines || '💰 Inventory Value — No data yet.');
+          await sendTagged(noClamp(lines || '💰 Inventory Value — No data yet.'));
         } catch (_) {
-          await sendTagged('💰 Inventory Value — snapshot unavailable.');
+          await sendTagged(noClamp('💰 Inventory Value — snapshot unavailable.'));
         }
         return true;
       }
