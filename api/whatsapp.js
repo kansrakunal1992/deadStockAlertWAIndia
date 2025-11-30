@@ -217,16 +217,18 @@ function shouldUseRomanOnly(languageCode) {
   return String(languageCode || '').toLowerCase().endsWith('-latn');
 }
 
-// === Render policy: single script only ======================================
+// === Render policy: single block, one script chosen by variant =================
 // 'latin' for en or *-latn; 'native' for Indic codes without -latn.
 function chooseRenderMode(languageCode) {
   const L = String(languageCode ?? 'en').toLowerCase().trim();
   if (L === 'en') return 'latin';
   if (L.endsWith('-latn')) return 'latin';
-  // All supported Indic natives use native script:
-  // hi, bn, ta, te, kn, mr, gu
+  // All supported Indic languages use native script: hi, bn, ta, te, kn, mr, gu
   return 'native';
 }
+
+// Canonical commands & button labels we want in "double quotes" in any language
+const QUOTE_TERMS = ['low stock','reorder suggestions','expiring 0','expiring 7','expiring 30','short summary','full summary','sales today','sales week','sales month','top 5 products month','inventory value','stock value','value summary','start trial','demo','help','paid','activate paid','activate trial'];
 
 // === Single-block formatter with de-duplication for echoes ===================
 function normalizeTwoBlockFormat(raw, languageCode) {          
@@ -681,19 +683,11 @@ function _hasGujarati(s)   { return /[\u0A80-\u0AFF]/.test(s); }
 
 // Localization helper: centralize generateMultiLanguageResponse + single-script clamp
 // === SAFETY: single-script clamp with short-message guard =====================
-const NO_CLAMP_MARKER = '<!NO_CLAMP!>'; // opt out of clamps when needed (help/tutorials)
 
-function enforceSingleScriptSafe(out, lang) {
-  // Allow explicit opt-out (tutorial/help that you want bilingual)  
-    if (String(out ?? '').startsWith(NO_CLAMP_MARKER)) {
-        return normalizeNumeralsToLatin(String(out).slice(NO_CLAMP_MARKER.length));
-      }
-      if (!SINGLE_SCRIPT_MODE) {
-        return normalizeNumeralsToLatin(out);
-      }
-      // ALWAYS clamp to single script, then normalize numerals to ASCII
-      const one = enforceSingleScript(out, lang);
-      return normalizeNumeralsToLatin(one);
+function enforceSingleScriptSafe(out, lang) {  
+    // Numerals-only normalization. No script clamping anymore.
+      // Trust Deepseek for language/script choice; we only ensure digits are ASCII 0–9.
+      return normalizeNumeralsToLatin(out);
 }
 
 async function t(text, languageCode, requestId) {
@@ -2120,20 +2114,18 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
              // NEW: Send 3‑button Onboarding Quick‑Reply (Start Trial • Demo • Help)
              let sent = false;
              const ONBOARDING_QR_SID = String(process.env.ONBOARDING_QR_SID || '').trim();
-                                          
-            // 0) INTRO (AI onboarding benefits) — FIRST                            
+                                                       
             try {
                 // Build source with localized label BEFORE translation and opt-out of clamp/footer for this message.
                 const introKey = `welcome-intro::${toNumber}::${String(detectedLanguage).toLowerCase()}`;
                 const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
-                const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
                 const startTrialLabel  = getStaticLabel('startTrialBtn', detectedLanguage);
                 // Keep the label in native script directly in the source text; avoid quotes getting emptied.
                 const introSrc = await composeAIOnboarding('en'); // deterministic English skeleton
                 const introSrcWithLabel = introSrc.replace(/"Start Trial"/g, `"${startTrialLabel}"`);
                 // Translate once, with NO_CLAMP + NO_FOOTER to avoid clamp artifacts and footer.
                 let introText = await t(
-                  NO_CLAMP_MARKER + NO_FOOTER_MARKER + introSrcWithLabel,
+                  NO_FOOTER_MARKER + introSrcWithLabel,
                   detectedLanguage ?? 'en',
                   introKey
                 );
@@ -2828,7 +2820,6 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
   if (payload === 'activate_paid') {
     // Show paywall; activation only after user replies "paid"
          // IMPORTANT: use RAW markers so clamp/footer logic can detect them.
-         const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
          const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
     
       // Compose the 3-line paywall body
@@ -2839,7 +2830,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
     // Put BOTH markers INSIDE the string given to t(...),
          // so enforceSingleScriptSafe() and tagWithLocalizedMode() skip clamp/footer.
          const localized = await t(
-           NO_CLAMP_MARKER + NO_FOOTER_MARKER + body,
+           NO_FOOTER_MARKER + body,
            lang,
            `cta-paid-${shopId}`
          );
@@ -3622,8 +3613,8 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
         await sendMessageViaAPI(From, msg);
   };
     
-// Helper to opt-out of clamp for specific header+emoji bodies
-const noClamp = (s) => `${NO_CLAMP_MARKER}${s}`;
+// Helper no-op: clamp removed, keep numerals-only normalization elsewhere
+  const noClamp = (s) => String(s);
               
     // -- Early activation gate for ANY inventory command (same defense as summaries)
       //    This prevents DB lookups for unactivated users and shows the same CTA prompt.
@@ -4000,9 +3991,8 @@ const noClamp = (s) => `${NO_CLAMP_MARKER}${s}`;
                 const moreTail = count > LINES_MAX ? `\n• +${count - LINES_MAX} more` : '';
                 const header = `🟠 Low Stock — ${count} ${count === 1 ? 'item' : 'items'}`;
                 const body   = `${header}\n${items.join('\n')}${moreTail}\n\n➡️ Action: check reorder suggestions or review prices.`;
-                // Prevent clamp from trimming the header: prefix NO_CLAMP_MARKER
-                const NO_CLAMP_MARKER = globalThis.NO_CLAMP_MARKER || '[[NO_CLAMP]]';
-                const safeBody = `${NO_CLAMP_MARKER}${body}`;
+                // Prevent clamp from trimming the header: prefix NO_CLAMP_MARKER                
+                const safeBody = `${header}\n${items.join('\n')}${moreTail}\n\n➡️ Action: check "reorder suggestions" or review "prices".`;
                 // Route via dedup path to append footer & normalize numerals
                 await sendMessageDedup(shopId, safeBody);
         } catch (_) {
@@ -8947,13 +8937,10 @@ if (isShortGreeting && (
     lowerMessage.includes('hi') ||
     lowerMessage.includes('नमस्ते')
 )) {
-  const greeting = commonGreetings[langExact] || commonGreetings['en'];     
-    let fallback;
-      if (shouldUseRomanOnly(langExact)) {               // [UNIQ:MLR-GREET-011]
-        fallback = greeting.roman;                       // SINGLE-SCRIPT (roman)
-      } else {
-        fallback = `${greeting.native}\n\n${greeting.roman}`; // two-block default
-      }        
+  const greeting = commonGreetings[langExact] || commonGreetings['en'];            
+    // SINGLE-SCRIPT fallback only (native for Indic, Latin for *-latn)
+    const fallback = shouldUseRomanOnly(langExact) ? greeting.roman : greeting.native;
+
     // Optional: enforce ending punctuation for consistency
     if (!/[.!?]$/.test(fallback)) {
       fallback += '.';
@@ -8976,23 +8963,40 @@ if (isShortGreeting && (
         model: "deepseek-chat",
         messages: [
           {
-            role: "system",            
-            content: `You are a precise translator. Return ONLY the translation of the user content
-                    as a SINGLE block in the required script, no extra lines, no second script.
-                    Render rules:
-                    - If Render = "native": use the native script of the target language (e.g., Devanagari for hi).
-                    - If Render = "latin": use Latin (ASCII-preferred) transliteration suitable for WhatsApp.
-                    Do NOT add labels, examples, or additional commentary.
-                    End with correct punctuation if suitable.
-                    `.trim()
+            role: "system",                        
+                content: `
+                You are a precise translator for WhatsApp.
+                Return ONLY a SINGLE-BLOCK translation in the requested script (no second script).
+                
+                STYLE & TONE:
+                - Use simple, easy-to-understand, day-to-day native language (conversational, not formal/literary).
+                - Keep sentences short and natural; avoid bureaucratic phrasing or rare/technical words unless necessary.
+                
+                SCRIPT:
+                - If Render = "native": write in the target language's native script (e.g., Devanagari for hi).
+                - If Render = "latin": write in Latin transliteration (ASCII-preferred).
+                
+                COMMANDS & BUTTON LABELS:
+                - Whenever any canonical command or button name appears, enclose it in "double quotes":
+                  "low stock", "reorder suggestions", "expiring 0", "expiring 7", "expiring 30",
+                  "short summary", "full summary", "sales today", "sales week", "sales month",
+                  "top 5 products month", "inventory value", "stock value", "value summary",
+                  "start trial", "demo", "help", "paid", "activate paid", "activate trial".
+                - This quoting applies across all language variants (keep the translated term, but put it inside "double quotes").
+                
+                OTHER RULES:
+                - Preserve common unit tokens: kg, g, ltr, liter, litre, ml, packet, piece, ₹.
+                - Do NOT add labels, headings, or multiple paragraphs unless the source clearly needs it.
+                - Do NOT invent extra punctuation; end with proper punctuation only if natural.
+                `.trim()
           },
           {
-            role: "user",                        
-            content: `
-            Target: ${langExact}
-            Render: ${renderMode}
-            Text: "${message}"
-            `.trim() // [UNIQ:MLR-API-007B]
+            role: "user",                                                
+            content: [
+                              `Target: ${langExact}`,
+                              `Render: ${renderMode}`,
+                              `Text: "${message}"`
+                            ].join('\n').trim() // [UNIQ:MLR-API-007B]
           }
         ],
         max_tokens: 600,
@@ -9035,16 +9039,18 @@ if (isShortGreeting && (
           'https://api.deepseek.com/v1/chat/completions',
           {
             model: "deepseek-chat",
-            messages: [                             
-                { role: "system", content: `
-                You are a precise translator. Return ONLY a SINGLE-BLOCK translation in the required script.
-                Do not add a second script or any labels. End with correct punctuation.
-                `.trim() },
-                              { role: "user", content: `
-                Target: ${langExact}
-                Render: ${renderMode}
-                Text: "${message}"
-                `.trim() } // [UNIQ:MLR-API-007C]
+            messages: [                                                        
+            { role: "system", content: `
+            You are a precise translator for WhatsApp.
+            Single-block only; simple everyday native language; requested script only.
+            Preserve unit tokens (kg, ltr, ₹). End with punctuation only if natural.
+            Enclose canonical commands/button names in "double quotes" as specified.
+            `.trim() },
+                          { role: "user", content: [
+                              `Target: ${langExact}`,
+                              `Render: ${renderMode}`,
+                              `Text: "${message}"`
+                            ].join('\n').trim() } // [UNIQ:MLR-API-007C]
             ],
             max_tokens: Math.min(2000, Math.max(800, Math.ceil(message.length * 3))),
             temperature: 0.2
