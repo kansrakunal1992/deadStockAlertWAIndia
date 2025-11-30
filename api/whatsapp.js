@@ -121,6 +121,63 @@ function ensureLangExact(languageDetected, fallback = 'en') {
   // Do NOT convert 'hi-latn' -> 'hi' (this caused cache/template mismatches)
   return l;
 }
+
+// -----------------------------------------------------------------------------
+// Lightweight auto-detector (expanded): switch native target to '*-latn' when
+// input is ASCII-looking Roman Indic across multiple languages. No bilingual
+// output—tx() is single-call and Unicode clamp keeps one script.
+// -----------------------------------------------------------------------------
+function autoLatnIfRoman(languageCode, sourceText) {
+  try {
+    const raw = String(sourceText ?? '');
+    // Fast ASCII check: Romanized inputs typically stay in 0x00–0x7F
+    const isAscii = /^[\x00-\x7F]+$/.test(raw);
+    if (!isAscii) return languageCode;  
+    const t = raw.toLowerCase();
+    
+        // --- Hindi/Marathi (Hinglish) ---
+        const hiTokens = /\b(kya|kyu|kaise|kab|kitna|kitni|daam|kimat|bhav|fayda|nuksan|bana|sakte|skte|hai|h|kharid|khareed|bech|bikri|return|wapis|chalu|shuru|tod|mode|dukaan|naam)\b/;
+        // --- Bengali (Banglish) ---
+        const bnTokens = /\b(koto|dam|dami|kimot|shuru|cholbe|kharid|kena|bikri|bikre|ferot|return)\b/;
+        // --- Tamil (Tanglish) ---
+        const taTokens = /\b(enna|epadi|eppadi|evlo|evvalu|price|vilai|todangu|arambam|suru|kharidu|vangi|vangirom|vittu|vikkal|return|thiruppu)\b/;
+        // --- Telugu (Teluglish) ---
+        const teTokens = /\b(emi|ela|enta|dharam|price|prarambhinchandi|start|kharid|konugolu|ammu|ammina|return|tirigi|cheyaali|naaku|kaavali)\b/;
+        // --- Kannada (Kanglish) ---
+        const knTokens = /\b(enenu|hege|eshtu|bele|shuru|prarambhisi|kharidi|kondu|marata|sale|return|wapsi|beku|maadabeku)\b/;
+        // --- Gujarati (Gujlish) ---
+        const guTokens = /\b(shu|kem|ketlu|bhav|kimat|daam|sharu|chalu|kharid|levu|vech|vechaan|return|wapas|joie|joye|joiy|karvu|chhe)\b/;
+    
+        const hitHi = hiTokens.test(t);
+        const hitBn = bnTokens.test(t);
+        const hitTa = taTokens.test(t);
+        const hitTe = teTokens.test(t);
+        const hitKn = knTokens.test(t);
+        const hitGu = guTokens.test(t);
+        const anyHit = hitHi || hitBn || hitTa || hitTe || hitKn || hitGu;
+        if (!anyHit) return languageCode;
+    const base = String(languageCode ?? 'en').toLowerCase().replace(/-latn$/, '');    
+    const isIndicBase = /^(hi|bn|ta|te|kn|mr|gu)$/.test(base);
+        if (!isIndicBase) return languageCode; // Already en or non-Indic
+    
+        // Prefer switching to the *-latn variant matching the detected base language.
+        // If AI/heuristics said 'hi' but tokens looked Tamil-ish, we still respect 'hi'
+        // (to avoid cross-language jumps), and simply flip to 'hi-latn'.
+        switch (base) {
+          case 'hi': return 'hi-latn';
+          case 'mr': return 'mr-latn';
+          case 'bn': return 'bn-latn';
+          case 'ta': return 'ta-latn';
+          case 'te': return 'te-latn';
+          case 'kn': return 'kn-latn';
+          case 'gu': return 'gu-latn';
+          default:   return languageCode;
+        }
+  } catch (_) {
+    return languageCode;
+  }
+}
+
 // Normalize user question for cache key purposes
 function normalizeUserTextForKey(s) {
   return String(s || '')
@@ -161,28 +218,26 @@ function shouldUseRomanOnly(languageCode) {
 }
 
 // === Single-block formatter with de-duplication for echoes ===================
-function normalizeTwoBlockFormat(raw, languageCode) {
-  if (!raw) return '';
-  const L = String(languageCode ?? 'en').toLowerCase();
-  const romanOnly = shouldUseRomanOnly(L);
-  let s = String(raw ?? '')
-    .replace(/[\`"<>\[\]\\]/g, '')
-    .replace(/\n\s*\n\s*\n/g, '\n\n')
-    .trim();
-  const punct = /[.!?]$/;
-  // De-echo: drop duplicates
-  const lines = s.split(/\n+/).map(l => l.trim()).filter(Boolean);
-  const uniq = [];
-  const seen = new Set();
-  for (const l of lines) {
-    const key = l.toLowerCase();
-    if (!seen.has(key)) { uniq.push(l); seen.add(key); }
-  }
-  s = uniq.join('\n');
-  // Single-script: prefer script-aware clamp, then ensure final punctuation
-  s = clampToSingleScript(s, languageCode);
-  if (!punct.test(s)) s += '.';
-  return normalizeNumeralsToLatin(s);
+function normalizeTwoBlockFormat(raw, languageCode) {          
+        if (!raw) return '';
+          let s = String(raw ?? '')
+            .replace(/[\`"<>\[\]\\]/g, '')
+            .replace(/\n\s*\n\s*\n/g, '\n\n')
+            .trim();
+          const punct = /[.!?]$/;
+          // De-echo: drop duplicates
+          const lines = s.split(/\n+/).map(l => l.trim()).filter(Boolean);
+          const uniq = [];
+          const seen = new Set();
+          for (const l of lines) {
+            const key = l.toLowerCase();
+            if (!seen.has(key)) { uniq.push(l); seen.add(key); }
+          }
+          s = uniq.join('\n');
+          // Single-script via Unicode clamp
+          s = clampToSingleScript(s, languageCode);
+          if (!punct.test(s)) s += '.';
+          return normalizeNumeralsToLatin(s);
 }
 
 // Minimal helper: de-duplicate repeated bullet/example lines (case-insensitive)
@@ -614,35 +669,6 @@ function _hasKannada(s)    { return /[\u0C80-\u0CFF]/.test(s); }
 function _hasGujarati(s)   { return /[\u0A80-\u0AFF]/.test(s); }
 // Marathi uses Devanagari
 
-// Return true if user's text is romanized for the target language (so reply should be roman)
-function preferRomanFor(lang, sourceText) {
-  const t = String(sourceText || '').trim();
-  if (!t) return false;
-  const lc = String(lang || 'en').toLowerCase();
-  switch (lc) {
-    case 'hi':
-    case 'mr': return !_hasDevanagari(t);
-    case 'bn': return !_hasBengali(t);
-    case 'ta': return !_hasTamil(t);
-    case 'te': return !_hasTelugu(t);
-    case 'kn': return !_hasKannada(t);
-    case 'gu': return !_hasGujarati(t);
-    default:   return false;
-  }
-}
-
-// NEW: Force -Latn variant when source looks Roman Indic (Hinglish)
-function forceLatnIfRoman(languageCode, sourceText) {
-  const raw = String(sourceText ?? '');
-  const ascii = /^[\x00-\x7F]+$/.test(raw);
-  const romanIndicTokens = /\b(kya|kyu|kaise|kab|kitna|daam|kimat|fayda|nuksan|bana|sakte|skte|hai|h|kharid|bech|karo)\b/i;
-  if (ascii && romanIndicTokens.test(raw)) {
-    const base = String(languageCode ?? 'hi').toLowerCase().replace(/-latn$/,'');
-    return `${base}-latn`;
-  }
-  return languageCode;
-}
-
 // Localization helper: centralize generateMultiLanguageResponse + single-script clamp
 // === SAFETY: single-script clamp with short-message guard =====================
 const NO_CLAMP_MARKER = '<!NO_CLAMP!>'; // opt out of clamps when needed (help/tutorials)
@@ -665,24 +691,10 @@ async function t(text, languageCode, requestId) {
   return enforceSingleScriptSafe(out, languageCode);
 }
 
-/**
- * tx: Translation wrapper with script preservation (roman/native).
- * If the user typed roman for lang, try `${lang}-Latn` first and fall back to `${lang}`.
- */
-async function tx(message, lang, fromOrShopId, sourceText, cacheKey) {  
-// Decide final target language: force -Latn when user text looks Hinglish
-  let L = String(lang ?? 'en').toLowerCase();
-  L = forceLatnIfRoman(L, sourceText);
-  const preferRoman = preferRomanFor(L, sourceText);
-
-  try {       
-    if (preferRoman || L.endsWith('-latn')) {
-          return await t(message, L, cacheKey); // already *-Latn
-        }
-        return await t(message, L, cacheKey);
-  } catch (_) {
-    try { return await t(message, L, cacheKey); } catch { return String(message); }
-  }
+// tx: simple wrapper (no romanization/bilingual logic)
+async function tx(message, lang, fromOrShopId, sourceText, cacheKey) {
+  const L = String(lang ?? 'en').toLowerCase();
+  try { return await t(message, L, cacheKey); } catch { return String(message ?? ''); }
 }
 
 // ---- NEW: scoped cache key builder to avoid generic translation reuse
@@ -1476,10 +1488,10 @@ async function detectLanguageWithFallback(text, from, requestId) {
       // 2) AI pass for Romanized Indic / ambiguous ASCII
             const useAI = _shouldUseAI(text, detectedLanguage);
             if (useAI) {
-              const ai = await aiDetectLangIntent(text);
-              if (ai.language) detectedLanguage = ai.language;                            
-              // OVERRIDE: if AI returned native 'hi' but text looks Hinglish ASCII → lock to hi-Latn
-              detectedLanguage = forceLatnIfRoman(detectedLanguage, text);
+              const ai = await aiDetectLangIntent(text);            
+              if (ai.language) detectedLanguage = ai.language;
+                        // Re-enable *-latn auto-detection (single-script only; no bilingual generation)
+                        detectedLanguage = autoLatnIfRoman(detectedLanguage, text);
               try {
                 const shopId = String(from ?? '').replace('whatsapp:', '');
                 if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, detectedLanguage);
@@ -1491,10 +1503,14 @@ async function detectLanguageWithFallback(text, from, requestId) {
               try {
                 const ai = await aiDetectLangIntent(text);
                 if (ai.language) detectedLanguage = ai.language;
+                detectedLanguage = autoLatnIfRoman(detectedLanguage, text);
               } catch (e) {
                 console.warn(`[${requestId}] AI language detection failed: ${e.message}`);
               }
             }
+        // Final pass: even if heuristics stayed native, switch to *-latn when text looks Roman Indic.
+              // (Ensures Hinglish/Tanglish etc. get Latin-only responses without bilingual.)
+              detectedLanguage = autoLatnIfRoman(detectedLanguage, text);
 
       console.log(`[${requestId}] Detected language: ${detectedLanguage}`);
 
@@ -3457,7 +3473,7 @@ if (typeof generateMultiLanguageResponse === 'undefined') {
   /**
    * Minimal fallback: return original text unchanged.
    * Prevents crashes when the real localization engine isn't loaded.
-   */
+   * (Now single-script only: no bilingual/native+roman output anywhere.) **/
   function generateMultiLanguageResponse(text, languageCode = 'en', requestId = '') {        
     const lc = String(languageCode ?? 'en').toLowerCase();
         const mapLang = (l) => l.endsWith('-latn') ? l.replace('-latn','') : l;
@@ -3479,8 +3495,55 @@ if (typeof generateMultiLanguageResponse === 'undefined') {
             'Processing your message…': 'Aapka sandesh process ho raha hai…',
             'Reply “Demo” to see a quick walkthrough; “Help” for support & contact.':
               '“Demo” likho walkthrough ke liye; “Help” likho support/contact ke liye.'
-          },
-          // Add more as needed later (bn, ta, te, kn, mr, gu) — fall back to English for now
+          },                   
+        // Bengali
+               'bn': {
+                 'Demo:': 'ডেমো:',
+                 'Help:': 'সহায়তা:',
+                 'Processing your message…': 'আপনার বার্তা প্রক্রিয়াকরণ হচ্ছে…',
+                 'Reply “Demo” to see a quick walkthrough; “Help” for support & contact.':
+                 'দ্রুত ওয়াকথ্রু দেখতে “ডেমো” লিখুন; সহায়তা/যোগাযোগের জন্য “হেল্প” লিখুন।'
+               },
+               // Tamil
+               'ta': {
+                 'Demo:': 'டெமோ:',
+                 'Help:': 'உதவி:',
+                 'Processing your message…': 'உங்கள் செய்தி செயலாக்கப்படுகிறது…',
+                 'Reply “Demo” to see a quick walkthrough; “Help” for support & contact.':
+                 'விரைவு நடைவழிக்காக “டெமோ” தட்டச்சு செய்யவும்; ஆதரவு/தொடர்பு “ஹெல்ப்”.'
+               },
+               // Telugu
+               'te': {
+                 'Demo:': 'డెమో:',
+                 'Help:': 'సహాయం:',
+                 'Processing your message…': 'మీ సందేశాన్ని ప్రాసెస్ చేస్తున్నాం…',
+                 'Reply “Demo” to see a quick walkthrough; “Help” for support & contact.':
+                 'వాక్‌థ్రూ కోసం “డెమో” టైప్ చేయండి; సహాయం/సంప్రదించడానికి “హెల్ప్”.'
+               },
+               // Kannada
+               'kn': {
+                 'Demo:': 'ಡೆಮೊ:',
+                 'Help:': 'ಸಹಾಯ:',
+                 'Processing your message…': 'ನಿಮ್ಮ ಸಂದೇಶವನ್ನು ಸಂಸ್ಕರಿಸಲಾಗುತ್ತಿದೆ…',
+                 'Reply “Demo” to see a quick walkthrough; “Help” for support & contact.':
+                 'ತ್ವರಿತ ವಾಕ್‌ಥ್ರೂಗೆ “ಡೆಮೊ” ಟೈಪ್ ಮಾಡಿ; ಸಹಾಯ/ಸಂಪರ್ಕಕ್ಕೆ “ಹೆಲ್ಪ್”.'
+               },
+               // Marathi
+               'mr': {
+                 'Demo:': 'डेमो:',
+                 'Help:': 'मदत:',
+                 'Processing your message…': 'आपला संदेश प्रक्रिया होत आहे…',
+                 'Reply “Demo” to see a quick walkthrough; “Help” for support & contact.':
+                 'जलद वॉकथ्रूसाठी “डेमो” लिहा; सपोर्ट/संपर्कासाठी “हेल्प” लिहा.'
+               },
+               // Gujarati
+               'gu': {
+                 'Demo:': 'ડેમો:',
+                 'Help:': 'મદદ:',
+                 'Processing your message…': 'તમારો સંદેશ પ્રોસેસ થઈ રહ્યો છે…',
+                 'Reply “Demo” to see a quick walkthrough; “Help” for support & contact.':
+                 'ઝડપી વૉકથ્રૂ માટે “ડેમો” લખો; સપોર્ટ/સંપર્ક માટે “હેલ્પ” લખો.'
+               },
           'en': {}
         };
         const dict = DICT[lc] || DICT[L] || DICT['en'];
