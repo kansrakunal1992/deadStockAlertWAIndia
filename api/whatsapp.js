@@ -732,10 +732,11 @@ function nativeglishWrap(text, lang) {
 
 // ---- NEW: helper to sanitize after late string edits (e.g., replacing labels)
 function sanitizeAfterReplace(text, lang) {
-  try {
-    const wrapped = nativeglishWrap(text, lang);        
-    const one = enforceSingleScript(wrapped, lang);
-    return normalizeNumeralsToLatin(one);
+  try {        
+    // t() already applied single-script clamp via enforceSingleScriptSafe.
+        // Avoid double-clamp which was causing punctuation-only artifacts.
+        const wrapped = nativeglishWrap(text, lang);
+        return normalizeNumeralsToLatin(wrapped);
   } catch {
     return normalizeNumeralsToLatin(text);
   }
@@ -2110,23 +2111,25 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
              let sent = false;
              const ONBOARDING_QR_SID = String(process.env.ONBOARDING_QR_SID || '').trim();
                                           
-            // 0) INTRO (AI onboarding benefits) — FIRST
-                try {                                                                                                          
-                // Compose then translate intro — use per-shop cacheKey
-                      const introKey = `welcome-intro::${toNumber}::${String(detectedLanguage).toLowerCase()}`;
-                      const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
-                      let introText = await t(
-                        NO_FOOTER_MARKER + (await composeAIOnboarding(detectedLanguage)),
-                        detectedLanguage ?? 'en',
-                        introKey
-                      );
-                      // Replace hardcoded "Start Trial" with localized label, then sanitize
-                      const startTrialLabel = getStaticLabel('startTrialBtn', detectedLanguage);
-                      introText = introText.replace(/"Start Trial"/g, `"${startTrialLabel}"`);
-                      introText = sanitizeAfterReplace(introText, detectedLanguage ?? 'en');
-                      // Marker already consumed; send clean text
-                      await sendMessageQueued(From, introText);
-                  await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons           
+            // 0) INTRO (AI onboarding benefits) — FIRST                            
+            try {
+                // Build source with localized label BEFORE translation and opt-out of clamp/footer for this message.
+                const introKey = `welcome-intro::${toNumber}::${String(detectedLanguage).toLowerCase()}`;
+                const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+                const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
+                const startTrialLabel  = getStaticLabel('startTrialBtn', detectedLanguage);
+                // Keep the label in native script directly in the source text; avoid quotes getting emptied.
+                const introSrc = await composeAIOnboarding('en'); // deterministic English skeleton
+                const introSrcWithLabel = introSrc.replace(/"Start Trial"/g, `"${startTrialLabel}"`);
+                // Translate once, with NO_CLAMP + NO_FOOTER to avoid clamp artifacts and footer.
+                let introText = await t(
+                  NO_CLAMP_MARKER + NO_FOOTER_MARKER + introSrcWithLabel,
+                  detectedLanguage ?? 'en',
+                  introKey
+                );
+                introText = fixNewlines1(introText); // only normalize escaped newlines
+                await sendMessageQueued(From, introText);
+                await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
                           // >>> NEW: Send benefits video AFTER intro, BEFORE buttons (once per session gate already applies)
                           try {
                             // Prefer saved language if present
