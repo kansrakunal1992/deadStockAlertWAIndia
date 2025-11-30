@@ -166,7 +166,7 @@ function normalizeTwoBlockFormat(raw, languageCode) {
   const L = String(languageCode ?? 'en').toLowerCase();
   const romanOnly = shouldUseRomanOnly(L);
   let s = String(raw ?? '')
-    .replace(/[`"<>\[\]]/g, '')
+    .replace(/[`"<>\[\]\\]/g, '')
     .replace(/\n\s*\n\s*\n/g, '\n\n')
     .trim();
   const punct = /[.!?]$/;
@@ -178,18 +178,19 @@ function normalizeTwoBlockFormat(raw, languageCode) {
     const key = l.toLowerCase();
     if (!seen.has(key)) { uniq.push(l); seen.add(key); }
   }
-  s = uniq.join('\n');
-  if (romanOnly) {
-    if (!s) return '';
-    return punct.test(s) ? s : (s + '.');
-  }
-  const parts = s.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
-  const nonAscii = /[^\x00-\x7F]/;
-  if (parts.length >= 2) {
-    const nativeBlock = parts.find(p => nonAscii.test(p)) ?? parts[0] ?? '';
-    const safeNative = nativeBlock ? (punct.test(nativeBlock) ? nativeBlock : nativeBlock + '.') : '';
-    return safeNative;
-  }
+  s = uniq.join('\n');      
+  // Hard single-script selection
+      const nonAscii = /[^\x00-\x7F]/;
+      const blocks = s.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+      if (romanOnly) {
+        const kept = blocks.filter(p => !nonAscii.test(p)).join('\n\n') || s;
+        s = kept;
+      } else {
+        const kept = blocks.filter(p => nonAscii.test(p)).join('\n\n') || s;
+        s = kept;
+      }
+      if (!punct.test(s)) s += '.';
+      return normalizeNumeralsToLatin(s);
   return punct.test(s) ? s : (s + '.');
 }
 
@@ -656,15 +657,18 @@ function forceLatnIfRoman(languageCode, sourceText) {
 const NO_CLAMP_MARKER = '<!NO_CLAMP!>'; // opt out of clamps when needed (help/tutorials)
 
 function enforceSingleScriptSafe(out, lang) {
-  // Allow explicit opt-out (tutorial/help that you want bilingual)
-  if (String(out ?? '').startsWith(NO_CLAMP_MARKER)) {
-    return String(out).slice(NO_CLAMP_MARKER.length);
-  }
-  if (!SINGLE_SCRIPT_MODE) return out;    
-  // ALWAYS clamp for all languages (English, Roman-Indic, native scripts).
-  // This guarantees a single-script output in every case.
-  return enforceSingleScript(out, lang);
+  // Allow explicit opt-out (tutorial/help that you want bilingual)  
+    if (String(out ?? '').startsWith(NO_CLAMP_MARKER)) {
+        return normalizeNumeralsToLatin(String(out).slice(NO_CLAMP_MARKER.length));
+      }
+      if (!SINGLE_SCRIPT_MODE) {
+        return normalizeNumeralsToLatin(out);
+      }
+      // ALWAYS clamp to single script, then normalize numerals to ASCII
+      const one = enforceSingleScript(out, lang);
+      return normalizeNumeralsToLatin(one);
 }
+
 async function t(text, languageCode, requestId) {
   const out = await generateMultiLanguageResponse(text, languageCode, requestId);
   return enforceSingleScriptSafe(out, languageCode);
@@ -726,10 +730,11 @@ function nativeglishWrap(text, lang) {
 // ---- NEW: helper to sanitize after late string edits (e.g., replacing labels)
 function sanitizeAfterReplace(text, lang) {
   try {
-    const wrapped = nativeglishWrap(text, lang);
-    return enforceSingleScript(wrapped, lang);
+    const wrapped = nativeglishWrap(text, lang);        
+    const one = enforceSingleScript(wrapped, lang);
+    return normalizeNumeralsToLatin(one);
   } catch {
-    return text;
+    return normalizeNumeralsToLatin(text);
   }
 }
 
@@ -2179,6 +2184,32 @@ function fixNewlines1(str) {
     .trimEnd();                // avoid trailing whitespace
 }
 
+// === NUMERAL NORMALIZER: always convert any script digits to ASCII (0-9) ===
+// Covers Devanagari (०-९), Bengali, Tamil, Telugu, Kannada, Gujarati, Arabic-Indic, etc.
+function normalizeNumeralsToLatin(text) {
+  if (!text) return '';
+  const map = {
+    // Devanagari
+    '०':'0','१':'1','२':'2','३':'3','४':'4','५':'5','६':'6','७':'7','८':'8','९':'9',
+    // Bengali
+    '০':'0','১':'1','২':'2','৩':'3','৪':'4','৫':'5','৬':'6','৭':'7','৮':'8','৯':'9',
+    // Tamil
+    '௦':'0','௧':'1','௨':'2','௩':'3','௪':'4','௫':'5','௬':'6','௭':'7','௮':'8','௯':'9',
+    // Telugu
+    '౦':'0','౧':'1','౨':'2','౩':'3','౪':'4','౫':'5','౬':'6','౭':'7','౮':'8','౯':'9',
+    // Kannada
+    '೦':'0','೧':'1','೨':'2','೩':'3','೪':'4','೫':'5','೬':'6','೭':'7','೮':'8','೯':'9',
+    // Gujarati
+    '૦':'0','૧':'1','૨':'2','૩':'3','૪':'4','૫':'5','૬':'6','૭':'7','૮':'8','૯':'9',
+    // Arabic-Indic
+    '٠':'0','١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9'
+  };
+  return String(text).replace(
+    /[\u0966-\u096F\u09E6-\u09EF\u0BE6-\u0BEF\u0C66-\u0C6F\u0CE6-\u0CEF\u0AE6-\u0AEF\u0660-\u0669]/g,
+    ch => map[ch] || ch
+  );
+}
+
 // Replace English labels with "native (English)" anywhere they appear
 // Single-script rendering: replace labels to native OR keep English only; never mix.
 function renderNativeglishLabels(text, languageCode) {
@@ -3323,11 +3354,32 @@ function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity
 // Falls back to wa.link if env isn't set.
 const SUPPORT_WHATSAPP_LINK = String(process.env.WHATSAPP_LINK || 'https://wa.link/6q3ol7');
 
-// Append one-line support footer to all user-visible messages
-function appendSupportFooter(msg) {
+// Append one-line support footer to all user-visible messages (language/script aware)
+function appendSupportFooter(msg, from) {
   const base = String(msg ?? '').trim();
-  const line = `For any help, kindly reach out to Saamagrii.AI support at ${SUPPORT_WHATSAPP_LINK}. Type "mode" to switch between Purchase/Sale/Return mode or make an inventory query.`;
-  return base ? `${base}\n\n${line}` : line;
+  // Resolve language preference (best-effort)
+  let lang = 'en';
+  try {
+    const shopId = String(from ?? '').replace('whatsapp:', '');
+    if (shopId && typeof getUserPreference === 'function') {
+      const pref = await getUserPreference(shopId);
+      if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+    }
+  } catch {}
+  const lines = {
+    en: `Need help? WhatsApp Saamagrii.AI support: ${SUPPORT_WHATSAPP_LINK}. Type "mode" to switch Purchase/Sale/Return or ask an inventory query.`,
+    hi: `मदद चाहिए? Saamagrii.AI सपोर्ट: ${SUPPORT_WHATSAPP_LINK}। "मोड" लिखें—खरीद/बिक्री/रिटर्न बदलें या इन्वेंटरी पूछें।`,
+    'hi-latn': `Madad chahiye? Saamagrii.AI support: ${SUPPORT_WHATSAPP_LINK}. "mode" likho—Purchase/Sale/Return badlo ya inventory puchho.`,
+    bn: `সাহায্য লাগবে? Saamagrii.AI সাপোর্ট: ${SUPPORT_WHATSAPP_LINK}। "মোড" লিখুন—ক্রয়/বিক্রি/রিটার্ন বদলান বা ইনভেন্টরি জিজ্ঞেস করুন।`,
+    ta: `உதவி வேண்டுமா? Saamagrii.AI ஆதரவு: ${SUPPORT_WHATSAPP_LINK}. "மோட்" தட்டச்சு செய்து கொள்முதல்/விற்பனை/ரிட்டர்ன் மாற்றவும் அல்லது இன்வென்டரி கேளுங்கள்.`,
+    te: `సహాయం కావాలా? Saamagrii.AI సపోర్ట్: ${SUPPORT_WHATSAPP_LINK}. "మోడ్" టైప్ చేసి కొనుగోలు/అమ్మకం/రిటర్న్ మార్చండి లేదా ఇన్వెంటరీ అడగండి.`,
+    kn: `ಸಹಾಯ ಬೇಕಾ? Saamagrii.AI ಸಹಾಯ: ${SUPPORT_WHATSAPP_LINK}. "ಮೋಡ್" ಟೈಪ್ ಮಾಡಿ ಖರೀದಿ/ಮಾರಾಟ/ರಿಟರ್ನ್ ಬದಲಿಸಿ ಅಥವಾ ಇನ್ವೆಂಟರಿ ಕೇಳಿ.`,
+    mr: `मदत हवी आहे? Saamagrii.AI सपोर्ट: ${SUPPORT_WHATSAPP_LINK}। "मोड" टाइप करा—खरेदी/विक्री/रिटर्न बदला किंवा इन्व्हेंटरी विचारा।`,
+    gu: `મદદ જોઈએ? Saamagrii.AI સપોર્ટ: ${SUPPORT_WHATSAPP_LINK}। "મોડ" લખો—ખરીદી/વેચાણ/રીટર્ન બદલો અથવા ઇન્વેન્ટરી પૂછો।`,
+  };
+  const footer = lines[lang] || lines.en;
+  const merged = base ? `${base}\n\n${footer}` : footer;
+  return normalizeNumeralsToLatin(enforceSingleScriptSafe(merged, lang));
 }
 
 // NEW: short-window duplicate message guard (3 seconds)
@@ -3347,13 +3399,14 @@ function _isDuplicateBody(from, msg, windowMs = 3000) {
 }
 async function sendMessageDedup(From, msg) {
   if (!msg) return;
-  // Append footer line using env var; dedupe on the final body
-  const withFooter = appendSupportFooter(String(msg).trim());
-  if (_isDuplicateBody(From, withFooter)) {
+  // Append language-aware footer; dedupe on the final normalized body
+      const withFooter = appendSupportFooter(String(msg).trim(), From);
+      const finalBody = normalizeNumeralsToLatin(withFooter);
+      if (_isDuplicateBody(From, finalBody)) {
     try { console.log('[dedupe] suppressed duplicate body for', From); } catch (_) {}
     return;
   }
-  await sendMessageViaAPI(From, withFooter);
+  await sendMessageViaAPI(From, finalBody);
 }
 
 async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, info) {
