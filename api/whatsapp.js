@@ -217,6 +217,17 @@ function shouldUseRomanOnly(languageCode) {
   return String(languageCode || '').toLowerCase().endsWith('-latn');
 }
 
+// === Render policy: single script only ======================================
+// 'latin' for en or *-latn; 'native' for Indic codes without -latn.
+function chooseRenderMode(languageCode) {
+  const L = String(languageCode ?? 'en').toLowerCase().trim();
+  if (L === 'en') return 'latin';
+  if (L.endsWith('-latn')) return 'latin';
+  // All supported Indic natives use native script:
+  // hi, bn, ta, te, kn, mr, gu
+  return 'native';
+}
+
 // === Single-block formatter with de-duplication for echoes ===================
 function normalizeTwoBlockFormat(raw, languageCode) {          
         if (!raw) return '';
@@ -234,8 +245,7 @@ function normalizeTwoBlockFormat(raw, languageCode) {
             if (!seen.has(key)) { uniq.push(l); seen.add(key); }
           }
           s = uniq.join('\n');
-          // Single-script via Unicode clamp
-          s = clampToSingleScript(s, languageCode);
+          // (Do not clamp here; clamping is centralized in t(...)/enforceSingleScriptSafe)
           if (!punct.test(s)) s += '.';
           return normalizeNumeralsToLatin(s);
 }
@@ -3346,14 +3356,11 @@ function formatResultLine(r, compact = true, includeStockPart = true) {
   const act = capitalize(r.action ?? '');
   if (compact) {
     if (r.success) {          
-    // Unified symbol map for actions
-      const SYMBOLS = {
-        purchased: '📦',
-        sold:      '🛒',
-        returned:  '↩️'
-      };
-      const actionLc = String(r.action ?? '').toLowerCase();
-      return `${symbol} ${act} ${qty} ${unit} ${r.product}${stockPart}`.trim();
+    // Unified symbol map for actions          
+    const SYMBOLS = { purchased: '📦', sold: '🛒', returned: '↩️' };
+          const actionLc = String(r.action ?? '').toLowerCase();
+          const symbol = SYMBOLS[actionLc] ?? '✅';
+          return `${symbol} ${act} ${qty} ${unit} ${r.product}${stockPart}`.trim();
     }
     return `❌ ${r.product} — ${r.error ?? 'Error'}`;
   }
@@ -8856,8 +8863,11 @@ async function generateMultiLanguageResponse(message, languageCode, requestId) {
             // [UNIQ:ORCH-VAR-LOCK-001A] Lock the exact variant before any caching/hashing
             // -----------------------------------------------------------------------
             // NOTE: We keep 'hi-latn' as-is throughout. Do not normalize away '-latn'.
-            const langExact = ensureLangExact(languageCode || 'en');
-            const isRomanOnly = shouldUseRomanOnly(langExact); // existing helper
+            const langExact = ensureLangExact(languageCode, 'en');
+            const isRomanOnly = shouldUseRomanOnly(langExact); // existing helper                  
+            // Decide render mode once: 'latin' for en/*-latn, else 'native'
+            const renderMode = (String(langExact).toLowerCase() === 'en' || isRomanOnly) ? 'latin' : 'native';
+
             // If the language is English, return the message as is
             if (langExact === 'en') {
               return message;
@@ -8966,20 +8976,23 @@ if (isShortGreeting && (
         model: "deepseek-chat",
         messages: [
           {
-            role: "system",
-            content: `You are a multilingual assistant. Translate the given message to the target language and provide it in two formats:
-Format your response exactly as:
-Line 1: Translation in native script (e.g., Devanagari for Hindi)
-Empty line
-Line 3: Translation in Roman script (transliteration using English alphabet)
-For example, for Hindi:
-नमस्ते, आप कैसे हैं?
-Namaste, aap kaise hain?
-Do NOT include any labels like [Roman Script], [Native Script], <translation>, or any other markers. Just provide the translations one after the other with a blank line in between.`
+            role: "system",            
+            content: `You are a precise translator. Return ONLY the translation of the user content
+                    as a SINGLE block in the required script, no extra lines, no second script.
+                    Render rules:
+                    - If Render = "native": use the native script of the target language (e.g., Devanagari for hi).
+                    - If Render = "latin": use Latin (ASCII-preferred) transliteration suitable for WhatsApp.
+                    Do NOT add labels, examples, or additional commentary.
+                    End with correct punctuation if suitable.
+                    `.trim()
           },
           {
-            role: "user",
-            content: `Translate this message to ${langExact}: "${message}"` // [UNIQ:MLR-API-007B]
+            role: "user",                        
+            content: `
+            Target: ${langExact}
+            Render: ${renderMode}
+            Text: "${message}"
+            `.trim() // [UNIQ:MLR-API-007B]
           }
         ],
         max_tokens: 600,
@@ -9012,19 +9025,26 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
     console.log(`[${requestId}] Raw translation response:`, translated);
     translated = normalizeTwoBlockFormat(translated, langExact); // [UNIQ:MLR-POST-008A]
 
-// Quick integrity check: ensure we have 2 blocks and not cut mid-sentence    
-    const endsNeatly = /[.!?]$/.test(String(translated).trim());  // [UNIQ:MLR-GUARD-009]
-    const hasTwoBlocks = String(translated).includes('\n\n');
-    if (!hasTwoBlocks || !endsNeatly) {
+    // Quick integrity check for SINGLE-BLOCK policy: tidy punctuation / minimal length only
+        const endsNeatly = /[.!?]$/.test(String(translated).trim()); // [UNIQ:MLR-GUARD-009]
+        const looksTooShort = String(translated).trim().length < 5;
+        if (!endsNeatly || looksTooShort) {
       try {
         console.warn(`[${requestId}] Translation looks incomplete. Retrying with larger budget...`);
         const retry = await axios.post(
           'https://api.deepseek.com/v1/chat/completions',
           {
             model: "deepseek-chat",
-            messages: [
-              { role: "system", content: `Return COMPLETE translation as two blocks (native script, blank line, roman transliteration). Do not omit the ending punctuation.` },
-              { role: "user", content: `Translate this message to ${langExact}: "${message}"` } // [UNIQ:MLR-API-007C }
+            messages: [                             
+                { role: "system", content: `
+                You are a precise translator. Return ONLY a SINGLE-BLOCK translation in the required script.
+                Do not add a second script or any labels. End with correct punctuation.
+                `.trim() },
+                              { role: "user", content: `
+                Target: ${langExact}
+                Render: ${renderMode}
+                Text: "${message}"
+                `.trim() } // [UNIQ:MLR-API-007C]
             ],
             max_tokens: Math.min(2000, Math.max(800, Math.ceil(message.length * 3))),
             temperature: 0.2
@@ -9044,15 +9064,15 @@ Do NOT include any labels like [Roman Script], [Native Script], <translation>, o
     }
       
     // [UNIQ:SAN-TRUNC-012D] Final min-length guard: avoid sending tiny/garbled stubs
-      try {
-        const MIN_LEN = 25;
-        if ((translated || '').trim().length < MIN_LEN) {
+      try {               
+        const MIN_LEN2 = 25;
+          if ((translated || '').trim().length < MIN_LEN2) {
           console.warn(`[${requestId}] Output too short (${translated.length}). Falling back to first-pass raw after sanitize.`);
           const fallbackClean = String(firstPassRaw || '')
             .replace(/`+/g, '')
             .replace(/^[\s.,\-–—•]+/u, '')
             .trim();
-          if (fallbackClean.length >= MIN_LEN) translated = fallbackClean;
+          if (fallbackClean.length >= MIN_LEN2) translated = fallbackClean;
         }
       } catch (_) {}
 
