@@ -2465,9 +2465,13 @@ async function handleTrialOnboardingStep(From, text, lang = 'en') {
         const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
         const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
         let msgRaw = `${NO_CLAMP_MARKER}${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
-                     `Try:\n• short summary\n• price list\n• "10 Parle-G sold at 11/packet"`;
-        const msgTranslated = await t(msgRaw, lang, `trial-onboard-done-${shopId}`);
-        await sendMessageViaAPI(From, fixNewlines1(msgTranslated));
+                     `Try:\n• short summary\n• price list\n• "10 Parle-G sold at 11/packet"`;               
+        let msgTranslated = await t(msgRaw, lang, `trial-onboard-done-${shopId}`);
+            // LOCAL CLAMP → Single script; newline + numerals normalization
+            msgTranslated = enforceSingleScriptSafe(msgTranslated, lang);
+            msgTranslated = fixNewlines1(msgTranslated);
+            msgTranslated = normalizeNumeralsToLatin(msgTranslated).trim();
+            await sendMessageViaAPI(From, msgTranslated);
     try {
       await ensureLangTemplates(lang);
       const sids = getLangSids(lang);
@@ -2590,17 +2594,26 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
       async function sendExamplesWithAck(from, lang, examplesText, requestId = 'examples') {
         try {
           // Localized short banner (consistent across modes)
-          const ackRaw = getStaticLabel('ack', lang);
-          const ack = await t(ackRaw, lang, `${requestId}::ack`);
-          await sendMessageViaAPI(from, ack);
+          const ackRaw = getStaticLabel('ack', lang);                     
+          let ack = await t(ackRaw, lang, `${requestId}::ack`);
+                // LOCAL CLAMP → Single script; newline + numerals normalization
+                ack = enforceSingleScriptSafe(ack, lang);
+                ack = normalizeNumeralsToLatin(fixNewlines1(ack)).trim();
+                await sendMessageViaAPI(from, ack);
         } catch (_) { /* non-blocking */ }
         try {
-          // Tag examples with the localized footer exactly once
-          const tagged = await tagWithLocalizedMode(from, fixNewlines(examplesText), lang);
-          await sendMessageViaAPI(from, tagged);
+          // Tag examples with the localized footer exactly once          
+        let tagged = await tagWithLocalizedMode(from, fixNewlines(examplesText), lang);
+            // LOCAL CLAMP → Single script; numerals normalization
+            tagged = enforceSingleScriptSafe(tagged, lang);
+            tagged = normalizeNumeralsToLatin(tagged).trim();
+            await sendMessageViaAPI(from, tagged);
         } catch (e) {
-          // Fallback: still send examples if tagging fails
-          await sendMessageViaAPI(from, fixNewlines(examplesText));
+          // Fallback: still send examples if tagging fails              
+        let ex = fixNewlines(examplesText);
+            ex = enforceSingleScriptSafe(ex, lang);
+            ex = normalizeNumeralsToLatin(ex).trim();
+            await sendMessageViaAPI(from, ex);
         }
       }
     
@@ -3401,9 +3414,11 @@ async function appendSupportFooter(msg, from) {
     mr: `मदत हवी आहे? Saamagrii.AI सपोर्ट: ${SUPPORT_WHATSAPP_LINK}। "मोड" टाइप करा—खरेदी/विक्री/रिटर्न बदला किंवा इन्व्हेंटरी विचारा।`,
     gu: `મદદ જોઈએ? Saamagrii.AI સપોર્ટ: ${SUPPORT_WHATSAPP_LINK}। "મોડ" લખો—ખરીદી/વેચાણ/રીટર્ન બદલો અથવા ઇન્વેન્ટરી પૂછો।`,
   };
-  const footer = lines[lang] || lines.en;
+  const footer = lines[lang] || lines.en;     
   const merged = base ? `${base}\n\n${footer}` : footer;
-  return normalizeNumeralsToLatin(enforceSingleScriptSafe(merged, lang));
+      // LOCAL CLAMP → Single script; numerals normalization
+      const one = enforceSingleScriptSafe(merged, lang);
+      return normalizeNumeralsToLatin(one).trim();
 }
 
 // NEW: short-window duplicate message guard (3 seconds)
@@ -3592,9 +3607,12 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
 
   const sendTagged = async (body) => {    
 // keep existing per-command cache key (already unique & scoped)
-    const msg0 = await tx(body, lang, From, cmd, `qq-${cmd}-${shopId}`);
-    const msg = await tagWithLocalizedMode(From, msg0, lang);
-    await sendMessageViaAPI(From, msg);
+    const msg0 = await tx(body, lang, From, cmd, `qq-${cmd}-${shopId}`);       
+    let msg = await tagWithLocalizedMode(From, msg0, lang);
+        // LOCAL CLAMP → Single script; numerals normalization
+        msg = enforceSingleScriptSafe(msg, lang);
+        msg = normalizeNumeralsToLatin(msg).trim();
+        await sendMessageViaAPI(From, msg);
   };
     
 // Helper to opt-out of clamp for specific header+emoji bodies
