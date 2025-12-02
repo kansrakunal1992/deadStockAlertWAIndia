@@ -178,6 +178,24 @@ function autoLatnIfRoman(languageCode, sourceText) {
   }
 }
 
+function isSafeAnchor(text) {
+    const safePatterns = [
+        /start trial/i,
+        /activate trial/i,
+        /activate paid/i,
+        /paid confirm/i,
+        /mode/i,
+        /help/i,
+        /support/i,
+        /Saamagrii\.AI/i,
+        /WhatsApp/i,
+        /https?:\/\//i,
+        /wa\.link/i,
+        /\b(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|₹|Rs|MRP|exp|expiry|expiring)\b/i
+    ];
+    return safePatterns.some(rx => rx.test(text));
+}
+
 // Normalize user question for cache key purposes
 function normalizeUserTextForKey(s) {
   return String(s || '')
@@ -699,7 +717,7 @@ async function t(text, languageCode, requestId) {
     const hasNativeScript = /[\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Gujarati}\p{Script=Kannada}]/u.test(out);
     const hasMixedScripts = hasLatin && hasNativeScript;
 
-    if (hasMixedScripts) {
+    if (hasMixedScripts && !isSafeAnchor(out)) {
         console.warn(`[clamp] Mixed scripts detected for ${languageCode}, enforcing single script.`);
         return enforceSingleScript(out, languageCode);
     }
@@ -748,7 +766,7 @@ function nativeglishWrap(text, lang) {
         const hasNativeScript = /[\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Gujarati}\p{Script=Kannada}]/u.test(out);
         const hasMixedScripts = hasLatin && hasNativeScript;
 
-        if (hasMixedScripts) {
+        if (hasMixedScripts && !isSafeAnchor(out)) {
             console.warn(`[nativeglishWrap] Mixed scripts detected for ${lang}, enforcing single script.`);
             return enforceSingleScript(out, lang);
         }
