@@ -696,7 +696,7 @@ async function t(text, languageCode, requestId) {
 
     // Detect mixed scripts: Latin + any major Indian script
     const hasLatin = /\p{Script=Latin}/u.test(out);
-    const hasNativeScript = /\p{Script=(Devanagari|Bengali|Tamil|Telugu|Gujarati|Kannada)}/u.test(out);
+    const hasNativeScript = /[\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Gujarati}\p{Script=Kannada}]/u.test(out);
     const hasMixedScripts = hasLatin && hasNativeScript;
 
     if (hasMixedScripts) {
@@ -745,7 +745,7 @@ function nativeglishWrap(text, lang) {
 
         // Detect mixed scripts before clamping
         const hasLatin = /\p{Script=Latin}/u.test(out);
-        const hasNativeScript = /\p{Script=(Devanagari|Bengali|Tamil|Telugu|Gujarati|Kannada)}/u.test(out);
+        const hasNativeScript = /[\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Gujarati}\p{Script=Kannada}]/u.test(out);
         const hasMixedScripts = hasLatin && hasNativeScript;
 
         if (hasMixedScripts) {
