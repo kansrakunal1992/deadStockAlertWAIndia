@@ -691,12 +691,21 @@ function enforceSingleScriptSafe(out, lang) {
       return normalizeNumeralsToLatin(out);
 }
 
-/**
- * Main translation wrapper: now clamps to single script.
- */
 async function t(text, languageCode, requestId) {
     const out = await generateMultiLanguageResponse(text, languageCode, requestId);
-    return enforceSingleScript(out, languageCode);
+
+    // Detect mixed scripts: Latin + any major Indian script
+    const hasLatin = /\p{Script=Latin}/u.test(out);
+    const hasNativeScript = /\p{Script=(Devanagari|Bengali|Tamil|Telugu|Gujarati|Kannada)}/u.test(out);
+    const hasMixedScripts = hasLatin && hasNativeScript;
+
+    if (hasMixedScripts) {
+        console.warn(`[clamp] Mixed scripts detected for ${languageCode}, enforcing single script.`);
+        return enforceSingleScript(out, languageCode);
+    }
+
+    // If AI output is already single-script, keep original
+    return out;
 }
 
 // tx: simple wrapper (no romanization/bilingual logic)
@@ -726,19 +735,29 @@ function buildTranslationCacheKey(requestId, topic, flavor, lang, sourceText) {
 
 // "Nativeglish": keep helpful English anchors (units, brand words) in otherwise localized text.
 function nativeglishWrap(text, lang) {
-   try {
-     const u = ['kg','kgs','g','ltr','l','ml','packet','packets','piece','pieces','₹','Rs','MRP'];
-     let out = String(text ?? '');
-     u.forEach(tok => {
-       const rx = new RegExp(`\\b${tok}\\b`, 'gi');
-       out = out.replace(rx, tok);
-     });
-     // NEW: enforce single-script after unit normalization
-     return enforceSingleScript(out, lang);
-   } catch {
-     return String(text ?? '');
-   }
- }
+    try {
+        let out = String(text ?? '');
+        const units = ['kg','kgs','g','gm','gms','ltr','ltrs','l','ml','packet','packets','piece','pieces','₹','Rs','MRP'];
+        units.forEach(tok => {
+            const rx = new RegExp(`\\b${tok}\\b`, 'gi');
+            out = out.replace(rx, tok);
+        });
+
+        // Detect mixed scripts before clamping
+        const hasLatin = /\p{Script=Latin}/u.test(out);
+        const hasNativeScript = /\p{Script=(Devanagari|Bengali|Tamil|Telugu|Gujarati|Kannada)}/u.test(out);
+        const hasMixedScripts = hasLatin && hasNativeScript;
+
+        if (hasMixedScripts) {
+            console.warn(`[nativeglishWrap] Mixed scripts detected for ${lang}, enforcing single script.`);
+            return enforceSingleScript(out, lang);
+        }
+
+        return out; // Keep original if single-script
+    } catch {
+        return String(text ?? '');
+    }
+}
 
 // ---- NEW: helper to sanitize after late string edits (e.g., replacing labels)
 function sanitizeAfterReplace(text, lang) {
