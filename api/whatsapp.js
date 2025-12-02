@@ -690,9 +690,12 @@ function enforceSingleScriptSafe(out, lang) {
       return normalizeNumeralsToLatin(out);
 }
 
+/**
+ * Main translation wrapper: now clamps to single script.
+ */
 async function t(text, languageCode, requestId) {
-  const out = await generateMultiLanguageResponse(text, languageCode, requestId);
-  return enforceSingleScriptSafe(out, languageCode);
+    const out = await generateMultiLanguageResponse(text, languageCode, requestId);
+    return enforceSingleScript(out, languageCode);
 }
 
 // tx: simple wrapper (no romanization/bilingual logic)
@@ -1596,43 +1599,28 @@ const SWITCH_FALLBACKS = [
 // ===== Unicode-script clamp (single-script rendering) ========================
 // ============================================================================
 
+
 /**
- * clampToSingleScript(text, lang)
- * Keep only characters that belong to the allowed script for the target lang.
- * - For Roman targets (en, *-latn): keep Latin (incl. diacritics), emoji, ₹, numbers, punctuation.
- * - For native Indic targets (hi/bn/ta/te/kn/mr/gu): keep that script, emoji, ₹, numbers, punctuation.
+ * Clamp text to a single script based on language.
+ * Keeps numerals, ₹, punctuation, and emojis.
  */
 function clampToSingleScript(text, lang) {
-  const s = String(text ?? '');
-  const L = String(lang ?? 'en').toLowerCase();
-
-  // Allowed scripts per language
-  const SCRIPT_RX = {
-    // Roman targets (Latin script)
-    roman: /[\p{Script=Latin}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
-    // Native Indic targets
-    hi: /[\p{Script=Devanagari}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
-    mr: /[\p{Script=Devanagari}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
-    bn: /[\p{Script=Bengali}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
-    ta: /[\p{Script=Tamil}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
-    te: /[\p{Script=Telugu}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
-    kn: /[\p{Script=Kannada}\p{Symbol}\p{Number}\p{Punctuation}\s]/u,
-    gu: /[\p{Script=Gujarati}\p{Symbol}\p{Number}\p{Punctuation}\s]/u
-  };
-
-  // Map ₹ explicitly into Symbols row; it already matches \p{Symbol}, kept here for clarity.
-  // Decide target: roman for en/*-latn, else native map
-  const isRomanTarget = /-latn$/.test(L) || L === 'en';
-  const rx = isRomanTarget ? SCRIPT_RX.roman : (SCRIPT_RX[L] ?? SCRIPT_RX.roman);
-
-  // Filter-per-char against allowed script
-  const kept = [...s].filter(ch => rx.test(ch)).join('');
-
-  // Normalize newlines (keep compact 2LFs max), trim tail
-  return kept
-    .replace(/\r?\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+    const s = String(text ?? '');
+    const L = String(lang ?? 'en').toLowerCase();
+    const SCRIPT_RX = {
+        roman: /[\p{Script=Latin}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
+        hi: /[\p{Script=Devanagari}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
+        mr: /[\p{Script=Devanagari}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
+        bn: /[\p{Script=Bengali}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
+        ta: /[\p{Script=Tamil}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
+        te: /[\p{Script=Telugu}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
+        kn: /[\p{Script=Kannada}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
+        gu: /[\p{Script=Gujarati}\p{Number}\p{Symbol}\p{Punctuation}\s]/u
+    };
+    const isRomanTarget = L === 'en' || L.endsWith('-latn');
+    const rx = isRomanTarget ? SCRIPT_RX.roman : (SCRIPT_RX[L] ?? SCRIPT_RX.roman);
+    const kept = [...s].filter(ch => rx.test(ch)).join('');
+    return kept.replace(/\r?\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 // ===== Language detection re-entry guard + explicit tokens =====
@@ -3317,17 +3305,11 @@ function isRomanTarget(lang) {
 }
 
 /**
- * enforceSingleScript(out, lang)
- * If SINGLE_SCRIPT_MODE is on, keep only one script:
- *  - For English or any *-Latn target: keep ASCII-ish paragraphs; strip native script.
- *  - For native (non-Latn, non-English): keep non-ASCII paragraphs; drop ASCII-only dupes.
- *  - Inline sanitization keeps ₹, numerals & common punctuations.
+ * Enforce strict single-script compliance.
  */
-
-
 function enforceSingleScript(out, lang) {
-  if (!SINGLE_SCRIPT_MODE) return out;
-  return clampToSingleScript(out, lang);
+    if (!SINGLE_SCRIPT_MODE) return out;
+    return clampToSingleScript(out, lang);
 }
 
 // === Compact/Verbose message helpers (inline; no new files) ===
@@ -9843,7 +9825,7 @@ async function generateSummaryInsights(data, languageCode, requestId) {
       const expiringLimit = 5;
       
       // Prepare a more concise prompt
-      const prompt = `You are an inventory analysis assistant. Analyze the following shop data and provide insights in Nativeglish (${nativeLanguage} mixed with English) - ensure response is formal and respectful.
+      const prompt = `You are an inventory analysis assistant. Analyze the following shop data and provide insights in Nativeglish (${nativeLanguage} mixed with English) - ensure response is formal and respectful. Respond ONLY in one script: if Hindi, use Devanagari; if Hinglish, use Roman Hindi (hi-Latn). Do NOT mix native and Roman in the same message. Keep brand names unchanged.
       Sales Data (last 30 days):
       - Total items sold: ${data.salesData.totalItems || 0}
       - Total sales value: ₹${(data.salesData.totalValue || 0).toFixed(2)}
@@ -9869,7 +9851,7 @@ async function generateSummaryInsights(data, languageCode, requestId) {
       3. Recommendations for restocking
       4. Suggestions for reducing waste
       5. Actionable insights for business growth
-      Format your response in Nativeglish (${nativeLanguage} + English mix) that is easy to understand for local shop owners. Keep the response under 500 words and focus on actionable insights.`;
+      Format your response in Nativeglish (${nativeLanguage} + English mix) that is easy to understand for local shop owners. Keep the response under 500 words and focus on actionable insights. Respond ONLY in one script: if Hindi, use Devanagari; if Hinglish, use Roman Hindi (hi-Latn). Do NOT mix native and Roman in the same message. Keep brand names unchanged.`;
       
       console.log(`[${requestId}] Prompt length: ${prompt.length} characters`);
       console.log(`[${requestId}] Making API request to Deepseek...`);
@@ -9886,7 +9868,7 @@ async function generateSummaryInsights(data, languageCode, requestId) {
             messages: [
               {
                 role: "system",
-                content: `You are an expert inventory analyst providing concise, actionable insights for small business owners. Your response should be in Nativeglish (${nativeLanguage} mixed with English) for better readability but should be formal and respectful. Keep your response under 1500 characters.`
+                content: `You are an expert inventory analyst providing concise, actionable insights for small business owners. Your response should be in Nativeglish (${nativeLanguage} mixed with English) for better readability but should be formal and respectful. Keep your response under 1500 characters. Respond ONLY in one script: if Hindi, use Devanagari; if Hinglish, use Roman Hindi (hi-Latn). Do NOT mix native and Roman in the same message. Keep brand names unchanged.`
               },
               {
                 role: "user",
