@@ -1807,7 +1807,7 @@ async function markAuthUserPaid(shopId) {
 }
 
 // ===== NEW: recordPaymentEvent (optional audit trail in Airtable) ============
-async function recordPaymentEvent({ shopId, amount, status, gateway = 'instamojo', payload = {} }) {
+async function recordPaymentEvent({ shopId, amount, status, gateway = 'razorpay', payload = {} }) {
   const context = `Record Payment ${shopId}`;
   try {
     const createData = {
