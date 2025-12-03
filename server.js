@@ -83,13 +83,16 @@ app.post(
       const entity = payload?.payload?.payment?.entity || {};
       const status = String(entity.status || '').toLowerCase();
       const notes = entity.notes || {};
-      const buyerPhone = String(entity.contact || '').trim();
+      const buyerPhone = String(entity.contact || '').trim(); // payer-entered phone
       // Canonicalize shopId (digits only; strip +91/91/leading zeros)
       const canon = s => {
         const d = String(s || '').replace(/\D+/g, '');
         return d.startsWith('91') && d.length >= 12 ? d.slice(2) : d.replace(/^0+/, '');
-      };
-      let shopId = canon(notes.shopId) || canon(buyerPhone);
+      };           
+      const rawNotesShopId = String(notes.shopId || '').trim();
+      const resolvedCanon = canon(rawNotesShopId) || canon(buyerPhone);
+      console.log(`[${requestId}] Razorpay webhook raw: notes.shopId="${rawNotesShopId}" contact="${buyerPhone}" → resolved canon=${resolvedCanon}`);
+      let shopId = resolvedCanon;
       if (!shopId) {
         console.warn(`[${requestId}] Razorpay webhook: missing shopId/contact`);
         return res.sendStatus(400);
