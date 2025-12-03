@@ -2417,17 +2417,17 @@ async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en', opts = {}
     const trialEnd = planInfo?.trialEndDate ?? null;
     const now = Date.now();
     const isPaid = (plan === 'paid');        
-    // New guards
+    // New guards                
         const hasNoPlan = (!plan || plan === 'none' || plan === 'demo' || plan === 'free_demo' || plan === 'free_demo_first_50');
-        const trialActive =
-          (plan === 'trial' && trialEnd && (trialEnd.getTime() > now));
+        const trialActive = (plan === 'trial' && trialEnd && (trialEnd.getTime() > now));
         const isTrialActiveLastDay =
           (plan === 'trial' && trialEnd && (trialEnd.getTime() > now) && (trialEnd.getTime() - now <= 24 * 60 * 60 * 1000));
     const isTrialExpired = (plan === 'trial' && trialEnd && (trialEnd.getTime() <= now));        
     // Context: if the current turn had a typed trial intent, suppress CTA
-        const trialIntentNow = !!opts?.trialIntentNow;
-        // New rule: NEVER show CTA for new users (no plan), active trial users, or the same turn as trial intent.
-        if (isPaid || hasNoPlan || trialActive || trialIntentNow) {
+        const trialIntentNow = !!opts?.trialIntentNow;        
+    // Suppress CTA for paid users, new/first-time users, or the same turn as trial intent.
+        // IMPORTANT: do NOT suppress when it's the last day of an active trial.
+        if ((isPaid || hasNoPlan || trialIntentNow) && !isTrialActiveLastDay) {
           // Suppressed by plan/intent state
           return;
         }
