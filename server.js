@@ -115,6 +115,16 @@ app.post(
         console.warn(`[${requestId}] Razorpay webhook: missing shopId/contact`);
         return res.sendStatus(400);
       }
+      
+      // Build E.164 WhatsApp 'From' for Twilio: whatsapp:+91XXXXXXXXXX
+            const toE164 = (canon10) => {
+              const d = String(canon10 || '').replace(/\D+/g, '');
+              const c = d.startsWith('91') && d.length >= 12 ? d.slice(2) : d.replace(/^0+/, '');
+              return `+91${c}`;
+            };
+            const fromWhatsApp = `whatsapp:${toE164(shopId)}`;
+            console.log(`[${requestId}] WhatsApp paid confirm target=${fromWhatsApp}`);
+
       // Optional: record payment event (audit)
       try {
         await recordPaymentEvent({
@@ -139,8 +149,9 @@ app.post(
         // Non-blocking WhatsApp confirmation
         try {
           const wa = require('./api/whatsapp');
-          if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {
-            await wa.sendWhatsAppPaidConfirmation(`whatsapp:${shopId}`);
+          if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {                          
+              await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
+              console.log(`[${requestId}] WhatsApp paid confirm sent to ${fromWhatsApp}`);
           }
         } catch (e) {
           console.warn(`[${requestId}] WhatsApp paid confirm (razorpay) failed: ${e?.message}`);
