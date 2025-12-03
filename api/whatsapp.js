@@ -2293,6 +2293,58 @@ function normalizeNumeralsToLatin(text) {
   );
 }
 
+// =============================================================================
+// ==== Paid Plan CTA & Confirmation (white-label, no partner branding) ========
+// =============================================================================
+/**
+ * Send the branded payment CTA page to the user with a shopId query param.
+ * The page is fully white-label: https://saamagrii-ai.mojo.page/activate-saamagrii-ai-paid-plan
+ */
+async function sendPaidPlanCTA(From, lang = 'en') {
+  try {
+    const shopId = String(From).replace('whatsapp:', '');
+    const base = 'https://saamagrii-ai.mojo.page/activate-saamagrii-ai-paid-plan';
+    const url = `${base}?shopId=${encodeURIComponent(shopId)}`;
+    const msg = await t(
+      '🔒 Activate your Saamagrii.AI Paid Plan to unlock full access.\n' +
+      'Complete the secure payment here:\n' + url,
+      lang,
+      `paid-cta::${shopId}`
+    );
+    await sendMessageViaAPI(From, msg);
+  } catch (e) {
+    console.warn('[paid-cta] failed:', e?.message);
+  }
+}
+
+/**
+ * Send a localized paid activation confirmation over WhatsApp.
+ * Called from the server webhook after successful payment capture.
+ */
+async function sendWhatsAppPaidConfirmation(From) {
+  try {
+    const shopId = String(From).replace('whatsapp:', '');
+    // Read language preference if available
+    let lang = 'en';
+    try {
+      const pref = await getUserPreference(shopId);
+      if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+    } catch (_) {}
+    const text = await t(
+      '✅ Your Saamagrii.AI Paid Plan is now active. Enjoy full access!',
+      lang,
+      `paid-confirm::${shopId}`
+    );
+    await sendMessageViaAPI(From, text);
+  } catch (e) {
+    console.warn('[paid-confirm] failed:', e?.message);
+  }
+}
+
+// Export helpers for server-side usage (without changing main handler export)
+try { module.exports.sendPaidPlanCTA = sendPaidPlanCTA; } catch (_) {}
+try { module.exports.sendWhatsAppPaidConfirmation = sendWhatsAppPaidConfirmation; } catch (_) {}
+
 // Replace English labels with "native (English)" anywhere they appear
 // Single-script rendering: replace labels to native OR keep English only; never mix.
 function renderNativeglishLabels(text, languageCode) {
