@@ -2447,18 +2447,16 @@ async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en', opts = {}
     // Ensure content bundle and pick Paid CTA ContentSid
     await ensureLangTemplates(lang);
     const sids = getLangSids(lang);
-    const paidSid = sids?.paidCtaSid ?? '';
-    if (paidSid) {
-      // Place AFTER your main reply in the thread
-      await new Promise(r => setTimeout(r, 250));
-      await sendContentTemplate({ toWhatsApp: shopId, contentSid: paidSid });
-      _paidCtaThrottle.set(shopId, now);
-      // Stamp LastTrialReminder (optional analytics)
-      try {
-        const prefRow = await getUserPreference(shopId);
-        if (prefRow?.id) await setTrialReminderSent(prefRow.id);
-      } catch (_) {}
-    }
+    const paidSid = sids?.paidCtaSid ?? '';    
+    // Place AFTER your main reply in the thread
+        await new Promise(r => setTimeout(r, 250));
+        await sendPaidPlanCTA(from, lang);
+        _paidCtaThrottle.set(shopId, now);
+        // Stamp LastTrialReminder (optional analytics)
+        try {
+          const prefRow = await getUserPreference(shopId);
+          if (prefRow?.id) await setTrialReminderSent(prefRow.id);
+        } catch (_) {}
   } catch (e) {
     console.warn('[paid-cta] skip:', e?.message);
   }
@@ -11631,7 +11629,19 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     const cleanTranscript = await validateTranscript(rawTranscript, requestId);
     console.log(`[${requestId}] [5] Detecting language...`);
     const detectedLanguage = await checkAndUpdateLanguage(cleanTranscript, From, conversationState?.language, requestId);
-    
+        
+    // --- Minimal hook: Activate Paid Plan command (voice path) ---
+    const lowerCmd = String(cleanTranscript || '').trim().toLowerCase();
+    if (
+      lowerCmd === 'activate paid' ||
+      lowerCmd === 'paid' ||
+      /activate\s+paid/i.test(lowerCmd) ||
+      /start\s+paid/i.test(lowerCmd)
+    ) {
+      await sendPaidPlanCTA(From, detectedLanguage || 'en');
+      return;
+    }
+
     // Save user preference
     const shopId = From.replace('whatsapp:', '');
     await saveUserPreference(shopId, detectedLanguage);
@@ -12252,7 +12262,19 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     let detectedLanguage = conversationState ? conversationState.language : 'en';
     detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
     console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
-        
+      
+    // --- Minimal hook: Activate Paid Plan command (text path) ---
+    const lowerBodyCmd = String(Body || '').trim().toLowerCase();
+    if (
+      lowerBodyCmd === 'activate paid' ||
+      lowerBodyCmd === 'paid' ||
+      /activate\s+paid/i.test(lowerBodyCmd) ||
+      /start\s+paid/i.test(lowerBodyCmd)
+    ) {
+      await sendPaidPlanCTA(From, detectedLanguage || 'en');
+      return;
+    }
+  
     // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====
       try {
         const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
@@ -13749,7 +13771,22 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   } catch (e) {
     console.warn(`[${requestId}] Language detection failed, defaulting to ${detectedLanguage}:`, e.message);
   }
-  console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`);        
+  console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`); 
+  // --- Minimal hook: Activate Paid Plan command ---
+    const lowerBodyCmd = String(Body || '').trim().toLowerCase();
+    if (
+      lowerBodyCmd === 'activate paid' ||
+      lowerBodyCmd === 'paid' ||
+      /activate\s+paid/i.test(lowerBodyCmd) ||
+      /start\s+paid/i.test(lowerBodyCmd)
+    ) {
+      await sendPaidPlanCTA(From, detectedLanguage || 'en');
+      const twiml = new twilio.twiml.MessagingResponse();
+      twiml.message('');
+      res.type('text/xml').send(twiml.toString());
+      return;
+    }
+
   // --- EARLY GUARD: typed "start trial" intent (handles plain text like "I want to start trial")
   // Trigger BEFORE sticky-mode, parsing, or AI orchestration to mirror the Start Trial button behavior.
       try {
