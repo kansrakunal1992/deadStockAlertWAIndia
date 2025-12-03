@@ -2298,18 +2298,16 @@ function normalizeNumeralsToLatin(text) {
 // =============================================================================
 /**
  * Send the branded payment CTA page to the user with a shopId query param.
- * The page is fully white-label: https://saamagrii-ai.mojo.page/activate-saamagrii-ai-paid-plan
+ * Razorpay static page (no shopId required): https://rzp.io/rzp/saamagriiAIPaidPlanActivation
  */
 async function sendPaidPlanCTA(From, lang = 'en') {
   try {
-    const shopId = String(From).replace('whatsapp:', '');
-    const base = 'https://saamagrii-ai.mojo.page/activate-saamagrii-ai-paid-plan';
-    const url = `${base}?shopId=${encodeURIComponent(shopId)}`;
+    const url = 'https://rzp.io/rzp/saamagriiAIPaidPlanActivation';
     const msg = await t(
       '🔒 Activate your Saamagrii.AI Paid Plan to unlock full access.\n' +
       'Complete the secure payment here:\n' + url,
       lang,
-      `paid-cta::${shopId}`
+      `paid-cta::${String(From).replace('whatsapp:', '')}`
     );
     await sendMessageViaAPI(From, msg);
   } catch (e) {
