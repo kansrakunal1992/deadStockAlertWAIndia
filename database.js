@@ -1,4 +1,5 @@
 const axios = require('axios');
+const PAYMENTS_TABLE_NAME = process.env.AIRTABLE_PAYMENTS_TABLE_NAME || 'Payments';
 const PENDING_TRANSCRIPTIONS_TABLE_NAME = process.env.AIRTABLE_PENDING_TRANSCRIPTIONS_TABLE_NAME || 'PendingTranscriptions';
 const CORRECTION_STATE_TABLE_NAME = process.env.AIRTABLE_CORRECTION_STATE_TABLE_NAME || 'CorrectionState';
 const USER_STATE_TABLE_NAME = process.env.AIRTABLE_USER_STATE_TABLE_NAME || 'UserState';
@@ -1805,6 +1806,32 @@ async function markAuthUserPaid(shopId) {
   }
 }
 
+// ===== NEW: recordPaymentEvent (optional audit trail in Airtable) ============
+async function recordPaymentEvent({ shopId, amount, status, gateway = 'instamojo', payload = {} }) {
+  const context = `Record Payment ${shopId}`;
+  try {
+    const createData = {
+      fields: {
+        ShopID: String(shopId || '').trim(),
+        Amount: Number(amount || 0),
+        Status: String(status || '').toLowerCase(),
+        Gateway: gateway,
+        Payload: JSON.stringify(payload || {}),
+        Timestamp: new Date().toISOString()
+      }
+    };
+    const result = await airtableRequest({
+      method: 'post',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${PAYMENTS_TABLE_NAME}`,
+      data: createData
+    }, `${context} - Create`);
+    return { success: true, id: result.id };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
 // === NEW: trials expiring before an ISO threshold (UserPreferences table) ===
 async function getTrialsExpiringBefore(thresholdISO) {
   const context = 'Get Trials Expiring';
@@ -3055,5 +3082,6 @@ module.exports = {
   getUserPlan, 
   isFirst50Shops, 
   isFeatureAvailable,
-  upsertAuthUserDetails
+  upsertAuthUserDetails,
+  recordPaymentEvent
 };
