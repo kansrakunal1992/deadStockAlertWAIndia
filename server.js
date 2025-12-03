@@ -475,32 +475,32 @@ app.post('/api/price-reminders', async (req, res) => {
 app.post('/api/whatsapp', whatsappHandler);
 
 // =============================================================================
-// ==== Instamojo Payment Webhook (white-label, secure HMAC verification) ======
+// ==== Razorpay Payment Webhook (white-label, secure HMAC verification)  ======
 // =============================================================================
 // Use env path if present, otherwise default to /api/payment-webhook
 app.post(process.env.PAID_WEBHOOK_PATH || '/api/payment-webhook',
   bodyParser.raw({ type: '*/*' }), // raw body ONLY for this route
   async (req, res) => {
     const requestId = req.requestId;
-    try {
-      const privateSalt = process.env.INSTAMOJO_PRIVATE_SALT;
-      if (!privateSalt) {
-        console.error(`[${requestId}] Missing INSTAMOJO_PRIVATE_SALT`);
+    try {          
+    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+          if (!webhookSecret) {
+            console.error(`[${requestId}] Missing RAZORPAY_WEBHOOK_SECRET`);
         return res.sendStatus(500);
-      }
-      // Signature header name used by Instamojo (case-insensitive)
-      const signatureHeader = req.get('X-Instamojo-Signature') || req.get('x-instamojo-signature');
+      }            
+      // Signature header name used by Razorpay (case-insensitive)
+      const signatureHeader = req.get('X-Razorpay-Signature') || req.get('x-razorpay-signature');
       if (!signatureHeader) {
-        console.warn(`[${requestId}] Webhook missing signature header`);
+        console.warn(`[${requestId}] Razorpay webhook missing signature header`);
         return res.sendStatus(400);
       }          
     // Compute HMAC on raw body (Buffer)
-          const rawBody = req.body;
-          // Allow selecting algorithm via env (default 'sha1'). If your Instamojo is configured for SHA-256, set INSTAMOJO_SIGNATURE_ALGO=sha256
-          const algo = (process.env.INSTAMOJO_SIGNATURE_ALGO || 'sha1').toLowerCase();
-          const computed = crypto.createHmac(algo, privateSalt).update(rawBody).digest('hex');
+          const rawBody = req.body;          
+    // Razorpay uses HMAC-SHA256 for webhook signatures
+          const computed = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
+
       if (computed !== signatureHeader) {
-        console.warn(`[${requestId}] Invalid webhook signature`);
+        console.warn(`[${requestId}] Razorpay webhook signature mismatch`);
         return res.sendStatus(403);
       }
 
@@ -512,33 +512,39 @@ app.post(process.env.PAID_WEBHOOK_PATH || '/api/payment-webhook',
         const qs = require('querystring');
         payload = qs.parse(rawBody.toString('utf8'));
       }
-
-      const status = String(payload.payment_status || payload.status || '').toLowerCase();
-      const buyerPhone = (payload.buyer_phone || payload.phone || '').trim();
-      // Prefer explicit shopId if your branded page appended it (query/metadata/custom field)
-      let shopId = (payload.shopId || payload.custom_shopId || (payload.metadata && payload.metadata.shopId) || '').trim();
-      if (!shopId && buyerPhone) shopId = buyerPhone;
+            
+      // ==== Razorpay payload mapping ====
+            // Structure: payload.event + payload.payload.payment.entity
+            const entity = payload?.payload?.payment?.entity || {};
+            const status = String(entity.status || '').toLowerCase();
+            const buyerPhone = String(entity.contact || '').trim(); // payer phone
+            // Prefer explicit shopId if present in notes; else fall back to phone
+            const notes = entity.notes || {};
+            let shopId = String(notes.shopId || buyerPhone || '').trim();
 
       if (!shopId) {
-        console.warn(`[${requestId}] Webhook: missing shopId & buyerPhone`);
+        console.warn(`[${requestId}] Razorpay webhook: missing shopId/contact`);
         return res.sendStatus(400);
       }
 
       // Optional: record payment event (audit)
       try {
         await recordPaymentEvent({
-          shopId,
-          amount: payload.amount || payload.payment_request?.amount || null,
+          shopId,          
+// Razorpay sends amount in paise
+          amount: (typeof entity.amount === 'number' ? entity.amount : Number(entity.amount || 0)) / 100,
           status,
-          gateway: 'instamojo',
+          gateway: 'razorpay',
           payload
         });
       } catch (e) {
-        console.warn(`[${requestId}] recordPaymentEvent failed: ${e?.message}`);
+        console.warn(`[${requestId}] recordPaymentEvent (razorpay) failed: ${e?.message}`);
       }
 
-      // Mark paid on successful/credited status
-      if (status === 'credit' || status === 'successful' || status === 'success') {
+      // Mark paid on successful/credited status            
+      // Razorpay payment entity statuses to treat as success
+            // Common: 'captured' (for payments), some flows may use 'authorized' then capture
+            if (status === 'captured' || status === 'authorized' || status === 'success' || status === 'successful' || status === 'credit') {
         const r = await markAuthUserPaid(shopId);
         if (!r?.success) {
           console.error(`[${requestId}] markAuthUserPaid failed: ${r?.error}`);
@@ -551,14 +557,14 @@ app.post(process.env.PAID_WEBHOOK_PATH || '/api/payment-webhook',
             await wa.sendWhatsAppPaidConfirmation(`whatsapp:${shopId}`);
           }
         } catch (e) {
-          console.warn(`[${requestId}] WhatsApp paid confirm failed: ${e?.message}`);
+          console.warn(`[${requestId}] WhatsApp paid confirm (razorpay) failed: ${e?.message}`);
         }
       } else {
-        console.log(`[${requestId}] Webhook received non-credit status: ${status}`);
+        console.log(`[${requestId}] Razorpay webhook received non-capture status: ${status}`);
       }
       return res.sendStatus(200);
     } catch (err) {
-      console.error(`[${requestId}] Webhook error:`, err.message);
+      console.error(`[${requestId}] Razorpay webhook error:`, err.message);
       return res.sendStatus(500);
     }
   }
