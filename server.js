@@ -23,7 +23,8 @@ const {
   getAllShopIDs,
   getCurrentInventory,
   getShopDetails,
-  recordPaymentEvent
+  recordPaymentEvent,
+  markAuthUserPaid
 } = require('./database');
 
 const bodyParser = require('body-parser'); // NEW: raw body for HMAC verification
@@ -476,6 +477,7 @@ app.post('/api/whatsapp', whatsappHandler);
 // =============================================================================
 // ==== Instamojo Payment Webhook (white-label, secure HMAC verification) ======
 // =============================================================================
+// Use env path if present, otherwise default to /api/payment-webhook
 app.post(process.env.PAID_WEBHOOK_PATH || '/api/payment-webhook',
   bodyParser.raw({ type: '*/*' }), // raw body ONLY for this route
   async (req, res) => {
@@ -491,11 +493,12 @@ app.post(process.env.PAID_WEBHOOK_PATH || '/api/payment-webhook',
       if (!signatureHeader) {
         console.warn(`[${requestId}] Webhook missing signature header`);
         return res.sendStatus(400);
-      }
-      // Compute HMAC on raw body (Buffer)
-      const rawBody = req.body;
-      // NOTE: Use 'sha256' if your Instamojo webhook is configured for SHA-256.
-      const computed = crypto.createHmac('sha1', privateSalt).update(rawBody).digest('hex');
+      }          
+    // Compute HMAC on raw body (Buffer)
+          const rawBody = req.body;
+          // Allow selecting algorithm via env (default 'sha1'). If your Instamojo is configured for SHA-256, set INSTAMOJO_SIGNATURE_ALGO=sha256
+          const algo = (process.env.INSTAMOJO_SIGNATURE_ALGO || 'sha1').toLowerCase();
+          const computed = crypto.createHmac(algo, privateSalt).update(rawBody).digest('hex');
       if (computed !== signatureHeader) {
         console.warn(`[${requestId}] Invalid webhook signature`);
         return res.sendStatus(403);
