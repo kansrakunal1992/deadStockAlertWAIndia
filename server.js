@@ -22,8 +22,12 @@ const {
   getReorderSuggestions,
   getAllShopIDs,
   getCurrentInventory,
-  getShopDetails
+  getShopDetails,
+  recordPaymentEvent
 } = require('./database');
+
+const bodyParser = require('body-parser'); // NEW: raw body for HMAC verification
+const crypto = require('crypto');          // NEW: HMAC for webhook signature
 
 const app = express();
 const tempDir = path.join(__dirname, 'temp');
@@ -468,6 +472,94 @@ app.post('/api/price-reminders', async (req, res) => {
 
 // WhatsApp webhook endpoint
 app.post('/api/whatsapp', whatsappHandler);
+
+// =============================================================================
+// ==== Instamojo Payment Webhook (white-label, secure HMAC verification) ======
+// =============================================================================
+app.post(process.env.PAID_WEBHOOK_PATH || '/api/payment-webhook',
+  bodyParser.raw({ type: '*/*' }), // raw body ONLY for this route
+  async (req, res) => {
+    const requestId = req.requestId;
+    try {
+      const privateSalt = process.env.INSTAMOJO_PRIVATE_SALT;
+      if (!privateSalt) {
+        console.error(`[${requestId}] Missing INSTAMOJO_PRIVATE_SALT`);
+        return res.sendStatus(500);
+      }
+      // Signature header name used by Instamojo (case-insensitive)
+      const signatureHeader = req.get('X-Instamojo-Signature') || req.get('x-instamojo-signature');
+      if (!signatureHeader) {
+        console.warn(`[${requestId}] Webhook missing signature header`);
+        return res.sendStatus(400);
+      }
+      // Compute HMAC on raw body (Buffer)
+      const rawBody = req.body;
+      // NOTE: Use 'sha256' if your Instamojo webhook is configured for SHA-256.
+      const computed = crypto.createHmac('sha1', privateSalt).update(rawBody).digest('hex');
+      if (computed !== signatureHeader) {
+        console.warn(`[${requestId}] Invalid webhook signature`);
+        return res.sendStatus(403);
+      }
+
+      // Parse payload AFTER verifying signature
+      let payload;
+      try {
+        payload = JSON.parse(rawBody.toString('utf8'));
+      } catch {
+        const qs = require('querystring');
+        payload = qs.parse(rawBody.toString('utf8'));
+      }
+
+      const status = String(payload.payment_status || payload.status || '').toLowerCase();
+      const buyerPhone = (payload.buyer_phone || payload.phone || '').trim();
+      // Prefer explicit shopId if your branded page appended it (query/metadata/custom field)
+      let shopId = (payload.shopId || payload.custom_shopId || (payload.metadata && payload.metadata.shopId) || '').trim();
+      if (!shopId && buyerPhone) shopId = buyerPhone;
+
+      if (!shopId) {
+        console.warn(`[${requestId}] Webhook: missing shopId & buyerPhone`);
+        return res.sendStatus(400);
+      }
+
+      // Optional: record payment event (audit)
+      try {
+        await recordPaymentEvent({
+          shopId,
+          amount: payload.amount || payload.payment_request?.amount || null,
+          status,
+          gateway: 'instamojo',
+          payload
+        });
+      } catch (e) {
+        console.warn(`[${requestId}] recordPaymentEvent failed: ${e?.message}`);
+      }
+
+      // Mark paid on successful/credited status
+      if (status === 'credit' || status === 'successful' || status === 'success') {
+        const r = await markAuthUserPaid(shopId);
+        if (!r?.success) {
+          console.error(`[${requestId}] markAuthUserPaid failed: ${r?.error}`);
+          return res.sendStatus(500);
+        }
+        // Non-blocking WhatsApp confirmation
+        try {
+          const wa = require('./api/whatsapp');
+          if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {
+            await wa.sendWhatsAppPaidConfirmation(`whatsapp:${shopId}`);
+          }
+        } catch (e) {
+          console.warn(`[${requestId}] WhatsApp paid confirm failed: ${e?.message}`);
+        }
+      } else {
+        console.log(`[${requestId}] Webhook received non-credit status: ${status}`);
+      }
+      return res.sendStatus(200);
+    } catch (err) {
+      console.error(`[${requestId}] Webhook error:`, err.message);
+      return res.sendStatus(500);
+    }
+  }
+);
 
 // Static files (if needed)
 app.use(express.static(path.join(__dirname, 'public')));
