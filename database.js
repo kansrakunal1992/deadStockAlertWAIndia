@@ -1721,6 +1721,7 @@ async function getAuthUserRecord(shopId) {
     logError(context, error);
     return null;
   }
+}
 
 // --- [NEW ANCHOR: AuthUsers Onboarding Upsert] -----------------------------------------
 // Upsert Name, GSTIN (optional), Address, Phone, CreatedDate BEFORE starting trial
