@@ -862,23 +862,18 @@ async function saveUserPreference(shopId, language) {
     
     // Format date for Airtable (YYYY-MM-DD)
     const now = new Date().toISOString().split('T')[0];
-    
-    // Check if record already exists
-    const filterFormula = `{ShopID} = '${shopId}'`;
-    const findResult = await airtableUserPreferencesRequest({
-      method: 'get',
-      params: { filterByFormula: filterFormula }
-    }, `${context} - Find`);
-    
-    if (findResult.records.length > 0) {
-      // Update existing record
-      const recordId = findResult.records[0].id;
+        
+    // Use variant-aware lookup
+        const prefRec = await getUserPreferencesRecord(shopId);
+        if (prefRec) {
+          const recordId = prefRec.id;
       const updateData = {
         fields: {
           Language: language,
-          LastUpdated: now,
-          Plan: currentPlan.plan || 'free_demo',
-          TrialEndDate: currentPlan.trialEndDate ? currentPlan.trialEndDate.toISOString() : null
+          LastUpdated: now,          
+          Plan: String(currentPlan.plan || 'free_demo').toLowerCase(),
+          TrialEndDate: currentPlan.trialEndDate ? currentPlan.trialEndDate.toISOString() : null,
+          ShopID: prefRec.fields.ShopID || shopId
         }
       };
       
@@ -915,34 +910,45 @@ async function saveUserPreference(shopId, language) {
 // Save user plan information
 async function saveUserPlan(shopId, plan, trialEndDate = null) {
   const context = `Save User Plan ${shopId}`;
-  try {
-    const updateData = {
-      fields: {
-        Plan: plan,
-        TrialEndDate: trialEndDate ? trialEndDate.toISOString() : null
-      }
-    };
-
-    // Check if user preference exists
-    const userPref = await getUserPreference(shopId);
-    if (userPref.success) {
-      // Update existing record
-      const recordId = userPref.id; // Assuming getUserPreference returns id
+  try {    
+const prefRec = await getUserPreferencesRecord(shopId);
+    const planValue = String(plan).toLowerCase(); // normalize (expects 'paid' / 'trial' etc.)
+    const trialISO = trialEndDate ? trialEndDate.toISOString() : null;
+    if (prefRec) {
+      // PATCH existing
+      const patchData = {
+        fields: {
+          ShopID: prefRec.fields.ShopID || shopId,
+          Plan: planValue,
+          TrialEndDate: trialISO
+        }
+      };
       await airtableUserPreferencesRequest({
         method: 'patch',
-        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${USER_PREFERENCES_TABLE_NAME}/${recordId}`,
-        data: updateData
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${USER_PREFERENCES_TABLE_NAME}/${prefRec.id}`,
+        data: patchData
       }, `${context} - Update`);
     } else {
-      // Create new record with plan info
-      updateData.fields.ShopID = shopId;
-      updateData.fields.Language = 'en'; // Default language
+      // CREATE new (upsert)
+      const digits = String(shopId ?? '').replace(/\D+/g, '');
+      const canon = digits.startsWith('91') && digits.length >= 12 ? digits.slice(2) : digits.replace(/^0+/, '');
+      const preferredShopId = `+91${canon}`; // match base convention
+      const createData = {
+        records: [{
+          fields: {
+            ShopID: preferredShopId,
+            Language: 'en',
+            Plan: planValue,
+            TrialEndDate: trialISO
+          }
+        }]
+      };
       await airtableUserPreferencesRequest({
         method: 'post',
-        data: updateData
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${USER_PREFERENCES_TABLE_NAME}`,
+        data: createData
       }, `${context} - Create`);
     }
-
     return { success: true };
   } catch (error) {
     logError(context, error);
@@ -1044,23 +1050,18 @@ async function isFeatureAvailable(shopId, feature) {
 // Get user preference from Airtable
 async function getUserPreference(shopId) {
   const context = `Get User Preference ${shopId}`;
-  try {
-    const filterFormula = `{ShopID} = '${shopId}'`;
-    const result = await airtableUserPreferencesRequest({
-      method: 'get',
-      params: { filterByFormula: filterFormula }
-    }, context);
-    
-    if (result.records.length > 0) {
-      return {
-        success: true,
-        language: result.records[0].fields.Language,
-        plan: result.records[0].fields.Plan || 'free_demo',
-        trialEndDate: result.records[0].fields.TrialEndDate ? new Date(result.records[0].fields.TrialEndDate) : null,
-        id: result.records[0].id
-      };
-    }
-    
+  try {        
+    // Use variant-aware lookup
+        const prefRec = await getUserPreferencesRecord(shopId);
+        if (prefRec) {
+          return {
+            success: true,
+            language: prefRec.fields.Language,
+            plan: prefRec.fields.Plan ?? 'free_demo',
+            trialEndDate: prefRec.fields.TrialEndDate ? new Date(prefRec.fields.TrialEndDate) : null,
+            id: prefRec.id
+          };
+        }    
     return { success: true, language: 'en' }; // Default to English
   } catch (error) {
     logError(context, error);
@@ -1259,10 +1260,13 @@ async function batchUpdateInventory(updates) {
           url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME + '/' + recordId
         }, `${itemContext} - Delete`);
         
-        // Create new record
+        // Create new record        
+        const digits = String(shopId ?? '').replace(/\D+/g, '');
+        const canon = digits.startsWith('91') && digits.length >= 12 ? digits.slice(2) : digits.replace(/^0+/, '');
+        const preferredShopId = `+91${canon}`; // store with +91 to match your base
         const createData = {
           fields: {
-            ShopID: shopId,
+            ShopID: preferredShopId,
             Product: product,
             Quantity: newQuantity,
             Units: normalizedUnit
@@ -1716,6 +1720,33 @@ async function getAuthUserRecord(shopId) {
       }
     }
     // No direct match — optionally, try a broader search (contains/startsWith) if needed
+    return null;
+  } catch (error) {
+    logError(context, error);
+    return null;
+  }
+}
+
+// NEW: variant-aware lookup for UserPreferences by ShopID
+async function getUserPreferencesRecord(shopId) {
+  const context = `Get UserPreferences ${shopId}`;
+  try {
+    const digits = String(shopId ?? '').replace(/\D+/g, '');
+    const canon = digits.startsWith('91') && digits.length >= 12 ? digits.slice(2) : digits.replace(/^0+/, '');
+    const variants = Array.from(new Set([
+      canon,
+      `+91${canon}`,
+      `91${canon}`,
+      `0${canon}`
+    ])).filter(Boolean);
+    for (const v of variants) {
+      const filterByFormula = `{ShopID}='${String(v).replace(/'/g, "''")}'`;
+      const result = await airtableUserPreferencesRequest({
+        method: 'get',
+        params: { filterByFormula, maxRecords: 1 }
+      }, `${context}::${v}`);
+      if (result.records && result.records[0]) return result.records[0];
+    }
     return null;
   } catch (error) {
     logError(context, error);
@@ -3068,6 +3099,7 @@ module.exports = {
   getUsersInactiveSince,
   getTodaySalesSummary,
   getInventorySummary,
+  getUserPreferencesRecord,
   getLowStockProducts,
   getExpiringProducts,
   getSalesDataForPeriod,
