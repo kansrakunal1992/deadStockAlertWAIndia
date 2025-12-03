@@ -32,6 +32,24 @@ const crypto = require('crypto');          // NEW: HMAC for webhook signature
 
 const app = express();
 
+// Request logging middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  
+  // Add request ID to the request object for tracking
+  req.requestId = requestId;
+  
+  console.log(`[${requestId}] ${req.method} ${req.url} - ${req.ip}`);
+  
+  // Log when the response is sent
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`[${requestId}] Response sent: ${res.statusCode} (${duration}ms)`);
+  });
+  
+  next();
+});
 // --- Resolve webhook path robustly (treat literal "" as empty and fallback) ---
 const _rawWebhookPath = process.env.PAID_WEBHOOK_PATH;
 let PAID_WEBHOOK_PATH_RESOLVED = (_rawWebhookPath || '/api/payment-webhook').trim();
@@ -195,25 +213,6 @@ app.get('/invoice/:fileName', (req, res) => {
 // Middleware for parsing JSON and URL-encoded bodies
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Request logging middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  
-  // Add request ID to the request object for tracking
-  req.requestId = requestId;
-  
-  console.log(`[${requestId}] ${req.method} ${req.url} - ${req.ip}`);
-  
-  // Log when the response is sent
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    console.log(`[${requestId}] Response sent: ${res.statusCode} (${duration}ms)`);
-  });
-  
-  next();
-});
 
 // Middleware for webhook verification
 app.use('/api/whatsapp', express.json({
