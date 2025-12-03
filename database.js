@@ -1694,19 +1694,33 @@ async function isUserAuthorized(shopId, authCode = null) {
 async function getAuthUserRecord(shopId) {
   const context = `Get AuthUser ${shopId}`;
   try {
-    const escapedShopId = shopId.replace(/'/g, "''");
-    const filterByFormula = `{ShopID}='${escapedShopId}'`;
-    const result = await airtableRequest({
-      method: 'get',
-      params: { filterByFormula, maxRecords: 1 },
-      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`
-    }, context);
-    return (result.records?.[0]) ?? null;
+    // Build common variants for phone-format mismatches
+    const digits = String(shopId || '').replace(/\D+/g, '');
+    const canon = digits.startsWith('91') && digits.length >= 12 ? digits.slice(2) : digits.replace(/^0+/, '');
+    const variants = Array.from(new Set([
+      canon,
+      `+91${canon}`,
+      `91${canon}`,
+      `0${canon}`
+    ])).filter(Boolean);
+    // Try each variant until we find a match
+    for (const v of variants) {
+      const filterByFormula = `{ShopID}='${String(v).replace(/'/g, "''")}'`;
+      const result = await airtableRequest({
+        method: 'get',
+        params: { filterByFormula, maxRecords: 1 },
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}`
+      }, `${context}::${v}`);
+      if (result.records && result.records[0]) {
+        return result.records[0];
+      }
+    }
+    // No direct match — optionally, try a broader search (contains/startsWith) if needed
+    return null;
   } catch (error) {
     logError(context, error);
     return null;
   }
-}
 
 // --- [NEW ANCHOR: AuthUsers Onboarding Upsert] -----------------------------------------
 // Upsert Name, GSTIN (optional), Address, Phone, CreatedDate BEFORE starting trial
