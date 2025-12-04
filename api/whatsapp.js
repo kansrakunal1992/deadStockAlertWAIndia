@@ -4875,12 +4875,15 @@ function markNudged(shopId) {
 
 async function composeNudge(shopId, language, hours = NUDGE_HOURS) {
   // Prevent single-script clamping for multi-line bodies
-  const NO_CLAMP_MARKER = '<!NO_CLAMP!>';
+  const NO_CLAMP_MARKER_ESC = '&lt;!NO_CLAMP!&gt;';
+  const NO_CLAMP_MARKER_RAW = '<!NO_CLAMP!>'; // just in case some paths use the raw variant
+
   const base =
-    NO_CLAMP_MARKER +
+    NO_CLAMP_MARKER_ESC +
     `🟢 It’s been ${hours}+ hours since you used Saamagrii.AI.\n` +
     `Try a quick entry:\n• sold milk 2 ltr\n• purchased Parle-G 12 packets ₹10 exp +6m\n` +
     `Or type “mode” to switch Purchase/Sale/Return mode or make an inventory query.`;
+
   // Resilient translation: always fall back to base
   let msg;
   try {
@@ -4888,10 +4891,17 @@ async function composeNudge(shopId, language, hours = NUDGE_HOURS) {
   } catch (_) {
     msg = base;
   }
+
   // Length guard: if translation is short/empty (e.g., "none", "Try:"), use base
   if (!msg || String(msg).trim().length < 20) {
     msg = base;
   }
+
+  // Strip internal markers before returning (handles both escaped and raw forms)
+  msg = String(msg)
+    .replace(/&lt;!NO_CLAMP!&gt;/g, '')
+    .replace(/<\!NO_CLAMP\!>/g, '');
+
   return msg;
 }
 
