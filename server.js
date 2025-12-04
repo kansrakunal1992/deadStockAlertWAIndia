@@ -147,7 +147,8 @@ app.post(
           return res.sendStatus(500);
         }
         // Non-blocking WhatsApp confirmation
-        try {          
+        try {  
+            const wa = require('./api/whatsapp');
             if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {
                     await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
                     console.log(`[${requestId}] WhatsApp paid confirm sent to ${fromWhatsApp}`);
