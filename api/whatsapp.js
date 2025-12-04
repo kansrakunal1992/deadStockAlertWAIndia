@@ -2339,10 +2339,6 @@ async function sendWhatsAppPaidConfirmation(From) {
   }
 }
 
-// Export helpers for server-side usage (without changing main handler export)
-try { module.exports.sendPaidPlanCTA = sendPaidPlanCTA; } catch (_) {}
-try { module.exports.sendWhatsAppPaidConfirmation = sendWhatsAppPaidConfirmation; } catch (_) {}
-
 // Replace English labels with "native (English)" anywhere they appear
 // Single-script rendering: replace labels to native OR keep English only; never mix.
 function renderNativeglishLabels(text, languageCode) {
@@ -10069,8 +10065,6 @@ function generateFallbackSummary(data, languageCode, requestId) {
   return t(fallbackSummary, languageCode, requestId);
 }
 
-module.exports = { generateSummaryInsights };
-
 // Add a new command handler for plan upgrades
 async function handlePlanUpgrade(Body, From, detectedLanguage, requestId) {
   const shopId = From.replace('whatsapp:', '');
@@ -12590,8 +12584,9 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   }
 }
 
-// Main module exports
-module.exports = async (req, res) => {
+
+// Main handler (exported as default). We attach helper functions below.
+ const whatsappHandler = async (req, res) => {
   const requestStart = Date.now();
   const response = new twilio.twiml.MessagingResponse();
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;    
@@ -12893,7 +12888,18 @@ module.exports = async (req, res) => {
             : `whatsapp:${String(req?.body?.WaId ?? '').replace(/^whatsapp:/, '')}`;
         await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) });
       } catch (_) {}
-}
+};
+
+// --- Attach helpers to the handler (so require('./api/whatsapp') has these) ---
+// NOTE: These functions must already be defined above in this file.
+//       e.g., sendWhatsAppPaidConfirmation, sendPaidPlanCTA
+try { whatsappHandler.sendWhatsAppPaidConfirmation = sendWhatsAppPaidConfirmation; } catch (_) {}
+try { whatsappHandler.sendPaidPlanCTA = sendPaidPlanCTA; } catch (_) {}
+// If you also want to expose other utilities, attach them similarly:
+// whatsappHandler.generateSummaryInsights = generateSummaryInsights; // (optional)
+
+// Export the handler as the default export
+module.exports = whatsappHandler;
 
 async function handleRequest(req, res, response, requestId, requestStart) {  
   try {
