@@ -2871,10 +2871,18 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
   }
   
   // --- NEW: Demo button ---     
-  if (payload === 'show_demo') {
-        // Show video first, then re-surface quick‑reply buttons (Start Trial • Demo • Help)
-        await sendDemoVideoAndButtons(from, lang, `cta-demo-${shopId}`);
-        return true;
+  if (payload === 'show_demo') {                
+        // Send demo video (no text narrative) and the QR buttons, then exit.
+          try {
+            const langPinned = String(lang ?? 'en').toLowerCase();
+            const rqid = req.requestId ? String(req.requestId) : `req-${Date.now()}`;
+            console.log(`[interactive:demo] payload=${payload} → sending video`);
+            await sendDemoVideoAndButtons(from, langPinned, `${rqid}::cta-demo`);
+          } catch (e) {
+            console.warn('[interactive:demo] video send failed:', e?.message);
+          }
+          // We already replied via PM API; short‑circuit this turn.
+          return true;
       }
   // --- NEW: Help button ---
   if (payload === 'show_help') {        
@@ -3292,38 +3300,40 @@ async function sendOnboardingQR(shopId, lang) {
 async function sendDemoVideoAndButtons(From, lang = 'en', requestId = 'cta-demo') {
   const shopId = String(From).replace('whatsapp:', '');
   const videoUrl = getDemoVideoUrl(lang);
-  // Try Twilio media first, then fallback to sending the URL as text.
+
+  // 1) Send WhatsApp video via Twilio PM API (no caption)
   try {
     const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-    await client.messages.create({
-      from: process.env.TWILIO_WHATSAPP_NUMBER,             
-      to: From,           // From is already 'whatsapp:+<number>'
-      body: '',           // no caption/text
+    console.log(`[demo-video] sending to ${From} url=${videoUrl}`);
+    const msg = await client.messages.create({
+      from: process.env.TWILIO_WHATSAPP_NUMBER, // e.g., 'whatsapp:+1415...'
+      to: From,                                 // already 'whatsapp:+<msisdn>'
+      body: '',
       mediaUrl: [videoUrl]
-    });      
-} catch (e) {
-        console.warn('[demo-video] media send failed:', e?.message);
-        // NO link fallback (we only want inline video)
-      }
-    
-  // Small pause for nicer UX, then render the 3 quick‑reply buttons
-  try { await new Promise(r => setTimeout(r, 250)); } catch {}
-  try {
-    await ensureLangTemplates(lang);
-    const sids = getLangSids(lang) ?? {};
-    const contentSid = String(process.env.ONBOARDING_QR_SID ?? '').trim() || sids.onboardingQrSid;
-    if (contentSid) {
-      await sendContentTemplate({ toWhatsApp: shopId, contentSid });
-    } else {
-      // Text fallback if content bundle not ready
-      const ctaText = getTrialCtaText(lang);
-      const msg = await t('<<!NO_FOOTER!>>' + ctaText, lang, `${requestId}::qr-fallback`);
-      await sendMessageViaAPI(From, msg);
-    }
+    });
+    console.log('[demo-video] sent', { sid: msg.sid });
   } catch (e) {
-    console.warn('[demo-buttons] failed:', e?.message);
+    console.warn('[demo-video] media send failed:', e?.message, e?.code, e?.status);
+    // No link fallback – we only want inline video
   }
-}
+
+ // 2) Render the quick‑reply buttons
+   try { await new Promise(r => setTimeout(r, 250)); } catch {}
+   try {
+     await ensureLangTemplates(lang);
+     const sids = getLangSids(lang) ?? {};
+     const contentSid = String(process.env.ONBOARDING_QR_SID ?? '').trim() || sids.onboardingQrSid;
+     if (contentSid) {
+       await sendContentTemplate({ toWhatsApp: shopId, contentSid });
+     } else {
+       const ctaText = getTrialCtaText(lang);
+       const msg = await t('<<!NO_FOOTER!>>' + ctaText, lang, `${requestId}::qr-fallback`);
+       await sendMessageViaAPI(From, msg);
+     }
+   } catch (e) {
+     console.warn('[demo-buttons] failed:', e?.message);
+   }
+ }
 
 // Localized trial CTA text fallback (used only if Content send fails)
 function getTrialCtaText(lang) {
