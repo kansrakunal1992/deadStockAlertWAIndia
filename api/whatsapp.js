@@ -2874,8 +2874,6 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
   if (payload === 'show_demo') {
         // Show video first, then re-surface quick‑reply buttons (Start Trial • Demo • Help)
         await sendDemoVideoAndButtons(from, lang, `cta-demo-${shopId}`);
-        // Optional: still send the localized transcript after video
-        try { await sendDemoTranscriptLocalized(from, lang, `cta-demo-${shopId}::transcript`); } catch {}
         return true;
       }
   // --- NEW: Help button ---
@@ -11792,7 +11790,6 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
               if (orch.normalizedCommand.trim().toLowerCase() === 'demo') {
                 handledRequests.add(requestId);
                 await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
-                // Optional: localized transcript after the video for context
                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
                 res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
                 return;
@@ -12439,7 +12436,6 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               if (orch.normalizedCommand.trim().toLowerCase() === 'demo') {
                 handledRequests.add(requestId);
                 await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
-                // Optional: localized transcript after the video for context
                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
                 res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
                 return;
@@ -12882,7 +12878,6 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               if (orch.normalizedCommand.trim().toLowerCase() === 'demo') {
                 handledRequests.add(requestId);
                 await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
-                // Optional: localized transcript after the video for context
                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
                 res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
                 return;
@@ -14224,7 +14219,6 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
               if (orch.normalizedCommand.trim().toLowerCase() === 'demo') {
                 handledRequests.add(requestId);
                 await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
-                // Optional: localized transcript after the video for context
                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
                 res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
                 return;
