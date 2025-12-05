@@ -2870,12 +2870,14 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
             return true;
   }
   
-  // --- NEW: Demo button ---
-  if (payload === 'show_demo') {           
-  // new: rich multilingual demo
-  await sendDemoTranscriptLocalized(from, lang, `cta-demo-${shopId}`);
-  return true;
-  }
+  // --- NEW: Demo button ---     
+  if (payload === 'show_demo') {
+        // Show video first, then re-surface quick‑reply buttons (Start Trial • Demo • Help)
+        await sendDemoVideoAndButtons(from, lang, `cta-demo-${shopId}`);
+        // Optional: still send the localized transcript after video
+        try { await sendDemoTranscriptLocalized(from, lang, `cta-demo-${shopId}::transcript`); } catch {}
+        return true;
+      }
   // --- NEW: Help button ---
   if (payload === 'show_help') {        
     const helpEn = [
@@ -3247,6 +3249,19 @@ const ONBOARDING_VIDEO_URL       = String(process.env.ONBOARDING_VIDEO_URL ?? 'h
 const ONBOARDING_VIDEO_URL_HI    = String(process.env.ONBOARDING_VIDEO_URL_HI    ?? '').trim();
 const ONBOARDING_VIDEO_URL_HI_LATN = String(process.env.ONBOARDING_VIDEO_URL_HI_LATN ?? '').trim();
 
+// === NEW: Demo video shown when user taps “Demo” or types demo ===
+// Recommended: host via GitHub Pages/S3 and set DEMO_VIDEO_URL in Railway env.
+const DEMO_VIDEO_URL        = String(process.env.DEMO_VIDEO_URL || process.env.ONBOARDING_VIDEO_URL ?? '').trim();
+const DEMO_VIDEO_URL_HI     = String(process.env.DEMO_VIDEO_URL_HI || '').trim();
+const DEMO_VIDEO_URL_HI_LATN= String(process.env.DEMO_VIDEO_URL_HI_LATN ?? '').trim();
+
+function getDemoVideoUrl(lang) {
+  const L = String(lang ?? 'en').toLowerCase();
+  if (L === 'hi' && DEMO_VIDEO_URL_HI) return DEMO_VIDEO_URL_HI;
+  if (L === 'hi-latn' && DEMO_VIDEO_URL_HI_LATN) return DEMO_VIDEO_URL_HI_LATN;
+  return DEMO_VIDEO_URL || ONBOARDING_VIDEO_URL; // safe fallback
+}
+
 /**
  * Canonical activation gate:
  * Only 'trial' (explicit user action) or 'paid' are considered activated.
@@ -3275,7 +3290,41 @@ async function sendOnboardingQR(shopId, lang) {
   if (contentSid) await sendContentTemplateQueuedOnce({ toWhatsApp: shopId, contentSid, requestId });
 }
 
-
+// === NEW: light media sender + buttons wrapper for Demo ===
+async function sendDemoVideoAndButtons(From, lang = 'en', requestId = 'cta-demo') {
+  const shopId = String(From).replace('whatsapp:', '');
+  const videoUrl = getDemoVideoUrl(lang);
+  // Try Twilio media first, then fallback to sending the URL as text.
+  try {
+    const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+    await client.messages.create({
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      to: shopId.startsWith('+') ? `whatsapp:${shopId}` : From,
+      body: '', // video only
+      mediaUrl: [videoUrl]
+    });
+  } catch (e) {
+    console.warn('[demo-video] media send failed → link fallback:', e?.message);
+    await sendMessageViaAPI(From, videoUrl);
+  }
+  // Small pause for nicer UX, then render the 3 quick‑reply buttons
+  try { await new Promise(r => setTimeout(r, 250)); } catch {}
+  try {
+    await ensureLangTemplates(lang);
+    const sids = getLangSids(lang) ?? {};
+    const contentSid = String(process.env.ONBOARDING_QR_SID ?? '').trim() || sids.onboardingQrSid;
+    if (contentSid) {
+      await sendContentTemplate({ toWhatsApp: shopId, contentSid });
+    } else {
+      // Text fallback if content bundle not ready
+      const ctaText = getTrialCtaText(lang);
+      const msg = await t('<<!NO_FOOTER!>>' + ctaText, lang, `${requestId}::qr-fallback`);
+      await sendMessageViaAPI(From, msg);
+    }
+  } catch (e) {
+    console.warn('[demo-buttons] failed:', e?.message);
+  }
+}
 
 // Localized trial CTA text fallback (used only if Content send fails)
 function getTrialCtaText(lang) {
@@ -11647,7 +11696,23 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     // Save user preference
     const shopId = From.replace('whatsapp:', '');
     await saveUserPreference(shopId, detectedLanguage);
-    
+        
+    // === NEW: typed "demo" intent (defensive, outside orchestrator) ===
+      try {
+        const langPinned = String(detectedLanguage ?? 'en').toLowerCase();
+        const raw = String(cleanTranscript ?? '').trim().toLowerCase();
+        const demoTokens = [
+          'demo','डेमो','ডেমো','டெமோ','డెమో','ಡೆಮೊ','ડેમો',
+          'demo please','डेमो देखें','डेमो देखो'
+        ];
+        if (demoTokens.some(t => raw.includes(t))) {
+          await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo-voice`);
+          try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo-voice::transcript`); } catch {}
+          handledRequests.add(requestId);
+          return;
+        }
+      } catch (_) { /* soft-fail: continue */ }
+
     // --- Typed "start trial" guard (voice transcript) ---
       // Only trigger when user is NOT already activated (paid or active trial).
       // Does not affect the existing button flow.
@@ -11723,6 +11788,16 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         }
         // Read‑only normalized command → route & exit
         if (!FORCE_INVENTORY && orch.normalizedCommand) {
+            // NEW: “demo” as a terminal command → play video + buttons
+              if (orch.normalizedCommand.trim().toLowerCase() === 'demo') {
+                handledRequests.add(requestId);
+                await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
+                // Optional: localized transcript after the video for context
+                try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo::transcript`); } catch {}
+                const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+                res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
+                return;
+              }
           handledRequests.add(requestId);
           await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-voice`);
           try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}                        
@@ -12024,6 +12099,22 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
             return; // exit early, like the "Start Trial" button
           }
         } catch (_) { /* soft-fail: continue */ }
+        
+    // === NEW: typed "demo" intent (defensive, outside orchestrator) ===
+      try {
+        const langPinned = String(conversationState?.language ?? 'en').toLowerCase();
+        const raw = String(Body ?? '').trim().toLowerCase();
+        const demoTokens = [
+          'demo','डेमो','ডেমো','டெமோ','డెమో','ಡೆಮೊ','ડેમો',
+          'demo please','डेमो देखें','डेमो देखो'
+        ];
+        if (demoTokens.some(t => raw.includes(t))) {
+          await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo-text`);
+          try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo-text::transcript`); } catch {}
+          handledRequests.add(requestId);
+          return;
+        }
+      } catch (_) { /* continue */ }
     
     // === FRONT-DOOR SUMMARY GUARD (text path) ===
     const intentAtEntry = resolveSummaryIntent(Body);        
@@ -12346,6 +12437,16 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         }
         // Read‑only normalized command → route & exit
         if (!FORCE_INVENTORY && orch.normalizedCommand) {
+            // NEW: “demo” as a terminal command → play video + buttons
+              if (orch.normalizedCommand.trim().toLowerCase() === 'demo') {
+                handledRequests.add(requestId);
+                await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
+                // Optional: localized transcript after the video for context
+                try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo::transcript`); } catch {}
+                const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+                res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
+                return;
+              }
           handledRequests.add(requestId);
           await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
           __handled = true;
@@ -12669,7 +12770,27 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   
     // Language detection (also persists preference)
       const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
-    
+            
+      // === NEW: typed "demo" intent (defensive, outside orchestrator) ===
+          try {
+            const langPinned = String(detectedLanguage ?? 'en').toLowerCase();
+            const raw = String(Body ?? '').trim().toLowerCase();
+            const demoTokens = [
+              'demo','डेमो','ডেমো','டெமோ','డెమో','ಡೆಮೊ','ડેમો',
+              'demo please','डेमो देखें','डेमो देखो'
+            ];
+            if (demoTokens.some(t => raw.includes(t))) {
+              await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo-typed`);
+              try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo-typed::transcript`); } catch {}
+              // Minimal TwiML ack; Content/PM API already replied
+              const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+              res.type('text/xml');
+              resp.safeSend(200, twiml.toString());
+              safeTrackResponseTime(requestStart, requestId);
+              return;
+            }
+          } catch (_) { /* best-effort; continue */ }
+        
       // --- Typed "start trial" guard (webhook level, plain text) ---
       // Run after language detection so we can respond in the user's script.
       // Only triggers when the user is NOT already activated; button flow remains unchanged.
@@ -12760,7 +12881,17 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
          return;
        }
        // Read‑only normalized command → route & exit
-       if (!FORCE_INVENTORY && orch.normalizedCommand) {
+       if (!FORCE_INVENTORY && orch.normalizedCommand) {                   
+       // NEW: “demo” as a terminal command → play video + buttons
+              if (orch.normalizedCommand.trim().toLowerCase() === 'demo') {
+                handledRequests.add(requestId);
+                await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
+                // Optional: localized transcript after the video for context
+                try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo::transcript`); } catch {}
+                const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+                res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
+                return;
+              }
          handledRequests.add(requestId);
          await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm`);
          __handled = true;
@@ -13785,7 +13916,25 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   } catch (e) {
     console.warn(`[${requestId}] Language detection failed, defaulting to ${detectedLanguage}:`, e.message);
   }
-  console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`); 
+  console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`);        
+  // === NEW: typed "demo" intent (defensive, outside orchestrator) ===
+      try {
+        const langPinned = String(detectedLanguage ?? 'en').toLowerCase();
+        const raw = String(Body ?? '').trim().toLowerCase();
+        const demoTokens = [
+          'demo','डेमो','ডেমো','டெமோ','డెమో','ಡೆಮೊ','ડેમો',
+          'demo please','डेमो देखें','डेमो देखो'
+        ];
+        if (demoTokens.some(t => raw.includes(t))) {
+          await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo-typed`);
+          try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo-typed::transcript`); } catch {}
+          // Minimal TwiML ack; main send used Content/PM API
+          const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+          res.type('text/xml').send(twiml.toString());
+          return;
+        }
+      } catch (_) { /* continue normal flow */ }
+    
   // --- Minimal hook: Activate Paid Plan command ---
     const lowerBodyCmd = String(Body || '').trim().toLowerCase();
     if (
@@ -14076,7 +14225,17 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       }
 
       // Read-only normalized command → route & exit
-      if (!FORCE_INVENTORY && orch.normalizedCommand) {
+      if (!FORCE_INVENTORY && orch.normalizedCommand) {                  
+      // NEW: “demo” as a terminal command → play video + buttons
+              if (orch.normalizedCommand.trim().toLowerCase() === 'demo') {
+                handledRequests.add(requestId);
+                await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
+                // Optional: localized transcript after the video for context
+                try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo::transcript`); } catch {}
+                const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+                res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
+                return;
+              }
         handledRequests.add(requestId);
         await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);                
         __handled = true;
