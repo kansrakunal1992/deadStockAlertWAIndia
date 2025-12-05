@@ -3251,8 +3251,8 @@ const ONBOARDING_VIDEO_URL_HI_LATN = String(process.env.ONBOARDING_VIDEO_URL_HI_
 
 // === NEW: Demo video shown when user taps “Demo” or types demo ===
 // Recommended: host via GitHub Pages/S3 and set DEMO_VIDEO_URL in Railway env.
-const DEMO_VIDEO_URL        = String(process.env.DEMO_VIDEO_URL || process.env.ONBOARDING_VIDEO_URL ?? '').trim();
-const DEMO_VIDEO_URL_HI     = String(process.env.DEMO_VIDEO_URL_HI || '').trim();
+const DEMO_VIDEO_URL        = String(process.env.DEMO_VIDEO_URL ?? process.env.ONBOARDING_VIDEO_URL ?? '').trim();
+const DEMO_VIDEO_URL_HI     = String(process.env.DEMO_VIDEO_URL_HI ?? '').trim();
 const DEMO_VIDEO_URL_HI_LATN= String(process.env.DEMO_VIDEO_URL_HI_LATN ?? '').trim();
 
 function getDemoVideoUrl(lang) {
