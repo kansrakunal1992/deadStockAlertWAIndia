@@ -3251,7 +3251,7 @@ const ONBOARDING_VIDEO_URL_HI_LATN = String(process.env.ONBOARDING_VIDEO_URL_HI_
 
 // === NEW: Demo video shown when user taps “Demo” or types demo ===
 // Recommended: host via GitHub Pages/S3 and set DEMO_VIDEO_URL in Railway env.
-const DEMO_VIDEO_URL        = String(process.env.DEMO_VIDEO_URL ?? process.env.ONBOARDING_VIDEO_URL ?? '').trim();
+const DEMO_VIDEO_URL        = String(((process.env.DEMO_VIDEO_URL || process.env.ONBOARDING_VIDEO_URL) ?? '')).trim();
 const DEMO_VIDEO_URL_HI     = String(process.env.DEMO_VIDEO_URL_HI ?? '').trim();
 const DEMO_VIDEO_URL_HI_LATN= String(process.env.DEMO_VIDEO_URL_HI_LATN ?? '').trim();
 
@@ -3296,17 +3296,18 @@ async function sendDemoVideoAndButtons(From, lang = 'en', requestId = 'cta-demo'
   const videoUrl = getDemoVideoUrl(lang);
   // Try Twilio media first, then fallback to sending the URL as text.
   try {
-    const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+    const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
     await client.messages.create({
-      from: process.env.TWILIO_WHATSAPP_NUMBER,
-      to: shopId.startsWith('+') ? `whatsapp:${shopId}` : From,
-      body: '', // video only
+      from: process.env.TWILIO_WHATSAPP_NUMBER,             
+      to: From,           // From is already 'whatsapp:+<number>'
+      body: '',           // no caption/text
       mediaUrl: [videoUrl]
-    });
-  } catch (e) {
-    console.warn('[demo-video] media send failed → link fallback:', e?.message);
-    await sendMessageViaAPI(From, videoUrl);
-  }
+    });      
+} catch (e) {
+        console.warn('[demo-video] media send failed:', e?.message);
+        // NO link fallback (we only want inline video)
+      }
+    
   // Small pause for nicer UX, then render the 3 quick‑reply buttons
   try { await new Promise(r => setTimeout(r, 250)); } catch {}
   try {
@@ -11707,7 +11708,6 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         ];
         if (demoTokens.some(t => raw.includes(t))) {
           await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo-voice`);
-          try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo-voice::transcript`); } catch {}
           handledRequests.add(requestId);
           return;
         }
@@ -11793,7 +11793,6 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                 handledRequests.add(requestId);
                 await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
                 // Optional: localized transcript after the video for context
-                try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo::transcript`); } catch {}
                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
                 res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
                 return;
@@ -12110,7 +12109,6 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         ];
         if (demoTokens.some(t => raw.includes(t))) {
           await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo-text`);
-          try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo-text::transcript`); } catch {}
           handledRequests.add(requestId);
           return;
         }
@@ -12442,7 +12440,6 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                 handledRequests.add(requestId);
                 await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
                 // Optional: localized transcript after the video for context
-                try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo::transcript`); } catch {}
                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
                 res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
                 return;
@@ -12781,7 +12778,6 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
             ];
             if (demoTokens.some(t => raw.includes(t))) {
               await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo-typed`);
-              try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo-typed::transcript`); } catch {}
               // Minimal TwiML ack; Content/PM API already replied
               const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
               res.type('text/xml');
@@ -12887,7 +12883,6 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                 handledRequests.add(requestId);
                 await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
                 // Optional: localized transcript after the video for context
-                try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo::transcript`); } catch {}
                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
                 res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
                 return;
@@ -13927,7 +13922,6 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         ];
         if (demoTokens.some(t => raw.includes(t))) {
           await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo-typed`);
-          try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo-typed::transcript`); } catch {}
           // Minimal TwiML ack; main send used Content/PM API
           const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
           res.type('text/xml').send(twiml.toString());
@@ -14231,7 +14225,6 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
                 handledRequests.add(requestId);
                 await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
                 // Optional: localized transcript after the video for context
-                try { await sendDemoTranscriptLocalized(From, langPinned, `${requestId}::demo::transcript`); } catch {}
                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
                 res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
                 return;
