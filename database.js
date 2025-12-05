@@ -1634,6 +1634,9 @@ const AUTH_USERS_TABLE_NAME = process.env.AIRTABLE_AUTH_USERS_TABLE_NAME || 'Aut
 const AUTH_CODE_EXPIRY = 24 * 60 * 60 * 1000; // 24 hours
 const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 3);
 
+// NEW: configurable paid plan duration (defaults to 30 days)
+const PAID_DAYS = Number(process.env.PAID_DAYS ?? 30);
+
 // In database.js, update these functions:
 
 // Check if user is authorized
@@ -1843,9 +1846,12 @@ async function markAuthUserPaid(shopId) {
       method: 'patch',
       url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${AUTH_USERS_TABLE_NAME}/${rec.id}`,
       data: { fields: { StatusUser: 'active', LastUsed: new Date().toISOString() } }
-    }, `${context} - Patch`);
-    await saveUserPlan(shopId, 'paid', null); // clears TrialEndDate
-    return { success: true, id: rec.id };
+    }, `${context} - Patch`);        
+    // NEW: set unified end date for PAID into TrialEndDate (single field for both trial & paid)
+        const start = new Date();
+        const end = new Date(start.getTime() + PAID_DAYS * 24 * 60 * 60 * 1000);
+        await saveUserPlan(shopId, 'paid', end); // writes TrialEndDate = paidStart + PAID_DAYS
+        return { success: true, id: rec.id, paidStart: start.toISOString(), paidEnd: end.toISOString() };
   } catch (error) {
     logError(context, error);
     return { success: false, error: error.message };
