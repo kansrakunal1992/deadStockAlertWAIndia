@@ -1754,6 +1754,26 @@ const LOCAL_SET_WORDS = {
   'ખરીદી': 'purchased', 'વેચાણ': 'sold', 'રીટર્ન': 'returned'
 };
 
+// ==== Canonical message markers (single source of truth) ====
+const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
+function stripMarkers(s) {
+  return String(s ?? '')
+    .replace(new RegExp(NO_FOOTER_MARKER, 'g'), '')
+    .replace(new RegExp(NO_CLAMP_MARKER, 'g'), '');
+}
+
+// ==== Unified end-date resolver (uses one Airtable field: TrialEndDate) ====
+// Many call sites previously checked planInfo.trialEnd / trialEndDate / endDate.
+// From now on, both trial and paid store the plan end in TrialEndDate.
+function getUnifiedEndDate(planInfo) {
+  return planInfo?.TrialEndDate
+      ?? planInfo?.trialEndDate
+      ?? planInfo?.trialEnd
+      ?? planInfo?.endDate
+      ?? null;
+}
+
 // Accept one-word localized switch triggers or direct-set actions
 function parseModeSwitchLocalized(text) {
   const raw = String(text || '').trim();
@@ -1832,7 +1852,7 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
   try {
     // NOTE: badge will be shown only if the user is activated (paid or trial & not expired)
     // Marker to opt-out of footer for specific messages (onboarding/upsell)
-        const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+        // marker now defined globally; do not redeclare
         if (String(text).startsWith(NO_FOOTER_MARKER)) {
           return String(text).slice(NO_FOOTER_MARKER.length);
         }
@@ -1847,10 +1867,10 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
         try {
           if (typeof isUserActivated === 'function') {
             activated = !!(await isUserActivated(shopId));
-          } else if (typeof getUserPlan === 'function') {
+          } else if (typeof getUserPlan === 'function') {                        
             const planInfo = await getUserPlan(shopId);
             const plan = String(planInfo?.plan ?? '').toLowerCase();
-            const end  = planInfo?.trialEnd ?? planInfo?.endDate ?? null;
+            const end = getUnifiedEndDate(planInfo);
             const expired = (plan === 'trial' && end)
               ? (new Date(end).getTime() < Date.now())
               : false;
@@ -2319,21 +2339,41 @@ async function sendPaidPlanCTA(From, lang = 'en') {
  * Send a localized paid activation confirmation over WhatsApp.
  * Called from the server webhook after successful payment capture.
  */
+
+// Idempotent + deduped paid confirmation (shows "30 days" and expiry date if present)
+const _paidConfirmGuard = new Map(); // shopId -> { at: ms, lastHash: string }
+const PAID_CONFIRM_TTL_MS = Number(process.env.PAID_CONFIRM_TTL_MS ?? (5 * 60 * 1000));
+function _hash(s) { try { return crypto.createHash('sha256').update(String(s ?? '')).digest('hex'); } catch { return String(s ?? '').length.toString(16); } }
 async function sendWhatsAppPaidConfirmation(From) {
   try {
     const shopId = String(From).replace('whatsapp:', '');
-    // Read language preference if available
+    // Resolve language
     let lang = 'en';
     try {
       const pref = await getUserPreference(shopId);
       if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-    } catch (_) {}
-    const text = await t(
-      '✅ Your Saamagrii.AI Paid Plan is now active. Enjoy full access!',
+    } catch {}
+    // Read unified end date (uses TrialEndDate for both trial & paid)
+    let endISO = null;
+    try {
+      const planInfo = await getUserPlan(shopId);
+      endISO = getUnifiedEndDate(planInfo);
+    } catch {}
+    const endLine = endISO
+      ? `\nExpires on ${new Date(endISO).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}.`
+      : '';
+    const text0 = await t(
+      `✅ Your Saamagrii.AI Paid Plan is now active. Enjoy full access for 30 days!${endLine}`,
       lang,
       `paid-confirm::${shopId}`
     );
-    await sendMessageViaAPI(From, text);
+    // Append footer and normalize; then idempotency guard by hash within TTL
+    const withFooter = await appendSupportFooter(text0, From);
+    const body = normalizeNumeralsToLatin(enforceSingleScriptSafe(withFooter, lang)).trim();
+    const h = _hash(body); const prev = _paidConfirmGuard.get(shopId); const now = Date.now();
+    if (prev && (now - prev.at) < PAID_CONFIRM_TTL_MS && prev.lastHash === h) { console.log('[paid-confirm] suppressed duplicate', { shopId }); return; }
+    _paidConfirmGuard.set(shopId, { at: now, lastHash: h });
+    await sendMessageDedup(From, body);
   } catch (e) {
     console.warn('[paid-confirm] failed:', e?.message);
   }
@@ -2407,18 +2447,24 @@ const PAID_CTA_THROTTLE_MS = Number(process.env.PAID_CTA_THROTTLE_MS ?? (2 * 60 
 async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en', opts = {}) {
   try {
     const shopId = String(from ?? '').replace('whatsapp:', '');
-    // Plan info from Airtable via database.js:getUserPlan
-    const planInfo = await getUserPlan(shopId); // { plan, trialEndDate } (trialEndDate is Date)
+    // Plan info from Airtable via database.js:getUserPlan        
+    const planInfo = await getUserPlan(shopId);
     const plan = String(planInfo?.plan ?? '').toLowerCase();
-    const trialEnd = planInfo?.trialEndDate ?? null;
+    const trialEnd = getUnifiedEndDate(planInfo);
+
     const now = Date.now();
     const isPaid = (plan === 'paid');        
     // New guards                
         const hasNoPlan = (!plan || plan === 'none' || plan === 'demo' || plan === 'free_demo' || plan === 'free_demo_first_50');
-        const trialActive = (plan === 'trial' && trialEnd && (trialEnd.getTime() > now));
+        const trialActive = (plan === 'trial' && trialEnd && (trialEnd.getTime() > now));                
         const isTrialActiveLastDay =
-          (plan === 'trial' && trialEnd && (trialEnd.getTime() > now) && (trialEnd.getTime() - now <= 24 * 60 * 60 * 1000));
-    const isTrialExpired = (plan === 'trial' && trialEnd && (trialEnd.getTime() <= now));        
+            (plan === 'trial' && trialEnd && (new Date(trialEnd).getTime() > now) && (new Date(trialEnd).getTime() - now <= 24 * 60 * 60 * 1000));
+          const isTrialExpired = (plan === 'trial' && trialEnd && (new Date(trialEnd).getTime() <= now));
+          // NEW: paid last-day & paid expired (using the same TrialEndDate)
+          const isPaidActiveLastDay =
+            (plan === 'paid' && trialEnd && (new Date(trialEnd).getTime() > now) && (new Date(trialEnd).getTime() - now <= 24 * 60 * 60 * 1000));
+          const isPaidExpired = (plan === 'paid' && trialEnd && (new Date(trialEnd).getTime() <= now));
+        
     // Context: if the current turn had a typed trial intent, suppress CTA
         const trialIntentNow = !!opts?.trialIntentNow;        
     // Suppress CTA for paid users, new/first-time users, or the same turn as trial intent.
@@ -2428,7 +2474,7 @@ async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en', opts = {}
           return;
         }
         // Show CTA ONLY if: last day of trial OR trial expired (post-expiry) [paid users already returned above]
-        if (!(isTrialActiveLastDay || isTrialExpired)) return;
+        if (!(isTrialActiveLastDay || isTrialExpired || isPaidActiveLastDay || isPaidExpired)) return;
     // Gentle throttle so we don't overwhelm
     const last = _paidCtaThrottle.get(shopId) ?? 0;
     if (now - last < PAID_CTA_THROTTLE_MS) return;
@@ -2536,11 +2582,12 @@ async function handleTrialOnboardingStep(From, text, lang = 'en') {
     // -----------------------------------------------------------------------
         // Send activation message WITHOUT clamp & WITHOUT footer to avoid truncation
         // -----------------------------------------------------------------------
-        const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
-        const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
+        
         let msgRaw = `${NO_CLAMP_MARKER}${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
                      `Try:\n• short summary\n• price list\n• "10 Parle-G sold at 11/packet"`;               
-        let msgTranslated = await t(msgRaw, lang, `trial-onboard-done-${shopId}`);
+        let msgTranslated = await t(msgRaw, lang, `trial-onboard-done-${shopId}`);              
+        // Strip markers so they never leak to WhatsApp
+          msgTranslated = stripMarkers(msgTranslated);
             // LOCAL CLAMP → Single script; newline + numerals normalization
             msgTranslated = enforceSingleScriptSafe(msgTranslated, lang);
             msgTranslated = fixNewlines1(msgTranslated);
@@ -3497,6 +3544,23 @@ function composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuan
 // --- Single-sale confirmation (compose & send once) --------------------------
 const saleConfirmTracker = new Set();
 
+const _confirmHashGuard = new Map(); // shopId -> { at: ms, lastHash: string }
+const CONFIRM_BODY_TTL_MS = Number(process.env.CONFIRM_BODY_TTL_MS ?? (10 * 1000));
+async function _sendConfirmOnceByBody(From, detectedLanguage, requestId, body) {
+  const shopId = String(From).replace('whatsapp:', '');
+  const localized = await t(body, detectedLanguage ?? 'en', `${requestId}::confirm-once`);
+  const final = normalizeNumeralsToLatin(
+    enforceSingleScriptSafe(await appendSupportFooter(localized, From), detectedLanguage)
+  ).trim();
+  const h = _hash(final); const prev = _confirmHashGuard.get(shopId); const now = Date.now();
+  if (prev && (now - prev.at) < CONFIRM_BODY_TTL_MS && prev.lastHash === h) {
+    console.log('[confirm-once] suppressed duplicate', { shopId, requestId });
+    return;
+  }
+  _confirmHashGuard.set(shopId, { at: now, lastHash: h });
+  await sendMessageViaAPI(From, final);
+}
+
 function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity }) {
   const unitText  = unit ? ` ${unit}` : '';
   const priceText = (Number(pricePerUnit) > 0)
@@ -3573,11 +3637,10 @@ async function sendMessageDedup(From, msg) {
 async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, info) {
   // Gate duplicates per request
   if (saleConfirmTracker.has(requestId)) return;
-  saleConfirmTracker.add(requestId);
+  saleConfirmTracker.add(requestId);      
   const head = composeSaleConfirmation(info);
   const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
-  const msg = await t(body, detectedLanguage ?? 'en', `${requestId}::sale-once`);
-  await sendMessageDedup(From, msg);
+  await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
 }
 
 /**
@@ -3593,11 +3656,10 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
     newQuantity = null
   } = payload || {};
 
-  // Build the one-line head via composer (emoji + unit/price/stock)
-  const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
-  const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
-  const localized = await t(body, detectedLanguage ?? 'en', `${requestId}::purchase-once`);
-  await sendMessageDedup(From, localized);
+  // Build the one-line head via composer (emoji + unit/price/stock)  
+const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
+const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
+await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
 }
 
 function chooseHeader(count, compact = true, isPrice = false) {
