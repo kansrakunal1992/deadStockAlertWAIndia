@@ -3382,6 +3382,52 @@ async function sendDemoVideoAndButtons(From, lang = 'en', requestId = 'cta-demo'
    }
  }
 
+
+// === Canonical benefits video (Hindi & Hinglish vs English) ===================
+const ONBOARDING_VIDEO_URL_EN = String(process.env.ONBOARDING_VIDEO_URL_EN ??
+  'https://kansrakunal1992.github.io/deadStockAlertWAIndia/saamagrii-benefits-en.mp4'
+).trim();
+
+/**
+ * Route benefits video by language:
+ * - Hindi *native* (hi) and Hinglish *roman* (hi-latn) → Hindi video
+ * - Everyone else → English video
+ */
+function getBenefitsVideoUrl(lang = 'en') {
+  const L = String(lang ?? 'en').toLowerCase();
+
+  // ✅ Treat hi-latn as Hindi
+  const isHindi = (L === 'hi' || L === 'hi-latn');
+
+  if (isHindi) {
+    // Precedence: explicit Hindi override → base (which already points to -hi) → English fallback
+    return (ONBOARDING_VIDEO_URL_HI || ONBOARDING_VIDEO_URL || ONBOARDING_VIDEO_URL_EN);
+  }
+  return ONBOARDING_VIDEO_URL_EN;
+}
+
+/**
+ * Send the benefits video once during onboarding, before QR buttons.
+ * Mirrors your demo video sender (Twilio PM API).
+ */
+async function sendOnboardingBenefitsVideo(From, lang = 'en') {
+  try {
+    const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+    const videoUrl = getBenefitsVideoUrl(lang);
+    console.log('[onboard-benefits] sending to', From, 'lang=', lang, 'url=', videoUrl);
+    await client.messages.create({
+      from: process.env.TWILIO_WHATSAPP_NUMBER,
+      to: From,
+      body: '',
+      mediaUrl: [videoUrl]
+    });
+  } catch (e) {
+    console.warn('[onboard-benefits] media send failed:', e?.message, e?.code, e?.status);
+    // No link fallback to keep UX consistent with your demo video flow.
+  }
+}
+
+
 // Localized trial CTA text fallback (used only if Content send fails)
 function getTrialCtaText(lang) {
   const lc = String(lang || 'en').toLowerCase();
