@@ -382,7 +382,7 @@ async function parseMultipleUpdates(reqOrText) {
       if (userState && userState.mode === 'onboarding_trial_capture') {
         try {
           const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'trial-capture');
-          await handleTrialOnboardingStep(from || `whatsapp:${shopId}`, transcript, langHint);
+          await handleTrialOnboardingStep(from || `whatsapp:${shopId}`, transcript, langHint, requestId);
         } catch (e) {
           console.warn('[onboard-capture] step failed:', e?.message);
         }
@@ -1657,7 +1657,16 @@ async function detectLanguageWithFallback(text, from, requestId) {
 
 // Safe wrapper so missing function can’t crash the request
 async function safeSendParseError(From, detectedLanguage, requestId, header) {
-  try {
+  try {          
+    // Do not send apologies/examples during trial onboarding capture
+       try {
+         const shopId = String(From).replace('whatsapp:', '');
+         const st = await getUserStateFromDB(shopId);
+         if (st?.mode === 'onboarding_trial_capture') {
+           console.log('[safeSendParseError] suppressed during onboarding', { requestId });
+           return;
+         }
+       } catch {}
     if (typeof sendParseErrorWithExamples === 'function') {
       await sendParseErrorWithExamples(From, detectedLanguage, requestId, header);
     } else {                             
@@ -2582,7 +2591,7 @@ async function beginTrialOnboarding(From, lang = 'en') {
   await sendMessageViaAPI(From, askName);
 }
 
-async function handleTrialOnboardingStep(From, text, lang = 'en') {
+async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = null) {
   const shopId = String(From).replace('whatsapp:', '');
   // ✅ Read by the same key we used to write
   const state = await getUserStateFromDB(shopId);  
@@ -2611,6 +2620,7 @@ async function handleTrialOnboardingStep(From, text, lang = 'en') {
          `trial-onboard-gstin-${shopId}`
        );
     await sendMessageViaAPI(From, askGstin);
+      try { if (requestId) handledRequests.add(requestId); } catch {}
     return true;
   }
   if (step === 'gstin') {
@@ -2624,6 +2634,7 @@ async function handleTrialOnboardingStep(From, text, lang = 'en') {
          `trial-onboard-address-${shopId}`
        );
     await sendMessageViaAPI(From, askAddr);
+      try { if (requestId) handledRequests.add(requestId); } catch {}
     return true;
   }
   if (step === 'address') {
@@ -2677,6 +2688,7 @@ async function handleTrialOnboardingStep(From, text, lang = 'en') {
             msgTranslated = fixNewlines1(msgTranslated);
             msgTranslated = normalizeNumeralsToLatin(msgTranslated).trim();
             await sendMessageViaAPI(From, msgTranslated);
+      try { if (requestId) handledRequests.add(requestId); } catch {}
     try {
       await ensureLangTemplates(lang);
       const sids = getLangSids(lang);
@@ -12986,7 +12998,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           const pref = await getUserPreference(shopId).catch(() => ({ language: 'en' }));
           const currentLang = String(pref?.language ?? 'en').toLowerCase();
           const langForStep = await checkAndUpdateLanguageSafe(String(Body ?? ''), From, currentLang, requestId);
-          await handleTrialOnboardingStep(From, Body, langForStep);
+          await handleTrialOnboardingStep(From, Body, langForStep, requestId);
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message('');
           res.type('text/xml');
@@ -13435,7 +13447,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
      if (currentState && currentState.mode === 'onboarding_trial_capture') {
        try {
          const langForStep = await detectLanguageWithFallback(String(Body ?? ''), From, requestId);
-         await handleTrialOnboardingStep(From, String(Body ?? ''), String(langForStep ?? 'en').toLowerCase());
+         await handleTrialOnboardingStep(From, String(Body ?? ''), String(langForStep ?? 'en').toLowerCase(), requestId);
        } catch (e) {
          console.warn(`[${requestId}] onboarding capture step error:`, e?.message);
        }
@@ -14032,7 +14044,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           const pref = await getUserPreference(shopId).catch(() => ({ language: 'en' }));
           const currentLang = String(pref?.language ?? 'en').toLowerCase();
           const langForStep = await checkAndUpdateLanguageSafe(String(Body ?? ''), From, currentLang, requestId);
-          await handleTrialOnboardingStep(From, String(Body ?? ''), String(langForStep ?? 'en').toLowerCase());
+          await handleTrialOnboardingStep(From, String(Body ?? ''), String(langForStep ?? 'en').toLowerCase(), requestId);
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message('');
           res.type('text/xml').send(twiml.toString());
