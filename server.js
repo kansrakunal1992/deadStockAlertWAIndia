@@ -3,6 +3,7 @@ const whatsappHandler = require('./api/whatsapp');
 const bodyParser = require('body-parser'); // for raw body
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const cron = require('node-cron');
 const { runDailySummary } = require('./dailySummary');
 const {
@@ -33,6 +34,34 @@ const crypto = require('crypto');          // NEW: HMAC for webhook signature
 const app = express();
 
 // Request logging middleware
+// ==== Paid-confirm dedupe (lightweight persisted) ============================
+// TTL can be tuned via env; default 6h
+const PAID_CONFIRM_TTL_MS = Number(process.env.PAID_CONFIRM_TTL_MS ?? (6 * 60 * 60 * 1000));
+const paidConfirmTrackerPath = path.join('/tmp', 'paid_confirm_tracker.json');
+let paidTracker = {};
+try {
+  if (fs.existsSync(paidConfirmTrackerPath)) {
+    paidTracker = JSON.parse(fs.readFileSync(paidConfirmTrackerPath, 'utf8'));
+  }
+} catch { /* noop */ }
+function savePaidTracker() {
+  try {
+    fs.writeFileSync(paidConfirmTrackerPath, JSON.stringify(paidTracker, null, 2));
+  } catch { /* noop */ }
+}
+function wasRecentlyConfirmed(shopId, eventId) {
+  if (!shopId) return false;
+  const rec = paidTracker[shopId];
+  if (!rec) return false;
+  const fresh = (Date.now() - (rec.at ?? 0)) < PAID_CONFIRM_TTL_MS;
+  // Same eventId within TTL -> duplicate
+  return fresh && rec.eventId === eventId;
+}
+function markConfirmed(shopId, eventId) {
+  paidTracker[shopId] = { at: Date.now(), eventId };
+  savePaidTracker();
+}
+
 app.use((req, res, next) => {
   const start = Date.now();
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -89,7 +118,15 @@ app.post(
         return res.sendStatus(403);
       }
       console.log(`[${requestId}] Razorpay webhook: path=${PAID_WEBHOOK_PATH_RESOLVED} signature OK`);
-      // Parse payload AFTER verifying signature
+      // Parse payload AFTER verifying signature            
+      // ---- ACK EARLY to stop Razorpay retries (process async) ----
+            // Razorpay treats non-2xx or >5s as failure and retries for ~24h. Early 200 prevents duplicates.
+            // Ref: Razorpay Webhooks Best Practices / Retries (exponential backoff). 
+            // We continue processing below in setImmediate().
+            res.status(200).json({ ok: true });
+            // ----------------------------------------------------------------
+      
+            setImmediate(async () => {
       let payload;
       try {
         payload = JSON.parse(rawBody.toString('utf8'));
@@ -100,7 +137,13 @@ app.post(
       // ==== Razorpay payload mapping ====
       const entity = payload?.payload?.payment?.entity || {};
       const status = String(entity.status || '').toLowerCase();
-      const notes = entity.notes || {};
+      const notes = entity.notes || {};                    
+      // Razorpay's unique event ID (recommended for idempotency)
+            const razorEventId =
+              req.get('x-razorpay-event-id') ||
+              req.get('X-Razorpay-Event-Id') ||
+              payload?.event || // fallback if header missing
+              crypto.createHash('sha256').update(rawBody).digest('hex'); // last resort: body hash
       const buyerPhone = String(entity.contact || '').trim(); // payer-entered phone
       // Canonicalize shopId (digits only; strip +91/91/leading zeros)
       const canon = s => {
@@ -113,7 +156,7 @@ app.post(
       let shopId = resolvedCanon;
       if (!shopId) {
         console.warn(`[${requestId}] Razorpay webhook: missing shopId/contact`);
-        return res.sendStatus(400);
+        return; // already 200-ACKed; just stop processing
       }
       
       // Build E.164 WhatsApp 'From' for Twilio: whatsapp:+91XXXXXXXXXX
@@ -123,8 +166,14 @@ app.post(
               return `+91${c}`;
             };
             const fromWhatsApp = `whatsapp:${toE164(shopId)}`;
-            console.log(`[${requestId}] WhatsApp paid confirm target=${fromWhatsApp}`);
-
+            console.log(`[${requestId}] WhatsApp paid confirm target=${fromWhatsApp}`);                          
+            // ---- Idempotency Guard: suppress duplicates within TTL ----
+                  if (wasRecentlyConfirmed(shopId, razorEventId)) {
+                    console.log(`[${requestId}] [paid-confirm] suppressed duplicate for shop=${shopId} event=${razorEventId}`);
+                    return;
+                  }
+            
+                  // record event (audit)
       // Optional: record payment event (audit)
       try {
         await recordPaymentEvent({
@@ -143,8 +192,9 @@ app.post(
         const r = await markAuthUserPaid(shopId);
         console.log(`[${requestId}] markAuthUserPaid(${shopId}) ->`, r);
         if (!r?.success) {
-          console.error(`[${requestId}] markAuthUserPaid failed: ${r?.error}`);
-          return res.sendStatus(500);
+          console.error(`[${requestId}] markAuthUserPaid failed: ${r?.error}`);                    
+          // We already ACKed; just stop processing here
+                    return;
         }
         // Non-blocking WhatsApp confirmation
         try {  
@@ -152,6 +202,7 @@ app.post(
             if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {
                     await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
                     console.log(`[${requestId}] WhatsApp paid confirm sent to ${fromWhatsApp}`);
+              markConfirmed(shopId, razorEventId);
                   } else {
                     // Fallback: send confirmation directly via Twilio WhatsApp
                     try {
@@ -166,6 +217,7 @@ app.post(
                           body: '✅ Your Saamagrii.AI Paid Plan is now active. Enjoy full access!',
                         });
                         console.log(`[${requestId}] Twilio fallback: paid confirm sent to ${fromWhatsApp}`);
+                        markConfirmed(shopId, razorEventId);
                       }
                     } catch (twErr) {
                       console.warn(`[${requestId}] Twilio fallback paid confirm failed: ${twErr?.message}`);
@@ -176,11 +228,12 @@ app.post(
         }
       } else {
         console.log(`[${requestId}] Razorpay webhook received non-capture status: ${status}`);
-      }
-      return res.sendStatus(200);
+      }            
+      // already ACKed
+            return;
     } catch (err) {
       console.error(`[${requestId}] Razorpay webhook error:`, err.message);
-      return res.sendStatus(500);
+      return;
     }
   }
 );
