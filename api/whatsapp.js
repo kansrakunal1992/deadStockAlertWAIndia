@@ -3296,11 +3296,14 @@ const PAYMENT_LINK  = String(process.env.PAYMENT_LINK  ?? '<payment_link>');
 const TRIAL_CTA_SID = String(process.env.TRIAL_CTA_SID ?? '').trim();
 
 // === NEW: Onboarding benefits video (default URL; per-language fallbacks optional) ===
-// You provided: https://kansrakunal1992.github.io/deadStockAlertWAIndia/Saamagrii.AI_ व्यापार बढ़ाएं.mp4
-// Set this in env for prod; we also allow hi/hi-Latn overrides if you later add them.
-const ONBOARDING_VIDEO_URL       = String(process.env.ONBOARDING_VIDEO_URL ?? 'https://kansrakunal1992.github.io/deadStockAlertWAIndia/saamagrii-benefits-hi.mp4').trim();
-const ONBOARDING_VIDEO_URL_HI    = String(process.env.ONBOARDING_VIDEO_URL_HI    ?? '').trim();
-const ONBOARDING_VIDEO_URL_HI_LATN = String(process.env.ONBOARDING_VIDEO_URL_HI_LATN ?? '').trim();
+const ONBOARDING_VIDEO_URL = String(process.env.ONBOARDING_VIDEO_URL ??
+  'https://kansrakunal1992.github.io/deadStockAlertWAIndia/saamagrii-benefits-hi.mp4'
+).trim();
+const ONBOARDING_VIDEO_URL_HI = String(process.env.ONBOARDING_VIDEO_URL_HI ?? '').trim();
+// (We won’t use HI_LATN separately; hi-latn is treated as Hindi)
+const ONBOARDING_VIDEO_URL_EN = String(process.env.ONBOARDING_VIDEO_URL_EN ??
+  'https://kansrakunal1992.github.io/deadStockAlertWAIndia/saamagrii-benefits-en.mp4'
+).trim();
 
 // === NEW: Demo video shown when user taps “Demo” or types demo ===
 // Recommended: host via GitHub Pages/S3 and set DEMO_VIDEO_URL in Railway env.
@@ -3382,51 +3385,82 @@ async function sendDemoVideoAndButtons(From, lang = 'en', requestId = 'cta-demo'
    }
  }
 
-
 // === Canonical benefits video (Hindi & Hinglish vs English) ===================
-const ONBOARDING_VIDEO_URL_EN = String(process.env.ONBOARDING_VIDEO_URL_EN ??
-  'https://kansrakunal1992.github.io/deadStockAlertWAIndia/saamagrii-benefits-en.mp4'
-).trim();
-
-/**
- * Route benefits video by language:
- * - Hindi *native* (hi) and Hinglish *roman* (hi-latn) → Hindi video
- * - Everyone else → English video
- */
 function getBenefitsVideoUrl(lang = 'en') {
   const L = String(lang ?? 'en').toLowerCase();
-
-  // ✅ Treat hi-latn as Hindi
-  const isHindi = (L === 'hi' || L === 'hi-latn');
-
+  const isHindi = (L === 'hi' || L === 'hi-latn'); // Hinglish is Hindi
   if (isHindi) {
-    // Precedence: explicit Hindi override → base (which already points to -hi) → English fallback
     return (ONBOARDING_VIDEO_URL_HI || ONBOARDING_VIDEO_URL || ONBOARDING_VIDEO_URL_EN);
   }
   return ONBOARDING_VIDEO_URL_EN;
 }
 
 /**
- * Send the benefits video once during onboarding, before QR buttons.
- * Mirrors your demo video sender (Twilio PM API).
+ * Send the onboarding benefits video (no caption), before QR buttons.
+ * Mirrors sendDemoVideoAndButtons(...) Twilio PM API pattern.
  */
 async function sendOnboardingBenefitsVideo(From, lang = 'en') {
   try {
-    const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-    const videoUrl = getBenefitsVideoUrl(lang);
-    console.log('[onboard-benefits] sending to', From, 'lang=', lang, 'url=', videoUrl);
-    await client.messages.create({
-      from: process.env.TWILIO_WHATSAPP_NUMBER,
-      to: From,
-      body: '',
-      mediaUrl: [videoUrl]
-    });
+    const toNumber    = String(From).replace('whatsapp:', '');
+    const L           = String(lang ?? 'en').toLowerCase();
+    const rawUrl      = getBenefitsVideoUrl(L);
+    if (!rawUrl) { console.warn('[onboard-benefits] No video URL configured; skipping'); return; }
+    // Percent-encode URL (safe for spaces/Unicode)
+    let encodedUrl = rawUrl;
+    try { encodedUrl = encodeURI(rawUrl); } catch (e) {
+      console.warn('[onboard-benefits] encodeURI failed; using raw URL', { error: e?.message, rawUrl });
+    }
+    console.log('[onboard-benefits] media URL', { rawUrl, encodedUrl, lang: L });
+    // Localized caption (single script) and NO_FOOTER marker
+    const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+    const captionEn = 'Manage stock & expiry on WhatsApp • Low-stock alerts • Smart reorder tips';
+    let caption0 = await t(captionEn, L, 'onboard-video-caption');
+    let caption  = NO_FOOTER_MARKER + enforceSingleScript(caption0, L);
+    // Twilio send
+    const accountSid   = process.env.ACCOUNT_SID;
+    const authToken    = process.env.AUTH_TOKEN;
+    const fromWhatsApp = process.env.TWILIO_WHATSAPP_NUMBER; // e.g. 'whatsapp:+14155238886'
+    if (accountSid && authToken && fromWhatsApp) {
+      const twilioClient = require('twilio')(accountSid, authToken);
+      try {
+        const resp = await twilioClient.messages.create({
+          from: fromWhatsApp,
+          to: `whatsapp:${toNumber}`,
+          mediaUrl: [encodedUrl],
+          body: caption,
+        });
+        console.log('[onboard-benefits] sent', { sid: resp?.sid, to: toNumber, url: encodedUrl, rawUrl, lang: L });
+        return;
+      } catch (err) {
+        const code       = err?.code ?? err?.status;
+        const message    = err?.message ?? err?.moreInfo;
+        const respStatus = err?.status ?? err?.response?.status;
+        const respData   = err?.response?.data;
+        console.warn('[onboard-benefits] Twilio send failed', { code, message, respStatus, respData, attemptedUrl: encodedUrl, rawUrl, lang: L });
+        // Fall through to abstraction fallback
+      }
+    } else {
+      console.warn('[onboard-benefits] Missing Twilio creds; will try abstraction fallback', {
+        hasSid: !!accountSid, hasToken: !!authToken, hasFrom: !!fromWhatsApp
+      });
+    }
+    // Fallback: app abstraction with mediaUrl
+    try {
+      if (typeof sendMessageViaAPI === 'function') {
+        await sendMessageViaAPI(From, caption, { mediaUrl: encodedUrl });
+        console.log('[onboard-benefits] sent via sendMessageViaAPI (fallback)', { to: toNumber, url: encodedUrl, rawUrl, lang: L });
+        return;
+      } else {
+        console.warn('[onboard-benefits] sendMessageViaAPI not available; cannot use fallback');
+      }
+    } catch (e) {
+      console.warn('[onboard-benefits] fallback sendMessageViaAPI failed', { error: e?.message, attemptedUrl: encodedUrl, rawUrl, lang: L });
+    }
+    console.warn('[onboard-benefits] send wrapper failed (both paths)');
   } catch (e) {
-    console.warn('[onboard-benefits] media send failed:', e?.message, e?.code, e?.status);
-    // No link fallback to keep UX consistent with your demo video flow.
+    console.warn('[onboard-benefits] send failed', e?.message);
   }
 }
-
 
 // Localized trial CTA text fallback (used only if Content send fails)
 function getTrialCtaText(lang) {
@@ -5623,93 +5657,6 @@ async function sendHelpMinimal(From, lang, requestId) {
     const withTag = await tagWithLocalizedMode(From, msg, lang);
     await sendMessageViaAPI(From, withTag);
   } catch { await sendMessageViaAPI(From, msg); }
-}
-
-// === NEW: Onboarding Benefits Video Sender ==========================================
-// Sends a WhatsApp video with a localized, single-script caption.
-// Called during onboarding for unactivated users, after intro text and before buttons.
-async function sendOnboardingBenefitsVideo(From, lang = 'en') {
-  try {
-    const toNumber = String(From).replace('whatsapp:', '');
-    const L = String(lang ?? 'en').toLowerCase();
-
-    // Prefer per-language URLs if provided; else fallback to default
-    let videoUrl = ONBOARDING_VIDEO_URL;
-    if (L === 'hi'      && ONBOARDING_VIDEO_URL_HI)      videoUrl = ONBOARDING_VIDEO_URL_HI;
-    if (L === 'hi-latn' && ONBOARDING_VIDEO_URL_HI_LATN) videoUrl = ONBOARDING_VIDEO_URL_HI_LATN;
-
-    if (!videoUrl) {
-      console.warn('[onboard-video] No video URL configured; skipping');
-      return;
-    }                   
-        
-    // DEFENSIVE: percent-encode any spaces/Unicode; log both forms
-        const rawUrl = videoUrl;
-        let encodedUrl = rawUrl;
-        try { encodedUrl = encodeURI(rawUrl); }
-        catch (e) { console.warn('[onboard-video] encodeURI failed; using raw URL', { error: e?.message, rawUrl }); }
-        console.log('[onboard-video] media URL snapshot', { rawUrl, encodedUrl, lang: L });
-
-    // Short localized caption; enforce single script; suppress footer badges        
-    const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
-        const captionEn = 'Manage stock & expiry on WhatsApp • Low-stock alerts • Smart reorder tips';
-        let caption0 = await t(captionEn, L, 'onboard-video-caption');
-        let caption  = NO_FOOTER_MARKER + enforceSingleScript(caption0, L);
-        
-    // Send via Twilio Messages API as video media
-        const accountSid   = process.env.ACCOUNT_SID;
-        const authToken    = process.env.AUTH_TOKEN;
-    const fromWhatsApp = process.env.TWILIO_WHATSAPP_NUMBER; // e.g. 'whatsapp:+14155238886'
-       
-    if (accountSid && authToken && fromWhatsApp) {
-          // Direct Twilio send using ENCODED URL
-          const twilioClient = require('twilio')(accountSid, authToken);
-          try {
-            const resp = await twilioClient.messages.create({
-              from: fromWhatsApp,
-              to: `whatsapp:${toNumber}`,
-              mediaUrl: [encodedUrl],
-              body: caption,
-            });
-            console.log('[onboard-video] sent', { sid: resp?.sid, to: toNumber, url: encodedUrl, rawUrl, lang: L });
-            return;
-          } catch (err) {
-            // Deep diagnostics: error code/status/body and the URL we attempted
-            const code       = err?.code ?? err?.status;
-            const message    = err?.message ?? err?.moreInfo;
-            const respStatus = err?.status ?? err?.response?.status;
-            const respData   = err?.response?.data;
-            console.warn('[onboard-video] Twilio send failed', {
-              code, message, respStatus, respData, attemptedUrl: encodedUrl, rawUrl, lang: L
-            });
-            // Fall through to try the abstraction path next
-          }
-        } else {
-          console.warn('[onboard-video] Missing Twilio creds or from number; will try abstraction fallback', {
-            hasSid: !!accountSid, hasToken: !!authToken, hasFrom: !!fromWhatsApp
-          });
-        }
-    
-        // Fallback: use your abstraction if it supports mediaUrl (keeps queueing/backoff consistent)
-        try {
-          if (typeof sendMessageViaAPI === 'function') {
-            await sendMessageViaAPI(From, caption, { mediaUrl: encodedUrl });
-            console.log('[onboard-video] sent via sendMessageViaAPI (fallback)', { to: toNumber, url: encodedUrl, rawUrl, lang: L });
-            return;
-          } else {
-            console.warn('[onboard-video] sendMessageViaAPI not found or not a function; cannot use fallback');
-          }
-        } catch (e) {
-          console.warn('[onboard-video] fallback sendMessageViaAPI failed', {
-            error: e?.message, attemptedUrl: encodedUrl, rawUrl, lang: L
-          });
-        }
-    
-        // If we reach here, both paths failed
-        console.warn('[onboard-video] send wrapper failed', { error: e?.message });
-  } catch (e) {
-    console.warn('[onboard-video] send failed', e?.message);
-  }
 }
 
 // Nativeglish demo: short, clear, localized with helpful English anchors
