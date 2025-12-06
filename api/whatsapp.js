@@ -250,7 +250,9 @@ function isSafeAnchor(text) {
         /https?:\/\//i,
         /wa\.link/i,
         /\b(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|₹|Rs|MRP|exp|expiry|expiring)\b/i,
-        /\b(GSTIN|GST|CGST|SGST|IGST|PAN|FSSAI|UPI|HSN|SKU|QR)\b/i
+        /\b(GSTIN|GST|CGST|SGST|IGST|PAN|FSSAI|UPI|HSN|SKU|QR)\b/i,              
+        /\b(Short Summary|Full Summary|Sales Today|Low Stock|Expiring Soon|Next actions)\b/i,
+        /"(low stock|reorder suggestions|expiring 0|expiring 7|expiring 30|sales (today|week|month)|top 5 products month|inventory value|stock value|value summary)"/i
     ];
     return safePatterns.some(rx => rx.test(text));
 }
@@ -782,10 +784,11 @@ async function t(text, languageCode, requestId) {
     const hasLatin = /\p{Script=Latin}/u.test(out);
     const hasNativeScript = /[\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Gujarati}\p{Script=Kannada}]/u.test(out);
     const hasMixedScripts = hasLatin && hasNativeScript;
-
+        
     if (hasMixedScripts && !isSafeAnchor(out)) {
-        console.warn(`[clamp] Mixed scripts detected for ${languageCode}, enforcing single script.`);
-        return enforceSingleScript(out, languageCode);
+       console.warn(`[clamp] Mixed scripts detected for ${languageCode}, applying numerals-only normalization.`);
+       // Use the safe variant so Latin anchors (units, quoted commands) survive
+       return enforceSingleScriptSafe(out, languageCode);
     }
 
     // If AI output is already single-script, keep original
@@ -3990,9 +3993,13 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
   const shopId = String(From).replace('whatsapp:', '');
 
   const sendTagged = async (body) => {    
-// keep existing per-command cache key (already unique & scoped)
-    const msg0 = await tx(body, lang, From, cmd, `qq-${cmd}-${shopId}`);       
-    let msg = await tagWithLocalizedMode(From, msg0, lang);
+// keep existing per-command cache key (already unique & scoped)            
+        const msg0 = await tx(body, lang, From, cmd, `qq-${cmd}-${shopId}`);
+         // NEW: replace English section headers with native ones to avoid mixed script
+         let labeled = renderNativeglishLabels(msg0, lang);
+         // Optional: keep English anchors (units/₹) readable inside localized text
+         labeled = nativeglishWrap(labeled, lang);
+         let msg = await tagWithLocalizedMode(From, labeled, lang);
         // LOCAL CLAMP → Single script; numerals normalization
         msg = enforceSingleScriptSafe(msg, lang);
         msg = normalizeNumeralsToLatin(msg).trim();
@@ -4095,15 +4102,18 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     
         // 3) Expiring soon (7 days) with days left if available
         try {
-          const eRaw = await getExpiringProducts(shopId, 7) || [];
-          const e = sanitizeProductRows(eRaw); // fields may include expiry; we just render names here
+          const eRaw = await getExpiringProducts(shopId, 7) || [];                  
+          const e = sanitizeProductRows(eRaw);
+          const seen = new Set();
+          const unique = [];
+          for (const r of e) { if (!seen.has((r.name||'').toLowerCase())) { seen.add((r.name||'').toLowerCase()); unique.push(r); } }
           if (e.length) {
             // attempt to read daysLeft if your rows carry it (defensive)
             const fmt = (r) => {
               const days = r?.fields?.DaysLeft ?? r?.daysLeft ?? null;
               return Number.isFinite(days) ? `${r.name} (${days}d)` : r.name;
             };
-            const expList = e.slice(0,5).map(fmt).join(', ');
+            const expList = unique.slice(0,5).map(fmt).join(', ');
             lines.push(`⏳ Expiring Soon: ${expList}`);
           }
         } catch(_){}
@@ -4111,7 +4121,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
         // 4) Next actions hint when there is anything actionable
         const actionable = lines.some(l => /^🟠 Low Stock:/i.test(l) || /^⏳ Expiring Soon:/i.test(l));
         if (actionable) {
-          lines.push(`➡️ Next actions: • reorder suggestions • prices • stock value`);
+          lines.push(`➡️ Next actions: • "reorder suggestions" • "prices" • "stock value"`);
         }
     
         const body = `📊 Short Summary\n${lines.join('\n') || '—'}`;
