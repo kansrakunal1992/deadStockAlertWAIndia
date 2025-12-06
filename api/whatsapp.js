@@ -249,7 +249,8 @@ function isSafeAnchor(text) {
         /WhatsApp/i,
         /https?:\/\//i,
         /wa\.link/i,
-        /\b(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|₹|Rs|MRP|exp|expiry|expiring)\b/i
+        /\b(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|₹|Rs|MRP|exp|expiry|expiring)\b/i,
+        /\b(GSTIN|GST|CGST|SGST|IGST|PAN|FSSAI|UPI|HSN|SKU|QR)\b/i
     ];
     return safePatterns.some(rx => rx.test(text));
 }
@@ -767,8 +768,15 @@ function enforceSingleScriptSafe(out, lang) {
       return normalizeNumeralsToLatin(out);
 }
 
-async function t(text, languageCode, requestId) {
-    const out = await generateMultiLanguageResponse(text, languageCode, requestId);
+async function t(text, languageCode, requestId) {     
+    const src = String(text ?? '');
+      const out = await generateMultiLanguageResponse(src, languageCode, requestId);
+    
+      // NEW: opt-out marker to preserve Latin anchors in mixed-script outputs
+      const skipClamp = src.includes(NO_CLAMP_MARKER);
+      if (skipClamp) {
+        return stripMarkers(out); // remove <!NO_CLAMP!> / <!NO_FOOTER!> safely
+      }
 
     // Detect mixed scripts: Latin + any major Indian script
     const hasLatin = /\p{Script=Latin}/u.test(out);
@@ -2230,11 +2238,7 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                 const introSrc = await composeAIOnboarding('en'); // deterministic English skeleton
                 const introSrcWithLabel = introSrc.replace(/"Start Trial"/g, `"${startTrialLabel}"`);
                 // Translate once, with NO_CLAMP + NO_FOOTER to avoid clamp artifacts and footer.
-                let introText = await t(
-                  NO_FOOTER_MARKER + introSrcWithLabel,
-                  detectedLanguage ?? 'en',
-                  introKey
-                );                                
+                let introText = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + introSrcWithLabel, detectedLanguage ?? 'en', introKey);                  
                 // Preserve brand & English anchors (Saamagrii.AI, URLs, etc.) before send
                   introText = nativeglishWrap(fixNewlines1(introText), detectedLanguage ?? 'en'); // only normalize escaped newlines
                   await sendMessageQueued(From, introText);
@@ -2583,21 +2587,42 @@ async function handleTrialOnboardingStep(From, text, lang = 'en') {
   // ✅ Read by the same key we used to write
   const state = await getUserStateFromDB(shopId);  
   if (!state || state.mode !== 'onboarding_trial_capture') return false;
-  const data = state.data?.collected ?? {};
-  const step = state.data?.step ?? 'name';
-  const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+     
+    const data = state.data?.collected ?? {};
+     const step = state.data?.step ?? 'name';
+     // Use the canonical markers (already defined globally in your module)
+     const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+     const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
+    
+     // NEW: pin language for this turn so code-like inputs (GSTIN) don't flip to en
+     try {
+       const pref = await getUserPreference(shopId).catch(() => ({ language: lang }));
+       const currentLang = String(pref?.language ?? lang ?? 'en').toLowerCase();
+       lang = await checkAndUpdateLanguageSafe(String(text ?? ''), From, currentLang, `trial-onboard-${shopId}`);
+     } catch (_) { /* keep incoming lang */ }
   if (step === 'name') {
     data.name = String(text ?? '').trim();
-    await setUserState(shopId, 'onboarding_trial_capture', { step: 'gstin', collected: data });
-    const askGstin = await t(NO_FOOTER_MARKER + 'Enter your *GSTIN* (type *skip* if not available).', lang, `trial-onboard-gstin-${shopId}`);
+    await setUserState(shopId, 'onboarding_trial_capture', { step: 'gstin', collected: data });        
+    // NEW: add NO_CLAMP to preserve Latin tokens (GSTIN/NA) in Hindi output
+       const askGstin = await t(
+         NO_CLAMP_MARKER + NO_FOOTER_MARKER +
+         'Enter your *GSTIN* (type "*NA*" or *skip* if not available).',
+         lang,
+         `trial-onboard-gstin-${shopId}`
+       );
     await sendMessageViaAPI(From, askGstin);
     return true;
   }
   if (step === 'gstin') {
     const raw = String(text ?? '').trim();
     data.gstin = _isSkipGST(raw) ? null : raw;
-    await setUserState(shopId, 'onboarding_trial_capture', { step: 'address', collected: data });
-    const askAddr = await t(NO_FOOTER_MARKER + 'Please share your *Shop Address* (area, city).', lang, `trial-onboard-address-${shopId}`);
+    await setUserState(shopId, 'onboarding_trial_capture', { step: 'address', collected: data });        
+    // NEW: add NO_CLAMP to preserve "Address" and any Latin/ASCII parts user may reply with
+       const askAddr = await t(
+         NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'Please share your *Shop Address* (area, city).',
+         lang,
+         `trial-onboard-address-${shopId}`
+       );
     await sendMessageViaAPI(From, askAddr);
     return true;
   }
@@ -12566,7 +12591,10 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               }
           handledRequests.add(requestId);                     
           // NEW: Localize low-stock section explicitly
-              const cmd = String(orch.normalizedCommand).toLowerCase().trim();
+              const cmd = String(orch.normalizedCommand).toLowerCase().trim();                            
+              // NEW: alias slugs to canonical commands
+                 if (cmd === 'list_low') cmd = 'low stock';
+                 if (cmd === 'list_short_summary') cmd = 'short summary';
               if (cmd === 'low stock' || cmd === 'कम स्टॉक') {
                 const shopId = String(From).replace('whatsapp:', '');
                 try {
@@ -12953,8 +12981,11 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         const s = (typeof getUserStateFromDB === 'function')
           ? await getUserStateFromDB(shopIdCheck)
           : await getUserState(shopIdCheck);
-        if (s && s.mode === 'onboarding_trial_capture') {
-          const langForStep = String(detectedLanguage ?? 'en').toLowerCase();
+        if (s && s.mode === 'onboarding_trial_capture') {                  
+        // NEW: keep the session language on code-like inputs (GSTIN, etc.)
+          const pref = await getUserPreference(shopId).catch(() => ({ language: 'en' }));
+          const currentLang = String(pref?.language ?? 'en').toLowerCase();
+          const langForStep = await checkAndUpdateLanguageSafe(String(Body ?? ''), From, currentLang, requestId);
           await handleTrialOnboardingStep(From, Body, langForStep);
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message('');
@@ -13996,8 +14027,11 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
        const s = (typeof getUserStateFromDB === 'function')
           ? await getUserStateFromDB(shopId)
           : await getUserState(shopId);
-        if (s && s.mode === 'onboarding_trial_capture') {
-          const langForStep = await detectLanguageWithFallback(String(Body ?? ''), From, requestId);
+        if (s && s.mode === 'onboarding_trial_capture') {                  
+        // NEW: keep the session language on code-like inputs (GSTIN, etc.)
+          const pref = await getUserPreference(shopId).catch(() => ({ language: 'en' }));
+          const currentLang = String(pref?.language ?? 'en').toLowerCase();
+          const langForStep = await checkAndUpdateLanguageSafe(String(Body ?? ''), From, currentLang, requestId);
           await handleTrialOnboardingStep(From, String(Body ?? ''), String(langForStep ?? 'en').toLowerCase());
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message('');
@@ -14365,7 +14399,10 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
               }
         handledRequests.add(requestId);
         // NEW: Localize low-stock section explicitly
-          const cmd = String(orch.normalizedCommand).toLowerCase().trim();
+          const cmd = String(orch.normalizedCommand).toLowerCase().trim();                      
+             // NEW: alias slugs to canonical commands
+             if (cmd === 'list_low') cmd = 'low stock';
+             if (cmd === 'list_short_summary') cmd = 'short summary';
           if (cmd === 'low stock' || cmd === 'कम स्टॉक') {
             const shopId = String(From).replace('whatsapp:', '');
             try {
