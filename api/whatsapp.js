@@ -768,28 +768,22 @@ function enforceSingleScriptSafe(out, lang) {
       return normalizeNumeralsToLatin(out);
 }
 
-async function t(text, languageCode, requestId) {     
-    const src = String(text ?? '');
-      const out = await generateMultiLanguageResponse(src, languageCode, requestId);
-    
-      // NEW: opt-out marker to preserve Latin anchors in mixed-script outputs
-      const skipClamp = src.includes(NO_CLAMP_MARKER);
-      if (skipClamp) {
-        return stripMarkers(out); // remove <!NO_CLAMP!> / <!NO_FOOTER!> safely
-      }
+async function t(text, languageCode, requestId) {
+  const src = String(text ?? '');
+  let out = await generateMultiLanguageResponse(src, languageCode, requestId);
 
-    // Detect mixed scripts: Latin + any major Indian script
-    const hasLatin = /\p{Script=Latin}/u.test(out);
-    const hasNativeScript = /[\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Gujarati}\p{Script=Kannada}]/u.test(out);
-    const hasMixedScripts = hasLatin && hasNativeScript;
+  // Always strip markers from OUTPUT (raw + HTML-encoded), regardless of input
+  out = stripMarkers(out);
 
-    if (hasMixedScripts && !isSafeAnchor(out)) {
-        console.warn(`[clamp] Mixed scripts detected for ${languageCode}, enforcing single script.`);
-        return enforceSingleScript(out, languageCode);
-    }
-
-    // If AI output is already single-script, keep original
-    return out;
+  // Existing mixed-script checks (unchanged)
+  const hasLatin = /\p{Script=Latin}/u.test(out);
+  const hasNativeScript = /[\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Gujarati}\p{Script=Kannada}]/u.test(out);
+  const hasMixedScripts = hasLatin && hasNativeScript;
+  if (hasMixedScripts && !isSafeAnchor(out)) {
+    console.warn(`[clamp] Mixed scripts detected for ${languageCode}, enforcing single script.`);
+    return enforceSingleScript(out, languageCode);
+  }
+  return out;
 }
 
 // tx: simple wrapper (no romanization/bilingual logic)
@@ -1820,13 +1814,27 @@ const LOCAL_SET_WORDS = {
   'ખરીદી': 'purchased', 'વેચાણ': 'sold', 'રીટર્ન': 'returned'
 };
 
-// ==== Canonical message markers (single source of truth) ====
+// ==== Canonical message markers (unchanged) ====
 const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
 const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
+
+// NEW: robust marker stripper — removes raw, HTML-encoded, and duplicated forms
 function stripMarkers(s) {
-  return String(s ?? '')
-    .replace(new RegExp(NO_FOOTER_MARKER, 'g'), '')
-    .replace(new RegExp(NO_CLAMP_MARKER, 'g'), '');
+  let out = String(s ?? '');
+
+  // Raw forms
+  out = out.replace(/<!NO_FOOTER!>/g, '').replace(/<!NO_CLAMP!>/g, '');
+
+  // HTML-encoded forms
+  out = out.replace(/&lt;!NO_FOOTER!&gt;/g, '').replace(/&lt;!NO_CLAMP!&gt;/g, '');
+
+  // Any accidental doubled markers (seen in logs)
+  out = out.replace(/<!NO_CLAMP!><!NO_CLAMP!>/g, '');
+  out = out.replace(/&lt;!NO_CLAMP!&gt;&lt;!NO_CLAMP!&gt;/g, '');
+
+  // Defensive: whitespace cleanup that may remain after stripping
+  out = out.replace(/[ \t]*\n[ \t]*/g, '\n').trim();
+  return out;
 }
 
 // ==== Unified end-date resolver (uses one Airtable field: TrialEndDate) ====
@@ -2228,37 +2236,64 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
              // NEW: Send 3‑button Onboarding Quick‑Reply (Start Trial • Demo • Help)
              let sent = false;
              const ONBOARDING_QR_SID = String(process.env.ONBOARDING_QR_SID || '').trim();
-                                                       
+                                                                  
             try {
-                // Build source with localized label BEFORE translation and opt-out of clamp/footer for this message.
-                const introKey = `welcome-intro::${toNumber}::${String(detectedLanguage).toLowerCase()}`;
-                const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
-                const startTrialLabel  = getStaticLabel('startTrialBtn', detectedLanguage);
-                // Keep the label in native script directly in the source text; avoid quotes getting emptied.
-                const introSrc = await composeAIOnboarding('en'); // deterministic English skeleton
-                const introSrcWithLabel = introSrc.replace(/"Start Trial"/g, `"${startTrialLabel}"`);
-                // Translate once, with NO_CLAMP + NO_FOOTER to avoid clamp artifacts and footer.
-                let introText = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + introSrcWithLabel, detectedLanguage ?? 'en', introKey);                  
-                // Preserve brand & English anchors (Saamagrii.AI, URLs, etc.) before send
-                  introText = nativeglishWrap(fixNewlines1(introText), detectedLanguage ?? 'en'); // only normalize escaped newlines
-                  await sendMessageQueued(From, introText);
-                await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
-                          // >>> NEW: Send benefits video AFTER intro, BEFORE buttons (once per session gate already applies)
-                          try {
-                            // Prefer saved language if present
-                            let lang = (detectedLanguage ?? 'en').toLowerCase();
-                            try {
-                              const prefLang = await getUserPreference(toNumber);
-                              if (prefLang?.success && prefLang.language) lang = String(prefLang.language).toLowerCase();
-                            } catch {}
-                            await sendOnboardingBenefitsVideo(From, lang);
-                            await new Promise(r => setTimeout(r, 300)); // breathing room before buttons
-                          } catch (e) {
-                            console.warn('[onboard-video] skipped', e?.message);
-                          }
-                } catch (e) {
-                  console.warn('[welcome] intro send failed', { message: e?.message });
-                }
+              // Build source with a placeholder BEFORE translation
+              const introKey = `welcome-intro::${toNumber}::${String(detectedLanguage).toLowerCase()}`;
+            
+              // Use RAW markers (not HTML-encoded)
+              const NO_FOOTER_MARKER = '<!NO_FOOTER!>';  // <-- fix
+              // NO_CLAMP_MARKER should already be defined globally as '<!NO_CLAMP!>'
+            
+              // Localized label you want to show inside quotes
+              const startTrialLabel = getStaticLabel('startTrialBtn', detectedLanguage); // e.g., 'ट्रायल शुरू करें'
+            
+              // Deterministic English skeleton
+              const introSrc = await composeAIOnboarding('en');
+            
+              // Use a placeholder that won't be modified by the translator
+              const BTN_PLACEHOLDER = '[[BTN_START_TRIAL]]';
+            
+              // Replace the English label with the placeholder (keep the quotes)
+              const introSrcWithPlaceholder = introSrc.replace(/"Start Trial"/g, `"${BTN_PLACEHOLDER}"`);
+            
+              // Translate once, with NO_CLAMP + NO_FOOTER to avoid clamp artifacts and footer
+              let introText = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + introSrcWithPlaceholder,
+                                      detectedLanguage ?? 'en',
+                                      introKey);
+            
+              // --- Robust cleanup: strip raw + HTML-encoded markers (if your stripMarkers is global, call it here)
+              introText = stripMarkers(introText);
+            
+              // Re-insert localized label with quotes AFTER translation
+              introText = introText.replace(new RegExp(`"${BTN_PLACEHOLDER}"`, 'g'), `"${startTrialLabel}"`);
+              // (Optional) use curly quotes if you want prettier typography:
+              // introText = introText.replace(new RegExp(`"${BTN_PLACEHOLDER}"`, 'g'), `\u201C${startTrialLabel}\u201D`);
+            
+              // Preserve brand & English anchors (Saamagrii.AI, URLs, units) and normalize newlines
+              introText = nativeglishWrap(fixNewlines1(introText), detectedLanguage ?? 'en');
+            
+              // Send the intro
+              await sendMessageQueued(From, introText);
+              await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
+            
+              // >>> NEW: Send benefits video AFTER intro, BEFORE buttons (once per session gate already applies)
+              try {
+                // Prefer saved language if present
+                let lang = (detectedLanguage ?? 'en').toLowerCase();
+                try {
+                  const prefLang = await getUserPreference(toNumber);
+                  if (prefLang?.success && prefLang.language) lang = String(prefLang.language).toLowerCase();
+                } catch {}
+                await sendOnboardingBenefitsVideo(From, lang);
+                await new Promise(r => setTimeout(r, 300)); // breathing room before buttons
+              } catch (e) {
+                console.warn('[onboard-video] skipped', e?.message);
+              }
+            } catch (e) {
+              console.warn('[welcome] intro send failed', { message: e?.message });
+            }
+
                 // 1) Prefer explicit env ContentSid if present — BUTTONS AFTER INTRO
                 if (ONBOARDING_QR_SID) {
                   try {
