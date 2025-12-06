@@ -1,8 +1,6 @@
 const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
-// NEW: import low-stock DB helper (already present in server/db)
-const { getLowStockProducts } = require('./database'); // safe if already imported elsewhere
 // ---------------------------------------------------------------------------
 // NEW: Trial length constant (fallback to 7 days if env not set)
 // ---------------------------------------------------------------------------
