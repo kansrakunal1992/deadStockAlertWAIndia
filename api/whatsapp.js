@@ -1009,7 +1009,15 @@ function looksLikeTxnLite(s) {
  * - aiTxn: parsed transaction skeleton (NEVER auto-applied; deterministic parser still decides).
  * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
  */
-async function applyAIOrchestration(text, From, detectedLanguageHint, requestId) {     
+async function applyAIOrchestration(text, From, detectedLanguageHint, requestId) {             
+    try {
+        const shopId = String(From ?? '').replace('whatsapp:', '');
+        const st = await getUserStateFromDB(shopId).catch(() => null);
+        if (st?.mode === 'onboarding_trial_capture') {
+          const pinned = st?.data?.lang ?? (await getUserPreference(shopId).catch(() => ({})))?.language;
+          if (pinned) detectedLanguageHint = String(pinned).toLowerCase();
+        }
+      } catch {}
     if (!USE_AI_ORCHESTRATOR) return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
       const shopId = String(From ?? '').replace('whatsapp:', '');
       // ---- Sticky-mode clamp: if user is in purchase/sale/return, force inventory routing
@@ -1555,7 +1563,22 @@ function _safeLang(...candidates) {
 // Must be declared BEFORE any calls (e.g., in handleRequest or module.exports).
 async function detectLanguageWithFallback(text, from, requestId) {
   return (async () => {
-    try {
+    try {       
+        const shopIdX = String(from ?? '').replace('whatsapp:', '');
+              const stX = await getUserStateFromDB(shopIdX).catch(() => null);
+              const isOnboarding = stX?.mode === 'onboarding_trial_capture';
+              const pinnedLangPref = (await getUserPreference(shopIdX).catch(() => ({})))?.language;
+              const pinnedLang = String(stX?.data?.lang ?? pinnedLangPref ?? '').toLowerCase();
+              const GSTIN_RX = /^[0-9A-Z]{15}$/i;
+              const raw = String(text ?? '');
+              const asciiLen = raw.replace(/[^\x00-\x7F]/g, '').length;
+              const isCodeDominant = (asciiLen / Math.max(1, raw.length)) > 0.85 || ((raw.match(/\d/g) ?? []).length >= 10);
+              if (isOnboarding && (GSTIN_RX.test(raw) || isCodeDominant)) {
+                const langLocked = pinnedLang || 'en';
+                console.log(`[${requestId}] GSTIN/code-dominant during onboarding; sticking to ${langLocked}`);
+                try { await saveUserPreference(shopIdX, langLocked); } catch {}
+                return ensureLangExact(langLocked);
+              }
       const lowerText = String(text || '').toLowerCase();
       let detectedLanguage = 'en';
 
@@ -2585,7 +2608,8 @@ function _isSkipGST(s) {
 async function beginTrialOnboarding(From, lang = 'en') {
   const shopId = String(From).replace('whatsapp:', '');
   // ✅ Always store by shopId (without "whatsapp:") to match DB readers
-  await setUserState(shopId, 'onboarding_trial_capture', { step: 'name', collected: {}});
+  await setUserState(shopId, 'onboarding_trial_capture', { step: 'name', collected: {}, lang });
+  try { await saveUserPreference(shopId, lang); } catch {}
   const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
   const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `trial-onboard-name-${shopId}`);
   await sendMessageViaAPI(From, askName);
@@ -2611,7 +2635,7 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
      } catch (_) { /* keep incoming lang */ }
   if (step === 'name') {
     data.name = String(text ?? '').trim();
-    await setUserState(shopId, 'onboarding_trial_capture', { step: 'gstin', collected: data });        
+    await setUserState(shopId, 'onboarding_trial_capture', { step: 'gstin', collected: data, lang });   
     // NEW: add NO_CLAMP to preserve Latin tokens (GSTIN/NA) in Hindi output
        const askGstin = await t(
          NO_CLAMP_MARKER + NO_FOOTER_MARKER +
@@ -2626,7 +2650,7 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
   if (step === 'gstin') {
     const raw = String(text ?? '').trim();
     data.gstin = _isSkipGST(raw) ? null : raw;
-    await setUserState(shopId, 'onboarding_trial_capture', { step: 'address', collected: data });        
+    await setUserState(shopId, 'onboarding_trial_capture', { step: 'address', collected: data, lang });
     // NEW: add NO_CLAMP to preserve "Address" and any Latin/ASCII parts user may reply with
        const askAddr = await t(
          NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'Please share your *Shop Address* (area, city).',
