@@ -1,6 +1,8 @@
 const twilio = require('twilio');
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
+// NEW: import low-stock DB helper (already present in server/db)
+const { getLowStockProducts } = require('./database'); // safe if already imported elsewhere
 // ---------------------------------------------------------------------------
 // NEW: Trial length constant (fallback to 7 days if env not set)
 // ---------------------------------------------------------------------------
@@ -122,6 +124,25 @@ function ensureLangExact(languageDetected, fallback = 'en') {
   return l;
 }
 
+// ==== NEW: Guard against GSTIN / code-dominant inputs flipping language =====
+async function checkAndUpdateLanguageSafe(text, From, currentLang, requestId) {
+  try {
+    const msg = String(text ?? '').trim();
+    const isGSTINLike = /^[0-9A-Z]{15}$/i.test(msg);
+    const asciiLen = msg.replace(/[^\x00-\x7F]/g, '').length;
+    const isCodeDominant = asciiLen / Math.max(1, msg.length) > 0.85 || (msg.match(/\d/g) || []).length >= 10;
+    // If pure code (GSTIN or numeric-heavy), keep user's language preference unchanged
+    if (isGSTINLike || isCodeDominant) {
+      return currentLang ?? 'en';
+    }
+    // Otherwise, delegate to your existing detector/persistence
+    return await checkAndUpdateLanguage(msg, From, currentLang ?? 'en', requestId);
+  } catch (e) {
+    console.warn(`[${requestId}] checkAndUpdateLanguageSafe failed; keeping ${currentLang}:`, e?.message);
+    return currentLang ?? 'en';
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Lightweight auto-detector (expanded): switch native target to '*-latn' when
 // input is ASCII-looking Roman Indic across multiple languages. No bilingual
@@ -176,6 +197,45 @@ function autoLatnIfRoman(languageCode, sourceText) {
   } catch (_) {
     return languageCode;
   }
+}
+
+// ==== NEW: Units mapping + low-stock composer (Hindi/Nativeglish) ===========
+const UNIT_MAP_HI = {
+  kg: 'किलो', g: 'ग्राम', gm: 'ग्राम', ml: 'एमएल', l: 'लीटर', ltr: 'लीटर',
+  packet: 'पैकेट', packets: 'पैकेट', piece: 'पीस', pieces: 'पीस',
+  box: 'बॉक्स', boxes: 'बॉक्स', bottle: 'बोतल', bottles: 'बोतल', dozen: 'दर्जन',
+  metre: 'मीटर', metres: 'मीटर'
+};
+function displayUnit(unit, lang) {
+  const u = String(unit ?? '').toLowerCase().trim();
+  return lang.startsWith('hi') ? (UNIT_MAP_HI[u] ?? unit) : unit;
+}
+async function composeLowStockLocalized(shopId, lang, requestId) {
+  // Try DB low-stock (threshold 5); fallback to inventory if needed
+  let items = [];
+  try {
+    items = await getLowStockProducts(shopId, 5) || [];
+  } catch (_) {}
+  const count = items.length;
+  const header = lang.startsWith('hi')
+    ? `🟠 कम स्टॉक — ${count} आइटम`
+    : `🟠 Low Stock — ${count} items`;
+  const lines = (count ? items.slice(0, 10) : []).map(async p => {
+    const nameSrc = p.name ?? p.fields?.Product ?? '—';
+    const nameHi = await translateProductName(nameSrc, `lowstock-${shopId}`);
+    const qty = p.quantity ?? p.fields?.Quantity ?? 0;
+    const unit = displayUnit(p.unit ?? p.fields?.Units ?? 'pieces', lang);
+    return `• ${nameHi} — ${qty} ${unit}`;
+  });
+  const resolved = (await Promise.all(lines)).join('\n');
+  const more = count > 10 ? (lang.startsWith('hi') ? '• +1 और' : '• +1 more') : '';
+  const actionLine = lang.startsWith('hi')
+    ? '➡️ कार्रवाई: "पुन: ऑर्डर सुझाव" देखें या "मूल्य" की समीक्षा करें।'
+    : '➡️ Action: check "reorder suggestions" or review "prices".';
+  const body = [header, resolved, more, '', actionLine].filter(Boolean).join('\n');
+  // Respect your Nativeglish anchors + footer/mode tags
+  const msg0 = await tx(body, lang, `whatsapp:${shopId}`, 'low-stock', `lowstock::${shopId}`);
+  return nativeglishWrap(await tagWithLocalizedMode(`whatsapp:${shopId}`, msg0, lang), lang);
 }
 
 function isSafeAnchor(text) {
@@ -2176,9 +2236,10 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                   NO_FOOTER_MARKER + introSrcWithLabel,
                   detectedLanguage ?? 'en',
                   introKey
-                );
-                introText = fixNewlines1(introText); // only normalize escaped newlines
-                await sendMessageQueued(From, introText);
+                );                                
+                // Preserve brand & English anchors (Saamagrii.AI, URLs, etc.) before send
+                  introText = nativeglishWrap(fixNewlines1(introText), detectedLanguage ?? 'en'); // only normalize escaped newlines
+                  await sendMessageQueued(From, introText);
                 await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
                           // >>> NEW: Send benefits video AFTER intro, BEFORE buttons (once per session gate already applies)
                           try {
@@ -12505,8 +12566,24 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                 res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
                 return;
               }
-          handledRequests.add(requestId);
-          await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
+          handledRequests.add(requestId);                     
+          // NEW: Localize low-stock section explicitly
+              const cmd = String(orch.normalizedCommand).toLowerCase().trim();
+              if (cmd === 'low stock' || cmd === 'कम स्टॉक') {
+                const shopId = String(From).replace('whatsapp:', '');
+                try {
+                  const low = await composeLowStockLocalized(shopId, langExact, `${requestId}::low-stock`);
+                  await sendMessageDedup(From, low);
+                } catch (e) {
+                  console.warn('[low-stock] compose failed:', e?.message);
+                  // Fallback to previous path
+                  await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
+                }
+                _handled = true;
+                try { await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-norm-text`); } catch (_) {}
+                return;
+              }
+              await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
           __handled = true;
           try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}          
           // STREAK (text normalized command): gated
@@ -13963,12 +14040,12 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   } catch (error) {
     console.warn(`[${requestId}] Failed to send processing message:`, error.message);
   }
-
-  // ✅ Detect/lock language variant (hi-latn, etc.)
-  let detectedLanguage = userLanguage || 'en';
-  try {
-    detectedLanguage = await checkAndUpdateLanguage(Body || '', From, userLanguage, requestId);
-  } catch (e) {
+      
+    // ✅ Detect/lock language variant (hi-latn, etc.)
+    let detectedLanguage = userLanguage ?? 'en';
+    try {
+      detectedLanguage = await checkAndUpdateLanguageSafe(Body ?? '', From, userLanguage, requestId);
+    } catch (e) {
     console.warn(`[${requestId}] Language detection failed, defaulting to ${detectedLanguage}:`, e.message);
   }
   console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`);        
@@ -14289,7 +14366,23 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
                 return;
               }
         handledRequests.add(requestId);
-        await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);                
+        // NEW: Localize low-stock section explicitly
+          const cmd = String(orch.normalizedCommand).toLowerCase().trim();
+          if (cmd === 'low stock' || cmd === 'कम स्टॉक') {
+            const shopId = String(From).replace('whatsapp:', '');
+            try {
+              const low = await composeLowStockLocalized(shopId, langExact, `${requestId}::low-stock`);
+              await sendMessageDedup(From, low);
+            } catch (e) {
+              console.warn('[low-stock] compose failed:', e?.message);
+              // Fallback to previous path
+              await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
+            }
+            _handled = true;
+            try { await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-norm-text`); } catch (_) {}
+            return;
+          }
+          await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);          
         __handled = true;
         try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
         return res.send('<Response></Response>');
