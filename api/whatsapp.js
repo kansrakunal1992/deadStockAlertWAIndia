@@ -252,7 +252,34 @@ function isSafeAnchor(text) {
         /\b(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|₹|Rs|MRP|exp|expiry|expiring)\b/i,
         /\b(GSTIN|GST|CGST|SGST|IGST|PAN|FSSAI|UPI|HSN|SKU|QR)\b/i,              
         /\b(Short Summary|Full Summary|Sales Today|Low Stock|Expiring Soon|Next actions)\b/i,
-        /"(low stock|reorder suggestions|expiring 0|expiring 7|expiring 30|sales (today|week|month)|top 5 products month|inventory value|stock value|value summary)"/i
+        /"(low stock|reorder suggestions|expiring 0|expiring 7|expiring 30|sales (today|week|month)|top 5 products month|inventory value|stock value|value summary)"/i,                
+        // NEW: English headers & quoted commands
+           /\b(Short Summary|Full Summary|Sales Today|Low Stock|Expiring Soon|Next actions)\b/i,
+           /"(reorder suggestions|prices|stock value)"/i,
+           // NEW: Hindi (Devanagari)
+           /\b(संक्षिप्त सारांश|आज की बिक्री|स्टॉक कम|शीघ्र समाप्त|अगले कदम)\b/,
+           /"(पुनः ऑर्डर सुझाव|मूल्य|स्टॉक मूल्य)"/,
+           // NEW: Hinglish (Roman Hindi)
+           /\b(Short Summary|Agle Kadam|Kam Stock|Jaldi Khatm)\b/i,
+           /"(punah order sujhav|moolya|stock moolya)"/i,
+           // NEW: Bengali
+           /\b(সংক্ষিপ্ত সারাংশ|আজকের বিক্রি|স্টক কম|শীঘ্রই মেয়াদোত্তীর্ণ|পরবর্তী পদক্ষেপ)\b/,
+           /"(পুনঃঅর্ডার পরামর্শ|মূল্য|স্টকের মূল্য)"/,
+           // NEW: Tamil
+           /\b(சுருக்கம்|இன்று விற்பனை|இருப்பு குறைவு|விரைவில் காலாவதி|அடுத்த செயல்கள்)\b/,
+           /"(மீண்டும் ஆர்டர் பரிந்துரைகள்|விலைகள்|இருப்பு மதிப்பு)"/,
+           // NEW: Telugu
+           /\b(సంక్షిప్త సారాంశం|ఈరోజు అమ్మకాలు|తక్కువ నిల్వ|త్వరలో గడువు|తదుపరి చర్యలు)\b/,
+           /"(పునః ఆర్డర్ సూచనలు|ధరలు|నిల్వ విలువ)"/,
+           // NEW: Kannada
+           /\b(ಸಂಕ್ಷಿಪ್ತ ಸಾರಾಂಶ|ಇಂದಿನ ಮಾರಾಟ|ಕಡಿಮೆ ಸಂಗ್ರಹ|ಶೀಘ್ರದಲ್ಲೇ ಅವಧಿ|ಮುಂದಿನ ಕ್ರಮಗಳು)\b/,
+           /"(ಮರುಆರ್ಡರ್ ಸಲಹೆಗಳು|ಬೆಲೆಗಳು|ಸ್ಟಾಕ್ ಮೌಲ್ಯ)"/,
+           // NEW: Marathi
+           /\b(संक्षिप्त सारांश|आजची विक्री|कमी साठा|लवकरच कालबाह्य|पुढील कृती)\b/,
+           /"(पुन्हा ऑर्डर सुचवणी|किंमती|साठा मूल्य)"/,
+           // NEW: Gujarati
+           /\b(સંક્ષિપ્ત સારાંશ|આજનું વેચાણ|ઓછો જથ્થો|ટૂંક સમયમાં ગાળા પૂરા|આગળની કાર્યવાહી)\b/,
+           /"(પુનઃ ઓર્ડર સૂચનો|કિંમતો|સ્ટોક મૂલ્ય)"/
     ];
     return safePatterns.some(rx => rx.test(text));
 }
@@ -2092,7 +2119,14 @@ const NL_LABELS = {
     'Profit Margin': 'लाभ मार्जिन',
     'Inventory by Category': 'वर्ग अनुसार भंडार',
     'Insights': 'अंतर्दृष्टि'
-  },
+  },       
+    'hi-latn': {
+       'Short Summary': 'Short Summary',
+       'Sales Today': 'Aaj ki Sales',
+       'Low Stock': 'Kam Stock',
+       'Expiring Soon': 'Jaldi Khatm',
+       'Next actions': 'Agle Kadam'
+     },
   bn: {
     'Short Summary': 'সংক্ষিপ্ত সারাংশ',
     'Sales Today': 'আজকের বিক্রি',
@@ -2240,6 +2274,77 @@ const NL_LABELS = {
   en: {}
 };
 
+// ==== NEW: Quoted command label map for "Next actions" (all languages) ====
+const CMD_LABELS = {
+  en: {
+    'reorder suggestions': 'reorder suggestions',
+    'prices': 'prices',
+    'stock value': 'stock value',
+  },
+  // Hindi (Devanagari)
+  hi: {
+    'reorder suggestions': 'पुनः ऑर्डर सुझाव',
+    'prices': 'मूल्य',
+    'stock value': 'स्टॉक मूल्य',
+  },
+  // Hinglish (Roman Hindi)
+  'hi-latn': {
+    'reorder suggestions': 'punah order sujhav',
+    'prices': 'moolya',
+    'stock value': 'stock moolya',
+  },
+  // Bengali
+  bn: {
+    'reorder suggestions': 'পুনঃঅর্ডার পরামর্শ',
+    'prices': 'মূল্য',
+    'stock value': 'স্টকের মূল্য',
+  },
+  // Tamil
+  ta: {
+    'reorder suggestions': 'மீண்டும் ஆர்டர் பரிந்துரைகள்',
+    'prices': 'விலைகள்',
+    'stock value': 'இருப்பு மதிப்பு',
+  },
+  // Telugu
+  te: {
+    'reorder suggestions': 'పునః ఆర్డర్ సూచనలు',
+    'prices': 'ధరలు',
+    'stock value': 'నిల్వ విలువ',
+  },
+  // Kannada
+  kn: {
+    'reorder suggestions': 'ಮರುಆರ್ಡರ್ ಸಲಹೆಗಳು',
+    'prices': 'ಬೆಲೆಗಳು',
+    'stock value': 'ಸ್ಟಾಕ್ ಮೌಲ್ಯ',
+  },
+  // Marathi
+  mr: {
+    'reorder suggestions': 'पुन्हा ऑर्डर सुचवणी',
+    'prices': 'किंमती',
+    'stock value': 'साठा मूल्य',
+  },
+  // Gujarati
+  gu: {
+    'reorder suggestions': 'પુનઃ ઓર્ડર સૂચનો',
+    'prices': 'કિંમતો',
+    'stock value': 'સ્ટોક મૂલ્ય',
+  },
+};
+
+// Helper: localize quoted commands → keeps the double quotes
+function localizeQuotedCommands(text, lang) {
+  try {
+    const lc = String(lang ?? 'en').toLowerCase();
+    const dict = CMD_LABELS[lc];
+    if (!dict) return text;
+    let out = String(text ?? '');
+    for (const [enKey, nativeVal] of Object.entries(dict)) {
+      const rx = new RegExp(`"${enKey}"`, 'gi');
+      out = out.replace(rx, `"${nativeVal}"`);
+    }
+    return out;
+  } catch { return text; }
+}
 
 const { sendContentTemplate } = require('./whatsappButtons');
 const { ensureLangTemplates, getLangSids } = require('./contentCache');
@@ -3996,7 +4101,9 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
 // keep existing per-command cache key (already unique & scoped)            
         const msg0 = await tx(body, lang, From, cmd, `qq-${cmd}-${shopId}`);
          // NEW: replace English section headers with native ones to avoid mixed script
-         let labeled = renderNativeglishLabels(msg0, lang);
+         let labeled = renderNativeglishLabels(msg0, lang);              
+        // NEW: localize quoted commands inside "Next actions" (e.g., "reorder suggestions", "prices", "stock value")
+         labeled = localizeQuotedCommands(labeled, lang);
          // Optional: keep English anchors (units/₹) readable inside localized text
          labeled = nativeglishWrap(labeled, lang);
          let msg = await tagWithLocalizedMode(From, labeled, lang);
