@@ -4471,38 +4471,54 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
           }
         }
       }
-
-    // -------------------------------
-      // NEW: Low Stock (compact list)
-      // -------------------------------
-      if (cmd === 'low stock') {
-        try {                     
-            const rows = sanitizeProductRows(await getLowStockProducts(shopId) ?? []);
-                const count = rows.length;
-                if (!count) {
-                  await sendTagged('🟢 Low Stock — No alerts right now.');
-                  return true;
+        
+        // -------------------------------
+              // NEW: Low Stock (fully localized)
+              // -------------------------------
+              if (cmd === 'low stock') {
+                try {
+                  const shopId = String(From).replace('whatsapp:', '');
+        
+                  // If nothing is low, send a localized "no alerts" line.
+                  const rows = sanitizeProductRows(await getLowStockProducts(shopId) ?? []);
+                  const count = rows.length;
+                  if (!count) {
+                    // Localize this short line via t(), then pass through your standard pipeline.
+                    let zeroLine = await t('🟢 Low Stock — No alerts right now.', lang, `lowstock::none::${shopId}`);
+                    zeroLine = renderNativeglishLabels(zeroLine, lang);
+                    zeroLine = localizeQuotedCommands(zeroLine, lang);
+                    zeroLine = nativeglishWrap(zeroLine, lang);
+                    let msg = await tagWithLocalizedMode(From, zeroLine, lang);
+                    msg = enforceSingleScriptSafe(msg, lang);
+                    msg = normalizeNumeralsToLatin(msg).trim();
+                    await sendMessageViaAPI(From, msg);
+                    return true;
+                  }
+        
+                  // Use your dedicated localized composer: Hindi/Hinglish headers, translated units & names.
+                  const composed = await composeLowStockLocalized(shopId, lang, `lowstock::${shopId}`);
+        
+                  // Keep your existing label/quote/anchor pipeline so "Next actions" quoted commands localize.
+                  let labeled = renderNativeglishLabels(composed, lang);
+                  labeled     = localizeQuotedCommands(labeled, lang);
+                  labeled     = nativeglishWrap(labeled, lang);
+                  let msg     = await tagWithLocalizedMode(From, labeled, lang);
+                  msg         = enforceSingleScriptSafe(msg, lang);     // numerals-only normalization
+                  msg         = normalizeNumeralsToLatin(msg).trim();   // ASCII digits
+        
+                  // IMPORTANT: sendMessageDedup expects `From` (WhatsApp format), not `shopId`.
+                  await sendMessageDedup(From, msg);
+                } catch (e) {
+                  // Localized fallback on error
+                  let err = await t('🟠 Low Stock — snapshot unavailable. Try again in a minute.', lang, 'lowstock::error');
+                  err = renderNativeglishLabels(err, lang);
+                  err = nativeglishWrap(err, lang);
+                  err = enforceSingleScriptSafe(err, lang);
+                  err = normalizeNumeralsToLatin(err).trim();
+                  await sendMessageViaAPI(From, err);
                 }
-                // Structured, formal rendering: header + one bullet per item
-                const LINES_MAX = 10;
-                const items = rows.slice(0, LINES_MAX).map((r) => {
-                  const q = Number(r.quantity ?? 0);
-                  const u = String(r.unit ?? '').trim();
-                  const qty = q ? `${q}${u ? ' ' + u : ''}` : '';
-                  return qty ? `• ${r.name} — ${qty}` : `• ${r.name}`;
-                });
-                const moreTail = count > LINES_MAX ? `\n• +${count - LINES_MAX} more` : '';
-                const header = `🟠 Low Stock — ${count} ${count === 1 ? 'item' : 'items'}`;
-                const body   = `${header}\n${items.join('\n')}${moreTail}\n\n➡️ Action: check reorder suggestions or review prices.`;
-                // Prevent clamp from trimming the header: prefix NO_CLAMP_MARKER                
-                const safeBody = `${header}\n${items.join('\n')}${moreTail}\n\n➡️ Action: check "reorder suggestions" or review "prices".`;
-                // Route via dedup path to append footer & normalize numerals
-                await sendMessageDedup(shopId, safeBody);
-        } catch (_) {
-          await sendTagged('🟠 Low Stock — snapshot unavailable. Try again in a minute.');
-        }
-        return true;
-      }
+                return true;
+              }
     
       // --------------------------------------
       // NEW: Reorder Suggestions (velocity-based)
