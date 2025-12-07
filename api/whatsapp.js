@@ -6883,15 +6883,16 @@ async function sendParseErrorWithExamples(From, detectedLanguage, requestId, hea
   }
   // --- END PATCH C ---
   try {
-    const examples = await renderPurchaseExamples(detectedLanguage, requestId + ':err-ex');
-    const msg = await t(
-      `${header}\n\n${examples}`,
-      detectedLanguage, requestId + ':err'
-    );
-    await sendMessageViaAPI(From, msg);
+    const examples = await renderPurchaseExamples(detectedLanguage, requestId + ':err-ex');        
+    let msg = await t(
+          `${header}\n\n${examples}`,
+          detectedLanguage, requestId + ':err'
+        );
+        // ANCHOR: UNIQ:PARSE-ERROR-FINALIZE-001
+        await sendMessageViaAPI(From, finalizeForSend(msg, detectedLanguage));
   } catch (e) {
     // Fallback to basic English if translation fails
-    await sendMessageViaAPI(From, `${header}\n\n${EXAMPLE_PURCHASE_EN}`);
+    await sendMessageViaAPI(From, finalizeForSend(`${header}\n\n${EXAMPLE_PURCHASE_EN}`, 'en'));
   }
 }
 
@@ -7155,7 +7156,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
               const m0  = await tx(ans, langForQa, From, text, `${requestId}::sales-qa-first`);
               const msg = nativeglishWrap(m0, langForQa);
               console.log('[sales-qa] sending via API', { requestId, to: From, len: msg.length });
-              await sendMessageViaAPI(From, msg);
+              await sendMessageViaAPI(From, finalizeForSend(msg, langForQa));
               console.log('[sales-qa] sent OK', { requestId });
         
               // STEP 7: Persist turn (parity with debounced path)
