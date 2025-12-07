@@ -99,13 +99,13 @@ async function maybeSendStreakMessage(From, lang = 'en', tag = 'streak') {
     }
     // If no counters exist yet, quietly skip
     if (!Number.isFinite(count) || count < 1) return false;
-
-    const msg = await t(
-      `🔥 Streak ${count}! Keep it going—log today’s update to reach ${count + 1}.`,
-      lang,
-      `${tag}::${shopId}`
-    );
-    await sendMessageViaAPI(From, msg);
+        
+    let msg = await t(
+          `🔥 Streak ${count}! Keep it going—log today’s update to reach ${count + 1}.`,
+          lang,
+          `${tag}::${shopId}`
+        );
+        await sendMessageViaAPI(From, finalizeForSend(msg, lang));
     return true;
   } catch (e) {
     console.warn('[streak] failed:', e?.message);
@@ -5740,7 +5740,7 @@ async function sendDailySummaries() {
             } catch (_) {}
   
             const insights = await generateFullScaleSummary(shopId, userLanguage, 'sched-ai-full');
-            await sendMessageViaAPI(`whatsapp:${shopId}`, insights);
+            await sendMessageViaAPI(`whatsapp:${shopId}`, finalizeForSend(insights, userLanguage));
             return { shopId, success: true };
           } catch (err) {
             console.error(`AI Full Summary error for ${shopId}:`, err.message);
@@ -6193,12 +6193,13 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
   }
 
   // If user didn’t give a price but we still need one, prompt again (with examples)
-  if (needsPrice && !updatedPrice) {
-    const again = await t(
-      `Please say or type the price per unit, like "₹60 per kg" or "₹10 per packet". You can also say expiry like "exp 20-09".`,
+  if (needsPrice && !updatedPrice) { 
+    let again = await t(
+      `Please share the purchase price and expiry for ${product}. You can also say expiry like "exp 20-09".`,
       detectedLanguage, 'ask-price-again'
     );
-    await sendMessageViaAPI(From, again);
+    // ANCHOR: UNIQ:PRICE-EXPIRY-ASKAGAIN-001
+    await sendMessageViaAPI(From, finalizeForSend(again, detectedLanguage));
     return true; // stay in same state
   }
 
@@ -6220,9 +6221,10 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
                 await updateInventory(shopId, product, quantity, unit);
                 console.log(`[handleAwaitingPriceExpiry] Inventory updated for ${product}: +${quantity} ${unit}`);
                     
-    // ✅ ADD: Confirmation message to user
-                const confirmation = `✅ Done:\n✅ Purchased ${quantity} ${unit} ${product} (Stock: updated)\n\n✅ Successfully updated 1 of 1 items`;
-                await sendMessageViaAPI(From, confirmation)
+    // ✅ ADD: Confirmation message to user                            
+            let confirmation = `✅ Done:\n✅ Purchased ${quantity} ${unit} ${product} (Stock: updated)\n\n✅ Successfully updated 1 of 1 items`;
+            // ANCHOR: UNIQ:PRICE-EXPIRY-CONFIRM-001
+            await sendMessageViaAPI(From, finalizeForSend(confirmation, detectedLanguage));
             } catch (e) {
                 console.error(`[handleAwaitingPriceExpiry] Failed to update inventory:`, e.message);
             }
@@ -6239,12 +6241,13 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
   if (isPerishable) {
     const shown = updatedExpiryISO ? formatDateForDisplay(updatedExpiryISO) : '—';
     lines.push(`Expiry: ${shown}`);
-  }
-  const done = await t(
-    `✅ Saved for ${product} ${quantity} ${unit}\n` + (lines.length ? lines.join('\n') : 'No changes.'),
-    detectedLanguage, 'saved-price-expiry'
-  );
-  await sendMessageViaAPI(From, done);
+  }      
+    let done = await t(
+      `✅ Saved for ${product} ${quantity} ${unit}\n` + (lines.length ? lines.join('\n') : 'No changes.'),
+      detectedLanguage, 'saved-price-expiry'
+    );
+    // ANCHOR: UNIQ:PRICE-EXPIRY-SAVED-001
+    await sendMessageViaAPI(From, finalizeForSend(done, detectedLanguage));
   return true;
 }
 
@@ -6390,11 +6393,12 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
         return true;
         }
         if (switchCmd.set) {
-          await setStickyMode(From, switchCmd.set); // purchased | sold | returned
-          await sendMessageViaAPI(
-            From,
-            await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`)
-          );
+          await setStickyMode(From, switchCmd.set); // purchased | sold | returned                  
+        {
+          let ack = await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`);
+          // ANCHOR: UNIQ:BATCH-OVERRIDE-MODE-SET-001
+          await sendMessageViaAPI(From, finalizeForSend(ack, detectedLanguage));
+        }
           return true;
         }
       }
@@ -6406,13 +6410,14 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
         //if (state?.mode !== 'awaitingTransactionDetails') {
         //  await deleteUserStateFromDB(state.id);
         //} 
-      } catch (_) {}
-      const msg = await t(
-        `✅ Reset. Cleared the current batch-selection window.`,
-        detectedLanguage,
-        requestId
-      );
-      await sendMessageViaAPI(From, msg);
+      } catch (_) {}          
+    let msg = await t(
+      `✅ Reset. Cleared the current batch-selection window.`,
+      detectedLanguage,
+      requestId
+    );
+    // ANCHOR: UNIQ:BATCH-OVERRIDE-RESET-001
+    await sendMessageViaAPI(From, finalizeForSend(msg, detectedLanguage));
       return true;
     }
   
@@ -6423,9 +6428,10 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   //if (state?.mode !== 'awaitingTransactionDetails') {
   //  await deleteUserStateFromDB(state.id);
   //}
-    const msg = await t(
-      `⏳ Sorry, the 2‑min window to change batch has expired.`, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, msg);
+        
+    let expired = await t(`⏳ Sorry, the 2‑min window to change batch has expired.`, detectedLanguage, requestId);
+    // ANCHOR: UNIQ:BATCH-OVERRIDE-EXPIRED-001
+    await sendMessageViaAPI(From, finalizeForSend(expired, detectedLanguage));
     return true;
   }
 
@@ -6441,13 +6447,14 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
        return false; // do NOT consume; downstream parser will use sticky 'sold'
      }
      // Otherwise (non-transaction chatter), show help
-     const help = await t(
-       COMPACT_MODE
-         ? `Reply: batch DD-MM \n batch oldest \n batch latest (2 min)`
-         : `Reply:\n• batch DD-MM (e.g., batch 12-09)\n• exp DD-MM (e.g., exp 20-09)\n• batch oldest \n batch latest\nWithin 2 min.`,
-       detectedLanguage, requestId
-     );
-     await sendMessageViaAPI(From, help);
+     
+    let help = await t(
+      COMPACT_MODE ? `Reply: batch DD-MM \n batch oldest \n batch latest (2 min)` :
+      `Reply:\n• batch DD-MM (e.g., batch 12-09)\n• exp DD-MM (e.g., exp 20-09)\n• batch oldest \n batch latest\nWithin 2 min.`,
+      detectedLanguage, requestId
+    );
+    // ANCHOR: UNIQ:BATCH-OVERRIDE-HELP-001
+    await sendMessageViaAPI(From, finalizeForSend(help, detectedLanguage));
      return true;
    }
 
@@ -6471,10 +6478,13 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
       oldCompositeKey: normalizeCompositeKey(oldCompositeKey),
       newCompositeKey: newKeyNorm
   });
-  if (!res.success) {
-    const fail = await t(
-      `⚠️ Could not switch batch: ${res.error}`, detectedLanguage, requestId);
-    await sendMessageViaAPI(From, fail);
+  if (!res.success) {        
+    let fail = await t(
+      `⚠️ Couldn’t find a matching batch with stock for ${product}. Try another date or "batches ${product}".`,
+      detectedLanguage, requestId
+    );
+    // ANCHOR: UNIQ:BATCH-OVERRIDE-FAIL-001
+    await sendMessageViaAPI(From, finalizeForSend(fail, detectedLanguage));
     return true;
   }
   
@@ -6484,11 +6494,13 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
   //}
   const used = await getBatchByCompositeKey(newKeyNorm);
   const pd = used?.fields?.PurchaseDate ? formatDateForDisplay(used.fields.PurchaseDate) : '—';
-  const ed = used?.fields?.ExpiryDate ? formatDateForDisplay(used.fields.ExpiryDate) : '—';
-  const ok = await t(
-    `✅ Updated. ${product} sale now attributed to: Purchased ${pd} (Expiry ${ed}).`,
-    detectedLanguage, requestId);
-  await sendMessageViaAPI(From, ok);
+  const ed = used?.fields?.ExpiryDate ? formatDateForDisplay(used.fields.ExpiryDate) : '—';      
+    let ok = await t(
+      `✅ Updated. ${product} sale now attributed to: Purchased ${pd} (Expiry ${ed}).`,
+      detectedLanguage, requestId
+    );
+    // ANCHOR: UNIQ:BATCH-OVERRIDE-OK-001
+    await sendMessageViaAPI(From, finalizeForSend(ok, detectedLanguage));
   return true;
 }
 
@@ -6502,13 +6514,14 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   if (isResetMessage(Body)) {
     try {             
         await deleteUserStateFromDB(state.id);
-    } catch (_) {}
-    const msg = await t(
+    } catch (_) {}        
+    let msg = await t(
       `✅ Reset. Cleared the expiry‑override window.`,
       detectedLanguage,
       requestId
     );
-    await sendMessageViaAPI(From, msg);
+    // ANCHOR: UNIQ:EXPIRY-OVERRIDE-RESET-001
+    await sendMessageViaAPI(From, finalizeForSend(msg, detectedLanguage));
     return true;
   }
 
@@ -6518,13 +6531,14 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
   if ((Date.now() - createdAt.getTime()) > (timeoutSec * 1000)) {        
     //if (state?.mode !== 'awaitingTransactionDetails') {
     //  await deleteUserStateFromDB(state.id);
-    //}
-    const msg = await t(
+    //}        
+    let expired = await t(
       `⏳ Sorry, the 2‑min window to change expiry has expired.`,
       detectedLanguage,
       requestId
     );
-    await sendMessageViaAPI(From, msg);
+    // ANCHOR: UNIQ:EXPIRY-OVERRIDE-EXPIRED-001
+    await sendMessageViaAPI(From, finalizeForSend(expired, detectedLanguage));
     return true;
   }
 
@@ -6543,11 +6557,12 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
           return true;
         }
         if (switchCmd.set) {
-          await setStickyMode(From, switchCmd.set);
-          await sendMessageViaAPI(
-            From,
-            await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`)
-          );
+          await setStickyMode(From, switchCmd.set);                      
+         {
+              let ack = await t(`✅ Mode set: ${switchCmd.set}`, detectedLanguage, `${requestId}::mode-set`);
+              // ANCHOR: UNIQ:EXPIRY-OVERRIDE-MODE-SET-001
+              await sendMessageViaAPI(From, finalizeForSend(ack, detectedLanguage));
+            }
           return true;
         }
       }
@@ -6556,13 +6571,14 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
     //if (state?.mode !== 'awaitingTransactionDetails') {
     //  await deleteUserStateFromDB(state.id);
     //}
-    const kept = currentExpiryISO ? formatDateForDisplay(currentExpiryISO) : '—';
-    const msg = await t(
+    const kept = currentExpiryISO ? formatDateForDisplay(currentExpiryISO) : '—';        
+    let keptMsg = await t(
       `✅ Kept expiry for ${product}: ${kept}`,
       detectedLanguage,
       requestId
     );
-    await sendMessageViaAPI(From, msg);
+    // ANCHOR: UNIQ:EXPIRY-OVERRIDE-KEEP-001
+    await sendMessageViaAPI(From, finalizeForSend(keptMsg, detectedLanguage));
     return true;
   }
   // Clear expiry
@@ -6570,13 +6586,10 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
     try { await updateBatchExpiry(batchId, null); } catch (_) {}          
       //if (state?.mode !== 'awaitingTransactionDetails') {
       //  await deleteUserStateFromDB(state.id);
-      //}
-    const msg = await t(
-      `✅ Cleared expiry for ${product}.`,
-      detectedLanguage,
-      requestId
-    );
-    await sendMessageViaAPI(From, msg);
+      //}        
+    let clearedMsg = await t(`✅ Cleared expiry for ${product}.`, detectedLanguage, requestId);
+    // ANCHOR: UNIQ:EXPIRY-OVERRIDE-CLEAR-001
+    await sendMessageViaAPI(From, finalizeForSend(clearedMsg, detectedLanguage));
     return true;
   }
 
@@ -6591,16 +6604,14 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
     newISO = bumpExpiryYearIfPast(wanted.byExpiryISO, purchaseDateISO || new Date().toISOString());
   }
   
-  if (!newISO) {
-      const help = await t(
-        COMPACT_MODE
-          ? `Reply: exp +7d | +3m | +1y  • skip (clear)`
-          : `Reply with: 
-  • exp +7d / exp +3m / exp +1y
-  • skip (to clear)`,
-        detectedLanguage, requestId
-      );
-      await sendMessageViaAPI(From, help);
+  if (!newISO) {          
+    let help = await t(
+      COMPACT_MODE ? `Reply: exp +7d | +3m | +1y • skip (clear)` :
+      `Reply with:\n• exp +7d / exp +3m / exp +1y\n• skip (to clear)`,
+      detectedLanguage, requestId
+    );
+    // ANCHOR: UNIQ:EXPIRY-OVERRIDE-HELP-001
+    await sendMessageViaAPI(From, finalizeForSend(help, detectedLanguage));
       return true;
     }
 
@@ -6608,12 +6619,13 @@ async function handleAwaitingPurchaseExpiryOverride(From, Body, detectedLanguage
     //if (state?.mode !== 'awaitingTransactionDetails') {
     //  await deleteUserStateFromDB(state.id);
     //}
-  const shown = formatDateForDisplay(newISO);
-  const ok = await t(
-    `✅ Updated. ${product} expiry set to ${shown}.`,
-    detectedLanguage, requestId
-  );
-  await sendMessageViaAPI(From, ok);
+  const shown = formatDateForDisplay(newISO);      
+    let ok = await t(
+      `✅ Updated. ${product} expiry set to ${shown}.`,
+      detectedLanguage, requestId
+    );
+    // ANCHOR: UNIQ:EXPIRY-OVERRIDE-UPDATED-001
+    await sendMessageViaAPI(From, finalizeForSend(ok, detectedLanguage));
   return true;
 }
 
@@ -10466,13 +10478,14 @@ async function handlePlanUpgrade(Body, From, detectedLanguage, requestId) {
   
   // Command to upgrade to enterprise plan
   if (Body.toLowerCase().includes('upgrade to enterprise')) {
-    await saveUserPlan(shopId, 'enterprise');
-    const message = await t(
+    await saveUserPlan(shopId, 'enterprise');    
+    let message = await t(
       'You have been upgraded to the Enterprise plan. You now have access to all features including advanced AI analytics.',
       detectedLanguage,
       requestId
     );
-    await sendMessageViaAPI(From, message);
+    // ANCHOR: UNIQ:ENTERPRISE-UPGRADE-ACK-001
+    await sendMessageViaAPI(From, finalizeForSend(message, detectedLanguage));
     return true;
   }
   
@@ -13528,13 +13541,14 @@ async function handleRequest(req, res, response, requestId, requestStart) {
         case 'ವಿಸ್ತೃತ ಸಾರಾಂಶ':
         case 'વિગતવાર સારાંશ':
         case 'तपशीलवार सारांश':
-          // Full summary handling
-          const generatingMessage = await t(
-            'Generating your detailed summary with insights... This may take a moment.',
-            userLanguage,
-            requestId
-          );
-          await sendMessageViaAPI(From, generatingMessage);
+          // Full summary handling                 
+        let generatingMessage = await t(
+          'Generating your detailed summary with insights... This may take a moment.',
+          userLanguage,
+          requestId
+        );
+        await sendMessageViaAPI(From, finalizeForSend(generatingMessage, userLanguage));
+              
           const fullSummary = await generateFullScaleSummary(shopId, userLanguage, requestId);
           await sendMessageViaAPI(From, fullSummary);
           res.send('<Response></Response>');
@@ -13543,13 +13557,13 @@ async function handleRequest(req, res, response, requestId, requestStart) {
         // Add more button cases as needed
         default:
           console.warn(`[${requestId}] Unhandled button text: "${ButtonText}"`);
-          // Send a response for unhandled buttons
-          const unhandledMessage = await t(
-            'I didn\'t understand that button selection. Please try again.',
-            userLanguage,
-            requestId
-          );
-          await sendMessageViaAPI(From, unhandledMessage);
+          // Send a response for unhandled buttons             
+          let unhandledMessage = await t(
+              'I didn\'t understand that button selection. Please try again.',
+              userLanguage,
+              requestId
+            );
+            await sendMessageViaAPI(From, finalizeForSend(unhandledMessage, userLanguage));
           res.send('<Response></Response>');
           return;
       }
@@ -13589,8 +13603,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
         detectedLanguage,
         requestId
       );
-      
-      await sendMessageViaAPI(From, resetMessage);
+      await sendMessageViaAPI(From, finalizeForSend(resetMessage, detectedLanguage));
       res.send('<Response></Response>');
       return;
     }
