@@ -1883,12 +1883,20 @@ const LOCAL_SET_WORDS = {
 };
 
 // ==== Canonical message markers (single source of truth) ====
+// ANCHOR: UNIQ:MARKER-STRIP-001
 const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
 const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
+// Hardened marker stripper: handles <!...!>, plain !NO_*! (if <> got sanitized),
+// duplicates, and trims leftovers.
 function stripMarkers(s) {
   return String(s ?? '')
     .replace(new RegExp(NO_FOOTER_MARKER, 'g'), '')
-    .replace(new RegExp(NO_CLAMP_MARKER, 'g'), '');
+    .replace(new RegExp(NO_CLAMP_MARKER,  'g'), '')
+    .replace(/!NO_CLAMP!/g, '')   // defensive: angle brackets removed upstream
+    .replace(/!NO_FOOTER!/g, '')  // defensive: angle brackets removed upstream
+    .replace(/(?:\s*\n)?\s*(?:!NO_CLAMP!\s*){2,}/g, '') // remove duplicates
+    .replace(/(?:\s*\n)?\s*(?:!NO_FOOTER!\s*){2,}/g, '')
+    .trim();
 }
 
 // ==== Unified end-date resolver (uses one Airtable field: TrialEndDate) ====
@@ -2376,12 +2384,11 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                 const startTrialLabel  = getStaticLabel('startTrialBtn', detectedLanguage);
                 // Keep the label in native script directly in the source text; avoid quotes getting emptied.
                 const introSrc = await composeAIOnboarding('en'); // deterministic English skeleton
-                const introSrcWithLabel = introSrc.replace(/"Start Trial"/g, `"${startTrialLabel}"`);
-                // Translate once, with NO_CLAMP + NO_FOOTER to avoid clamp artifacts and footer.
-                let introText = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + introSrcWithLabel, detectedLanguage ?? 'en', introKey);                  
-                // Preserve brand & English anchors (Saamagrii.AI, URLs, etc.) before send
-                  introText = nativeglishWrap(fixNewlines1(introText), detectedLanguage ?? 'en'); // only normalize escaped newlines
-                  await sendMessageQueued(From, introText);
+                const introSrcWithLabel = introSrc.replace(/"Start Trial"/g, `"${startTrialLabel}"`);                                
+                // Translate once with canonical markers, then finalize and send.
+                      let introText = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + introSrcWithLabel, detectedLanguage ?? 'en', introKey);
+                      introText = nativeglishWrap(introText, detectedLanguage ?? 'en'); // keep anchors readable
+                      await sendMessageQueued(From, finalizeForSend(introText, detectedLanguage ?? 'en'));
                 await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
                           // >>> NEW: Send benefits video AFTER intro, BEFORE buttons (once per session gate already applies)
                           try {
@@ -2434,14 +2441,9 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
              // 3) Text fallback if neither option worked
              if (!sent) {                                                               
                 // If buttons couldn't be sent, still send a compact CTA AFTER intro
-                      const ctaText = getTrialCtaText(detectedLanguage ?? 'en');
-                      const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
-                      const ctaLocalized = await t(
-                        NO_FOOTER_MARKER + ctaText,
-                        detectedLanguage ?? 'en',
-                        'welcome-gate'
-                      );
-                      await sendMessageQueued(From, ctaLocalized);
+                      const ctaText = getTrialCtaText(detectedLanguage ?? 'en');                                             
+                      let ctaLocalized = await t(NO_FOOTER_MARKER + ctaText, detectedLanguage ?? 'en', 'welcome-gate');
+                      await sendMessageQueued(From, finalizeForSend(ctaLocalized, detectedLanguage ?? 'en'));
              }
         try { markWelcomed(toNumber); } catch {}
              return; // still skip menus until activation
@@ -2516,6 +2518,16 @@ function normalizeNumeralsToLatin(text) {
   );
 }
 
+// ANCHOR: UNIQ:FINALIZE-SEND-001
+// Finalize text for sending: strip any markers, enforce single-script, fix newlines,
+// and normalize digits. Use this on all onboarding text sends.
+function finalizeForSend(text, lang) {
+  const stripped  = stripMarkers(text);
+  const oneScript = enforceSingleScriptSafe(stripped, lang);
+  const withNL    = fixNewlines1(oneScript);
+  return normalizeNumeralsToLatin(withNL).trim();
+}
+
 // =============================================================================
 // ==== Paid Plan CTA & Confirmation (white-label, no partner branding) ========
 // =============================================================================
@@ -2524,15 +2536,16 @@ function normalizeNumeralsToLatin(text) {
  * Razorpay static page (no shopId required): https://rzp.io/rzp/saamagriiAIPaidPlanActivation
  */
 async function sendPaidPlanCTA(From, lang = 'en') {
-  try {
-    const url = 'https://rzp.io/rzp/saamagriiAIPaidPlanActivation';
-    const msg = await t(
-      '🔒 Activate your Saamagrii.AI Paid Plan to unlock full access.\n' +
-      'Complete the secure payment here:\n' + url,
-      lang,
-      `paid-cta::${String(From).replace('whatsapp:', '')}`
-    );
-    await sendMessageViaAPI(From, msg);
+  try {        
+        const url = 'https://rzp.io/rzp/saamagriiAIPaidPlanActivation';
+        let msg = await t(
+          '🔒 Activate your Saamagrii.AI Paid Plan to unlock full access.\n' +
+          'Complete the secure payment here:\n' + url,
+          lang,
+          `paid-cta::${String(From).replace('whatsapp:', '')}`
+        );
+        // Ensure single-script, clean newlines and ASCII digits before sending
+        await sendMessageViaAPI(From, finalizeForSend(msg, lang));
   } catch (e) {
     console.warn('[paid-cta] failed:', e?.message);
   }
@@ -2751,7 +2764,7 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
          lang,
          `trial-onboard-gstin-${shopId}`
        );
-    await sendMessageViaAPI(From, askGstin);
+    await sendMessageViaAPI(From, finalizeForSend(askGstin, lang));
       try { if (requestId) handledRequests.add(requestId); } catch {}
     return true;
   }
@@ -2765,7 +2778,7 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
          lang,
          `trial-onboard-address-${shopId}`
        );
-    await sendMessageViaAPI(From, askAddr);
+    await sendMessageViaAPI(From, finalizeForSend(askAddr, lang));
       try { if (requestId) handledRequests.add(requestId); } catch {}
     return true;
   }
@@ -2813,13 +2826,7 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
         let msgRaw = `${NO_CLAMP_MARKER}${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
                      `Try:\n• short summary\n• price list\n• "10 Parle-G sold at 11/packet"`;               
         let msgTranslated = await t(msgRaw, lang, `trial-onboard-done-${shopId}`);              
-        // Strip markers so they never leak to WhatsApp
-          msgTranslated = stripMarkers(msgTranslated);
-            // LOCAL CLAMP → Single script; newline + numerals normalization
-            msgTranslated = enforceSingleScriptSafe(msgTranslated, lang);
-            msgTranslated = fixNewlines1(msgTranslated);
-            msgTranslated = normalizeNumeralsToLatin(msgTranslated).trim();
-            await sendMessageViaAPI(From, msgTranslated);
+        await sendMessageViaAPI(From, finalizeForSend(msgTranslated, lang));
       try { if (requestId) handledRequests.add(requestId); } catch {}
     try {
       await ensureLangTemplates(lang);
@@ -3183,19 +3190,11 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
         `Or pay at: ${PAYMENT_LINK}\nClick on "paid" after payment ✅`;        
           
     // Put BOTH markers INSIDE the string given to t(...),
-         // so enforceSingleScriptSafe() and tagWithLocalizedMode() skip clamp/footer.
-         const localized = await t(
-           NO_FOOTER_MARKER + body,
-           lang,
-           `cta-paid-${shopId}`
-         );
-         // Normalize any escaped newlines before sending
-         const fixNewlines = s =>
-           String(s)
-             .replace(/\/n/g, '\n')   // forward-slash n -> newline
-             .replace(/\\r/g, '')     // drop CRs
-             .replace(/\\n/g, '\n');  // literal backslash-n -> newline
-         await sendMessageViaAPI(from, fixNewlines(localized));
+         // so enforceSingleScriptSafe() and tagWithLocalizedMode() skip clamp/footer.                 
+        let localized = await t(NO_FOOTER_MARKER + body, lang, `cta-paid-${shopId}`);
+            // ANCHOR: UNIQ:ACTIVATE-PAID-001
+            // Finalize before sending (strip markers, single-script, newline & digit normalization)
+            await sendMessageViaAPI(from, finalizeForSend(localized, lang));
     
       // NEW: Immediately surface single-button "Paid" quick-reply (unchanged)
       try {
@@ -3215,12 +3214,12 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
 // NEW: Handle taps on the single-button "Paid" quick-reply
 if (payload === 'confirm_paid') {
   const shopId = String(from).replace('whatsapp:', '');
-  const langPref = (await getUserPreference(shopId))?.language?.toLowerCase() ?? 'en';
-  const ack = await t(
-    'Thanks! We will verify the payment shortly. If not activated in a minute, please tap “Paid” again.',
-    langPref, `confirm-paid-${shopId}`
-  );
-  await sendMessageViaAPI(from, ack);
+  const langPref = (await getUserPreference(shopId))?.language?.toLowerCase() ?? 'en';      
+    let ack = await t(
+        'Thanks! We will verify the payment shortly. If not activated in a minute, please tap “Paid” again.',
+        langPref, `confirm-paid-${shopId}`
+      );
+      await sendMessageViaAPI(from, finalizeForSend(ack, langPref));
   // Re-surface the button for convenience
   try {
     await ensureLangTemplates(langPref);
@@ -3604,10 +3603,10 @@ async function sendDemoVideoAndButtons(From, lang = 'en', requestId = 'cta-demo'
      const contentSid = String(process.env.ONBOARDING_QR_SID ?? '').trim() || sids.onboardingQrSid;
      if (contentSid) {
        await sendContentTemplate({ toWhatsApp: shopId, contentSid });
-     } else {
-       const ctaText = getTrialCtaText(lang);
-       const msg = await t('<<!NO_FOOTER!>>' + ctaText, lang, `${requestId}::qr-fallback`);
-       await sendMessageViaAPI(From, msg);
+     } else {               
+        const ctaText = getTrialCtaText(lang);
+              let msg = await t(NO_FOOTER_MARKER + ctaText, lang, `${requestId}::qr-fallback`);
+              await sendMessageViaAPI(From, finalizeForSend(msg, lang));
      }
    } catch (e) {
      console.warn('[demo-buttons] failed:', e?.message);
@@ -3639,12 +3638,11 @@ async function sendOnboardingBenefitsVideo(From, lang = 'en') {
     try { encodedUrl = encodeURI(rawUrl); } catch (e) {
       console.warn('[onboard-benefits] encodeURI failed; using raw URL', { error: e?.message, rawUrl });
     }
-    console.log('[onboard-benefits] media URL', { rawUrl, encodedUrl, lang: L });
-    // Localized caption (single script) and NO_FOOTER marker
-    const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
-    const captionEn = 'Manage stock & expiry on WhatsApp • Low-stock alerts • Smart reorder tips';
-    let caption0 = await t(captionEn, L, 'onboard-video-caption');
-    let caption  = NO_FOOTER_MARKER + enforceSingleScript(caption0, L);
+    console.log('[onboard-benefits] media URL', { rawUrl, encodedUrl, lang: L });        
+    // Localized caption with canonical marker handled inside t(...), then stripped & finalized.
+        const captionEn = 'Manage stock & expiry on WhatsApp • Low-stock alerts • Smart reorder tips';
+        let caption = await t(NO_FOOTER_MARKER + captionEn, L, 'onboard-video-caption');
+        caption = finalizeForSend(caption, L);
     // Twilio send
     const accountSid   = process.env.ACCOUNT_SID;
     const authToken    = process.env.AUTH_TOKEN;
@@ -3933,9 +3931,17 @@ function _isDuplicateBody(from, msg, windowMs = 3000) {
 }
 async function sendMessageDedup(From, msg) {
   if (!msg) return;
-  // Append language-aware footer; dedupe on the final normalized body
-      const withFooter = await appendSupportFooter(String(msg).trim(), From);
-      const finalBody = normalizeNumeralsToLatin(withFooter);
+  // Append language-aware footer; dedupe on the final normalized body          
+    const withFooter = await appendSupportFooter(String(msg).trim(), From);
+      // OPTIONAL GLOBAL FINALIZE:
+      // Determine language hint best-effort (you may keep 'en' to avoid extra DB reads)
+      let langHint = 'en';
+      try {
+        const shopId = String(From ?? '').replace('whatsapp:', '');
+        const pref = await getUserPreference(shopId);
+        if (pref?.success && pref.language) langHint = String(pref.language).toLowerCase();
+      } catch {}
+      const finalBody = finalizeForSend(withFooter, langHint);
       if (_isDuplicateBody(From, finalBody)) {
     try { console.log('[dedupe] suppressed duplicate body for', From); } catch (_) {}
     return;
