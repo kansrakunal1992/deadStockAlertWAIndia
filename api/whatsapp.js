@@ -3535,15 +3535,16 @@ const ONBOARDING_VIDEO_URL_EN = String(process.env.ONBOARDING_VIDEO_URL_EN ??
 
 // === NEW: Demo video shown when user taps “Demo” or types demo ===
 // Recommended: host via GitHub Pages/S3 and set DEMO_VIDEO_URL in Railway env.
-const DEMO_VIDEO_URL        = String(((process.env.DEMO_VIDEO_URL || process.env.ONBOARDING_VIDEO_URL) ?? '')).trim();
-const DEMO_VIDEO_URL_HI     = String(process.env.DEMO_VIDEO_URL_HI ?? '').trim();
-const DEMO_VIDEO_URL_HI_LATN= String(process.env.DEMO_VIDEO_URL_HI_LATN ?? '').trim();
+const DEMO_VIDEO_URL = String(((process.env.DEMO_VIDEO_URL ?? process.env.ONBOARDING_VIDEO_URL) ?? '')).trim();               // English (all other languages)
+const DEMO_VIDEO_URL_HI = String(process.env.DEMO_VIDEO_URL_HI ?? '').trim();                                                  // Hindi/Hinglish shared
+// NOTE: We no longer need a separate hi-latn URL; Hinglish will reuse DEMO_VIDEO_URL_HI
 
 function getDemoVideoUrl(lang) {
   const L = String(lang ?? 'en').toLowerCase();
-  if (L === 'hi' && DEMO_VIDEO_URL_HI) return DEMO_VIDEO_URL_HI;
-  if (L === 'hi-latn' && DEMO_VIDEO_URL_HI_LATN) return DEMO_VIDEO_URL_HI_LATN;
-  return DEMO_VIDEO_URL || ONBOARDING_VIDEO_URL; // safe fallback
+  // Use the Hindi demo video for both native Hindi and Hinglish (hi-latn)
+  if ((L === 'hi' || L === 'hi-latn') && DEMO_VIDEO_URL_HI) return DEMO_VIDEO_URL_HI;
+  // Otherwise use the English demo video (or fallback)
+  return DEMO_VIDEO_URL || ONBOARDING_VIDEO_URL;
 }
 
 /**
