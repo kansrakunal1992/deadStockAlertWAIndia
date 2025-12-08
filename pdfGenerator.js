@@ -81,55 +81,57 @@ const colors = {
 };
 
 /**
- * COPILOT-PATCH-PDF-TABLE-001
  * Simple grid table renderer (no fills, fixed row height, grid lines).
  * headers: [{label, width}], rows: array of arrays
+ * Compact/monochrome for dense reports.
  */
 function addSimpleTable(doc, headers, rows) {
   const left = 50;
-  const top = doc.y;
+  const startY = doc.y;
   const tableWidth = doc.page.width - 100;
-  const rowH = 20;
-  // Use a clean font for alignment
-  doc.fontSize(10).fillColor('black');
-  // Header line
+  const rowH = 14;              // tighter rows
+  const bottomPad = 40;         // guard for page bottom/footers
+
+  doc.font('Helvetica').fontSize(9).fillColor('black');
+
+  // Header row
   let x = left;
   headers.forEach(h => {
-    doc.text(h.label, x + 4, top + 4, { width: h.width - 8, align: 'left' });
+    doc.text(h.label, x + 4, startY + 3, { width: h.width - 8, align: 'left', lineBreak: false });
     x += h.width;
   });
-  // Header bottom line
-  doc.moveTo(left, top + rowH).lineTo(left + tableWidth, top + rowH).stroke();
+  doc.moveTo(left, startY + rowH).lineTo(left + tableWidth, startY + rowH).stroke();
+
   // Rows
-  let y = top + rowH;
+  let y = startY + rowH;
   rows.forEach(r => {
     let cx = left;
     r.forEach((cell, i) => {
       const w = headers[i]?.width ?? 100;
-      doc.text(String(cell ?? ''), cx + 4, y + 4, { width: w - 8, align: 'left' });
-      // vertical line
-      doc.moveTo(cx + w, y).lineTo(cx + w, y + rowH).stroke();
+      const txt = (cell ?? '').toString();
+      const align = (i === 1 || i === 2) ? 'right' : 'left'; // right-align qty/unit
+      doc.text(txt, cx + 4, y + 2, { width: w - 8, align, lineBreak: false });
+      doc.moveTo(cx + w, y).lineTo(cx + w, y + rowH).stroke(); // vertical line
       cx += w;
     });
-    // horizontal line
-    doc.moveTo(left, y + rowH).lineTo(left + tableWidth, y + rowH).stroke();
+    doc.moveTo(left, y + rowH).lineTo(left + tableWidth, y + rowH).stroke(); // horizontal line
     y += rowH;
+
     // page break guard
-    if (y + rowH > doc.page.height - 60) {
+    if (y + rowH > doc.page.height - bottomPad) {
       doc.addPage();
-      y = 50;
-      // redraw header on new page
+      y = 50; // top margin on new page
+      // redraw header
       let xx = left;
       headers.forEach(h => {
-        doc.text(h.label, xx + 4, y + 4, { width: h.width - 8, align: 'left' });
+        doc.text(h.label, xx + 4, y + 3, { width: h.width - 8, align: 'left', lineBreak: false });
         xx += h.width;
       });
       doc.moveTo(left, y + rowH).lineTo(left + tableWidth, y + rowH).stroke();
       y += rowH;
     }
   });
-  // set doc.y for subsequent content
-  doc.y = y + 10;
+  doc.y = y + 8; // small padding below table
 }
 
 /**
@@ -143,7 +145,7 @@ async function generateInventoryShortSummaryPDF(shopId) {
       const fileName = `inventory_short_${shopId.replace(/\D/g, '')}_${timestamp}.pdf`;            
       // COPILOT-PATCH-PDF-DIR-001: write to invoicesDir so HTTP /invoice route can find it
             const filePath = path.join(invoicesDir, fileName);
-            const doc = new PDFDocument({ margin: 50, size: 'A4' });
+            const doc = new PDFDocument({ margin: 36, size: 'A4' });
             const stream = fs.createWriteStream(filePath);
             // COPILOT-PATCH-PDF-FINISH-001: resolve only after stream 'finish'
             doc.pipe(stream);
@@ -157,7 +159,7 @@ async function generateInventoryShortSummaryPDF(shopId) {
       doc.x = 50;
       addSummaryBox(doc, 'Total Products', summary.totalProducts ?? 0, colors.primary);
       addSummaryBox(doc, 'Est. Stock Value', `₹${Number(summary.totalValue ?? 0).toFixed(2)}`, colors.success);
-      doc.moveDown(3);
+      doc.y += 10;
             
       // Table (simple)
       addSectionHeader(doc, 'Raw Inventory', colors.secondary);
@@ -172,19 +174,26 @@ async function generateInventoryShortSummaryPDF(shopId) {
         { label: 'Product',  width: 200 },
         { label: 'Quantity', width: 120 },
         { label: 'Units',    width: 120 },
-      ];
-            
-      const rows = invRecords
-          .map(r => {
-            const f = r.fields ?? r;
-            return [f.Product ?? '—', f.Quantity ?? 0, f.Units ?? 'pieces'];
-          })
-          .filter(row => {
-            const name = String(row[0] ?? '').toLowerCase();
-            if (!name || name.startsWith('list_')) return false;
-            // drop obvious command-like terms
-            return !['summary','daily summary','expiring','packet','packets','pieces','metre','metres','time','times'].includes(name);
-          });
+      ];            
+      
+    // Sanitize string fields & tighter filter
+          const sanitize = s =>
+            String(s ?? '')
+              .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // strip control chars
+              .replace(/\s+/g, ' ')
+              .trim();
+    
+          const rows = invRecords
+            .map(r => {
+              const f = r.fields ?? r;
+              return [sanitize(f.Product ?? '—'), sanitize(f.Quantity ?? 0), sanitize(f.Units ?? 'pieces')];
+            })
+            .filter(row => {
+              const name = String(row[0] ?? '').toLowerCase();
+              if (!name || name.startsWith('list_')) return false;
+              // drop obvious command-like terms
+              return !['summary','daily summary','expiring'].includes(name);
+            });
         addSimpleTable(doc, headers, rows);
 
       // Footer           
@@ -284,43 +293,34 @@ async function generateSalesRawTablePDF(shopId, period = 'today') {
 /**
  * Add a colored header section for reports
  */
-function addColoredHeader(doc, reportTitle, reportDate, shopId) {
-  // Header background
+function addColoredHeader(doc, reportTitle, reportDate, shopId) {  
+// Header bar
   doc.rect(0, 0, doc.page.width, 80).fill(colors.header);
-  
-  // Company name in white
+
+  // Text inside header
   doc.fillColor('white');
-  doc.fontSize(14);
-  doc.text('Inventory Management System', 50, 30, { align: 'center' });
-  
-  // GSTIN in white
-  doc.fontSize(10);
-  doc.text('GSTIN: 29ABCDE1234F1Z5', 50, 50, { align: 'center' });
-  
-  // Report title in white
-  doc.fontSize(18);
-  doc.text(reportTitle, 50, 70, { align: 'center' });
-  
-  // Shop ID and date in light gray
-  doc.fillColor(colors.light);
-  doc.fontSize(12);
-  doc.text(`Shop ID: ${shopId}`, 50, 95, { align: 'center' });
-  doc.text(`Report Period: ${reportDate}`, 50, 110, { align: 'center' });
-  
-  doc.moveDown(30);
+  doc.fontSize(14).text('Inventory Management System', 50, 30, { align: 'center' });
+  doc.fontSize(10).text('GSTIN: 29ABCDE1234F1Z5', 50, 46, { align: 'center' });
+  doc.fontSize(18).text(reportTitle, 50, 62, { align: 'center' });
+
+  // Shop/date below the header bar (predictable spacing, no moveDown)
+  doc.fillColor(colors.dark);
+  doc.fontSize(12).text(`Shop ID: ${shopId}`, 50, 90, { align: 'center' });
+  doc.text(`Report Period: ${reportDate}`, 50, 106, { align: 'center' });
+
+  // Explicit starting Y for content that follows
+  doc.y = 128;
 }
 
 /**
  * Add a colored section header
  */
-function addSectionHeader(doc, title, color = colors.primary) {
-  doc.rect(50, doc.y, doc.page.width - 100, 25).fill(color);
-  
-  doc.fillColor('white');
-  doc.fontSize(14);
-  doc.text(title, 50, doc.y + 15, { align: 'center' });
-  
-  doc.moveDown(35);
+function addSectionHeader(doc, title, color = colors.primary) {  
+const barY = doc.y;
+  doc.rect(50, barY, doc.page.width - 100, 22).fill(color);
+  doc.fillColor('white').fontSize(12).text(title, 50, barY + 5, { align: 'center' });
+  // pixel-based spacing (avoid lines-based moveDown)
+  doc.y = barY + 22 + 10;
 }
 
 /**
