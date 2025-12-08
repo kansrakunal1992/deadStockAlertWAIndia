@@ -878,8 +878,11 @@ function buildTranslationCacheKey(requestId, topic, flavor, lang, sourceText) {
 // "Nativeglish": keep helpful English anchors (units, brand words) in otherwise localized text.
 function nativeglishWrap(text, lang) {
     try {
-        let out = String(text ?? '');
-        const units = ['kg','kgs','g','gm','gms','ltr','ltrs','l','ml','packet','packets','piece','pieces','₹','Rs','MRP'];
+        let out = String(text ?? '');                
+        const units = [
+              'kg','kgs','g','gm','gms','ltr','ltrs','l','ml','packet','packets','piece','pieces',
+              '₹','Rs','MRP','Saamagrii\\.AI' // keep brand in Latin script everywhere
+            ];
         units.forEach(tok => {
             const rx = new RegExp(`\\b${tok}\\b`, 'gi');
             out = out.replace(rx, tok);
@@ -4863,26 +4866,42 @@ const SALES_AI_MANIFEST = Object.freeze({
 });
 
 // Deterministic native pricing (no MT). Uses ₹ and simple phrasing for en/hi/hi-latn.
-function composePricingAnswer(lang = 'en', flavor = 'tool_pricing') {
+async function composePricingAnswer(lang = 'en', flavor = 'tool_pricing', shopId = null) {
   const L = typeof canonicalizeLang === 'function' ? canonicalizeLang(lang) : String(lang ?? 'en').toLowerCase();
   const price = Number(process.env.PAID_PRICE_INR ?? 11);
-  const trialDays = Number(process.env.TRIAL_DAYS ?? 3);
+  const trialDays = Number(process.env.TRIAL_DAYS ?? 3);    
+  // Determine activation state (only include links when activated)
+    let activated = false;
+    try {
+      if (shopId && typeof getUserPreference === 'function') {
+        const pref = await getUserPreference(shopId);
+        const plan = String(pref?.plan ?? '').toLowerCase();
+        // Consider trial active only if not expired; paid is always active
+        if (plan === 'trial' || plan === 'paid') activated = true;
+      }
+    } catch { /* noop */ }
   const map = {
     en: {
-      tool: `Saamagrii.AI — free trial ${trialDays} days • paid plan ₹${price}/month`,
-      how: `Pay via Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) or ${process.env.PAYMENT_LINK}`
+      tool: `Saamagrii.AI — free trial ${trialDays} days • paid plan ₹${price}/month`,            
+      how: activated
+              ? `Pay via Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) or ${process.env.PAYMENT_LINK}`
+              : `` // no link pre-trial
     },
     hi: {
-      tool: `Saamagrii.AI — मुफ़्त ट्रायल ${trialDays} दिन • पेड प्लान ₹${price}/महीना`,
-      how: `पेमेंट: Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) या ${process.env.PAYMENT_LINK}`
+      tool: `Saamagrii.AI — मुफ़्त ट्रायल ${trialDays} दिन • पेड प्लान ₹${price}/महीना`,            
+      how: activated
+              ? `पेमेंट: Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) या ${process.env.PAYMENT_LINK}`
+              : `` // no link pre-trial
     },
     'hi-latn': {
-      tool: `Saamagrii.AI — free trial ${trialDays} din • paid plan ₹${price}/mahina`,
-      how: `Payment: Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) ya ${process.env.PAYMENT_LINK}`
+      tool: `Saamagrii.AI — free trial ${trialDays} din • paid plan ₹${price}/mahina`,            
+      how: activated
+              ? `Payment: Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) ya ${process.env.PAYMENT_LINK}`
+              : `` // no link pre-trial
     }
   };
   const dict = map[L] ?? map.en;
-  const msg = `${dict.tool}\n${dict.how}`;
+  const msg = dict.how ? `${dict.tool}\n${dict.how}` : `${dict.tool}`;
   return normalizeNumeralsToLatin(nativeglishWrap(msg, L));
 }
 
@@ -4997,7 +5016,7 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
     const flavor = (activated && /\b(inventory|stock|summary|sales)\b/i.test(q))
       ? 'inventory_pricing'
       : 'tool_pricing';
-    return composePricingAnswer(language, flavor);
+    return await composePricingAnswer(language, flavor, shopId);
   }
 
 const lang = canonicalizeLang(language ?? 'en');
@@ -5100,7 +5119,7 @@ const lang = canonicalizeLang(language ?? 'en');
   // --------------------------------------------------------------------------
   if (topic === 'pricing') {
     // Compose deterministic native copy (no MT, single-script)
-    const pricingText = composePricingAnswer(lang, pricingFlavor);
+    const pricingText = await composePricingAnswer(lang, pricingFlavor);
     return pricingText;
   }
    
@@ -5279,8 +5298,14 @@ const lang = canonicalizeLang(language ?? 'en');
 
         try {        
           const q = String(question || '').toLowerCase();                
-          const askedPrice = /(?:price|cost|charges?)/.test(q) || /(\bकीमत\b|\bमूल्य\b|\bदाम\b)/i.test(question) || /\b(kimat|daam|rate)\b/i.test(q);
-             if (INLINE_PAYTM_IN_PRICING && askedPrice && pricingFlavor === 'tool_pricing') {
+          const askedPrice = /(?:price|cost|charges?)/.test(q) || /(\bकीमत\b|\bमूल्य\b|\bदाम\b)/i.test(question) || /\b(kimat|daam|rate)\b/i.test(q);                     
+          let _activated = false;
+           try {
+             const pref = await getUserPreference(shopId);
+             const plan = String(pref?.plan ?? '').toLowerCase();
+             _activated = (plan === 'trial' || plan === 'paid');
+           } catch {}
+           if (_activated && INLINE_PAYTM_IN_PRICING && askedPrice && pricingFlavor === 'tool_pricing') {
             // Keep it short and language-neutral (numbers/brand names OK in single-script output)
             const line = `\nPaytm → ${PAYTM_NUMBER} (${PAYTM_NAME})`;
             out = out + line;
