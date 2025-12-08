@@ -4906,6 +4906,7 @@ async function composeAIOnboarding(language = 'en') {
       }
     );                      
     let body = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
+    console.log('[AI_RAW_OUTPUT]', { requestId: rid, rawAI: body });
     // Ensure localized text and clamp to single script even if MT blends lines       
     body = ensureLanguageOrFallback(body, lang);
     // Safe clamp: only normalize numerals; preserve Latin anchors/brand
