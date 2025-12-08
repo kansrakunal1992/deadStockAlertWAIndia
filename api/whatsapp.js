@@ -3287,15 +3287,6 @@ if (payload === 'confirm_paid') {
              
         case 'list_short_summary':                      
           await route('short summary');
-                // NEW: also generate Short Summary inventory PDF (additional)                                  
-                  try {
-                          const pdfPath = await generateInventoryShortSummaryPDF(shopIdTop);
-                          if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);
-                          const msg = await sendPDFViaWhatsApp(from, pdfPath);
-                          console.log(`[interactive:list] Inventory summary PDF sent. SID: ${msg?.sid}`);
-                        } catch (e) {
-                          console.warn('[interactive:list] inventory PDF send failed', e?.message);
-                        }
                 return true;
         
           case 'list_full_summary':
@@ -3306,15 +3297,6 @@ if (payload === 'confirm_paid') {
         
           case 'list_sales_week':                   
             await route('sales week');
-                  // NEW: also generate Sales (week) raw table PDF (additional)                                    
-                  try {
-                          const pdfPath = await generateSalesRawTablePDF(shopIdTop, 'week');
-                          if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);
-                          const msg = await sendPDFViaWhatsApp(from, pdfPath);
-                          console.log(`[interactive:list] Sales (week) PDF sent. SID: ${msg?.sid}`);
-                        } catch (e) {
-                          console.warn('[interactive:list] sales week PDF send failed', e?.message);
-                        }
                   return true;
         
           case 'list_expiring_30':
@@ -3329,15 +3311,6 @@ if (payload === 'confirm_paid') {
         
           case 'list_sales_day':                      
             await route('sales today');
-                  // NEW: also generate Sales (today) raw table PDF (additional)                                    
-                  try {
-                          const pdfPath = await generateSalesRawTablePDF(shopIdTop, 'today');
-                          if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);
-                          const msg = await sendPDFViaWhatsApp(from, pdfPath);
-                          console.log(`[interactive:list] Sales (today) PDF sent. SID: ${msg?.sid}`);
-                        } catch (e) {
-                          console.warn('[interactive:list] sales today PDF send failed', e?.message);
-                        }
                   return true;
         
           case 'list_top_month':
@@ -9838,6 +9811,13 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
     const stats = fs.statSync(pdfPath);
     console.log(`[sendPDFViaWhatsApp] PDF file size: ${stats.size} bytes`);
     
+    // COPILOT-PATCH-PDF-CAPTION-001: dynamic caption based on filename
+         const baseName = path.basename(pdfPath).toLowerCase();
+         const isInventory = baseName.startsWith('inventory_short_');
+         const isSalesRaw  = baseName.startsWith('sales_raw_');
+         const caption     = isInventory
+           ? 'Here is your inventory table:'
+           : (isSalesRaw ? 'Here is your sales table:' : 'Here is your invoice:');
     
     // Prefer public URL flow unless explicitly overridden
         if (!USE_BASE64_PDF) {
@@ -9847,7 +9827,7 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
           const publicUrl = `${normalizedBaseUrl}/invoice/${fileName}`;
           console.log(`[sendPDFViaWhatsApp] Using public URL: ${publicUrl}`);
           const msg = await client.messages.create({
-            body: 'Here is your invoice:',
+            body: caption,
             mediaUrl: [publicUrl],
             from: process.env.TWILIO_WHATSAPP_NUMBER,
             to: formattedTo
@@ -9860,7 +9840,7 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
         const pdfBase64 = pdfBuffer.toString('base64');
         console.log(`[sendPDFViaWhatsApp] Sending as base64 by override`);
         const msg64 = await client.messages.create({
-          body: 'Here is your invoice:',
+          body: caption,
           mediaUrl: [`data:application/pdf;base64,${pdfBase64}`],
           from: process.env.TWILIO_WHATSAPP_NUMBER,
           to: formattedTo
@@ -9879,8 +9859,14 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
       const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
       const publicUrl = `${normalizedBaseUrl}/invoice/${fileName}`;
       console.log(`[sendPDFViaWhatsApp] Trying fallback URL: ${publicUrl}`);
-      const fb = await client.messages.create({
-        body: 'Here is your invoice:',
+      const fb = await client.messages.create({             
+        body: (function () {
+                   // COPILOT-PATCH-PDF-CAPTION-001 (fallback path)
+                   const bn = fileName.toLowerCase();
+                   if (bn.startsWith('inventory_short_')) return 'Here is your inventory table:';
+                   if (bn.startsWith('sales_raw_'))      return 'Here is your sales table:';
+                   return 'Here is your invoice:';
+                 })(),
         mediaUrl: [publicUrl],
         from: process.env.TWILIO_WHATSAPP_NUMBER,
         to: formattedTo
