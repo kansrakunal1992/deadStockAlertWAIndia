@@ -1794,17 +1794,17 @@ const SWITCH_FALLBACKS = [
  * Keeps numerals, ₹, punctuation, and emojis.
  */
 function clampToSingleScript(text, lang) {
-    const s = String(text ?? '');
+    const s = String(text ?? '').normalize('NFC');
     const L = String(lang ?? 'en').toLowerCase();
-    const SCRIPT_RX = {
-        roman: /[\p{Script=Latin}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
-        hi: /[\p{Script=Devanagari}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
-        mr: /[\p{Script=Devanagari}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
-        bn: /[\p{Script=Bengali}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
-        ta: /[\p{Script=Tamil}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
-        te: /[\p{Script=Telugu}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
-        kn: /[\p{Script=Kannada}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
-        gu: /[\p{Script=Gujarati}\p{Number}\p{Symbol}\p{Punctuation}\s]/u
+    const SCRIPT_RX = {                
+        roman: /[\p{Script=Latin}\p{Number}\p{Symbol}\p{Punctuation}\p{Mark}\s]/u,
+            hi:    /[\p{Script=Devanagari}\p{Number}\p{Symbol}\p{Punctuation}\p{Mark}\s]/u,
+            mr:    /[\p{Script=Devanagari}\p{Number}\p{Symbol}\p{Punctuation}\p{Mark}\s]/u,
+            bn:    /[\p{Script=Bengali}\p{Number}\p{Symbol}\p{Punctuation}\p{Mark}\s]/u,
+            ta:    /[\p{Script=Tamil}\p{Number}\p{Symbol}\p{Punctuation}\p{Mark}\s]/u,
+            te:    /[\p{Script=Telugu}\p{Number}\p{Symbol}\p{Punctuation}\p{Mark}\s]/u,
+            kn:    /[\p{Script=Kannada}\p{Number}\p{Symbol}\p{Punctuation}\p{Mark}\s]/u,
+            gu:    /[\p{Script=Gujarati}\p{Number}\p{Symbol}\p{Punctuation}\p{Mark}\s]/u
     };
     const isRomanTarget = L === 'en' || L.endsWith('-latn');
     const rx = isRomanTarget ? SCRIPT_RX.roman : (SCRIPT_RX[L] ?? SCRIPT_RX.roman);
