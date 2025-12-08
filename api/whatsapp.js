@@ -2409,11 +2409,11 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                             } catch {}
                             await sendOnboardingBenefitsVideo(From, lang);
                             await new Promise(r => setTimeout(r, 300)); // breathing room before buttons
-                          } catch (e) {
-                            console.warn('[onboard-video] skipped', e?.message);
+                          } catch (err) {
+                            console.warn('[onboard-video] skipped', err?.message);
                           }
-                } catch (e) {
-                  console.warn('[welcome] intro send failed', { message: e?.message });
+                } catch (err) {
+                  console.warn('[welcome] intro send failed', { message: err?.message });
                 }
                 // 1) Prefer explicit env ContentSid if present — BUTTONS AFTER INTRO
                 if (ONBOARDING_QR_SID) {
@@ -2421,9 +2421,9 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                     const resp = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: ONBOARDING_QR_SID });
                     console.log('[onboard-qr] env ContentSid send OK', { sid: resp?.sid, to: toNumber, contentSid: ONBOARDING_QR_SID });
                     sent = true;
-                  } catch (e) {
-                    const status = e?.response?.status;
-                    const data = e?.response?.data;
+                  } catch (err) {
+                    const status = err?.response?.status;
+                    const data = err?.response?.data;
                     console.warn('[onboard-qr] env ContentSid send FAILED', { status, data, sid: ONBOARDING_QR_SID, to: toNumber });
                   }
                 }
@@ -2440,9 +2440,9 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                  } else {
                    console.warn('[onboard-qr] missing per-language onboardingQrSid after ensureLangTemplates', { lang: detectedLanguage });
                  }
-               } catch (e) {
-                 const status = e?.response?.status;
-                 const data   = e?.response?.data;
+               } catch (err) {
+                 const status = err?.response?.status;
+                 const data   = err?.response?.data;
                  console.warn('[onboard-qr] per-language send FAILED', { status, data, lang: detectedLanguage, to: toNumber });
                }
              }
@@ -2468,19 +2468,19 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
         if (sids?.listPickerSid) {
           try {
             await sendContentTemplateOnce({ toWhatsApp: toNumber, contentSid: sids.listPickerSid, requestId });
-          } catch (e) {
-            console.warn('[welcome] listPicker send failed', { status: e?.response?.status, data: e?.response?.data, sid: sids?.listPickerSid });
+          } catch (err) {
+            console.warn('[welcome] listPicker send failed', { status: err?.response?.status, data: err?.response?.data, sid: sids?.listPickerSid });
           }
         }
         if (sids?.quickReplySid) {
           try {
             await sendContentTemplateOnce({ toWhatsApp: toNumber, contentSid: sids.quickReplySid, requestId });
-          } catch (e) {
-            console.warn('[welcome] quickReply send failed', { status: e?.response?.status, data: e?.response?.data, sid: sids?.quickReplySid });
+          } catch (err) {
+            console.warn('[welcome] quickReply send failed', { status: err?.response?.status, data: err?.response?.data, sid: sids?.quickReplySid });
           }
         }
-      } catch (e) {
-        console.warn('[welcome] template orchestration failed', { status: e?.response?.status, data: e?.response?.data, message: e?.message });
+      } catch (err) {
+        console.warn('[welcome] template orchestration failed', { status: err?.response?.status, data: err?.response?.data, message: err?.message });
         // Localized fallback hint
         const fhLabel = getStaticLabel('fallbackHint', detectedLanguage);
         const fhText = await t(fhLabel, detectedLanguage ?? 'en', 'welcome-fallback');
