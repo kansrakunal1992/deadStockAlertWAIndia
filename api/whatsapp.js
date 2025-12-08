@@ -2391,10 +2391,11 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                 // Keep the label in native script directly in the source text; avoid quotes getting emptied.
                 const introSrc = await composeAIOnboarding('en'); // deterministic English skeleton
                 const introSrcWithLabel = introSrc.replace(/"Start Trial"/g, `"${startTrialLabel}"`);                                
-                // Translate once with canonical markers, then finalize and send.
-                      let introText = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + introSrcWithLabel, detectedLanguage ?? 'en', introKey);
+                // Translate once with canonical markers, then finalize and send.                                      
+                let introText = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + introSrcWithLabel, detectedLanguage ?? 'en', introKey);
+                      // NEW: localize quoted commands right after translation
+                      introText = localizeQuotedCommands(introText, detectedLanguage ?? 'en');
                       introText = nativeglishWrap(introText, detectedLanguage ?? 'en'); // keep anchors readable
-                      await sendMessageQueued(From, finalizeForSend(introText, detectedLanguage ?? 'en'));
                 await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
                           // >>> NEW: Send benefits video AFTER intro, BEFORE buttons (once per session gate already applies)
                           try {
@@ -3659,9 +3660,10 @@ async function sendOnboardingBenefitsVideo(From, lang = 'en') {
       console.warn('[onboard-benefits] encodeURI failed; using raw URL', { error: e?.message, rawUrl });
     }
     console.log('[onboard-benefits] media URL', { rawUrl, encodedUrl, lang: L });        
-    // Localized caption with canonical marker handled inside t(...), then stripped & finalized.
-        const captionEn = 'Manage stock & expiry on WhatsApp • Low-stock alerts • Smart reorder tips';
-        let caption = await t(NO_FOOTER_MARKER + captionEn, L, 'onboard-video-caption');
+    // Localized caption with canonical marker handled inside t(...), then stripped & finalized.            
+    let caption = await t(NO_FOOTER_MARKER + captionEn, L, 'onboard-video-caption');
+        // NEW: localize quoted commands for Hindi/Hinglish if any appear
+        caption = localizeQuotedCommands(caption, L);
         caption = finalizeForSend(caption, L);
     // Twilio send
     const accountSid   = process.env.ACCOUNT_SID;
@@ -4944,8 +4946,14 @@ async function composeAIOnboarding(language = 'en') {
     return body;
   } catch {
     // Deterministic, grounded fallback (no AI, no hallucination)        
-    const fallback = getLocalizedOnboarding(lang);
-    console.warn('AI_AGENT_FALLBACK_USED', { kind: 'onboarding' });
+    const fallback = getLocalizedOnboarding(lang);        
+    console.warn('AI_AGENT_FALLBACK_USED', {
+        kind: 'onboarding',
+        status: e?.response?.status,
+        code: e?.code,
+        message: e?.message,
+        more: e?.response?.data
+      });
     return fallback;
   }
 }
