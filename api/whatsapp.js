@@ -12,26 +12,6 @@ const path = require('path');
 const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
-// ==== BRAND PLACEHOLDER: survive script clamp =================================
-const __BRAND_TOKEN = '<<BRAND_SAAMAGRII_AI>>';
-function preserveAnchorsBeforeClamp(text) {
-  try {
-    let out = String(text ?? '');
-    // Normalize obvious Latin variants first (so placeholder applies once).
-    out = out.replace(/\bsaamagrii\s*\.?\s*ai\b/gi, 'Saamagrii.AI');
-    // Replace brand with a neutral placeholder that passes clamp filters
-    out = out.replace(/Saamagrii\.AI/gi, __BRAND_TOKEN);
-    return out;
-  } catch { return String(text ?? ''); }
-}
-function restoreAnchorsAfterClamp(text) {
-  try {
-    let out = String(text ?? '');
-    out = out.replace(new RegExp(__BRAND_TOKEN, 'g'), 'Saamagrii.AI');
-    return out;
-  } catch { return String(text ?? ''); }
-}
-
 // --------------------------------------------------------------------------------
 // NEW: Canonical language mapper (single source of truth)
 // --------------------------------------------------------------------------------
@@ -118,35 +98,6 @@ function __isStreakEnabled() {
   return enabled;
 }
 // === End flag helper ===
-
-// ==== BRAND ANCHOR: always render brand in Roman script ======================
-// Minimal helper to normalize any localized/variant forms to "Saamagrii.AI".
-// Handles:
-//  - exact/case-insensitive "Saamagrii.AI" (kept),
-//  - accidental space or missing dot: "Saamagrii AI" / "SaamagriiAI",
-//  - common Indic transliterations of "Saamagrii" followed by "AI".
-// Extendable without affecting other logic.
-function enforceBrandLatin(text) {
-  try {
-    let out = String(text ?? '');
-    // Normalize obvious Latin variants first
-    out = out
-      .replace(/\bsaamagrii\s*\.?\s*ai\b/gi, 'Saamagrii.AI')
-      .replace(/\bsaamagri\s*\.?\s*ai\b/gi, 'Saamagrii.AI'); // minor typo fallback
-    // Normalize common Indic transliterations + "AI"
-    const indicBrand = [
-      /सामग्री\s*\.?\s*ai/gi,     // Hindi (generic)
-      /सामाग्री\s*\.?\s*ai/gi,    // Hindi alt
-      /সামাগ্রি\s*\.?\s*ai/gi,    // Bengali
-      /சாமாக்ரி\s*\.?\s*ai/gi,    // Tamil
-      /సామాగ్రి\s*\.?\s*ai/gi,    // Telugu
-      /ಸಾಮಾಗ್ರಿ\s*\.?\s*ai/gi,    // Kannada
-      /સામગ્રી\s*\.?\s*ai/gi      // Gujarati
-    ];
-    indicBrand.forEach(rx => { out = out.replace(rx, 'Saamagrii.AI'); });
-    return out;
-  } catch { return String(text ?? ''); }
-}
 
 // --- Gamified streak nudge (gated; safe to leave even if counters aren't live) ---
 async function maybeSendStreakMessage(From, lang = 'en', tag = 'streak') {
@@ -681,14 +632,12 @@ function nativeglishWrap(text, lang) {
         let out = String(text ?? '');                
         const units = [
               'kg','kgs','g','gm','gms','ltr','ltrs','l','ml','packet','packets','piece','pieces',
-              '₹','Rs','MRP','Saamagrii\\.AI' // keep brand in Latin script everywhere
+              '₹','Rs','MRP'
             ];
         units.forEach(tok => {
             const rx = new RegExp(`\\b${tok}\\b`, 'gi');
             out = out.replace(rx, tok);
         });
-        
-        out = out.replace(/\bsaamagrii\s*\.?\s*ai\b/gi, 'Saamagrii.AI');
 
         // Detect mixed scripts before clamping
         const hasLatin = /\p{Script=Latin}/u.test(out);
@@ -697,10 +646,7 @@ function nativeglishWrap(text, lang) {
 
         if (hasMixedScripts && !isSafeAnchor(out)) {
             console.warn(`[nativeglishWrap] Mixed scripts detected for ${lang}, enforcing single script.`);                        
-            // Preserve brand through clamp
-                  const pre = preserveAnchorsBeforeClamp(out);
-                  const clamped = enforceSingleScript(pre, lang);
-                  return restoreAnchorsAfterClamp(clamped);
+            return enforceSingleScript(out, lang);
         }
 
         return out; // Keep original if single-script
@@ -1848,7 +1794,7 @@ const SWITCH_FALLBACKS = [
  * Keeps numerals, ₹, punctuation, and emojis.
  */
 function clampToSingleScript(text, lang) {
-    let s = preserveAnchorsBeforeClamp(text);
+    const s = String(text ?? '');
     const L = String(lang ?? 'en').toLowerCase();
     const SCRIPT_RX = {
         roman: /[\p{Script=Latin}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
@@ -1863,8 +1809,7 @@ function clampToSingleScript(text, lang) {
     const isRomanTarget = L === 'en' || L.endsWith('-latn');
     const rx = isRomanTarget ? SCRIPT_RX.roman : (SCRIPT_RX[L] ?? SCRIPT_RX.roman);
     const kept = [...s].filter(ch => rx.test(ch)).join('');        
-    const out = kept.replace(/\r?\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-    return restoreAnchorsAfterClamp(out);
+    return kept.replace(/\r?\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 // ===== Language detection re-entry guard + explicit tokens =====
@@ -2599,9 +2544,7 @@ function normalizeNumeralsToLatin(text) {
 // and normalize digits. Use this on all onboarding text sends.
 function finalizeForSend(text, lang) {    
   const stripped = stripMarkers(text);      
-  // Last-mile brand safety even when numerals-only normalization is used
-   const brandSafe = restoreAnchorsAfterClamp(preserveAnchorsBeforeClamp(stripped));
-   const oneScript = enforceSingleScriptSafe(brandSafe, lang);
+  const oneScript = enforceSingleScriptSafe(stripped, lang);
   const withNL    = fixNewlines1(oneScript);
   return normalizeNumeralsToLatin(withNL).trim();
 }
@@ -3898,10 +3841,7 @@ function isRomanTarget(lang) {
  */
 function enforceSingleScript(out, lang) {
     if (!SINGLE_SCRIPT_MODE) return out;        
-    // Preserve brand across the clamp
-      const pre = preserveAnchorsBeforeClamp(out);
-      const clamped = clampToSingleScript(pre, lang);
-      return restoreAnchorsAfterClamp(clamped);
+    return clampToSingleScript(out, lang);
 }
 
 // === Compact/Verbose message helpers (inline; no new files) ===
@@ -4926,25 +4866,25 @@ async function composePricingAnswer(lang = 'en', flavor = 'tool_pricing', shopId
     } catch { /* noop */ }
   const map = {
     en: {
-      tool: `Saamagrii.AI — free trial ${trialDays} days • paid plan ₹${price}/month`,            
+      tool: `Free trial is for ${trialDays} days • Post Trial, paid plan at ₹${price}/month`,            
       how: activated
               ? `Pay via Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) or ${process.env.PAYMENT_LINK}`
               : `` // no link pre-trial
     },
     hi: {
-      tool: `Saamagrii.AI — मुफ़्त ट्रायल ${trialDays} दिन • पेड प्लान ₹${price}/महीना`,            
+      tool: `मुफ़्त ट्रायल ${trialDays} दिन • पेड प्लान ₹${price}/महीना`,            
       how: activated
               ? `पेमेंट: Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) या ${process.env.PAYMENT_LINK}`
               : `` // no link pre-trial
     },
     'hi-latn': {
-      tool: `Saamagrii.AI — free trial ${trialDays} din • paid plan ₹${price}/mahina`,            
+      tool: `Free trial ${trialDays} din • Trial ke baad, paid plan ₹${price}/mahina`,            
       how: activated
               ? `Payment: Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) ya ${process.env.PAYMENT_LINK}`
               : `` // no link pre-trial
     }
   };
-  const dict = map[L] ?? map.en;
+  const dict = map[L] ?? map.en;    
   const msg = dict.how ? `${dict.tool}\n${dict.how}` : `${dict.tool}`;
   return normalizeNumeralsToLatin(nativeglishWrap(msg, L));
 }
