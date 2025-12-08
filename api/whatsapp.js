@@ -1458,7 +1458,7 @@ const responseTimes = {
 };
 const authCache = new Map();
 const { processShopSummary } = require('../dailySummary');
-const { generateInvoicePDF } = require('../pdfGenerator');
+const { generateInvoicePDF, generateInventoryShortSummaryPDF, generateSalesRawTablePDF } = require('../pdfGenerator'); // +new generators
 const { getShopDetails } = require('../database');
 const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS || 12000);
 const languageNames = {
@@ -2949,7 +2949,17 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
         if (prefLP?.success && prefLP.language) btnLang = String(prefLP.language).toLowerCase();
       } catch (_) {}
       const cmd = (payload === 'instant_summary') ? 'short summary' : 'full summary';
-      await handleQuickQueryEN(cmd, from, btnLang, 'btn');
+      await handleQuickQueryEN(cmd, from, btnLang, 'btn');            
+      // NEW: also generate Inventory Short Summary PDF for 'short summary' button
+          if (cmd === 'short summary') {
+            try {
+              const pdfPath = await generateInventoryShortSummaryPDF(shopIdTop);
+              // Attach or notify (your existing media-sender can pick file path like invoice)
+              await sendMessageQueued(from, `📄 Inventory summary PDF is ready.\nPath: ${pdfPath}`);
+            } catch (e) {
+              console.warn('[interactive] inventory PDF failed', e?.message);
+            }
+          }
       return true;
     }
 
@@ -3273,8 +3283,16 @@ if (payload === 'confirm_paid') {
     const route = (cmd) => handleQuickQueryEN(cmd, from, lpLang, 'lp');
    switch (listId) {
              
-        case 'list_short_summary':
-            await route('short summary'); return true;
+        case 'list_short_summary':                      
+          await route('short summary');
+                // NEW: also generate Short Summary inventory PDF (additional)
+                try {
+                  const pdfPath = await generateInventoryShortSummaryPDF(shopIdTop);
+                  await sendMessageQueued(from, `📄 Inventory summary PDF is ready.\nPath: ${pdfPath}`);
+                } catch (e) {
+                  console.warn('[interactive:list] inventory PDF failed', e?.message);
+                }
+                return true;
         
           case 'list_full_summary':
             await route('full summary'); return true;
@@ -3282,8 +3300,16 @@ if (payload === 'confirm_paid') {
           case 'list_reorder_suggest':
             await route('reorder suggestions'); return true;
         
-          case 'list_sales_week':
-            await route('sales week'); return true;
+          case 'list_sales_week':                   
+            await route('sales week');
+                  // NEW: also generate Sales (week) raw table PDF (additional)
+                  try {
+                    const pdfPath = await generateSalesRawTablePDF(shopIdTop, 'week');
+                    await sendMessageQueued(from, `📄 Sales (week) PDF is ready.\nPath: ${pdfPath}`);
+                  } catch (e) {
+                    console.warn('[interactive:list] sales week PDF failed', e?.message);
+                  }
+                  return true;
         
           case 'list_expiring_30':
             await route('expiring 30'); return true;
@@ -3295,8 +3321,16 @@ if (payload === 'confirm_paid') {
           case 'list_expiring': // your "Expiring 0"
             await route('expiring 0'); return true;
         
-          case 'list_sales_day':
-            await route('sales today'); return true;
+          case 'list_sales_day':                      
+            await route('sales today');
+                  // NEW: also generate Sales (today) raw table PDF (additional)
+                  try {
+                    const pdfPath = await generateSalesRawTablePDF(shopIdTop, 'today');
+                    await sendMessageQueued(from, `📄 Sales (today) PDF is ready.\nPath: ${pdfPath}`);
+                  } catch (e) {
+                    console.warn('[interactive:list] sales today PDF failed', e?.message);
+                  }
+                  return true;
         
           case 'list_top_month':
             await route('top 5 products month'); return true;
@@ -4650,7 +4684,16 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
           const orders = (s?.orders ?? s?.bills ?? s?.count ?? null);
           const items  = (s?.totalItems ?? null);
           const tail   = orders ? ` • ${orders} orders` : (items ? ` • ${items} items` : '');
-          await sendTagged(noClamp(`🧾 Sales ${capitalize(period)}\n₹${amt}${tail}`));
+          await sendTagged(noClamp(`🧾 Sales ${capitalize(period)}\n₹${amt}${tail}`));                    
+          // NEW: also generate Sales raw table PDF (additional) for today/week
+              try {
+                if (period === 'today' || period === 'week') {
+                  const pdfPath = await generateSalesRawTablePDF(shopId, period);
+                  await sendMessageQueued(From, `📄 Sales (${period}) PDF is ready.\nPath: ${pdfPath}`);
+                }
+              } catch (e) {
+                console.warn('[qq] sales PDF failed', e?.message);
+              }
         } catch (_) {
           await sendTagged(noClamp(`🧾 Sales ${capitalize(period)} — snapshot unavailable.`));
         }
