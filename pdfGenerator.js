@@ -81,37 +81,55 @@ const colors = {
 };
 
 /**
- * Generic "Airtable-style" table renderer
- * headers: [{label, width}], rows: array of arrays (text per column)
+ * COPILOT-PATCH-PDF-TABLE-001
+ * Simple grid table renderer (no fills, fixed row height, grid lines).
+ * headers: [{label, width}], rows: array of arrays
  */
-function addAirtableStyleTable(doc, headers, rows) {
-  // Header band
-  const startY = doc.y;
-  doc.rect(50, startY, doc.page.width - 100, 25).fill(colors.tableHeader);
-  doc.fillColor('white').fontSize(9);
-  let x = 55;
+function addSimpleTable(doc, headers, rows) {
+  const left = 50;
+  const top = doc.y;
+  const tableWidth = doc.page.width - 100;
+  const rowH = 20;
+  // Use a clean font for alignment
+  doc.fontSize(10).fillColor('black');
+  // Header line
+  let x = left;
   headers.forEach(h => {
-    doc.text(h.label, x, startY + 15, { width: h.width });
+    doc.text(h.label, x + 4, top + 4, { width: h.width - 8, align: 'left' });
     x += h.width;
   });
-  doc.moveDown(2);
-  // Rows (alternating fill)
-  let isEven = false;
+  // Header bottom line
+  doc.moveTo(left, top + rowH).lineTo(left + tableWidth, top + rowH).stroke();
+  // Rows
+  let y = top + rowH;
   rows.forEach(r => {
-    const rowY = doc.y;
-    const rowColor = isEven ? colors.evenRow : colors.oddRow;
-    doc.rect(50, rowY, doc.page.width - 100, 22).fill(rowColor);
-    doc.fillColor(colors.dark).fontSize(9);
-    let colX = 55;
+    let cx = left;
     r.forEach((cell, i) => {
-      const width = headers[i]?.width ?? 100;
-      doc.text(String(cell ?? ''), colX, rowY + 13, { width });
-      colX += width;
+      const w = headers[i]?.width ?? 100;
+      doc.text(String(cell ?? ''), cx + 4, y + 4, { width: w - 8, align: 'left' });
+      // vertical line
+      doc.moveTo(cx + w, y).lineTo(cx + w, y + rowH).stroke();
+      cx += w;
     });
-    doc.moveDown(1.8);
-    isEven = !isEven;
+    // horizontal line
+    doc.moveTo(left, y + rowH).lineTo(left + tableWidth, y + rowH).stroke();
+    y += rowH;
+    // page break guard
+    if (y + rowH > doc.page.height - 60) {
+      doc.addPage();
+      y = 50;
+      // redraw header on new page
+      let xx = left;
+      headers.forEach(h => {
+        doc.text(h.label, xx + 4, y + 4, { width: h.width - 8, align: 'left' });
+        xx += h.width;
+      });
+      doc.moveTo(left, y + rowH).lineTo(left + tableWidth, y + rowH).stroke();
+      y += rowH;
+    }
   });
-  doc.moveDown(2);
+  // set doc.y for subsequent content
+  doc.y = y + 10;
 }
 
 /**
@@ -140,9 +158,10 @@ async function generateInventoryShortSummaryPDF(shopId) {
       addSummaryBox(doc, 'Total Products', summary.totalProducts ?? 0, colors.primary);
       addSummaryBox(doc, 'Est. Stock Value', `₹${Number(summary.totalValue ?? 0).toFixed(2)}`, colors.success);
       doc.moveDown(3);
+            
+      // Table (simple)
+      addSectionHeader(doc, 'Raw Inventory', colors.secondary);
 
-      // Table
-      addSectionHeader(doc, 'Raw Inventory (Airtable format)', colors.secondary);
       let invRecords = [];
       try {
         const res = await getCurrentInventory(shopId);
@@ -154,11 +173,19 @@ async function generateInventoryShortSummaryPDF(shopId) {
         { label: 'Quantity', width: 120 },
         { label: 'Units',    width: 120 },
       ];
-      const rows = invRecords.map(r => {
-        const f = r.fields ?? r; // Airtable row shape
-        return [f.Product ?? '—', f.Quantity ?? 0, f.Units ?? 'pieces'];
-      });
-      addAirtableStyleTable(doc, headers, rows);
+            
+      const rows = invRecords
+          .map(r => {
+            const f = r.fields ?? r;
+            return [f.Product ?? '—', f.Quantity ?? 0, f.Units ?? 'pieces'];
+          })
+          .filter(row => {
+            const name = String(row[0] ?? '').toLowerCase();
+            if (!name || name.startsWith('list_')) return false;
+            // drop obvious command-like terms
+            return !['summary','daily summary','expiring','packet','packets','pieces','metre','metres','time','times'].includes(name);
+          });
+        addSimpleTable(doc, headers, rows);
 
       // Footer           
       doc.end();
@@ -213,7 +240,7 @@ async function generateSalesRawTablePDF(shopId, period = 'today') {
       } catch (_) {}
 
       // Table
-      addSectionHeader(doc, 'Raw Sales (Airtable format)', colors.secondary);
+      addSectionHeader(doc, 'Raw Sales', colors.secondary);
       const headers = [
         { label: 'SaleDate (IST)', width: 140 },
         { label: 'Product',        width: 150 },
@@ -232,7 +259,7 @@ async function generateSalesRawTablePDF(shopId, period = 'today') {
                                 : moment(saleISO || new Date()).format('DD/MM/YYYY HH:mm');
         return [saleIST, f.Product ?? '—', qty, f.Units ?? 'pieces', rate.toFixed(2), val.toFixed(2)];
       });
-      addAirtableStyleTable(doc, headers, rows);
+      addSimpleTable(doc, headers, rows);
 
       // Footer
       addColoredFooter(doc);            
