@@ -12,6 +12,26 @@ const path = require('path');
 const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
+// ==== BRAND PLACEHOLDER: survive script clamp =================================
+const __BRAND_TOKEN = '<<BRAND_SAAMAGRII_AI>>';
+function preserveAnchorsBeforeClamp(text) {
+  try {
+    let out = String(text ?? '');
+    // Normalize obvious Latin variants first (so placeholder applies once).
+    out = out.replace(/\bsaamagrii\s*\.?\s*ai\b/gi, 'Saamagrii.AI');
+    // Replace brand with a neutral placeholder that passes clamp filters
+    out = out.replace(/Saamagrii\.AI/gi, __BRAND_TOKEN);
+    return out;
+  } catch { return String(text ?? ''); }
+}
+function restoreAnchorsAfterClamp(text) {
+  try {
+    let out = String(text ?? '');
+    out = out.replace(new RegExp(__BRAND_TOKEN, 'g'), 'Saamagrii.AI');
+    return out;
+  } catch { return String(text ?? ''); }
+}
+
 // --------------------------------------------------------------------------------
 // NEW: Canonical language mapper (single source of truth)
 // --------------------------------------------------------------------------------
@@ -668,7 +688,7 @@ function nativeglishWrap(text, lang) {
             out = out.replace(rx, tok);
         });
         
-        out = enforceBrandLatin(out);
+        out = out.replace(/\bsaamagrii\s*\.?\s*ai\b/gi, 'Saamagrii.AI');
 
         // Detect mixed scripts before clamping
         const hasLatin = /\p{Script=Latin}/u.test(out);
@@ -676,8 +696,11 @@ function nativeglishWrap(text, lang) {
         const hasMixedScripts = hasLatin && hasNativeScript;
 
         if (hasMixedScripts && !isSafeAnchor(out)) {
-            console.warn(`[nativeglishWrap] Mixed scripts detected for ${lang}, enforcing single script.`);
-            return enforceSingleScript(out, lang);
+            console.warn(`[nativeglishWrap] Mixed scripts detected for ${lang}, enforcing single script.`);                        
+            // Preserve brand through clamp
+                  const pre = preserveAnchorsBeforeClamp(out);
+                  const clamped = enforceSingleScript(pre, lang);
+                  return restoreAnchorsAfterClamp(clamped);
         }
 
         return out; // Keep original if single-script
@@ -1825,7 +1848,7 @@ const SWITCH_FALLBACKS = [
  * Keeps numerals, ₹, punctuation, and emojis.
  */
 function clampToSingleScript(text, lang) {
-    const s = String(text ?? '');
+    let s = preserveAnchorsBeforeClamp(text);
     const L = String(lang ?? 'en').toLowerCase();
     const SCRIPT_RX = {
         roman: /[\p{Script=Latin}\p{Number}\p{Symbol}\p{Punctuation}\s]/u,
@@ -1839,8 +1862,9 @@ function clampToSingleScript(text, lang) {
     };
     const isRomanTarget = L === 'en' || L.endsWith('-latn');
     const rx = isRomanTarget ? SCRIPT_RX.roman : (SCRIPT_RX[L] ?? SCRIPT_RX.roman);
-    const kept = [...s].filter(ch => rx.test(ch)).join('');
-    return kept.replace(/\r?\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    const kept = [...s].filter(ch => rx.test(ch)).join('');        
+    const out = kept.replace(/\r?\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    return restoreAnchorsAfterClamp(out);
 }
 
 // ===== Language detection re-entry guard + explicit tokens =====
@@ -2574,10 +2598,10 @@ function normalizeNumeralsToLatin(text) {
 // Finalize text for sending: strip any markers, enforce single-script, fix newlines,
 // and normalize digits. Use this on all onboarding text sends.
 function finalizeForSend(text, lang) {    
-  const stripped = stripMarkers(text);
-    // NEW: enforce brand Latin before any clamp/normalization
-    const brandSafe = enforceBrandLatin(stripped);
-    const oneScript = enforceSingleScriptSafe(brandSafe, lang);
+  const stripped = stripMarkers(text);      
+  // Last-mile brand safety even when numerals-only normalization is used
+   const brandSafe = restoreAnchorsAfterClamp(preserveAnchorsBeforeClamp(stripped));
+   const oneScript = enforceSingleScriptSafe(brandSafe, lang);
   const withNL    = fixNewlines1(oneScript);
   return normalizeNumeralsToLatin(withNL).trim();
 }
@@ -3873,8 +3897,11 @@ function isRomanTarget(lang) {
  * Enforce strict single-script compliance.
  */
 function enforceSingleScript(out, lang) {
-    if (!SINGLE_SCRIPT_MODE) return out;
-    return clampToSingleScript(out, lang);
+    if (!SINGLE_SCRIPT_MODE) return out;        
+    // Preserve brand across the clamp
+      const pre = preserveAnchorsBeforeClamp(out);
+      const clamped = clampToSingleScript(pre, lang);
+      return restoreAnchorsAfterClamp(clamped);
 }
 
 // === Compact/Verbose message helpers (inline; no new files) ===
