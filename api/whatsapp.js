@@ -99,6 +99,35 @@ function __isStreakEnabled() {
 }
 // === End flag helper ===
 
+// ==== BRAND ANCHOR: always render brand in Roman script ======================
+// Minimal helper to normalize any localized/variant forms to "Saamagrii.AI".
+// Handles:
+//  - exact/case-insensitive "Saamagrii.AI" (kept),
+//  - accidental space or missing dot: "Saamagrii AI" / "SaamagriiAI",
+//  - common Indic transliterations of "Saamagrii" followed by "AI".
+// Extendable without affecting other logic.
+function enforceBrandLatin(text) {
+  try {
+    let out = String(text ?? '');
+    // Normalize obvious Latin variants first
+    out = out
+      .replace(/\bsaamagrii\s*\.?\s*ai\b/gi, 'Saamagrii.AI')
+      .replace(/\bsaamagri\s*\.?\s*ai\b/gi, 'Saamagrii.AI'); // minor typo fallback
+    // Normalize common Indic transliterations + "AI"
+    const indicBrand = [
+      /सामग्री\s*\.?\s*ai/gi,     // Hindi (generic)
+      /सामाग्री\s*\.?\s*ai/gi,    // Hindi alt
+      /সামাগ্রি\s*\.?\s*ai/gi,    // Bengali
+      /சாமாக்ரி\s*\.?\s*ai/gi,    // Tamil
+      /సామాగ్రి\s*\.?\s*ai/gi,    // Telugu
+      /ಸಾಮಾಗ್ರಿ\s*\.?\s*ai/gi,    // Kannada
+      /સામગ્રી\s*\.?\s*ai/gi      // Gujarati
+    ];
+    indicBrand.forEach(rx => { out = out.replace(rx, 'Saamagrii.AI'); });
+    return out;
+  } catch { return String(text ?? ''); }
+}
+
 // --- Gamified streak nudge (gated; safe to leave even if counters aren't live) ---
 async function maybeSendStreakMessage(From, lang = 'en', tag = 'streak') {
   // Double gate: respect env flag here too
@@ -889,6 +918,8 @@ function nativeglishWrap(text, lang) {
             const rx = new RegExp(`\\b${tok}\\b`, 'gi');
             out = out.replace(rx, tok);
         });
+        
+        out = enforceBrandLatin(out);
 
         // Detect mixed scripts before clamping
         const hasLatin = /\p{Script=Latin}/u.test(out);
@@ -2560,9 +2591,11 @@ function normalizeNumeralsToLatin(text) {
 // ANCHOR: UNIQ:FINALIZE-SEND-001
 // Finalize text for sending: strip any markers, enforce single-script, fix newlines,
 // and normalize digits. Use this on all onboarding text sends.
-function finalizeForSend(text, lang) {
-  const stripped  = stripMarkers(text);
-  const oneScript = enforceSingleScriptSafe(stripped, lang);
+function finalizeForSend(text, lang) {    
+  const stripped = stripMarkers(text);
+    // NEW: enforce brand Latin before any clamp/normalization
+    const brandSafe = enforceBrandLatin(stripped);
+    const oneScript = enforceSingleScriptSafe(brandSafe, lang);
   const withNL    = fixNewlines1(oneScript);
   return normalizeNumeralsToLatin(withNL).trim();
 }
