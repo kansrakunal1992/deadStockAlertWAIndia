@@ -655,23 +655,36 @@ async function parseMultipleUpdates(reqOrText) {
   return updates;
 }
 
-// SAFE SHIM: ensure nativeglishWrap exists even if bundling misses the real one
-if (typeof nativeglishWrap !== 'function') {
-   function nativeglishWrap(text, lang) {
-     try {
-       const anchors = ['kg','kgs','g','gm','gms','ltr','ltrs','l','ml','packet','packets','piece','pieces','₹','Rs','MRP'];
-       let out = String(text ?? '');
-       anchors.forEach(tok => {
-         const rx = new RegExp(`\\b${tok}\\b`, 'gi');
-         out = out.replace(rx, tok);
-       });
-       // NEW: enforce single-script after anchors
-       return enforceSingleScript(out, lang);
-     } catch {
-       return String(text ?? '');
-     }
-   }
- }
+// "Nativeglish": keep helpful English anchors (units, brand words) in otherwise localized text.
+function nativeglishWrap(text, lang) {
+    try {
+        let out = String(text ?? '');                
+        const units = [
+              'kg','kgs','g','gm','gms','ltr','ltrs','l','ml','packet','packets','piece','pieces',
+              '₹','Rs','MRP','Saamagrii\\.AI' // keep brand in Latin script everywhere
+            ];
+        units.forEach(tok => {
+            const rx = new RegExp(`\\b${tok}\\b`, 'gi');
+            out = out.replace(rx, tok);
+        });
+        
+        out = enforceBrandLatin(out);
+
+        // Detect mixed scripts before clamping
+        const hasLatin = /\p{Script=Latin}/u.test(out);
+        const hasNativeScript = /[\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Gujarati}\p{Script=Kannada}]/u.test(out);
+        const hasMixedScripts = hasLatin && hasNativeScript;
+
+        if (hasMixedScripts && !isSafeAnchor(out)) {
+            console.warn(`[nativeglishWrap] Mixed scripts detected for ${lang}, enforcing single script.`);
+            return enforceSingleScript(out, lang);
+        }
+
+        return out; // Keep original if single-script
+    } catch {
+        return String(text ?? '');
+    }
+}
 
 /**
  * composeDemoByLanguage(lang)
@@ -904,37 +917,6 @@ function buildTranslationCacheKey(requestId, topic, flavor, lang, sourceText) {
   const flv = String(flavor ?? 'n/a').toLowerCase();
   const L   = String(lang ?? 'en').toLowerCase();
   return `${rid}::${tpc}::${flv}::${L}::${shortHash(sourceText ?? '')}`;
-}
-
-// "Nativeglish": keep helpful English anchors (units, brand words) in otherwise localized text.
-function nativeglishWrap(text, lang) {
-    try {
-        let out = String(text ?? '');                
-        const units = [
-              'kg','kgs','g','gm','gms','ltr','ltrs','l','ml','packet','packets','piece','pieces',
-              '₹','Rs','MRP','Saamagrii\\.AI' // keep brand in Latin script everywhere
-            ];
-        units.forEach(tok => {
-            const rx = new RegExp(`\\b${tok}\\b`, 'gi');
-            out = out.replace(rx, tok);
-        });
-        
-        out = enforceBrandLatin(out);
-
-        // Detect mixed scripts before clamping
-        const hasLatin = /\p{Script=Latin}/u.test(out);
-        const hasNativeScript = /[\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Gujarati}\p{Script=Kannada}]/u.test(out);
-        const hasMixedScripts = hasLatin && hasNativeScript;
-
-        if (hasMixedScripts && !isSafeAnchor(out)) {
-            console.warn(`[nativeglishWrap] Mixed scripts detected for ${lang}, enforcing single script.`);
-            return enforceSingleScript(out, lang);
-        }
-
-        return out; // Keep original if single-script
-    } catch {
-        return String(text ?? '');
-    }
 }
 
 // ---- NEW: helper to sanitize after late string edits (e.g., replacing labels)
