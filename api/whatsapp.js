@@ -2950,16 +2950,18 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
       } catch (_) {}
       const cmd = (payload === 'instant_summary') ? 'short summary' : 'full summary';
       await handleQuickQueryEN(cmd, from, btnLang, 'btn');            
-      // NEW: also generate Inventory Short Summary PDF for 'short summary' button
+      // NEW: also generate Inventory Short Summary PDF for 'short summary' button                   
           if (cmd === 'short summary') {
-            try {
-              const pdfPath = await generateInventoryShortSummaryPDF(shopIdTop);
-              // Attach or notify (your existing media-sender can pick file path like invoice)
-              await sendMessageQueued(from, `📄 Inventory summary PDF is ready.\nPath: ${pdfPath}`);
-            } catch (e) {
-              console.warn('[interactive] inventory PDF failed', e?.message);
-            }
-          }
+                try {
+                  const pdfPath = await generateInventoryShortSummaryPDF(shopIdTop);
+                  // Optional safety check (mirrors your invoice flow):
+                  if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);
+                  const msg = await sendPDFViaWhatsApp(from, pdfPath);
+                  console.log(`[interactive] Inventory summary PDF sent. SID: ${msg?.sid}`);
+                } catch (e) {
+                  console.warn('[interactive] inventory PDF send failed', e?.message);
+                }
+              }
       return true;
     }
 
@@ -3285,13 +3287,15 @@ if (payload === 'confirm_paid') {
              
         case 'list_short_summary':                      
           await route('short summary');
-                // NEW: also generate Short Summary inventory PDF (additional)
-                try {
-                  const pdfPath = await generateInventoryShortSummaryPDF(shopIdTop);
-                  await sendMessageQueued(from, `📄 Inventory summary PDF is ready.\nPath: ${pdfPath}`);
-                } catch (e) {
-                  console.warn('[interactive:list] inventory PDF failed', e?.message);
-                }
+                // NEW: also generate Short Summary inventory PDF (additional)                                  
+                  try {
+                          const pdfPath = await generateInventoryShortSummaryPDF(shopIdTop);
+                          if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);
+                          const msg = await sendPDFViaWhatsApp(from, pdfPath);
+                          console.log(`[interactive:list] Inventory summary PDF sent. SID: ${msg?.sid}`);
+                        } catch (e) {
+                          console.warn('[interactive:list] inventory PDF send failed', e?.message);
+                        }
                 return true;
         
           case 'list_full_summary':
@@ -3302,13 +3306,15 @@ if (payload === 'confirm_paid') {
         
           case 'list_sales_week':                   
             await route('sales week');
-                  // NEW: also generate Sales (week) raw table PDF (additional)
+                  // NEW: also generate Sales (week) raw table PDF (additional)                                    
                   try {
-                    const pdfPath = await generateSalesRawTablePDF(shopIdTop, 'week');
-                    await sendMessageQueued(from, `📄 Sales (week) PDF is ready.\nPath: ${pdfPath}`);
-                  } catch (e) {
-                    console.warn('[interactive:list] sales week PDF failed', e?.message);
-                  }
+                          const pdfPath = await generateSalesRawTablePDF(shopIdTop, 'week');
+                          if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);
+                          const msg = await sendPDFViaWhatsApp(from, pdfPath);
+                          console.log(`[interactive:list] Sales (week) PDF sent. SID: ${msg?.sid}`);
+                        } catch (e) {
+                          console.warn('[interactive:list] sales week PDF send failed', e?.message);
+                        }
                   return true;
         
           case 'list_expiring_30':
@@ -3323,13 +3329,15 @@ if (payload === 'confirm_paid') {
         
           case 'list_sales_day':                      
             await route('sales today');
-                  // NEW: also generate Sales (today) raw table PDF (additional)
+                  // NEW: also generate Sales (today) raw table PDF (additional)                                    
                   try {
-                    const pdfPath = await generateSalesRawTablePDF(shopIdTop, 'today');
-                    await sendMessageQueued(from, `📄 Sales (today) PDF is ready.\nPath: ${pdfPath}`);
-                  } catch (e) {
-                    console.warn('[interactive:list] sales today PDF failed', e?.message);
-                  }
+                          const pdfPath = await generateSalesRawTablePDF(shopIdTop, 'today');
+                          if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);
+                          const msg = await sendPDFViaWhatsApp(from, pdfPath);
+                          console.log(`[interactive:list] Sales (today) PDF sent. SID: ${msg?.sid}`);
+                        } catch (e) {
+                          console.warn('[interactive:list] sales today PDF send failed', e?.message);
+                        }
                   return true;
         
           case 'list_top_month':
@@ -4318,7 +4326,19 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
         }
     
         const body = `📊 Short Summary\n${lines.join('\n') || '—'}`;
-    await sendTagged(body);
+    await sendTagged(body);   
+    // NEW: Attach the Inventory Short Summary PDF (same UX as invoice)
+      try {
+        const pdfPath = await generateInventoryShortSummaryPDF(shopId);
+        // Optional: mirror your invoice safety check
+        if (typeof fs !== 'undefined' && fs.existsSync && !fs.existsSync(pdfPath)) {
+          throw new Error(`Generated PDF file not found: ${pdfPath}`);
+        }
+        const msg = await sendPDFViaWhatsApp(From, pdfPath); // From is 'whatsapp:<shopId>'
+        console.log(`[qq] Inventory summary PDF sent. SID: ${msg?.sid}`);
+      } catch (e) {
+        console.warn('[qq] inventory PDF send failed', e?.message);
+      }
     return true;
   }
   if (cmd === 'full summary') {
@@ -4684,15 +4704,16 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
           const orders = (s?.orders ?? s?.bills ?? s?.count ?? null);
           const items  = (s?.totalItems ?? null);
           const tail   = orders ? ` • ${orders} orders` : (items ? ` • ${items} items` : '');
-          await sendTagged(noClamp(`🧾 Sales ${capitalize(period)}\n₹${amt}${tail}`));                    
-          // NEW: also generate Sales raw table PDF (additional) for today/week
-              try {
+          await sendTagged(noClamp(`🧾 Sales ${capitalize(period)}\n₹${amt}${tail}`));                                        
+          try {
                 if (period === 'today' || period === 'week') {
                   const pdfPath = await generateSalesRawTablePDF(shopId, period);
-                  await sendMessageQueued(From, `📄 Sales (${period}) PDF is ready.\nPath: ${pdfPath}`);
+                  if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);
+                  const msg = await sendPDFViaWhatsApp(From, pdfPath);
+                  console.log(`[qq] Sales (${period}) PDF sent. SID: ${msg?.sid}`);
                 }
               } catch (e) {
-                console.warn('[qq] sales PDF failed', e?.message);
+                console.warn('[qq] sales PDF send failed', e?.message);
               }
         } catch (_) {
           await sendTagged(noClamp(`🧾 Sales ${capitalize(period)} — snapshot unavailable.`));
