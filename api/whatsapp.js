@@ -2523,14 +2523,21 @@ function normalizeNumeralsToLatin(text) {
   );
 }
 
-// ANCHOR: UNIQ:FINALIZE-SEND-001
+function _stripLeadingPunct(s) {
+  // Remove common leading whitespace and punctuation that sometimes appear
+  // when models start with a dot, quotes, or dash. Keeps emojis & letters.
+  // Examples stripped: " . ” ‘ ` — - "
+  return String(s ?? '').replace(/^[\s"'`().,[\]{}:;!—\-]+/, '');
+}
+
 // Finalize text for sending: strip any markers, enforce single-script, fix newlines,
 // and normalize digits. Use this on all onboarding text sends.
 function finalizeForSend(text, lang) {
   const stripped  = stripMarkers(text);
   const oneScript = enforceSingleScriptSafe(stripped, lang);
   const withNL    = fixNewlines1(oneScript);
-  return normalizeNumeralsToLatin(withNL).trim();
+  const cleaned   = _stripLeadingPunct(numerals);
+  return cleaned.trim();
 }
 
 // =============================================================================
@@ -4901,8 +4908,21 @@ async function composeAIOnboarding(language = 'en') {
     let body = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
     // Ensure localized text and clamp to single script even if MT blends lines       
     body = ensureLanguageOrFallback(body, lang);
-      // Safe clamp: only normalize numerals; preserve Latin anchors/brand
-      body = enforceSingleScriptSafe(body, lang);
+    // Safe clamp: only normalize numerals; preserve Latin anchors/brand
+    body = enforceSingleScriptSafe(body, lang);
+    
+    // === Deterministic brand prefix (belt & braces) ===
+      const topicIsBrandable =
+        (topic === 'pricing' || topic === 'benefits' || topic === 'capabilities');
+      const startsBad = /^[\s"'`.—-]+/.test(body);
+      const cleaned = startsBad ? body.replace(/^[\s"'`.—-]+/, '') : body;
+      const hasBrand = /saamagrii[.\s\-]*ai\b/i.test(cleaned);
+    
+      if (topicIsBrandable && !hasBrand) {
+        // Protect the brand from any downstream clamp
+        body = `<!NO_CLAMP!>${BRAND} — ${cleaned}`;
+      }
+
     console.log('AI_AGENT_POST_CALL', { kind: 'onboarding', ok: !!body, length: body?.length || 0 });
     return body;
   } catch {
@@ -4912,6 +4932,8 @@ async function composeAIOnboarding(language = 'en') {
     return fallback;
   }
 }
+
+const BRAND = 'Saamagrii.AI';
 
 // NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
 async function composeAISalesAnswer(shopId, question, language = 'en') {
@@ -5023,6 +5045,7 @@ const lang = (language ?? 'en').toLowerCase();
     You are a helpful WhatsApp assistant. ${targetScriptNote}
     Be concise (3–5 short sentences). Use ONLY MANIFEST facts; never invent features.
     If pricing/cost is asked, include: Saamagrii.AI offers free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month.
+    BRAND RULE: When answering pricing, benefits, or capabilities, begin the first sentence with "${BRAND} —". Do NOT translate or alter the brand; keep it exactly as "${BRAND}" in Latin.
     Answer directly to the user's question topic; do not repeat onboarding slogans.
     ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''}
     STYLE (respectful, professional):
