@@ -244,8 +244,11 @@ function isSafeAnchor(text) {
         /paid confirm/i,
         /mode/i,
         /help/i,
-        /support/i,
-        /Saamagrii\.AI/i,
+        /support/i,                
+        // BRAND: allow dot, space, or no separator; case-insensitive
+            /Saamagrii[.\s]?AI/i,
+            // Rare outputs where only "Saamagrii" appears
+            /\bSaamagrii\b/i,
         /WhatsApp/i,
         /https?:\/\//i,
         /wa\.link/i,
@@ -861,11 +864,13 @@ function nativeglishWrap(text, lang) {
         const hasLatin = /\p{Script=Latin}/u.test(out);
         const hasNativeScript = /[\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Gujarati}\p{Script=Kannada}]/u.test(out);
         const hasMixedScripts = hasLatin && hasNativeScript;
-
-        if (hasMixedScripts && !isSafeAnchor(out)) {
-            console.warn(`[nativeglishWrap] Mixed scripts detected for ${lang}, enforcing single script.`);
-            return enforceSingleScript(out, lang);
-        }
+        const brandPresent = /Saamagrii[.\s]?AI/i.test(out) || /\bSaamagrii\b/i.test(out);
+                
+        // Never clamp when brand is present; keep anchors readable.
+         if (hasMixedScripts && !isSafeAnchor(out) && !brandPresent) {
+           console.warn(`[nativeglishWrap] Mixed scripts (no brand) for ${lang}, enforcing single script.`);
+           return enforceSingleScript(out, lang);
+         }
 
         return out; // Keep original if single-script
     } catch {
@@ -4894,9 +4899,10 @@ async function composeAIOnboarding(language = 'en') {
       }
     );                      
     let body = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
-    // Ensure localized text and clamp to single script even if MT blends lines
+    // Ensure localized text and clamp to single script even if MT blends lines       
     body = ensureLanguageOrFallback(body, lang);
-    body = enforceSingleScript(body, lang);
+      // Safe clamp: only normalize numerals; preserve Latin anchors/brand
+      body = enforceSingleScriptSafe(body, lang);
     console.log('AI_AGENT_POST_CALL', { kind: 'onboarding', ok: !!body, length: body?.length || 0 });
     return body;
   } catch {
