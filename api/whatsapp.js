@@ -2391,12 +2391,14 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                 // Keep the label in native script directly in the source text; avoid quotes getting emptied.
                 const introSrc = await composeAIOnboarding('en'); // deterministic English skeleton
                 const introSrcWithLabel = introSrc.replace(/"Start Trial"/g, `"${startTrialLabel}"`);                                
-                // Translate once with canonical markers, then finalize and send.                                      
+                // Translate once with canonical markers, then finalize and send.                                                                  
                 let introText = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + introSrcWithLabel, detectedLanguage ?? 'en', introKey);
-                      // NEW: localize quoted commands right after translation
-                      introText = localizeQuotedCommands(introText, detectedLanguage ?? 'en');
-                      introText = nativeglishWrap(introText, detectedLanguage ?? 'en'); // keep anchors readable
-                await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
+                                // NEW: localize quoted commands right after translation
+                                introText = localizeQuotedCommands(introText, detectedLanguage ?? 'en');
+                                introText = nativeglishWrap(introText, detectedLanguage ?? 'en'); // keep anchors readable
+                                // SEND the intro before video/buttons
+                                await sendMessageQueued(From, finalizeForSend(introText, detectedLanguage ?? 'en'));
+                                await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
                           // >>> NEW: Send benefits video AFTER intro, BEFORE buttons (once per session gate already applies)
                           try {
                             // Prefer saved language if present
