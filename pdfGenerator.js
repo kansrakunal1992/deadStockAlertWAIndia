@@ -181,12 +181,27 @@ async function generateInventoryShortSummaryPDF(shopId) {
       // Summary numbers
       let summary = { totalProducts: 0, totalValue: 0 };
       try { summary = await getInventorySummary(shopId); } catch (_) {}           
-      // Centered summary row: "Total Products" + "Stock Value"
+      // Centered summary row: "Total Products" + "Stock Value" + "Total Sales (Till Date)"
             const totalProductsStr = String(summary.totalProducts ?? 0);
-            const stockValueStr = `₹${Number(summary.totalValue ?? 0).toFixed(2)}`;
+            const stockValueStr = `₹${Number(summary.totalValue ?? 0).toFixed(2)}`;            
+      // Compute "Total Sales (Till Date)"
+        let totalSalesTillDate = 0;
+        try {
+          const dataAll = await getSalesDataForPeriod(shopId, new Date(0), new Date());
+          const recsAll = Array.isArray(dataAll?.records) ? dataAll.records : [];
+          totalSalesTillDate = recsAll.reduce((sum, r) => {
+            const f = r.fields ?? r;
+            const qty = Math.abs(Number(f.Quantity ?? 0));
+            const rate = Number(f.SalePrice ?? 0);
+            return sum + (qty * rate);
+          }, 0);
+        } catch (_) {}
+        const totalSalesTillDateStr = `₹${Number(totalSalesTillDate).toFixed(2)}`;
+      
             renderSummary(doc, [
               { label: 'Total Products', value: totalProductsStr, color: colors.primary },
               { label: 'Stock Value',    value: stockValueStr,    color: colors.success },
+              { label: 'Total Sales (Till Date)', value: totalSalesTillDateStr, color: colors.accent },
             ], { stacked: false }); // set stacked:true to stack vertically centred
             
       // Table (simple)
@@ -275,8 +290,20 @@ async function generateSalesRawTablePDF(shopId, period = 'today') {
         const data  = await getSalesDataForPeriod(shopId, start, end);
         records     = Array.isArray(data?.records) ? data.records : [];
       } catch (_) {}
-
-      // Table
+            
+      // Add centered "Total Sales (period)" box above the table
+        const periodTotalSales = records.reduce((sum, r) => {
+          const f = r.fields ?? r;
+          const qty = Math.abs(Number(f.Quantity ?? 0));
+          const rate = Number(f.SalePrice ?? 0);
+          return sum + (qty * rate);
+        }, 0);
+        const totalSalesLabel = safePeriod === 'week' ? 'Total Sales (Last 7 Days)' : 'Total Sales (Today)';
+        renderSummary(doc, [
+          { label: totalSalesLabel, value: `₹${periodTotalSales.toFixed(2)}`, color: colors.success },
+        ], { stacked: false });
+      
+        // Table
       addSectionHeader(doc, 'Raw Sales', colors.secondary);           
       // Column widths must fit within tableWidth (~595 - 100 = 495). Sum = 495.
         const headers = [
