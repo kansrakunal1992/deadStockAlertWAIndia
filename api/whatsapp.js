@@ -5099,7 +5099,7 @@ const lang = canonicalizeLang(language ?? 'en');
   // --------------------------------------------------------------------------
   // NEW: Short-circuit pricing questions with deterministic native answer
   // --------------------------------------------------------------------------
-  const topic = classifyQuestionTopic(question);
+  let topic = classifyQuestionTopic(question);
   if (topic === 'pricing') {
     // Compose deterministic native copy (no MT, single-script)
     const pricingText = composePricingAnswer(lang, pricingFlavor);
