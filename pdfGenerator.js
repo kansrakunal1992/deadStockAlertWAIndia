@@ -122,10 +122,13 @@ async function generateInventoryShortSummaryPDF(shopId) {
   return new Promise(async (resolve, reject) => {
     try {
       const timestamp = moment().format('YYYYMMDD_HHmmss');
-      const fileName = `inventory_short_${shopId.replace(/\D/g, '')}_${timestamp}.pdf`;
-      const filePath = path.join(tempDir, fileName);
-      const doc = new PDFDocument({ margin: 50, size: 'A4' });
-      doc.pipe(fs.createWriteStream(filePath));
+      const fileName = `inventory_short_${shopId.replace(/\D/g, '')}_${timestamp}.pdf`;            
+      // COPILOT-PATCH-PDF-DIR-001: write to invoicesDir so HTTP /invoice route can find it
+            const filePath = path.join(invoicesDir, fileName);
+            const doc = new PDFDocument({ margin: 50, size: 'A4' });
+            const stream = fs.createWriteStream(filePath);
+            // COPILOT-PATCH-PDF-FINISH-001: resolve only after stream 'finish'
+            doc.pipe(stream);
 
       // Header
       addColoredHeader(doc, 'Inventory Short Summary', moment().format('DD/MM/YYYY'), shopId);
@@ -157,10 +160,19 @@ async function generateInventoryShortSummaryPDF(shopId) {
       });
       addAirtableStyleTable(doc, headers, rows);
 
-      // Footer
-      addColoredFooter(doc);
+      // Footer           
       doc.end();
-      resolve(filePath);
+            stream.on('finish', () => {
+              try {
+                const sz = fs.statSync(filePath).size;
+                console.log(`[PDF Generator] Inventory short PDF ready: ${filePath} (${sz} bytes)`);
+              } catch (_) { /* noop */ }
+              resolve(filePath);
+            });
+            stream.on('error', (err) => {
+              console.error('[PDF Generator] Stream error (inventory short):', err);
+              reject(err);
+            });
     } catch (e) {
       reject(e);
     }
@@ -176,10 +188,13 @@ async function generateSalesRawTablePDF(shopId, period = 'today') {
     try {
       const timestamp = moment().format('YYYYMMDD_HHmmss');
       const safePeriod = (period === 'week') ? 'week' : 'today';
-      const fileName = `sales_raw_${shopId.replace(/\D/g, '')}_${safePeriod}_${timestamp}.pdf`;
-      const filePath = path.join(tempDir, fileName);
-      const doc = new PDFDocument({ margin: 50, size: 'A4' });
-      doc.pipe(fs.createWriteStream(filePath));
+      const fileName = `sales_raw_${shopId.replace(/\D/g, '')}_${safePeriod}_${timestamp}.pdf`;            
+      // COPILOT-PATCH-PDF-DIR-001: standardize to invoicesDir
+            const filePath = path.join(invoicesDir, fileName);
+            const doc = new PDFDocument({ margin: 50, size: 'A4' });
+            const stream = fs.createWriteStream(filePath);
+            // COPILOT-PATCH-PDF-FINISH-001
+            doc.pipe(stream);
 
       // Header
       const title = safePeriod === 'week' ? 'Sales (Last 7 Days)' : 'Sales (Today)';
@@ -220,9 +235,19 @@ async function generateSalesRawTablePDF(shopId, period = 'today') {
       addAirtableStyleTable(doc, headers, rows);
 
       // Footer
-      addColoredFooter(doc);
+      addColoredFooter(doc);            
       doc.end();
-      resolve(filePath);
+            stream.on('finish', () => {
+              try {
+                const sz = fs.statSync(filePath).size;
+                console.log(`[PDF Generator] Sales raw PDF ready: ${filePath} (${sz} bytes)`);
+              } catch (_) { /* noop */ }
+              resolve(filePath);
+            });
+            stream.on('error', (err) => {
+              console.error('[PDF Generator] Stream error (sales raw):', err);
+              reject(err);
+            });
     } catch (e) {
       reject(e);
     }
@@ -479,17 +504,20 @@ async function generateSalesPDF(shopId, period = 'today', startDate = null, endD
       
       // Generate filename
       const timestamp = moment().format('YYYYMMDD_HHmmss');
-      const fileName = `sales_report_${shopId.replace(/\D/g, '')}_${period}_${timestamp}.pdf`;
-      const filePath = path.join(tempDir, fileName);
+      const fileName = `sales_report_${shopId.replace(/\D/g, '')}_${period}_${timestamp}.pdf`;           
+      // COPILOT-PATCH-PDF-DIR-001: standardize to invoicesDir
+      const filePath = path.join(invoicesDir, fileName);
       
       // Create PDF document
       const doc = new PDFDocument({
         margin: 50,
         size: 'A4'
-      });
-      
-      // Pipe to file
-      doc.pipe(fs.createWriteStream(filePath));
+      });            
+            
+      // Pipe to file with finish guard
+            const stream = fs.createWriteStream(filePath);
+            // COPILOT-PATCH-PDF-FINISH-001
+            doc.pipe(stream);
       
       // Add colored header
       let reportTitle = 'Daily Sales Report';
@@ -549,11 +577,19 @@ async function generateSalesPDF(shopId, period = 'today', startDate = null, endD
       // Add footer
       addColoredFooter(doc);
       
-      // Finalize PDF
+      // Finalize PDF            
       doc.end();
-      
-      console.log(`[PDF Generator] PDF generated successfully: ${filePath}`);
-      resolve(filePath);
+            stream.on('finish', () => {
+              try {
+                const sz = fs.statSync(filePath).size;
+                console.log(`[PDF Generator] Sales PDF ready: ${filePath} (${sz} bytes)`);
+              } catch (_) { /* noop */ }
+              resolve(filePath);
+            });
+            stream.on('error', (error) => {
+              console.error(`[PDF Generator] Stream error (sales):`, error);
+              reject(error);
+            });
     } catch (error) {
       console.error('[PDF Generator] Error generating PDF:', error);
       reject(error);
