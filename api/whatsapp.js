@@ -244,12 +244,8 @@ function isSafeAnchor(text) {
         /paid confirm/i,
         /mode/i,
         /help/i,
-        /support/i,                
-        // BRAND: allow dot, space, or no separator; case-insensitive
-        /Saamagrii[.\s]?AI/i,
-        // Rare outputs where only "Saamagrii" appears
-        /\bSaamagrii\b/i,
-        /saamagrii[.\\s\\-]*ai\\b/i,
+        /support/i,
+        /Saamagrii\.AI/i,
         /WhatsApp/i,
         /https?:\/\//i,
         /wa\.link/i,
@@ -865,13 +861,11 @@ function nativeglishWrap(text, lang) {
         const hasLatin = /\p{Script=Latin}/u.test(out);
         const hasNativeScript = /[\p{Script=Devanagari}\p{Script=Bengali}\p{Script=Tamil}\p{Script=Telugu}\p{Script=Gujarati}\p{Script=Kannada}]/u.test(out);
         const hasMixedScripts = hasLatin && hasNativeScript;
-        const brandPresent = /Saamagrii[.\s]?AI/i.test(out) || /\bSaamagrii\b/i.test(out);
-                
-        // Never clamp when brand is present; keep anchors readable.
-         if (hasMixedScripts && !isSafeAnchor(out) && !brandPresent) {
-           console.warn(`[nativeglishWrap] Mixed scripts (no brand) for ${lang}, enforcing single script.`);
-           return enforceSingleScript(out, lang);
-         }
+
+        if (hasMixedScripts && !isSafeAnchor(out)) {
+            console.warn(`[nativeglishWrap] Mixed scripts detected for ${lang}, enforcing single script.`);
+            return enforceSingleScript(out, lang);
+        }
 
         return out; // Keep original if single-script
     } catch {
@@ -2391,14 +2385,11 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                 // Keep the label in native script directly in the source text; avoid quotes getting emptied.
                 const introSrc = await composeAIOnboarding('en'); // deterministic English skeleton
                 const introSrcWithLabel = introSrc.replace(/"Start Trial"/g, `"${startTrialLabel}"`);                                
-                // Translate once with canonical markers, then finalize and send.                                                                  
-                let introText = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + introSrcWithLabel, detectedLanguage ?? 'en', introKey);
-                                // NEW: localize quoted commands right after translation
-                                introText = localizeQuotedCommands(introText, detectedLanguage ?? 'en');
-                                introText = nativeglishWrap(introText, detectedLanguage ?? 'en'); // keep anchors readable
-                                // SEND the intro before video/buttons
-                                await sendMessageQueued(From, finalizeForSend(introText, detectedLanguage ?? 'en'));
-                                await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
+                // Translate once with canonical markers, then finalize and send.
+                      let introText = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + introSrcWithLabel, detectedLanguage ?? 'en', introKey);
+                      introText = nativeglishWrap(introText, detectedLanguage ?? 'en'); // keep anchors readable
+                      await sendMessageQueued(From, finalizeForSend(introText, detectedLanguage ?? 'en'));
+                await new Promise(r => setTimeout(r, 250)); // tiny spacing before buttons
                           // >>> NEW: Send benefits video AFTER intro, BEFORE buttons (once per session gate already applies)
                           try {
                             // Prefer saved language if present
@@ -2409,11 +2400,11 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                             } catch {}
                             await sendOnboardingBenefitsVideo(From, lang);
                             await new Promise(r => setTimeout(r, 300)); // breathing room before buttons
-                          } catch (err) {
-                            console.warn('[onboard-video] skipped', err?.message);
+                          } catch (e) {
+                            console.warn('[onboard-video] skipped', e?.message);
                           }
-                } catch (err) {
-                  console.warn('[welcome] intro send failed', { message: err?.message });
+                } catch (e) {
+                  console.warn('[welcome] intro send failed', { message: e?.message });
                 }
                 // 1) Prefer explicit env ContentSid if present — BUTTONS AFTER INTRO
                 if (ONBOARDING_QR_SID) {
@@ -2421,9 +2412,9 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                     const resp = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: ONBOARDING_QR_SID });
                     console.log('[onboard-qr] env ContentSid send OK', { sid: resp?.sid, to: toNumber, contentSid: ONBOARDING_QR_SID });
                     sent = true;
-                  } catch (err) {
-                    const status = err?.response?.status;
-                    const data = err?.response?.data;
+                  } catch (e) {
+                    const status = e?.response?.status;
+                    const data = e?.response?.data;
                     console.warn('[onboard-qr] env ContentSid send FAILED', { status, data, sid: ONBOARDING_QR_SID, to: toNumber });
                   }
                 }
@@ -2440,9 +2431,9 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                  } else {
                    console.warn('[onboard-qr] missing per-language onboardingQrSid after ensureLangTemplates', { lang: detectedLanguage });
                  }
-               } catch (err) {
-                 const status = err?.response?.status;
-                 const data   = err?.response?.data;
+               } catch (e) {
+                 const status = e?.response?.status;
+                 const data   = e?.response?.data;
                  console.warn('[onboard-qr] per-language send FAILED', { status, data, lang: detectedLanguage, to: toNumber });
                }
              }
@@ -2468,19 +2459,19 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
         if (sids?.listPickerSid) {
           try {
             await sendContentTemplateOnce({ toWhatsApp: toNumber, contentSid: sids.listPickerSid, requestId });
-          } catch (err) {
-            console.warn('[welcome] listPicker send failed', { status: err?.response?.status, data: err?.response?.data, sid: sids?.listPickerSid });
+          } catch (e) {
+            console.warn('[welcome] listPicker send failed', { status: e?.response?.status, data: e?.response?.data, sid: sids?.listPickerSid });
           }
         }
         if (sids?.quickReplySid) {
           try {
             await sendContentTemplateOnce({ toWhatsApp: toNumber, contentSid: sids.quickReplySid, requestId });
-          } catch (err) {
-            console.warn('[welcome] quickReply send failed', { status: err?.response?.status, data: err?.response?.data, sid: sids?.quickReplySid });
+          } catch (e) {
+            console.warn('[welcome] quickReply send failed', { status: e?.response?.status, data: e?.response?.data, sid: sids?.quickReplySid });
           }
         }
-      } catch (err) {
-        console.warn('[welcome] template orchestration failed', { status: err?.response?.status, data: err?.response?.data, message: err?.message });
+      } catch (e) {
+        console.warn('[welcome] template orchestration failed', { status: e?.response?.status, data: e?.response?.data, message: e?.message });
         // Localized fallback hint
         const fhLabel = getStaticLabel('fallbackHint', detectedLanguage);
         const fhText = await t(fhLabel, detectedLanguage ?? 'en', 'welcome-fallback');
@@ -2527,28 +2518,14 @@ function normalizeNumeralsToLatin(text) {
   );
 }
 
-function _stripLeadingPunct(s) {
-  // Remove common leading whitespace and punctuation that sometimes appear
-  // when models start with a dot, quotes, or dash. Keeps emojis & letters.
-  // Examples stripped: " . ” ‘ ` — - "
-  return String(s ?? '').replace(/^[\s"'`().,[\]{}:;!—\-]+/, '');
-}
-
+// ANCHOR: UNIQ:FINALIZE-SEND-001
 // Finalize text for sending: strip any markers, enforce single-script, fix newlines,
 // and normalize digits. Use this on all onboarding text sends.
 function finalizeForSend(text, lang) {
   const stripped  = stripMarkers(text);
   const oneScript = enforceSingleScriptSafe(stripped, lang);
-  const withNL    = fixNewlines1(oneScript);        
-  let numerals;
-    try {
-      numerals = normalizeNumeralsToLatin(withNL);
-    } catch (e) {
-      console.warn('[finalizeForSend] numerals normalize failed:', e?.message);
-      numerals = withNL;
-    }
-    const cleaned = _stripLeadingPunct(numerals);
-    return cleaned.trim();
+  const withNL    = fixNewlines1(oneScript);
+  return normalizeNumeralsToLatin(withNL).trim();
 }
 
 // =============================================================================
@@ -3662,10 +3639,9 @@ async function sendOnboardingBenefitsVideo(From, lang = 'en') {
       console.warn('[onboard-benefits] encodeURI failed; using raw URL', { error: e?.message, rawUrl });
     }
     console.log('[onboard-benefits] media URL', { rawUrl, encodedUrl, lang: L });        
-    // Localized caption with canonical marker handled inside t(...), then stripped & finalized.            
-    let caption = await t(NO_FOOTER_MARKER + captionEn, L, 'onboard-video-caption');
-        // NEW: localize quoted commands for Hindi/Hinglish if any appear
-        caption = localizeQuotedCommands(caption, L);
+    // Localized caption with canonical marker handled inside t(...), then stripped & finalized.
+        const captionEn = 'Manage stock & expiry on WhatsApp • Low-stock alerts • Smart reorder tips';
+        let caption = await t(NO_FOOTER_MARKER + captionEn, L, 'onboard-video-caption');
         caption = finalizeForSend(caption, L);
     // Twilio send
     const accountSid   = process.env.ACCOUNT_SID;
@@ -4157,32 +4133,23 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
           if (!activated) {                        
                 // Keep EXACT same prompt text you use for summaries, per request.
                         // (If you prefer a more generic line like "To use inventory queries...",
-                        // you can change only the text below without touching the gating.)                        
-            // Localize the quoted button label to match Content templates
-             let startTrialLabel = 'Start Trial';
-             try {
-               startTrialLabel = getStaticLabel('startTrialBtn', lang);
-             } catch { /* best effort; fallback stays in English */ }
-             const prompt = await t(
-               `To use summaries, please activate your FREE trial.\nReply "${startTrialLabel}" or tap the trial button.`,
-               lang,
-               `cta-summary-${shopId}`
-             );
+                        // you can change only the text below without touching the gating.)
+                        const prompt = await t(
+                          'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+                          lang,
+                          `cta-summary-${shopId}`
+                        );
             await sendTagged(prompt);
             return true;
           }
         }
       } catch (_e) {
         if (INVENTORY_COMMANDS.has(String(cmd).toLowerCase())) {
-          let startTrialLabel = 'Start Trial';
-             try {
-               startTrialLabel = getStaticLabel('startTrialBtn', lang);
-             } catch { /* best effort; fallback stays in English */ }
-             const prompt = await t(
-               `To use summaries, please activate your FREE trial.\nReply "${startTrialLabel}" or tap the trial button.`,
-               lang,
-               `cta-summary-${shopId}`
-             );
+          const prompt = await t(
+            'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+            lang,
+            `cta-summary-${shopId}`
+          );
           await sendTagged(prompt);
           return true;
         }
@@ -4927,44 +4894,22 @@ async function composeAIOnboarding(language = 'en') {
       }
     );                      
     let body = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
-    console.log('[AI_RAW_OUTPUT]', { requestId: rid, topic, pricingFlavor, rawAI: body });
-    // Ensure localized text and clamp to single script even if MT blends lines       
+    // Ensure localized text and clamp to single script even if MT blends lines
     body = ensureLanguageOrFallback(body, lang);
-    // Safe clamp: only normalize numerals; preserve Latin anchors/brand
-    body = enforceSingleScriptSafe(body, lang);
-    
-    // === Deterministic brand prefix (belt & braces) ===
-      const topicIsBrandable =
-        (topic === 'pricing' || topic === 'benefits' || topic === 'capabilities');              
-        const startsBad = /^[\\s\"'`().,[\\]{}:;!—\\-]+/.test(body);
-          const cleaned   = startsBad ? body.replace(/^[\\s\"'`().,[\\]{}:;!—\\-]+/, '') : body;
-          const hasBrand  = /saamagrii[.\\s\\-]*ai\\b/i.test(cleaned);
-        
-          if (topicIsBrandable && !hasBrand) {
-            body = `<!NO_CLAMP!>${BRAND} — ${cleaned}`;
-          }
-
+    body = enforceSingleScript(body, lang);
     console.log('AI_AGENT_POST_CALL', { kind: 'onboarding', ok: !!body, length: body?.length || 0 });
     return body;
   } catch {
     // Deterministic, grounded fallback (no AI, no hallucination)        
-    const fallback = getLocalizedOnboarding(lang);        
-    console.warn('AI_AGENT_FALLBACK_USED', {
-        kind: 'onboarding',
-        status: e?.response?.status,
-        code: e?.code,
-        message: e?.message,
-        more: e?.response?.data
-      });
+    const fallback = getLocalizedOnboarding(lang);
+    console.warn('AI_AGENT_FALLBACK_USED', { kind: 'onboarding' });
     return fallback;
   }
 }
 
-
-
 // NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
 async function composeAISalesAnswer(shopId, question, language = 'en') {
-const BRAND = 'Saamagrii.AI';
+  
 const lang = (language ?? 'en').toLowerCase();        
 
   // ---------- Generic, extensible domain classification ----------
@@ -5066,34 +5011,24 @@ const lang = (language ?? 'en').toLowerCase();
       : `Respond ONLY in ${lang} script.`;
 
   // If user asks about invoice, force an explicit line in the reply about PDFs
-  const mustMentionInvoice = /\b(invoice|बिल|चालान)\b/i.test(String(question ?? ''));                                  
+  const mustMentionInvoice = /\b(invoice|बिल|चालान)\b/i.test(String(question ?? ''));              
             
-        const sys = `
-        You are a helpful WhatsApp assistant. ${targetScriptNote}
-        Be concise (3–5 short sentences). Use ONLY MANIFEST facts; never invent features.
-        
-        BRAND RULE: For questions on pricing, benefits, or capabilities, begin the FIRST sentence with "${BRAND} —". Do NOT translate or alter the brand; keep it exactly as "${BRAND}" in Latin.
-        
-        If pricing/cost is asked, include: ${BRAND} offers a free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month.
-        Answer directly to the user's question topic; do not repeat onboarding slogans.
-        
-        ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''}
-        
-        STYLE (respectful, professional):
-        - In Hindi or Hinglish or any Native+English, ALWAYS address the user with “aap / aapki / aapke / aapko / aapse”.
-        - NEVER use “tum / tumhari / tumhara / tumhare / tumko / tumse”.
-        - Use polite plural verb forms: “sakte hain”, “karenge”, “kar payenge”; avoid “sakte ho”, “karoge”, “kar paoge”.
-        - In Hindi/Hinglish, keep numerals in roman digits only (e.g., ₹11 प्रति माह).
-        
-        FEATURE LABELS:
-        - Do NOT output raw internal command names like "low stock", "expiring 7", "short summary".
-        - Instead, use natural Hindi labels: “कम स्टॉक चेतावनी”, “7 दिनों में एक्सपायर”, “संक्षिप्त सारांश”, “विस्तृत सारांश”, “आज की बिक्री”, “मासिक बिक्री”, “इन्वेंट्री मूल्य”, “स्टॉक का मूल्य”.
-        
-        FORMAT RULES (strict):
-        - Do NOT use code fences (no triple backticks).
-        - Do NOT use inline backticks (no backtick characters).
-        - Avoid bullet lists; prefer short sentences.
-        `.trim();
+    const sys = `
+    You are a helpful WhatsApp assistant. ${targetScriptNote}
+    Be concise (3–5 short sentences). Use ONLY MANIFEST facts; never invent features.
+    If pricing/cost is asked, include: Saamagrii.AI offers free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month.
+    Answer directly to the user's question topic; do not repeat onboarding slogans.
+    ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''}
+    STYLE (respectful, professional):
+    - In Hindi or Hinglish or any Native+English, ALWAYS address the user with “aap / aapki / aapke / aapko / aapse”.
+    - NEVER use “tum / tumhari / tumhara / tumhare / tumko / tumse”.
+    - Use polite plural verb forms: “sakte hain”, “karenge”, “kar payenge”; avoid “sakte ho”, “karoge”, “kar paoge”.
+    - In Hindi or Hinglish or any Native+English, always ensure numerals/numbers are in roman script only - e.g. केवल ₹11 प्रति माह.
+    FORMAT RULES (strict):
+    - Do NOT use code fences (no triple backticks).
+    - Do NOT use inline backticks (no backtick characters).
+    - Avoid bullet lists; prefer short sentences.
+    `.trim();
 
   const manifest = JSON.stringify(SALES_AI_MANIFEST);
 
@@ -5230,34 +5165,6 @@ const lang = (language ?? 'en').toLowerCase();
         // Final single-script guard for any residual mixed content; de-echo first
         const out0 = normalizeTwoBlockFormat(out, lang);                
         out = enforceSingleScriptSafe(out0, lang);      
-      
-        // === Humanize Feature Labels (Hindi) ===
-        // Place right after enforceSingleScriptSafe(...) and BEFORE the final clamp.
-        function humanizeFeatureLabelsHindi(s) {
-          const map = new Map([
-            [/\blow stock\b/gi, 'कम स्टॉक'],
-            [/\breorder suggestions\b/gi, 'फिर से ऑर्डर सुझाव'],
-            [/\bexpiring 0\b/gi, 'आज एक्सपायर होने वाले'],
-            [/\bexpiring 7\b/gi, '7 दिनों में एक्सपायर'],
-            [/\bexpiring 30\b/gi, '30 दिनों में एक्सपायर'],
-            [/\bshort summary\b/gi, 'संक्षिप्त सारांश'],
-            [/\bfull summary\b/gi, 'विस्तृत सारांश'],
-            [/\bsales today\b/gi, 'आज की बिक्री'],
-            [/\bsales week\b/gi, 'साप्ताहिक बिक्री'],
-            [/\bsales month\b/gi, 'मासिक बिक्री'],
-            [/\btop 5 products month\b/gi, 'महीने के टॉप 5 उत्पाद'],
-            [/\binventory value\b/gi, 'इन्वेंट्री मूल्य'],
-            [/\bstock value\b/gi, 'स्टॉक का मूल्य'],
-            [/\bvalue summary\b/gi, 'मूल्य सारांश'],
-          ]);
-          let out = String(s ?? '');
-          for (const [rx, repl] of map) out = out.replace(rx, repl);
-          return out;
-        }
-        if ((lang ?? '').toLowerCase().startsWith('hi')) {
-          out = humanizeFeatureLabelsHindi(out);
-        }
-
           
         // (kept compatible) Specific overrides still work if you ever pass flags
           if (topic === 'benefits' && typeof isMobileShop !== 'undefined' && isMobileShop) {
@@ -12838,42 +12745,23 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
           handledRequests.add(requestId);
           const shopId = From.replace('whatsapp:', '');
-          const ans  = await composeAISalesAnswer(shopId, Body, langExact);                  
-        // Skip translate when AI target == detected target to reduce latency.
-        const tgtLang        = (langExact ?? 'en').toLowerCase();
-        // If you set model target to langExact in composeAISalesAnswer, source guess equals target.
-        const srcLangGuess   = (langExact ?? 'en').toLowerCase();
-        const shouldTranslate = srcLangGuess !== tgtLang;       
-        const msg0 = shouldTranslate
-          ? await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`)
-          : ans;
-
+          const ans  = await composeAISalesAnswer(shopId, Body, langExact);
+          const msg0 = await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`);
           const msg  = nativeglishWrap(msg0, langExact);
-          await sendMessageDedup(From, msg);                        
-          // Parallelize buttons send so text arrives first
-            Promise.allSettled([
-              (async () => {
-                try {
-                  const shopId      = String(From).replace('whatsapp:', '');
-                  const isActivated = await isUserActivated(shopId);
-            
-                  // Derive button language safely from preference; your code already does this
-                  let buttonLang    = langExact;
-                  try {
-                    const pref = await getUserPreference(shopId);
-                    if (pref?.success && pref.language) buttonLang = String(pref.language).toLowerCase();
-                  } catch {/* best effort */}
-            
-                  // Small pause to avoid back-to-back network contention
-                  await new Promise(r => setTimeout(r, 300));
-            
-                  await sendSalesQAButtons(From, buttonLang, isActivated);
-                } catch (e) {
-                  console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
-                }
-              })()
-            ]);
+          await sendMessageDedup(From, msg);
             __handled = true;
+          try {                          
+            // Defensive: derive button language safely using detected preference
+                    const isActivated = await isUserActivated(shopId);
+                    let buttonLang = langExact;
+                    try {
+                      const pref = await getUserPreference(shopId);
+                      if (pref?.success && pref.language) buttonLang = String(pref.language).toLowerCase();
+                    } catch { /* best effort */ }
+              await sendSalesQAButtons(From, buttonLang, isActivated);
+            } catch (e) {
+              console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
+            }
             try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}                        
             // STREAK (text Q&A): gated
             if (__isStreakEnabled()) {
@@ -14673,16 +14561,8 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       // Question → answer & exit
       if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
         handledRequests.add(requestId);
-        const ans = await composeAISalesAnswer(shopId, Body, langExact);                
-        // Skip translate when AI target == detected target to reduce latency.
-        const tgtLang        = (langExact ?? 'en').toLowerCase();
-        // If you set model target to langExact in composeAISalesAnswer, source guess equals target.
-        const srcLangGuess   = (langExact ?? 'en').toLowerCase();
-        const shouldTranslate = srcLangGuess !== tgtLang;        
-        const msg0 = shouldTranslate
-          ? await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`)
-          : ans;
-
+        const ans = await composeAISalesAnswer(shopId, Body, langExact);
+        const msg0 = await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`);
         const msg = nativeglishWrap(msg0, langExact);
         await sendMessageDedup(From, msg);
         try {
