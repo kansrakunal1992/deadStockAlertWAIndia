@@ -13242,7 +13242,50 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   
   // (optional) quick log to confirm gate path in prod logs
     try { console.log('[webhook]', { From, Body: String(Body).slice(0,120) }); } catch(_) {}
-      
+    
+    // --- AUDIO-FIRST GATE (WhatsApp voice notes) ---
+    // Route audio media to processVoiceMessageAsync BEFORE any text/interactive flow.
+    const NumMedia = Number(req.body?.NumMedia || 0);
+    const MediaUrl0 = req.body?.MediaUrl0 || req.body?.MediaUrl || '';
+    const MediaContentType0 = String(req.body?.MediaContentType0 || req.body?.MediaContentType || '').toLowerCase();
+    
+    // Accept common WhatsApp audio types, including Opus-in-OGG
+    const isAudio =
+      NumMedia > 0 &&
+      (
+        MediaContentType0.startsWith('audio/') ||
+        MediaContentType0.includes('audio/ogg') ||
+        MediaContentType0.includes('codecs=opus')
+      );
+    
+    // Optionally pull conversation state early (so voice handler can use it)
+    let conversationState = null;
+    try {
+      const shopIdCheck = String(From).replace('whatsapp:', '');
+      conversationState = (typeof getUserStateFromDB === 'function')
+        ? await getUserStateFromDB(shopIdCheck)
+        : await getUserState(shopIdCheck);
+    } catch (_) { /* best-effort */ }
+    
+    if (isAudio && MediaUrl0) {
+      try {
+        console.log(`[${requestId}] [0] Routing to voice handler (NumMedia=${NumMedia}, ct=${MediaContentType0})`);
+        await processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState);
+      } catch (e) {
+        console.error(`[${requestId}] voice handler error:`, e?.message);
+        // Fall through to minimal ack; downstream catch-all will not fire because we return here.
+      }
+    
+      // Minimal TwiML ack to satisfy webhook single-response guard
+      const twiml = new twilio.twiml.MessagingResponse();
+      twiml.message('');
+      res.type('text/xml');
+      resp.safeSend(200, twiml.toString());
+      safeTrackResponseTime(requestStart, requestId);
+      return; // EARLY EXIT: do not continue to text/interactive flow
+    }
+    // --- END AUDIO-FIRST GATE ---
+  
     /**
        * NEW: Inbound sanitization to drop footer echoes & interactive noise.
        * Prevents noisy bodies like «कोई • मोड» (mode badges) and interactive echoes
