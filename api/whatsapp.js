@@ -269,6 +269,8 @@ function isSafeAnchor(text) {
         /help/i,
         /support/i,
         /Saamagrii\.AI/i,
+        /\bSaamagrii\.AI\b/,  
+        /Saamagrii\.AI/i,
         /WhatsApp/i,
         /https?:\/\//i,
         /wa\.link/i,
@@ -5015,8 +5017,11 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
     } catch {}
     const flavor = (activated && /\b(inventory|stock|summary|sales)\b/i.test(q))
       ? 'inventory_pricing'
-      : 'tool_pricing';
-    return await composePricingAnswer(language, flavor, shopId);
+      : 'tool_pricing';      
+  const pricingText = await composePricingAnswer(language, flavor, shopId); // pass shopId
+    const aiNative = enforceSingleScriptSafe(pricingText, language);
+    // brand preserved by nativeglishWrap (Patch 1)
+    return normalizeNumeralsToLatin(nativeglishWrap(aiNative, language));
   }
 
 const lang = canonicalizeLang(language ?? 'en');
