@@ -11,6 +11,27 @@ const {
   getCurrentInventory
 } = require('./database'); // +inventory helpers
 
+// --- Font assets (for Hindi/Unicode text) ---
+const devanagariFontPath = path.join(__dirname, 'assets', 'NotoSansDevanagari-Regular.ttf');
+let devanagariAvailable = false;
+try {
+  devanagariAvailable = fs.existsSync(devanagariFontPath);
+} catch (_) { /* noop */ }
+
+/**
+ * Switch to a font suitable for given text.
+ * Uses Devanagari font when Hindi/Marathi/Sanskrit codepoints are detected.
+ */
+function applyFontForText(doc, text) {
+  const s = String(text ?? '');
+  const hasDevanagari = /[\u0900-\u097F]/.test(s);
+  if (hasDevanagari && devanagariAvailable) {
+    doc.font(devanagariFontPath);
+  } else {
+    doc.font('Helvetica');
+  }
+}
+
 // Create a temporary directory for PDFs if it doesn't exist
 const tempDir = process.env.NODE_ENV === 'production'
   ? '/tmp' // Use system temp directory in production
@@ -33,8 +54,9 @@ if (!fs.existsSync(invoicesDir)) {
 const logoPath = path.join(__dirname, 'assets', 'saamagrii_logo.png');
 let logoImageBuffer = null;
 
-function isGSTApplicable(shopDetails) {
-  return shopDetails?.gstin && shopDetails.gstin.trim() !== '' && shopDetails.gstin !== 'N/A';
+function isGSTApplicable(shopDetails) {        
+      const gst = shopDetails?.gstin;
+      return gst && gst.trim() !== '' && gst.toLowerCase() !== 'n/a' && gst.toLowerCase() !== 'skip';
 }
 
 /**
@@ -96,8 +118,9 @@ function addSimpleTable(doc, headers, rows) {
 
   // Header row
   let x = left;
-  headers.forEach(h => {
-    doc.text(h.label, x + 4, startY + 3, { width: h.width - 8, align: 'left', lineBreak: false });
+  headers.forEach(h => {         
+      applyFontForText(doc, h.label);
+      doc.text(h.label, x + 4, startY + 3, { width: h.width - 8, align: 'left', lineBreak: false });
     x += h.width;
   });
   doc.moveTo(left, startY + rowH).lineTo(left + tableWidth, startY + rowH).stroke();
@@ -109,7 +132,8 @@ function addSimpleTable(doc, headers, rows) {
     r.forEach((cell, i) => {
       const w = headers[i]?.width ?? 100;
       const txt = (cell ?? '').toString();
-      const align = (i === 1 || i === 2) ? 'right' : 'left'; // right-align qty/unit
+      const align = (i === 1 || i === 2) ? 'right' : 'left'; // right-align qty/unit            
+      applyFontForText(doc, txt);
       doc.text(txt, cx + 4, y + 2, { width: w - 8, align, lineBreak: false });
       doc.moveTo(cx + w, y).lineTo(cx + w, y + rowH).stroke(); // vertical line
       cx += w;
@@ -123,8 +147,9 @@ function addSimpleTable(doc, headers, rows) {
       y = 50; // top margin on new page
       // redraw header
       let xx = left;
-      headers.forEach(h => {
-        doc.text(h.label, xx + 4, y + 3, { width: h.width - 8, align: 'left', lineBreak: false });
+      headers.forEach(h => {                 
+          applyFontForText(doc, h.label);
+          doc.text(h.label, xx + 4, y + 3, { width: h.width - 8, align: 'left', lineBreak: false });
         xx += h.width;
       });
       doc.moveTo(left, y + rowH).lineTo(left + tableWidth, y + rowH).stroke();
@@ -149,17 +174,20 @@ async function generateInventoryShortSummaryPDF(shopId) {
             const stream = fs.createWriteStream(filePath);
             // COPILOT-PATCH-PDF-FINISH-001: resolve only after stream 'finish'
             doc.pipe(stream);
-
-      // Header
-      addColoredHeader(doc, 'Inventory Short Summary', moment().format('DD/MM/YYYY'), shopId);
+           
+      // Header: pass gstin null so it won't show hard-coded GSTIN
+            addColoredHeader(doc, 'Inventory Short Summary', moment().format('DD/MM/YYYY'), shopId, null);
 
       // Summary numbers
       let summary = { totalProducts: 0, totalValue: 0 };
-      try { summary = await getInventorySummary(shopId); } catch (_) {}
-      doc.x = 50;
-      addSummaryBox(doc, 'Total Products', summary.totalProducts ?? 0, colors.primary);
-      addSummaryBox(doc, 'Est. Stock Value', `₹${Number(summary.totalValue ?? 0).toFixed(2)}`, colors.success);
-      doc.y += 10;
+      try { summary = await getInventorySummary(shopId); } catch (_) {}           
+      // Centered summary row: "Total Products" + "Stock Value"
+            const totalProductsStr = String(summary.totalProducts ?? 0);
+            const stockValueStr = `₹${Number(summary.totalValue ?? 0).toFixed(2)}`;
+            renderSummary(doc, [
+              { label: 'Total Products', value: totalProductsStr, color: colors.primary },
+              { label: 'Stock Value',    value: stockValueStr,    color: colors.success },
+            ], { stacked: false }); // set stacked:true to stack vertically centred
             
       // Table (simple)
       addSectionHeader(doc, 'Raw Inventory', colors.secondary);
@@ -170,10 +198,10 @@ async function generateInventoryShortSummaryPDF(shopId) {
         invRecords = Array.isArray(res) ? res : (res?.records ?? []);
       } catch (_) {}
 
-      const headers = [
-        { label: 'Product',  width: 200 },
-        { label: 'Quantity', width: 120 },
-        { label: 'Units',    width: 120 },
+      const headers = [                
+          { label: 'Product',  width: Math.round((doc.page.width - 72) * 0.60) },
+          { label: 'Quantity', width: Math.round((doc.page.width - 72) * 0.20) },
+          { label: 'Units',    width: Math.round((doc.page.width - 72) * 0.20) },
       ];            
       
     // Sanitize string fields & tighter filter
@@ -293,20 +321,35 @@ async function generateSalesRawTablePDF(shopId, period = 'today') {
 /**
  * Add a colored header section for reports
  */
-function addColoredHeader(doc, reportTitle, reportDate, shopId) {  
+function addColoredHeader(doc, reportTitle, reportDate, shopId, gstin = null) {
 // Header bar
   doc.rect(0, 0, doc.page.width, 80).fill(colors.header);
 
-  // Text inside header
+  // Text inside header   
   doc.fillColor('white');
-  doc.fontSize(14).text('Inventory Management System', 50, 30, { align: 'center' });
-  doc.fontSize(10).text('GSTIN: 29ABCDE1234F1Z5', 50, 46, { align: 'center' });
-  doc.fontSize(18).text(reportTitle, 50, 62, { align: 'center' });
+    doc.fontSize(14);
+    applyFontForText(doc, 'Inventory Management System');
+    doc.text('Inventory Management System', 50, 30, { align: 'center' });
+  
+    // GSTIN line (conditional)
+    const showGST = gstin && gstin.trim() !== '' && gstin.toLowerCase() !== 'skip' && gstin.toLowerCase() !== 'n/a';
+    if (showGST) {
+      doc.fontSize(10);
+      applyFontForText(doc, `GSTIN: ${gstin}`);
+      doc.text(`GSTIN: ${gstin}`, 50, 46, { align: 'center' });
+    }
+  
+    doc.fontSize(18);
+    applyFontForText(doc, reportTitle);
+    doc.text(reportTitle, 50, 62, { align: 'center' });
 
-  // Shop/date below the header bar (predictable spacing, no moveDown)
+  // Shop/date below the header bar (predictable spacing, no moveDown)    
   doc.fillColor(colors.dark);
-  doc.fontSize(12).text(`Shop ID: ${shopId}`, 50, 90, { align: 'center' });
-  doc.text(`Report Period: ${reportDate}`, 50, 106, { align: 'center' });
+    doc.fontSize(12);
+    applyFontForText(doc, `Shop ID: ${shopId}`);
+    doc.text(`Shop ID: ${shopId}`, 50, 90, { align: 'center' });
+    applyFontForText(doc, `Report Period: ${reportDate}`);
+    doc.text(`Report Period: ${reportDate}`, 50, 106, { align: 'center' });
 
   // Explicit starting Y for content that follows
   doc.y = 128;
@@ -317,10 +360,41 @@ function addColoredHeader(doc, reportTitle, reportDate, shopId) {
  */
 function addSectionHeader(doc, title, color = colors.primary) {  
 const barY = doc.y;
-  doc.rect(50, barY, doc.page.width - 100, 22).fill(color);
-  doc.fillColor('white').fontSize(12).text(title, 50, barY + 5, { align: 'center' });
+  doc.rect(50, barY, doc.page.width - 100, 22).fill(color);    
+  doc.fillColor('white').fontSize(12);
+    applyFontForText(doc, title);
+    doc.text(title, 50, barY + 5, { align: 'center' });
   // pixel-based spacing (avoid lines-based moveDown)
   doc.y = barY + 22 + 10;
+}
+
+// --- Summary rendering (centered row or center stack) ---
+function renderSummary(doc, items, { stacked = false } = {}) {
+  // items: [{label, value, color}]
+  const boxWidth = 120, boxHeight = 60, gap = 20;
+  const totalWidth = stacked ? boxWidth : items.length * boxWidth + (items.length - 1) * gap;
+  const startX = (doc.page.width - totalWidth) / 2;
+  let x = startX, y = doc.y;
+
+  items.forEach((it, idx) => {
+    // box
+    doc.rect(x, y, boxWidth, boxHeight).fill(it.color);
+    // label
+    doc.fillColor('white').fontSize(10);
+    applyFontForText(doc, it.label);
+    doc.text(it.label, x, y + 20, { width: boxWidth, align: 'center' });
+    // value
+    doc.fontSize(16);
+    applyFontForText(doc, it.value);
+    doc.text(it.value, x, y + 40, { width: boxWidth, align: 'center' });
+    // next position
+    if (stacked) {
+      y += boxHeight + 12;
+    } else {
+      x += boxWidth + gap;
+    }
+  });
+  doc.y = (stacked ? y : y + boxHeight) + 12;
 }
 
 /**
