@@ -4153,23 +4153,32 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
           if (!activated) {                        
                 // Keep EXACT same prompt text you use for summaries, per request.
                         // (If you prefer a more generic line like "To use inventory queries...",
-                        // you can change only the text below without touching the gating.)
-                        const prompt = await t(
-                          'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
-                          lang,
-                          `cta-summary-${shopId}`
-                        );
+                        // you can change only the text below without touching the gating.)                        
+            // Localize the quoted button label to match Content templates
+             let startTrialLabel = 'Start Trial';
+             try {
+               startTrialLabel = getStaticLabel('startTrialBtn', lang);
+             } catch { /* best effort; fallback stays in English */ }
+             const prompt = await t(
+               `To use summaries, please activate your FREE trial.\nReply "${startTrialLabel}" or tap the trial button.`,
+               lang,
+               `cta-summary-${shopId}`
+             );
             await sendTagged(prompt);
             return true;
           }
         }
       } catch (_e) {
         if (INVENTORY_COMMANDS.has(String(cmd).toLowerCase())) {
-          const prompt = await t(
-            'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
-            lang,
-            `cta-summary-${shopId}`
-          );
+          let startTrialLabel = 'Start Trial';
+             try {
+               startTrialLabel = getStaticLabel('startTrialBtn', lang);
+             } catch { /* best effort; fallback stays in English */ }
+             const prompt = await t(
+               `To use summaries, please activate your FREE trial.\nReply "${startTrialLabel}" or tap the trial button.`,
+               lang,
+               `cta-summary-${shopId}`
+             );
           await sendTagged(prompt);
           return true;
         }
@@ -12855,18 +12864,6 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               })()
             ]);
             __handled = true;
-          try {                          
-            // Defensive: derive button language safely using detected preference
-                    const isActivated = await isUserActivated(shopId);
-                    let buttonLang = langExact;
-                    try {
-                      const pref = await getUserPreference(shopId);
-                      if (pref?.success && pref.language) buttonLang = String(pref.language).toLowerCase();
-                    } catch { /* best effort */ }
-              await sendSalesQAButtons(From, buttonLang, isActivated);
-            } catch (e) {
-              console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
-            }
             try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}                        
             // STREAK (text Q&A): gated
             if (__isStreakEnabled()) {
