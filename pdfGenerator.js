@@ -111,10 +111,10 @@ function addSimpleTable(doc, headers, rows) {
   const left = 50;
   const startY = doc.y;
   const tableWidth = doc.page.width - 100;
-  const rowH = 14;              // tighter rows
+  const rowH = 12;              // tighter rows
   const bottomPad = 40;         // guard for page bottom/footers
 
-  doc.font('Helvetica').fontSize(9).fillColor('black');
+  doc.fontSize(9).fillColor('black'); 
 
   // Header row
   let x = left;
@@ -277,23 +277,30 @@ async function generateSalesRawTablePDF(shopId, period = 'today') {
       } catch (_) {}
 
       // Table
-      addSectionHeader(doc, 'Raw Sales', colors.secondary);
-      const headers = [
-        { label: 'SaleDate (IST)', width: 140 },
-        { label: 'Product',        width: 150 },
-        { label: 'Qty',            width: 60  },
-        { label: 'Unit',           width: 70  },
-        { label: 'Rate (₹)',       width: 70  },
-        { label: 'Value (₹)',      width: 90  },
-      ];
+      addSectionHeader(doc, 'Raw Sales', colors.secondary);           
+      // Column widths must fit within tableWidth (~595 - 100 = 495). Sum = 495.
+        const headers = [
+          { label: 'SaleDate (IST)', width: 120 },
+          { label: 'Product',        width: 170 },
+          { label: 'Qty',            width: 40  },
+          { label: 'Unit',           width: 50  },
+          { label: 'Rate (₹)',       width: 55  },
+          { label: 'Value (₹)',      width: 60  },
+        ];
       const rows = records.map(r => {
         const f = r.fields ?? r;
         const qty  = Math.abs(Number(f.Quantity ?? 0));
         const rate = Number(f.SalePrice ?? 0);
-        const val  = qty * rate;
+        const val  = qty * rate;                
         const saleISO = f.SaleDate ?? f['SaleDate'];
-        const saleIST = saleISO ? moment(saleISO).tz?.('Asia/Kolkata').format('DD/MM/YYYY HH:mm') 
-                                : moment(saleISO || new Date()).format('DD/MM/YYYY HH:mm');
+            // Always produce a value; avoid .tz dependency
+            let saleIST;
+            try {
+              saleIST = saleISO ? moment(saleISO).utcOffset('+05:30').format('DD/MM/YYYY HH:mm')
+                                : moment().utcOffset('+05:30').format('DD/MM/YYYY HH:mm');
+            } catch (_) {
+              saleIST = moment().utcOffset('+05:30').format('DD/MM/YYYY HH:mm');
+            }
         return [saleIST, f.Product ?? '—', qty, f.Units ?? 'pieces', rate.toFixed(2), val.toFixed(2)];
       });
       addSimpleTable(doc, headers, rows);
