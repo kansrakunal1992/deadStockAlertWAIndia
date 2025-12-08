@@ -4983,7 +4983,6 @@ async function composeAIOnboarding(language = 'en') {
 
 // NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
 async function composeAISalesAnswer(shopId, question, language = 'en') {
-    
 // Fast-pricing detector (English + Hindi)
   const q = String(question ?? '').trim();
   const isPricing = /\b(price|cost|charges?)\b/i.test(q) || /क़ीमत|कीमत|मूल्य|भाव|लागत/i.test(q);
@@ -5099,23 +5098,11 @@ const lang = canonicalizeLang(language ?? 'en');
   // --------------------------------------------------------------------------
   // NEW: Short-circuit pricing questions with deterministic native answer
   // --------------------------------------------------------------------------
-  let topic = classifyQuestionTopic(question);
   if (topic === 'pricing') {
     // Compose deterministic native copy (no MT, single-script)
     const pricingText = composePricingAnswer(lang, pricingFlavor);
     return pricingText;
   }
-
-  // --------------------------------------------------------------------------
-  // Strengthened system prompt: produce answer directly in target language/script
-  // --------------------------------------------------------------------------
-  const sys =
-    'You are a concise WhatsApp assistant for a small retail inventory tool.' +
-    ' Respond ONLY in the target language/script; do NOT mix Roman and native.' +
-    ' Keep 3–5 short sentences, simple vocabulary. No extra commentary.' +
-    (lang === 'hi-latn'
-      ? ' If Hindi (Hinglish), use Roman Hindi (hi-Latn) only, one script.'
-      : ` Use ${lang} native script only, one script.`);
    
  // ---- NEW: Hinglish enforcement note ----
   const targetScriptNote =        
