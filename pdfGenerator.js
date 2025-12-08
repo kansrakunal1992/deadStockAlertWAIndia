@@ -2,7 +2,14 @@ const PDFDocument = require('pdfkit');
 const moment = require('moment');
 const fs = require('fs');
 const path = require('path');
-const { getTodaySalesSummary, getSalesDataForPeriod, getProductPrice } = require('./database');
+
+const { 
+  getTodaySalesSummary, 
+  getSalesDataForPeriod, 
+  getProductPrice,
+  getInventorySummary,
+  getCurrentInventory
+} = require('./database'); // +inventory helpers
 
 // Create a temporary directory for PDFs if it doesn't exist
 const tempDir = process.env.NODE_ENV === 'production'
@@ -72,6 +79,155 @@ const colors = {
   gst28: '#7b1fa2', // Purple for 28% GST
   gstSpecial: '#009688' // Teal for special rates
 };
+
+/**
+ * Generic "Airtable-style" table renderer
+ * headers: [{label, width}], rows: array of arrays (text per column)
+ */
+function addAirtableStyleTable(doc, headers, rows) {
+  // Header band
+  const startY = doc.y;
+  doc.rect(50, startY, doc.page.width - 100, 25).fill(colors.tableHeader);
+  doc.fillColor('white').fontSize(9);
+  let x = 55;
+  headers.forEach(h => {
+    doc.text(h.label, x, startY + 15, { width: h.width });
+    x += h.width;
+  });
+  doc.moveDown(2);
+  // Rows (alternating fill)
+  let isEven = false;
+  rows.forEach(r => {
+    const rowY = doc.y;
+    const rowColor = isEven ? colors.evenRow : colors.oddRow;
+    doc.rect(50, rowY, doc.page.width - 100, 22).fill(rowColor);
+    doc.fillColor(colors.dark).fontSize(9);
+    let colX = 55;
+    r.forEach((cell, i) => {
+      const width = headers[i]?.width ?? 100;
+      doc.text(String(cell ?? ''), colX, rowY + 13, { width });
+      colX += width;
+    });
+    doc.moveDown(1.8);
+    isEven = !isEven;
+  });
+  doc.moveDown(2);
+}
+
+/**
+ * Inventory Short Summary → raw table PDF
+ * Trigger: "short summary"
+ */
+async function generateInventoryShortSummaryPDF(shopId) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const timestamp = moment().format('YYYYMMDD_HHmmss');
+      const fileName = `inventory_short_${shopId.replace(/\D/g, '')}_${timestamp}.pdf`;
+      const filePath = path.join(tempDir, fileName);
+      const doc = new PDFDocument({ margin: 50, size: 'A4' });
+      doc.pipe(fs.createWriteStream(filePath));
+
+      // Header
+      addColoredHeader(doc, 'Inventory Short Summary', moment().format('DD/MM/YYYY'), shopId);
+
+      // Summary numbers
+      let summary = { totalProducts: 0, totalValue: 0 };
+      try { summary = await getInventorySummary(shopId); } catch (_) {}
+      doc.x = 50;
+      addSummaryBox(doc, 'Total Products', summary.totalProducts ?? 0, colors.primary);
+      addSummaryBox(doc, 'Est. Stock Value', `₹${Number(summary.totalValue ?? 0).toFixed(2)}`, colors.success);
+      doc.moveDown(3);
+
+      // Table
+      addSectionHeader(doc, 'Raw Inventory (Airtable format)', colors.secondary);
+      let invRecords = [];
+      try {
+        const res = await getCurrentInventory(shopId);
+        invRecords = Array.isArray(res) ? res : (res?.records ?? []);
+      } catch (_) {}
+
+      const headers = [
+        { label: 'Product',  width: 200 },
+        { label: 'Quantity', width: 120 },
+        { label: 'Units',    width: 120 },
+      ];
+      const rows = invRecords.map(r => {
+        const f = r.fields ?? r; // Airtable row shape
+        return [f.Product ?? '—', f.Quantity ?? 0, f.Units ?? 'pieces'];
+      });
+      addAirtableStyleTable(doc, headers, rows);
+
+      // Footer
+      addColoredFooter(doc);
+      doc.end();
+      resolve(filePath);
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+/**
+ * Sales raw table PDF (today | week)
+ * Trigger: "sales today", "sales week"
+ */
+async function generateSalesRawTablePDF(shopId, period = 'today') {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const timestamp = moment().format('YYYYMMDD_HHmmss');
+      const safePeriod = (period === 'week') ? 'week' : 'today';
+      const fileName = `sales_raw_${shopId.replace(/\D/g, '')}_${safePeriod}_${timestamp}.pdf`;
+      const filePath = path.join(tempDir, fileName);
+      const doc = new PDFDocument({ margin: 50, size: 'A4' });
+      doc.pipe(fs.createWriteStream(filePath));
+
+      // Header
+      const title = safePeriod === 'week' ? 'Sales (Last 7 Days)' : 'Sales (Today)';
+      const dateRange = safePeriod === 'week'
+        ? `${moment().subtract(7, 'days').format('DD/MM/YYYY')} - ${moment().format('DD/MM/YYYY')}`
+        : moment().format('DD/MM/YYYY');
+      addColoredHeader(doc, title, dateRange, shopId);
+
+      // Fetch raw records via your period summary helper (which returns {records})
+      let records = [];
+      try {
+        const start = safePeriod === 'week' ? moment().subtract(7, 'days').toDate() : moment().startOf('day').toDate();
+        const end   = new Date();
+        const data  = await getSalesDataForPeriod(shopId, start, end);
+        records     = Array.isArray(data?.records) ? data.records : [];
+      } catch (_) {}
+
+      // Table
+      addSectionHeader(doc, 'Raw Sales (Airtable format)', colors.secondary);
+      const headers = [
+        { label: 'SaleDate (IST)', width: 140 },
+        { label: 'Product',        width: 150 },
+        { label: 'Qty',            width: 60  },
+        { label: 'Unit',           width: 70  },
+        { label: 'Rate (₹)',       width: 70  },
+        { label: 'Value (₹)',      width: 90  },
+      ];
+      const rows = records.map(r => {
+        const f = r.fields ?? r;
+        const qty  = Math.abs(Number(f.Quantity ?? 0));
+        const rate = Number(f.SalePrice ?? 0);
+        const val  = qty * rate;
+        const saleISO = f.SaleDate ?? f['SaleDate'];
+        const saleIST = saleISO ? moment(saleISO).tz?.('Asia/Kolkata').format('DD/MM/YYYY HH:mm') 
+                                : moment(saleISO || new Date()).format('DD/MM/YYYY HH:mm');
+        return [saleIST, f.Product ?? '—', qty, f.Units ?? 'pieces', rate.toFixed(2), val.toFixed(2)];
+      });
+      addAirtableStyleTable(doc, headers, rows);
+
+      // Footer
+      addColoredFooter(doc);
+      doc.end();
+      resolve(filePath);
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
 
 /**
  * Add a colored header section for reports
@@ -780,5 +936,7 @@ async function generateInvoicePDF(shopDetails, saleRecord) {
 // Export the functions
 module.exports = {
   generateSalesPDF,
-  generateInvoicePDF
+  generateInvoicePDF,
+  generateInventoryShortSummaryPDF,
+  generateSalesRawTablePDF
 };
