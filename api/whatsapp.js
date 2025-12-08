@@ -12,6 +12,27 @@ const path = require('path');
 const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
+// --------------------------------------------------------------------------------
+// NEW: Canonical language mapper (single source of truth)
+// --------------------------------------------------------------------------------
+function canonicalizeLang(code) {
+  const s = String(code ?? 'en').trim().toLowerCase();
+  const map = {
+    // Hindi / Hinglish
+    'hindi': 'hi',
+    'hinglish': 'hi-latn',
+    'hi-latin': 'hi-latn',
+    'roman hindi': 'hi-latn',
+    // Bengali
+    'bangla': 'bn',
+    'bengali': 'bn',
+    // Others
+    'tamil': 'ta', 'telugu': 'te', 'kannada': 'kn',
+    'marathi': 'mr', 'gujarati': 'gu',
+  };
+  return map[s] ?? s;
+}
+
 // ---------------------------------------------------------------------------
 // STEP 2: HOISTED GLOBALS (fix early references like "handledRequests is not defined")
 // Place all global Sets/Maps and TTLs at the very top, right after imports.
@@ -116,10 +137,12 @@ async function maybeSendStreakMessage(From, lang = 'en', tag = 'streak') {
 // [UNIQ:ORCH-VAR-LOCK-001] Variant lock & Sales-QA cache helpers
 // ============================================================================
 // Keep exact language variant (e.g., 'hi-latn') instead of normalizing to 'hi'
-function ensureLangExact(languageDetected, fallback = 'en') {
-  const l = String(languageDetected || fallback).toLowerCase().trim();
-  // Do NOT convert 'hi-latn' -> 'hi' (this caused cache/template mismatches)
-  return l;
+function ensureLangExact(languageDetected, fallback = 'en') {      
+    // Canonicalize arbitrary tokens like "hindi", "hinglish" into our supported codes.
+      // Still preserves '-latn' variants (hi-latn).
+      const l = String(languageDetected ?? fallback).toLowerCase().trim();
+      const c = canonicalizeLang(l);
+      return c;
 }
 
 // ==== NEW: Guard against GSTIN / code-dominant inputs flipping language =====
@@ -797,9 +820,14 @@ function enforceSingleScriptSafe(out, lang) {
       return normalizeNumeralsToLatin(out);
 }
 
-async function t(text, languageCode, requestId) {     
-    const src = String(text ?? '');
-      const out = await generateMultiLanguageResponse(src, languageCode, requestId);
+async function t(text, languageCode, requestId) {             
+    const L = canonicalizeLang(languageCode);
+      const src = String(text ?? '');
+      // Race: if translation is slow, return source (keeps reply snappy)
+      const out = await Promise.race([
+        generateMultiLanguageResponse(src, L, requestId),
+        new Promise(resolve => setTimeout(() => resolve(src), TRANSLATE_TIMEOUT_MS))
+      ]);
     
       // NEW: opt-out marker to preserve Latin anchors in mixed-script outputs
       const skipClamp = src.includes(NO_CLAMP_MARKER);
@@ -815,7 +843,7 @@ async function t(text, languageCode, requestId) {
     if (hasMixedScripts && !isSafeAnchor(out)) {
        console.warn(`[clamp] Mixed scripts detected for ${languageCode}, applying numerals-only normalization.`);
        // Use the safe variant so Latin anchors (units, quoted commands) survive
-       return enforceSingleScriptSafe(out, languageCode);
+       return enforceSingleScriptSafe(out, L);
     }
 
     // If AI output is already single-script, keep original
@@ -1136,7 +1164,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
     // [UNIQ:ORCH-LANG-LOCK-004] Prefer the exact variant from the detector
       // Keep 'hi-latn' if the hint carries it, even when orchestrator returns 'hi'
       // ---------------------------------------------------------------------
-      const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
+      const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');              
       const orchestratedLang = ensureLangExact(o.language ?? hintedLang);
       const language = hintedLang.endsWith('-latn') ? hintedLang : orchestratedLang;
     
@@ -1436,7 +1464,7 @@ const authCache = new Map();
 const { processShopSummary } = require('../dailySummary');
 const { generateInvoicePDF } = require('../pdfGenerator');
 const { getShopDetails } = require('../database');
-const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS || 25000);
+const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS || 12000);
 const languageNames = {
   'hi': 'Hindi',
   'bn': 'Bengali',
@@ -1584,8 +1612,13 @@ function _isTerminalCommand(cmd) {
 }
 
 // Helper: normalize language hint safely
-function _safeLang(...candidates) {
-  for (const c of candidates) { if (c) return String(c).toLowerCase(); }
+function _safeLang(...candidates) {      
+    for (const c of candidates) {
+        if (c) {
+          const s = String(c).toLowerCase();
+          return canonicalizeLang(s);
+        }
+      }
   return 'en';
 }
 
@@ -1678,6 +1711,7 @@ async function detectLanguageWithFallback(text, from, requestId) {
         // Final pass: even if heuristics stayed native, switch to *-latn when text looks Roman Indic.
               // (Ensures Hinglish/Tanglish etc. get Latin-only responses without bilingual.)
               detectedLanguage = autoLatnIfRoman(detectedLanguage, text);
+        detectedLanguage = canonicalizeLang(detectedLanguage);
 
       console.log(`[${requestId}] Detected language: ${detectedLanguage}`);
 
@@ -3425,6 +3459,21 @@ console.log('Environment detection:', {
   nodeVersion: process.version,
   platform: process.platform
 });
+
+// --------------------------------------------------------------------------------
+// NEW: Pre-warm content templates at boot (non-blocking) to avoid cold-start lag
+// --------------------------------------------------------------------------------
+setImmediate(async () => {
+  try {
+    for (const L of ['en', 'hi', 'hi-latn']) {
+      await ensureLangTemplates(L);
+    }
+    console.log('[contentCache] pre-warmed en/hi/hi-latn');
+  } catch (e) {
+    console.warn('[contentCache] pre-warm failed', e?.message);
+  }
+});
+
 const {
   updateInventory,
   testConnection,
@@ -4813,10 +4862,34 @@ const SALES_AI_MANIFEST = Object.freeze({
   ]
 });
 
+// Deterministic native pricing (no MT). Uses ₹ and simple phrasing for en/hi/hi-latn.
+function composePricingAnswer(lang = 'en', flavor = 'tool_pricing') {
+  const L = typeof canonicalizeLang === 'function' ? canonicalizeLang(lang) : String(lang ?? 'en').toLowerCase();
+  const price = Number(process.env.PAID_PRICE_INR ?? 11);
+  const trialDays = Number(process.env.TRIAL_DAYS ?? 3);
+  const map = {
+    en: {
+      tool: `Saamagrii.AI — free trial ${trialDays} days • paid plan ₹${price}/month`,
+      how: `Pay via Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) or ${process.env.PAYMENT_LINK}`
+    },
+    hi: {
+      tool: `Saamagrii.AI — मुफ़्त ट्रायल ${trialDays} दिन • पेड प्लान ₹${price}/महीना`,
+      how: `पेमेंट: Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) या ${process.env.PAYMENT_LINK}`
+    },
+    'hi-latn': {
+      tool: `Saamagrii.AI — free trial ${trialDays} din • paid plan ₹${price}/mahina`,
+      how: `Payment: Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) ya ${process.env.PAYMENT_LINK}`
+    }
+  };
+  const dict = map[L] ?? map.en;
+  const msg = `${dict.tool}\n${dict.how}`;
+  return normalizeNumeralsToLatin(nativeglishWrap(msg, L));
+}
+
 // Helper: if target lang is non-English but output is mostly ASCII/English, replace with localized deterministic copy
 function ensureLanguageOrFallback(out, language = 'en') {
   try {
-    const lang = String(language ?? 'en').toLowerCase();
+    const lang = canonicalizeLang(language ?? 'en');
     const text = String(out ?? '').trim();
     if (!text) {              
         // Only fallback when output is empty
@@ -4862,11 +4935,11 @@ function getLocalizedQAFallback(lang = 'en') {
   }
 }
 
-async function composeAIOnboarding(language = 'en') {
-  const lang = (language || 'en').toLowerCase();       
-  const sys =
-      'You are a friendly, professional WhatsApp assistant for a small retail inventory tool. ' +
-      'Respond ONLY in one script: if Hindi, use Devanagari; if Hinglish, use Roman Hindi (hi-Latn). Do NOT mix native and Roman in the same message. Keep brand names unchanged.' +
+async function composeAIOnboarding(language = 'en') {  
+    const lang = canonicalizeLang(language ?? 'en');
+      const sys =
+        'You are a friendly, professional WhatsApp assistant for a small retail inventory tool. ' +
+        'Respond ONLY in the target language/script; do NOT mix Roman and native. Keep brand names unchanged. ' +
       'Separate paragraphs with double newlines if multiple lines are needed.' +
       'Tone: conversational, helpful, approachable. Keep it concise. Use emojis sparingly. ' +
       'STYLE (respectful, professional): In Hindi or Hinglish, ALWAYS address the user with “aap / aapki / aapke / aapko / aapse”; NEVER use “tum…”. Use polite plural verb forms (“sakte hain”, “karenge”, “kar payenge”). ' +
@@ -4892,9 +4965,10 @@ async function composeAIOnboarding(language = 'en') {
         headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
         timeout: 10000
       }
-    );                      
+    );                              
     let body = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();
-    // Ensure localized text and clamp to single script even if MT blends lines
+        // Ensure localized text and enforce single script + ASCII numerals
+        body = enforceSingleScriptSafe(body, lang);
     body = ensureLanguageOrFallback(body, lang);
     body = enforceSingleScript(body, lang);
     console.log('AI_AGENT_POST_CALL', { kind: 'onboarding', ok: !!body, length: body?.length || 0 });
@@ -4909,8 +4983,25 @@ async function composeAIOnboarding(language = 'en') {
 
 // NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
 async function composeAISalesAnswer(shopId, question, language = 'en') {
-  
-const lang = (language ?? 'en').toLowerCase();        
+    
+// Fast-pricing detector (English + Hindi)
+  const q = String(question ?? '').trim();
+  const isPricing = /\b(price|cost|charges?)\b/i.test(q) || /क़ीमत|कीमत|मूल्य|भाव|लागत/i.test(q);
+  if (isPricing) {
+    // Pick flavor based on activation + whether question seems inventory-related
+    let activated = false;
+    try {
+      const pref = await getUserPreference(shopId);
+      const plan = String(pref?.plan ?? '').toLowerCase();
+      activated = (plan === 'trial' || plan === 'paid');
+    } catch {}
+    const flavor = (activated && /\b(inventory|stock|summary|sales)\b/i.test(q))
+      ? 'inventory_pricing'
+      : 'tool_pricing';
+    return composePricingAnswer(language, flavor);
+  }
+
+const lang = canonicalizeLang(language ?? 'en');
 
   // ---------- Generic, extensible domain classification ----------
   // Optional: pull a saved category from preferences if you later store it
@@ -4985,6 +5076,7 @@ const lang = (language ?? 'en').toLowerCase();
     if (isCapabilitiesQuestion(msg)) return 'capabilities';
     return null;
   }
+
   function looksLikeInventoryPricing(msg) {
     const s = String(msg ?? '').toLowerCase();
     const unitRx = /(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|बॉक्स|टुकड़ा|नंग)/i;
@@ -5004,11 +5096,32 @@ const lang = (language ?? 'en').toLowerCase();
     pricingFlavor = (activated && looksLikeInventoryPricing(question)) ? 'inventory_pricing' : 'tool_pricing';
   }
 
-  // ---- NEW: Hinglish enforcement note ----
-  const targetScriptNote =
+  // --------------------------------------------------------------------------
+  // NEW: Short-circuit pricing questions with deterministic native answer
+  // --------------------------------------------------------------------------
+  const topic = classifyQuestionTopic(question);
+  if (topic === 'pricing') {
+    // Compose deterministic native copy (no MT, single-script)
+    const pricingText = composePricingAnswer(lang, pricingFlavor);
+    return pricingText;
+  }
+
+  // --------------------------------------------------------------------------
+  // Strengthened system prompt: produce answer directly in target language/script
+  // --------------------------------------------------------------------------
+  const sys =
+    'You are a concise WhatsApp assistant for a small retail inventory tool.' +
+    ' Respond ONLY in the target language/script; do NOT mix Roman and native.' +
+    ' Keep 3–5 short sentences, simple vocabulary. No extra commentary.' +
+    (lang === 'hi-latn'
+      ? ' If Hindi (Hinglish), use Roman Hindi (hi-Latn) only, one script.'
+      : ` Use ${lang} native script only, one script.`);
+   
+ // ---- NEW: Hinglish enforcement note ----
+  const targetScriptNote =        
     lang === 'hi-latn'
-      ? 'Respond ONLY in Roman Hindi (Hinglish; language code hi-Latn). Keep sentences short and natural Hinglish.'
-      : `Respond ONLY in ${lang} script.`;
+        ? 'Respond ONLY in Roman Hindi (Hinglish; language code hi-Latn). Keep sentences short and natural Hinglish.'
+        : `Respond ONLY in ${lang} native script.`;
 
   // If user asks about invoice, force an explicit line in the reply about PDFs
   const mustMentionInvoice = /\b(invoice|बिल|चालान)\b/i.test(String(question ?? ''));              
@@ -7213,10 +7326,14 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
       
     // ====== Q&A FIRST for new/unactivated users (pricing/benefits), post-welcome ======
       // If user is unactivated and asks a question, answer via AI Sales Q&A instead of re-sending onboarding.
-      if (isQuestion && gate && (gate.upsellReason === 'new_user' || gate.upsellReason === 'trial_ended')) {
+      if (isQuestion && gate && (gate.upsellReason === 'new_user' || gate.upsellReason === 'trial_ended')) {                
         const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
-        const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa-first`);
-        await sendMessageQueued(From, msg);
+            // Send AI-native answer without MT; keep one script + readable anchors
+            const aiNative = enforceSingleScriptSafe(ans, detectedLanguage);
+            const msg = normalizeNumeralsToLatin(
+              nativeglishWrap(aiNative, detectedLanguage)
+            );
+            await sendMessageQueued(From, msg);
         handledRequests.add(requestId);
         return true;
       }
@@ -14560,11 +14677,14 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
 
       // Question → answer & exit
       if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
-        handledRequests.add(requestId);
+        handledRequests.add(requestId);                
         const ans = await composeAISalesAnswer(shopId, Body, langExact);
-        const msg0 = await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`);
-        const msg = nativeglishWrap(msg0, langExact);
-        await sendMessageDedup(From, msg);
+            // Send AI-native answer without MT; keep one script + readable anchors
+            const aiNative = enforceSingleScriptSafe(ans, langExact);
+            const msg = normalizeNumeralsToLatin(
+              nativeglishWrap(aiNative, langExact)
+            );
+            await sendMessageDedup(From, msg);
         try {
           const isActivated = await isUserActivated(shopId);
           const buttonLang = langExact.includes('-latn') ? langExact.split('-')[0] : langExact;
