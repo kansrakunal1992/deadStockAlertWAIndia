@@ -318,17 +318,26 @@ function normalizeUserTextForKey(s) {
 }
 // Build a robust Sales-QA key that separates language variants & topics
 // Using base64 for log readability (your logs show base64 promptHash values)
-function buildSalesQaCacheKey({ langExact, topicForced, pricingFlavor, text }) {
-  // crypto is already imported in your file; reuse it here
-  const payload = [
-    'sales-qa',
-    String(langExact || 'en'),
-    String(topicForced || 'none'),
-    String(pricingFlavor || 'none'),
-    normalizeUserTextForKey(text)
-  ].join('::');
-  return crypto.createHash('sha1').update(payload).digest('base64');
-}
+
+// Optional runtime flag to toggle off cache hits without removing writes
+ const DISABLE_SALES_QA_CACHE_HIT =
+   String(process.env.DISABLE_SALES_QA_CACHE_HIT ?? '1').toLowerCase() === '1';
+
+ function buildSalesQaCacheKey({ langExact, topicForced, pricingFlavor, text }) {
+   // crypto is already imported in your file; reuse it here
+   const payload = [
+     'sales-qa',
+     String(langExact ?? 'en'),
+     String(topicForced ?? 'none'),
+     String(pricingFlavor ?? 'none'),
+     normalizeUserTextForKey(text)
+   ].join('::');
+   const base = crypto.createHash('sha1').update(payload).digest('base64');
+   // Return a per-request unique key when disabling cache hits
+   // (ensures lookups never match previous writes; minimal blast radius)
+   return DISABLE_SALES_QA_CACHE_HIT ? `${base}::${Date.now()}` : base;
+ }
+
 // Lightweight pricing validator (optional use downstream)
 function isPricingAnswer(text) {
   return /\b(₹|rs\.?|inr)\b/i.test(String(text || '')) || /\d/.test(String(text || ''));
