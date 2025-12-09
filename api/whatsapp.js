@@ -4335,7 +4335,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
             .replace(/^Low Stock\b/m,       '🟠 Low Stock')
             .replace(/^Expiring Soon\b/m,   '⏳ Expiring Soon')
             .replace(/^Insights\b/m,        '💡 Insights');
-          const decorated = insights?.startsWith('📊') ? insights : `📊 Full Summary\n${insights}`;
+          
           await sendTagged(decorated);
     } catch (_) {
       await sendTagged('📊 Full Summary — snapshot unavailable. Try: “short summary”.');
