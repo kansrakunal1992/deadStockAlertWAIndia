@@ -4315,8 +4315,20 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     return true;
   }
   if (cmd === 'full summary') {
-    try {      
-    let insights = await generateFullScaleSummary(shopId, lang, `qq-full-${shopId}`);
+    try {          
+        let langPref = lang;
+        try {
+          const pref = await getUserPreference(shopId);
+          if (pref?.success && pref.language) {
+            langPref = String(pref.language).toLowerCase();
+          }
+        } catch { /* noop */ }
+        
+        let insights = await generateFullScaleSummary(shopId, langPref, `qq-full-${shopId}`);
+        
+        // Ensure final send uses the same preferred language
+        const decorated = insights?.startsWith('📊') ? insights : `📊 Full Summary\n${insights}`;
+
           // Optional: decorate common section headers with icons (non-destructive)
           insights = String(insights)
             .replace(/^Sales\b/m,           '🧾 Sales')
@@ -10480,7 +10492,7 @@ async function generateSummaryInsights(data, languageCode, requestId) {
       const expiringLimit = 5;
       
       // Prepare a more concise prompt
-      const prompt = `You are an inventory analysis assistant. Analyze the following shop data and provide insights in Nativeglish (${nativeLanguage} mixed with English) - ensure response is formal and respectful. Respond ONLY in one script: if Hindi, use Devanagari; if Hinglish, use Roman Hindi (hi-Latn). Do NOT mix native and Roman in the same message. Keep brand names unchanged.
+      const prompt = `You are an inventory analysis assistant. Analyze the following shop data and provide insights in Native language (${nativeLanguage}) - ensure response is formal and respectful. Respond ONLY in one script: if Hindi, use Devanagari; if Hinglish, use Roman Hindi (hi-Latn). Do NOT mix native and Roman in the same message. Keep brand names unchanged. Also, add emoticons wherever required to make it more presentable.
       Sales Data (last 30 days):
       - Total items sold: ${data.salesData.totalItems || 0}
       - Total sales value: ₹${(data.salesData.totalValue || 0).toFixed(2)}
@@ -10523,7 +10535,7 @@ async function generateSummaryInsights(data, languageCode, requestId) {
             messages: [
               {
                 role: "system",
-                content: `You are an expert inventory analyst providing concise, actionable insights for small business owners. Your response should be in Nativeglish (${nativeLanguage} mixed with English) for better readability but should be formal and respectful. Keep your response under 1500 characters. Respond ONLY in one script: if Hindi, use Devanagari; if Hinglish, use Roman Hindi (hi-Latn). Do NOT mix native and Roman in the same message. Keep brand names unchanged.`
+                content: `You are an expert inventory analyst providing concise, actionable insights for small business owners. Your response should be in Native language (${nativeLanguage}) for better readability but should be formal and respectful. Keep your response under 1500 characters. Respond ONLY in one script: if Hindi, use Devanagari; if Hinglish, use Roman Hindi (hi-Latn). Do NOT mix native and Roman in the same message. Keep brand names unchanged. Also, add emoticons wherever required to make it more presentable.`
               },
               {
                 role: "user",
