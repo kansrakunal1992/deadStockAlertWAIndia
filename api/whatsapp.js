@@ -940,7 +940,7 @@ function composeDemoByLanguage(lang) {
         'User: sold milk 2 ltr',
         'Bot: ✅ Sold 2 ltr milk @ ₹? each — Stock: (updated)',
         'User: purchased Parle-G 12 packets ₹10 exp +6m',
-        'Bot: ✅ Purchased 12 packets Parle-G — Price: ₹10',
+        'Bot: 📦 Purchased 12 packets Parle-G — Price: ₹10',
         '      Expiry: set to +6 months',
         'User: short summary',
         'Bot: 📊 Short Summary — Sales Today, Low Stock, Expiring Soon…',
@@ -4989,7 +4989,7 @@ async function sendDemoTranscriptOnce(From, lang, rid = 'cta-demo') {
     'User: sold milk 2 ltr',
     'Bot: ✅ Sold 2 ltr milk @ ₹? each — Stock: (updated)',
     'User: purchased Parle-G 12 packets ₹10 exp +6m',
-    'Bot: ✅ Purchased 12 packets Parle-G — Price: ₹10',
+    'Bot: 📦 Purchased 12 packets Parle-G — Price: ₹10',
     '      Expiry: set to +6 months',
     'User: short summary',
     'Bot: 📊 Short Summary — Sales Today, Low Stock, Expiring Soon…',
@@ -6546,7 +6546,7 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
                 console.log(`[handleAwaitingPriceExpiry] Inventory updated for ${product}: +${quantity} ${unit}`);
                     
     // ✅ ADD: Confirmation message to user                            
-            let confirmation = `✅ Done:\n✅ Purchased ${quantity} ${unit} ${product} (Stock: updated)\n\n✅ Successfully updated 1 of 1 items`;
+            let confirmation = `✅ Done:\n📦 Purchased ${quantity} ${unit} ${product} (Stock: updated)\n\n✅ Successfully updated 1 of 1 items`;
             // ANCHOR: UNIQ:PRICE-EXPIRY-CONFIRM-001
             await sendMessageViaAPI(From, finalizeForSend(confirmation, detectedLanguage));
             } catch (e) {
@@ -9179,8 +9179,8 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           // Assign to hoisted holder so we can use it later safely
                   confirmTextLine = COMPACT_MODE
                     ? (isPerishable
-                      ? `✅ Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}. Exp: ${edDisplay}`
-                      : `✅ Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}`)
+                      ? `📦 Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}. Exp: ${edDisplay}`
+                      : `📦 Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}`)
                     : `• ${product}: ${update.quantity} ${update.unit} purchased @ ₹${finalPrice}`
                       + (isPerishable ? `\n Expiry: ${edDisplay}` : `\n Expiry: —`);
 
