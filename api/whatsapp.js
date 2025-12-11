@@ -12,6 +12,12 @@ const path = require('path');
 const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
+// ========================================================================
+// [UNIQ:VOICE-CONF-005] Voice (STT) confidence minimum — environment-driven
+// Default to 0.60 for audio turns; upstream handlers can read this constant.
+// ========================================================================
+const STT_CONFIDENCE_MIN_VOICE = Number(process.env.STT_CONFIDENCE_MIN_VOICE ?? 0.60);
+
 // --------------------------------------------------------------------------------
 // NEW: Canonical language mapper (single source of truth)
 // --------------------------------------------------------------------------------
@@ -32,6 +38,72 @@ function canonicalizeLang(code) {
   };
   return map[s] ?? s;
 }
+
+// ========================================================================
+ // [UNIQ:UNIT-TAXONOMY-001] Unified metrics/unit taxonomy & helpers
+ // One source of truth for all parsers (rule-based, verb-less, sticky mode).
+ // Includes textile-friendly length units + common mass/volume/count units.
+ // ========================================================================
+ const UNIT_TOKENS = {
+   // Length (common for textiles/wires)
+   metre:       ['metre','meter','metres','meters','mtr','mtrs','m'],
+   centimeter:  ['centimeter','centimetre','centimeters','centimetres','cm'],
+   millimeter:  ['millimeter','millimetre','millimeters','millimetres','mm'],
+   inch:        ['inch','inches','in'],
+   foot:        ['foot','feet','ft'],
+   yard:        ['yard','yards','yd'],
+   // Area (optional)
+   square_meter:['square meter','square metre','sq m','sqm','m²'],
+   square_foot: ['square foot','square feet','sq ft','sqft','ft²'],
+   // Mass
+   kilogram:    ['kilogram','kilograms','kg','kgs'],
+   gram:        ['gram','grams','g','gm','gms'],
+   milligram:   ['milligram','milligrams','mg'],
+   // Volume
+   liter:       ['liter','litre','liters','litres','l','ltr','ltrs'],
+   milliliter:  ['milliliter','millilitre','milliliters','millilitres','ml'],
+   // Count / packs
+   piece:       ['piece','pieces','pc','pcs'],
+   packet:      ['packet','packets','pkt','pkts','pack','packs'],
+   box:         ['box','boxes'],
+   bottle:      ['bottle','bottles'],
+   dozen:       ['dozen','dozens'],
+   roll:        ['roll','rolls'],
+ };
+ 
+ const UNIT_REGEX = new RegExp(
+   '\\b(?:' +
+   Object.values(UNIT_TOKENS)
+     .flat()
+     .map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+     .join('|') +
+   ')\\b',
+   'i'
+ );
+ 
+ const UNIT_CANONICAL_MAP = (() => {
+   const m = new Map();
+   for (const [canon, toks] of Object.entries(UNIT_TOKENS)) {
+     toks.forEach(t => m.set(t.toLowerCase(), canon));
+   }
+   return m;
+ })();
+ 
+ function canonicalizeUnitToken(tok = '') {
+   const lc = String(tok).toLowerCase();
+   const key = UNIT_CANONICAL_MAP.get(lc);
+   if (!key) return tok;
+   const DISPLAY = {
+     metre: 'metres', centimeter: 'cm', millimeter: 'mm',
+     inch: 'inch', foot: 'ft', yard: 'yd',
+     square_meter: 'sqm', square_foot: 'sqft',
+     kilogram: 'kg', gram: 'g', milligram: 'mg',
+     liter: 'ltr', milliliter: 'ml',
+     piece: 'pieces', packet: 'packets', box: 'boxes',
+     bottle: 'bottles', dozen: 'dozen', roll: 'rolls',
+   };
+   return DISPLAY[key] ?? tok;
+ }
 
 // ---------------------------------------------------------------------------
 // STEP 2: HOISTED GLOBALS (fix early references like "handledRequests is not defined")
@@ -227,10 +299,64 @@ const UNIT_MAP_HI = {
   box: 'बॉक्स', boxes: 'बॉक्स', bottle: 'बोतल', bottles: 'बोतल', dozen: 'दर्जन',
   metre: 'मीटर', metres: 'मीटर'
 };
+
 function displayUnit(unit, lang) {
   const u = String(unit ?? '').toLowerCase().trim();
   return lang.startsWith('hi') ? (UNIT_MAP_HI[u] ?? unit) : unit;
 }
+
+ // ========================================================================
+ // [UNIQ:WORDS-TO-DIGITS-002] English number words → digits (voice-friendly)
+ // Handles compounds ("twenty five"), hyphens, "point five", and Indian scales.
+ // ========================================================================
+ function wordsToNumber(input) {
+   if (!input) return '';
+   const SMALL = {
+     zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9,
+     ten:10, eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15,
+     sixteen:16, seventeen:17, eighteen:18, nineteen:19
+   };
+   const TENS = { twenty:20, thirty:30, forty:40, fifty:50, sixty:60, seventy:70, eighty:80, ninety:90 };
+   // India-friendly scales (optional: 'million' kept for generality)
+   const SCALE = { hundred:100, thousand:1000, lakh:100000, million:1000000, crore:10000000 };
+   const clean = String(input).toLowerCase().replace(/-/g,' ').replace(/\band\b/g,' ').replace(/\s+/g,' ').trim();
+   const tokens = clean.split(/\b/);
+   const out = [];
+   let buffer = [];
+   const flush = () => {
+     if (!buffer.length) return;
+     const decIdx = buffer.indexOf('point');
+     if (decIdx >= 0) {
+       const intVal = parseNumberWords(buffer.slice(0, decIdx));
+       const fracVal = buffer.slice(decIdx + 1).map(w => SMALL[w] ?? (/\d/.test(w) ? w : '')).join('');
+       if (intVal != null && fracVal) { out.push(String(intVal) + '.' + String(fracVal)); buffer = []; return; }
+     }
+     const val = parseNumberWords(buffer);
+     out.push(val != null ? String(val) : buffer.join(''));
+     buffer = [];
+   };
+   function parseNumberWords(arr) {
+     let total = 0, current = 0, seen = false;
+     for (const raw of arr) {
+       const w = raw.trim(); if (!w) continue;
+       if (w in SMALL) { current += SMALL[w]; seen = true; continue; }
+       if (w in TENS)  { current += TENS[w];  seen = true; continue; }
+       if (w in SCALE) { if (!seen && w === 'hundred') return null; current *= SCALE[w]; total += current; current = 0; seen = true; continue; }
+       if (/^\d+$/.test(w)) { total += current; current = 0; total += parseInt(w,10); seen = true; continue; }
+       return null;
+     }
+     total += current; return seen ? total : null;
+   }
+   for (const t of tokens) {
+     const token = t.trim();
+     if (!token) { out.push(t); continue; }
+     const isNumberish = (token in SMALL) || (token in TENS) || (token in SCALE) || token === 'point' || /^\d+$/.test(token);
+     if (isNumberish) { buffer.push(token); continue; }
+     flush(); out.push(t);
+   }
+   flush(); return out.join('');
+ }
+
 async function composeLowStockLocalized(shopId, lang, requestId) {
   // Try DB low-stock (threshold 5); fallback to inventory if needed
   let items = [];
@@ -435,8 +561,12 @@ async function parseMultipleUpdates(reqOrText) {
     return [];
   }
   const shopId = String(from).replace('whatsapp:', '');
-  const updates = [];
-  const t = String(transcript || '').trim();       
+  const updates = [];  
+  // ----------------------------------------------------------------------
+     // [UNIQ:WORDS-TO-DIGITS-002] Normalize spelled numbers → digits for STT
+     // ----------------------------------------------------------------------
+     let t = String(transcript ?? '').trim();
+     t = wordsToNumber(t);     
   // Prefer DB state; use in-memory fallback if DB read is transiently null
   const userState = (await getUserStateFromDB(shopId)) || globalState.conversationState[shopId] || null;      
   
@@ -469,7 +599,23 @@ async function parseMultipleUpdates(reqOrText) {
         console.log(`[parseMultipleUpdates] Using pending action from state: ${pendingAction}`);
       }
     }
-  
+    
+  // ----------------------------------------------------------------------
+     // [UNIQ:ACTION-INFER-004] Infer action directly from text if no sticky mode
+     // ----------------------------------------------------------------------
+     function resolveActionFromText(s) {
+       const t = String(s||'').toLowerCase();
+       const PURCHASE = /\b(purchase|purchased|buy|bought|billed in|restock|opening|received|recd)\b/;
+       const SALE     = /\b(sale|sell|sold|billed out|issued)\b/;
+       const RETURN   = /\b(return|returned|refund|exchange)\b/;
+       if (PURCHASE.test(t)) return 'purchased';
+       if (SALE.test(t))     return 'sold';
+       if (RETURN.test(t))   return 'returned';
+       return null;
+     }
+     const inferredAction = pendingAction ? null : resolveActionFromText(t);
+     const hasAnyAction = !!(pendingAction || inferredAction);
+
   // Never treat summary commands as inventory messages
   if (resolveSummaryIntent(t)) return [];
   // NEW: ignore read-only inventory queries outright
@@ -477,9 +623,9 @@ async function parseMultipleUpdates(reqOrText) {
     console.log('[Parser] Read-only query detected; skipping update parsing.');
     return [];
   }  
- // NEW: only attempt update parsing if message looks like a transaction
- // Relax when we already have a sticky mode/pending action (consume verb-less lines)
-   if (!looksLikeTransaction(t) && !pendingAction) {
+ // NEW: only attempt update parsing if message looks like a transaction   
+ // Relax when we already have a sticky mode OR an inferred action (consume verb-less lines)
+    if (!looksLikeTransaction(t) && !hasAnyAction) {
     console.log('[Parser] Not transaction-like; skipping update parsing.');
     return [];
   }
@@ -554,15 +700,15 @@ async function parseMultipleUpdates(reqOrText) {
       
       // Simple parser for verb-less lines like: "milk 10 litres at 40/litre"
       function parseSimpleWithoutVerb(s, actionHint) {
-        try {
-          const mQty = s.match(/(^|\s)(\d+(?:\.\d+)?)(?=\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces)\b)/i);
-          const mUnit = s.match(/\b(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces)\b/i);
+        try {                    
+          const mQty = s.match(/(^|\s)(\d+(?:\.\d+)?)(?=\s*(?:.+)?)/i); // qty first; unit checked separately
+          const mUnit = s.match(UNIT_REGEX);
           const mPrice = s.match(/\b(?:at|@)\s*(\d+(?:\.\d+)?)(?:\s*\/\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces))?/i);
           const idxQty = mQty ? s.indexOf(mQty[2]) : -1;
           if (idxQty < 1 || !mUnit) return null;
           const product = s.slice(0, idxQty).replace(/\bat\b$/i, '').trim();
           const qty = parseFloat(mQty[2]);
-          const unitToken = mUnit[1].toLowerCase();
+          const unitToken = canonicalizeUnitToken(mUnit[0]);
           const price = mPrice ? parseFloat(mPrice[1]) : null;
           return { action: actionHint || 'purchased', product, quantity: qty, unit: unitToken, pricePerUnit: price, expiry: null };
         } catch { return null; }
@@ -595,10 +741,11 @@ async function parseMultipleUpdates(reqOrText) {
           };
           
           const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
-          
-          if (['purchased', 'sold', 'returned'].includes(finalAction)) {
-            update.action = finalAction;
-            console.log(`[Rule Parsing] Overriding action with normalized state action: ${update.action}`);
+
+          const actionResolved = finalAction || inferredAction || null;
+          if (['purchased', 'sold', 'returned'].includes(actionResolved)) {                         
+              update.action = actionResolved;
+              console.log(`[Rule Parsing] Action resolved: ${update.action} (sticky/inferred)`);
           } else {
             console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
           }      
@@ -641,7 +788,9 @@ function nativeglishWrap(text, lang) {
         let out = String(text ?? '');                
         const units = [
               'kg','kgs','g','gm','gms','ltr','ltrs','l','ml','packet','packets','piece','pieces',
-              '₹','Rs','MRP'
+              '₹','Rs','MRP',                        
+              // [UNIQ:UNIT-TAXONOMY-001] expose extra anchors in mixed-script outputs
+              'meter','metre','meters','metres','cm','mm','in','ft','yd','sqm','sqft'
             ];
         units.forEach(tok => {
             const rx = new RegExp(`\\b${tok}\\b`, 'gi');
@@ -3428,14 +3577,19 @@ function looksLikeTransaction(text) {
   try { regexPatterns.salesKeywords.lastIndex = 0; } catch (_) {}
   try { regexPatterns.remainingKeywords.lastIndex = 0; } catch (_) {}
   try { regexPatterns.returnKeywords.lastIndex = 0; } catch (_) {}
-  try { regexPatterns.digits.lastIndex = 0; } catch (_) {}
-  const hasDigits = regexPatterns.digits.test(s);
-  const mentionsMoney =
-    /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i.test(s)
-    ||
-    /(?:@|at)\s*(?:\d+(?:\.\d+)?)\s*(?:per\s+)?(kg|liter|litre|liters|litres|packet|packets|box|boxes|piece|pieces|ml|g|kg|ltr)/i.test(s);
-  const hasUnit =
-    /(kg|g|gram|grams|ml|ltr|l|liter|litre|liters|litres|packet|packets|box|boxes|piece|pieces|किलो|किग्रा|ग्राम|लिटर|पॅकेट|पेकट|बॉक्स|टुकडो|टुकडाओ|नंग)/i.test(s);
+  try { regexPatterns.digits.lastIndex = 0; } catch (_) {}    
+  // ======================================================================
+     // [UNIQ:TXN-GATE-EDIT-003] Voice-friendly gating:
+     // - Accept worded numbers OR digits
+     // - Use unified UNIT_REGEX (includes metre/meter + extended units)
+     // ======================================================================
+     const hasDigits = regexPatterns.digits.test(s) ||
+       /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|lakh|million|crore|point)\b/i.test(s);
+     const mentionsMoney =
+       /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i.test(s)
+       ||
+       /(?:@|at)\s*(?:\d+(?:\.\d+)?)\s*(?:per\s+)?(?:kg|liter|litre|liters|litres|packet|packets|box|boxes|piece|pieces|ml|g|kg|ltr|meter|metre|meters|metres|cm|mm|in|ft|yd)/i.test(s);
+     const hasUnit = UNIT_REGEX.test(s);
   const hasTxnVerb =
     regexPatterns.purchaseKeywords.test(s)
     ||
