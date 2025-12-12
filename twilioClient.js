@@ -1,13 +1,7 @@
-const https = require('https');
-const twilio = require('twilio');
-
-// Reuse TLS connections for faster short API calls (ACKs, examples, etc.)
-const agent = new https.Agent({ keepAlive: true, keepAliveMsecs: 1000, maxSockets: 50 });
-
-// Initialize the Twilio client once per process
-const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN, {
-  httpClient: new twilio.HttpClient({ agent })
-});
+// Initialize the Twilio client once per process.
+// Use the standard env vars Twilio documents for Node SDK:
+// TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN
+const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 // Set Edge + Region for the SDK; the client will build the FQDN for you.
 // IMPORTANT: Always set BOTH edge and region (Twilio SDKs require both for non-US routing).
