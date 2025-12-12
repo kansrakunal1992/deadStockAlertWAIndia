@@ -2722,7 +2722,7 @@ function finalizeForSend(text, lang) {
 // [UNIQ:ACK-FAST-CORE-002] — ultra-early ack helpers (no t(), no footer)
 const SEND_EARLY_ACK = String(process.env.SEND_EARLY_ACK ?? 'true').toLowerCase() === 'true';
 const EARLY_ACK_TIMEOUT_MS = Number(process.env.EARLY_ACK_TIMEOUT_MS ?? 150);
-const ACK_SILENCE_WINDOW_MS = Number(process.env.ACK_SILENCE_WINDOW_MS ?? 2000);
+const ACK_SILENCE_WINDOW_MS = Number(process.env.ACK_SILENCE_WINDOW_MS ?? 5000); // was 2000
 const _recentAcks = (globalThis._recentAcks = globalThis._recentAcks ?? new Map()); // from -> {at}
 
 function wasAckRecentlySent(From, windowMs = ACK_SILENCE_WINDOW_MS) {
@@ -2766,11 +2766,13 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
   try {
     if (!SEND_EARLY_ACK) return;
     if (wasAckRecentlySent(From)) return; // silence follow-up variants
-    const lang = await getPreferredLangQuick(From, langHint);
-    const raw = getStaticLabel(kind === 'voice' ? 'ackVoice' : 'ack', lang) || getStaticLabel('ack', 'en');
-    const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
-    const body = finalizeForSend(NO_FOOTER_MARKER + raw, lang);
-    await sendMessageViaAPI(From, body);
+    const lang = await getPreferredLangQuick(From, langHint);                
+    const raw = getStaticLabel(kind === 'voice' ? 'ackVoice' : 'ack', lang)
+          ?? getStaticLabel('ack', 'en');
+        // PATCH: include localized footer so ack shows «PURCHASE • मोड» etc.
+        let withFooter = await tagWithLocalizedMode(From, raw, lang);
+        withFooter = finalizeForSend(withFooter, lang); // single script + ASCII digits
+        await sendMessageViaAPI(From, withFooter);
     markAckSent(From);
   } catch (e) {
     try { console.warn('[ack-fast] failed:', e?.message); } catch {}
@@ -3209,18 +3211,6 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
          
     // --- NEW: send examples with a localized "Processing your message…" ack + single footer tag
       async function sendExamplesWithAck(from, lang, examplesText, requestId = 'examples') {
-        try {                   
-          if (!wasAckRecentlySent(from)) {
-                const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
-                const ackRaw = getStaticLabel('ack', lang);
-                const ack = finalizeForSend(NO_FOOTER_MARKER + ackRaw, lang);
-                await sendMessageViaAPI(from, ack);
-                markAckSent(from);
-              } else {
-                // silently suppress the second ack
-                try { console.log('[ack-fast] suppressed secondary ack', { from, requestId }); } catch {}
-              }
-        } catch (_) { /* non-blocking */ }
         try {
           // Tag examples with the localized footer exactly once          
         let tagged = await tagWithLocalizedMode(from, fixNewlines(examplesText), lang);
@@ -12419,7 +12409,7 @@ async function sendMessageQueued(toWhatsApp, body) {
 
 // Async processing for voice messages
 async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState) {
-  try { sendProcessingAckQuick(From, 'voice').catch(() => {}); } catch {}
+  
   try {
     console.log(`[${requestId}] [1] Downloading audio...`);
     const audioBuffer = await downloadAudio(MediaUrl0);
@@ -12829,7 +12819,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
 
 // Async processing for text messages
 async function processTextMessageAsync(Body, From, requestId, conversationState) {
-  try { sendProcessingAckQuick(From, 'text').catch(() => {}); } catch {}
+  
   try {
     console.log(`[${requestId}] [1] Parsing text message: "${Body}"`);
     let __handled = false;
@@ -13884,8 +13874,6 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
     const shopId = From.replace('whatsapp:', '');
     
-    try { sendProcessingAckQuick(From, 'text').catch(() => {}); } catch {}   
-    
     // AUTHENTICATION / SOFT GATE
         // ==========================
         console.log(`[${requestId}] Checking authentication for ${shopId}`);
@@ -14716,8 +14704,6 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   } catch (error) {
     console.warn(`[${requestId}] Failed to get user preference:`, error.message);
   }
-
-  try { sendProcessingAckQuick(From, 'text').catch(() => {}); } catch {}
       
     // ✅ Detect/lock language variant (hi-latn, etc.)
     let detectedLanguage = userLanguage ?? 'en';
@@ -14999,7 +14985,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
 
   // ✅ Voice branch
   if (NumMedia && MediaUrl0 && (NumMedia !== '0' && NumMedia !== 0)) {
-    res.send('<Response><Message>Processing your voice message...</Message></Response>');
+    res.send('<Response></Response>');
     processVoiceMessageAsync(MediaUrl0, From, requestId, null)
       .catch(error => console.error(`[${requestId}] Error in async voice processing:`, error));
     return;
