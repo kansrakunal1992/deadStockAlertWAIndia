@@ -1,4 +1,3 @@
-
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
 // ---------------------------------------------------------------------------
@@ -2769,9 +2768,10 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
         let withFooter = await tagWithLocalizedMode(From, raw, lang);      // «PURCHASE • मोड», etc.
         withFooter = finalizeForSend(withFooter, lang);                    // single‑script + numerals
         // Instrument ack latency (POST→ack‑sent). The webhook sets reqStart in scope.
-        const __t0 = Date.now();
+        const __t0 = Date.now();        
+        const t0 = Date.now();
         await sendMessageViaAPI(From, withFooter);
-        try { console.log('[ack]', { from: From, ms_post_to_sent: Date.now() - (globalThis.__lastPostTs ?? __t0) }); } catch {}
+        try { console.log('[ack]', { ms_post_to_sent: Date.now() - (globalThis.__lastPostTs || t0) }); } catch {}
         markAckSent(From);
   } catch (e) {
     try { console.warn('[ack-fast] failed:', e?.message); } catch {}
