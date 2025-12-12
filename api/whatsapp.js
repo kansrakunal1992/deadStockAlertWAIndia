@@ -1634,6 +1634,18 @@ const STATIC_LABELS = {
     kn: 'ನಿಮ್ಮ ಸಂದೇಶವನ್ನು ಸಂಸ್ಕರಿಸಲಾಗುತ್ತಿದೆ…',
     mr: 'आपला संदेश प्रक्रिया होत आहे…',
     gu: 'તમારો સંદેશ પ્રોસેસ થઈ રહ્યો છે…'
+  }, 
+// NEW: Voice-specific ultra-early ack
+  ackVoice: {
+    en: 'Transcribing your voice…',
+    hi: 'आपकी आवाज़ का ट्रांसक्रिप्शन हो रहा है…',
+    'hi-latn': 'Aapki awaaz ka transcription ho raha hai…',
+    bn: 'আপনার ভয়েস ট্রান্সক্রাইব হচ্ছে…',
+    ta: 'உங்கள் குரலை பதிவுசெய்கிறோம்…',
+    te: 'మీ వాయిస్ ట్రాన్స్‌క్రైబ్ అవుతోంది…',
+    kn: 'ನಿಮ್ಮ ಧ್ವನಿಯನ್ನು ಲಿಖಿತಗೊಳಿಸುತ್ತಿದ್ದೇವೆ…',
+    mr: 'आपल्या आवाजाचे ट्रान्सक्रिप्शन होत आहे…',
+    gu: 'તમારો અવાજ ટ્રાન્સક્રાઇબ થઈ રહ્યો છે…',
   },
   fallbackHint: {
     en: 'Type “mode” to switch Purchase/Sale/Return mode or make an inventory query',
@@ -2707,6 +2719,64 @@ function finalizeForSend(text, lang) {
   return normalizeNumeralsToLatin(withNL).trim();
 }
 
+// [UNIQ:ACK-FAST-CORE-002] — ultra-early ack helpers (no t(), no footer)
+const SEND_EARLY_ACK = String(process.env.SEND_EARLY_ACK ?? 'true').toLowerCase() === 'true';
+const EARLY_ACK_TIMEOUT_MS = Number(process.env.EARLY_ACK_TIMEOUT_MS ?? 150);
+const ACK_SILENCE_WINDOW_MS = Number(process.env.ACK_SILENCE_WINDOW_MS ?? 2000);
+const _recentAcks = (globalThis._recentAcks = globalThis._recentAcks ?? new Map()); // from -> {at}
+
+function wasAckRecentlySent(From, windowMs = ACK_SILENCE_WINDOW_MS) {
+  try {
+    const prev = _recentAcks.get(String(From));
+    return !!(prev && Date.now() - prev.at < windowMs);
+  } catch { return false; }
+}
+function markAckSent(From) {
+  try { _recentAcks.set(String(From), { at: Date.now() }); } catch {}
+}
+
+// Fast preference resolver with tiny timeout; never blocks the ack path.
+async function getPreferredLangQuick(From, hint = 'en') {
+  const shopId = String(From ?? '').replace('whatsapp:', '');
+  const fallback = String(hint ?? 'en').toLowerCase();
+  try {
+    // reuse your languageCache if present (best-effort)
+    for (const [key, val] of languageCache) {
+      if (String(key).startsWith(String(From))) {
+        const age = Date.now() - (val?.timestamp ?? 0);
+        if (age < LANGUAGE_CACHE_TTL) return String(val.language ?? fallback).toLowerCase();
+      }
+    }
+  } catch {}
+  try {
+    const prefP = getUserPreference(shopId);
+    const lang = await Promise.race([
+      prefP.then(p => String(p?.language ?? fallback).toLowerCase()),
+      new Promise(resolve => setTimeout(() => resolve(fallback), EARLY_ACK_TIMEOUT_MS))
+    ]);
+    return lang;
+  } catch { return fallback; }
+}
+
+/**
+ * Send ultra-early ack (text/voice). No t(), no footer; single-script + digits normalized.
+ * Safe to call multiple times — guarded by _recentAcks.
+ */
+async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
+  try {
+    if (!SEND_EARLY_ACK) return;
+    if (wasAckRecentlySent(From)) return; // silence follow-up variants
+    const lang = await getPreferredLangQuick(From, langHint);
+    const raw = getStaticLabel(kind === 'voice' ? 'ackVoice' : 'ack', lang) || getStaticLabel('ack', 'en');
+    const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+    const body = finalizeForSend(NO_FOOTER_MARKER + raw, lang);
+    await sendMessageViaAPI(From, body);
+    markAckSent(From);
+  } catch (e) {
+    try { console.warn('[ack-fast] failed:', e?.message); } catch {}
+  }
+}
+
 // =============================================================================
 // ==== Paid Plan CTA & Confirmation (white-label, no partner branding) ========
 // =============================================================================
@@ -3139,14 +3209,17 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
          
     // --- NEW: send examples with a localized "Processing your message…" ack + single footer tag
       async function sendExamplesWithAck(from, lang, examplesText, requestId = 'examples') {
-        try {
-          // Localized short banner (consistent across modes)
-          const ackRaw = getStaticLabel('ack', lang);                     
-          let ack = await t(ackRaw, lang, `${requestId}::ack`);
-                // LOCAL CLAMP → Single script; newline + numerals normalization
-                ack = enforceSingleScriptSafe(ack, lang);
-                ack = normalizeNumeralsToLatin(fixNewlines1(ack)).trim();
+        try {                   
+          if (!wasAckRecentlySent(from)) {
+                const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+                const ackRaw = getStaticLabel('ack', lang);
+                const ack = finalizeForSend(NO_FOOTER_MARKER + ackRaw, lang);
                 await sendMessageViaAPI(from, ack);
+                markAckSent(from);
+              } else {
+                // silently suppress the second ack
+                try { console.log('[ack-fast] suppressed secondary ack', { from, requestId }); } catch {}
+              }
         } catch (_) { /* non-blocking */ }
         try {
           // Tag examples with the localized footer exactly once          
@@ -12346,6 +12419,7 @@ async function sendMessageQueued(toWhatsApp, body) {
 
 // Async processing for voice messages
 async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState) {
+  try { sendProcessingAckQuick(From, 'voice').catch(() => {}); } catch {}
   try {
     console.log(`[${requestId}] [1] Downloading audio...`);
     const audioBuffer = await downloadAudio(MediaUrl0);
@@ -12755,6 +12829,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
 
 // Async processing for text messages
 async function processTextMessageAsync(Body, From, requestId, conversationState) {
+  try { sendProcessingAckQuick(From, 'text').catch(() => {}); } catch {}
   try {
     console.log(`[${requestId}] [1] Parsing text message: "${Body}"`);
     let __handled = false;
@@ -13405,7 +13480,19 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
   
   let __handled = false;
-  
+    
+  try {
+      const NumMedia = Number(req.body?.NumMedia ?? 0);
+      const ct0 = String(req.body?.MediaContentType0 ?? '').toLowerCase();
+      const isAudio = NumMedia > 0 && /audio|ogg|opus|m4a|mp3|wav/.test(ct0);
+      if (isAudio) {
+        sendProcessingAckQuick(From, 'voice').catch(() => {});
+      } else {
+        // For plain text and non-audio media, send text ack ultra-early
+        sendProcessingAckQuick(From, 'text').catch(() => {});
+      }
+    } catch { /* non-blocking */ }
+
   // (optional) quick log to confirm gate path in prod logs
     try { console.log('[webhook]', { From, Body: String(Body).slice(0,120) }); } catch(_) {}
     
@@ -13796,7 +13883,9 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
     const shopId = From.replace('whatsapp:', '');
-        
+    
+    try { sendProcessingAckQuick(From, 'text').catch(() => {}); } catch {}   
+    
     // AUTHENTICATION / SOFT GATE
         // ==========================
         console.log(`[${requestId}] Checking authentication for ${shopId}`);
@@ -14628,24 +14717,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     console.warn(`[${requestId}] Failed to get user preference:`, error.message);
   }
 
-  // ✅ “Processing…” message
-  try {
-    const processingMessages = {
-      hi: `आपके संदेश को संसाधित किया जा रहा है...`,
-      bn: `আপনার বার্তা প্রক্রিয়াকরণ করা হচ্ছে...`,
-      ta: `உங்கள் செய்தி செயலாக்கப்படுகிறது...`,
-      te: `మీ సందేశాన్ని ప్రాసెస్ చేస్తోంది...`,
-      kn: `ನಿಮ್ಮ ಸಂದೇಶವನ್ನು ಸಂಸ್ಕರಿಸಲಾಗುತ್ತಿದೆ...`,
-      gu: `તમારા સંદેશને પ્રક્રિયા કરવામાં આવી રહ્યું છે...`,
-      mr: `तुमच्या संदेशाचे प्रक्रियाकरण होत आहे...`,
-      en: `Processing your message...`
-    };
-    const processingMessage = processingMessages[userLanguage] || processingMessages['en'];
-    await sendMessageViaAPI(From, processingMessage);
-    await new Promise(resolve => setTimeout(resolve, 2000));
-  } catch (error) {
-    console.warn(`[${requestId}] Failed to send processing message:`, error.message);
-  }
+  try { sendProcessingAckQuick(From, 'text').catch(() => {}); } catch {}
       
     // ✅ Detect/lock language variant (hi-latn, etc.)
     let detectedLanguage = userLanguage ?? 'en';
