@@ -1,4 +1,4 @@
-const twilio = require('twilio');
+
 const { GoogleAuth } = require('google-auth-library');
 const axios = require('axios');
 // ---------------------------------------------------------------------------
@@ -3857,7 +3857,7 @@ async function sendDemoVideoAndButtons(From, lang = 'en', requestId = 'cta-demo'
 
   // 1) Send WhatsApp video via Twilio PM API (no caption)
   try {
-    const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+    const client = require('../twilioClient');
     console.log(`[demo-video] sending to ${From} url=${videoUrl}`);
     const msg = await client.messages.create({
       from: process.env.TWILIO_WHATSAPP_NUMBER, // e.g., 'whatsapp:+1415...'
@@ -10024,7 +10024,7 @@ finally {
 // Set USE_BASE64_PDF=true to force base64 path (not recommended).
 const USE_BASE64_PDF = String(process.env.USE_BASE64_PDF ?? 'false').toLowerCase() === 'true';
 async function sendPDFViaWhatsApp(to, pdfPath) {
-  const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+  const client = require('../twilioClient');
   const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
   
   console.log(`[sendPDFViaWhatsApp] Preparing to send PDF: ${pdfPath}`);
@@ -12241,7 +12241,7 @@ function sanitizeOutboundMessage(text) {
 // Function to send WhatsApp message via Twilio API (for async responses)
 async function sendMessageViaAPI(to, body) {
   try {
-    const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+    const client = require('../twilioClient');
     const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
 
     console.log(`[sendMessageViaAPI] Preparing to send message to: ${formattedTo}`);
@@ -12639,7 +12639,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       // Check if the transcript contains batch selection keywords
       if (isBatchSelectionResponse(cleanTranscript)) {
         // Send follow-up message via Twilio API
-        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+        const client = require('../twilioClient');
         await client.messages.create({
           body: 'Processing your batch selection...',
           from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -12664,7 +12664,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       });
       
       // Send confirmation request via Twilio API
-      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+      const client = require('../twilioClient');
       const confirmationResponse = await confirmTranscript(cleanTranscript, From, detectedLanguage, requestId);
       
       // Extract just the message body from the TwiML
@@ -12714,7 +12714,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           });
           
           // Confirm the first unknown product via Twilio API
-          const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+          const client = require('../twilioClient');
           const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
           
           // Extract just the message body from the TwiML
@@ -12744,7 +12744,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         }
         
         // Process the transcription and send result via Twilio API
-        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+        const client = require('../twilioClient');
         
         // Create a mock response object for processConfirmedTranscription
         const mockResponse = {
@@ -12794,7 +12794,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         console.error(`[${requestId}] Error processing high confidence transcription:`, processingError);
         
         // Send error message via Twilio API
-        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+        const client = require('../twilioClient');
         await client.messages.create({
           body: 'Sorry, I had trouble processing your voice message. Please try again.',
           from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -12807,7 +12807,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     console.error(`[${requestId}] Error processing voice message:`, error);
     
     // Send error message via Twilio API
-    const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+    const client = require('../twilioClient');
     await client.messages.create({
       body: 'Sorry, I had trouble processing your voice message. Please try again.',
       from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -12937,7 +12937,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       }
       
       // Send correction message via API
-      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+      const client = require('../twilioClient');
       await client.messages.create({
         body: correctionMessage,
         from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -13045,7 +13045,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         if (userPreference !== 'voice') {
           const greetingMessage = greetingMessages[greetingLang] || greetingMessages['en'];
           // Send via Twilio API
-          const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+          const client = require('../twilioClient');
           await client.messages.create({
             body: greetingMessage,
             from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -13068,7 +13068,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         
         const welcomeMessage = welcomeMessages[greetingLang] || welcomeMessages['en'];
         // Send via Twilio API
-        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+        const client = require('../twilioClient');
         await client.messages.create({
           body: welcomeMessage,
           from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -13340,7 +13340,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
       
       // Send via Twilio API
-      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+      const client = require('../twilioClient');
       
       // Extract message body with error handling
       let messageBody;
@@ -13441,7 +13441,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     // Send error message via Twilio API        
     // STEP 6: global tail/apology guard — if a response was already sent, skip
     try { if (handledRequests.has(requestId)) return; } catch (_) {}
-    const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+    const client = require('../twilioClient');
     await client.messages.create({
       body: 'Sorry, I had trouble processing your message. Please try again.',
       from: process.env.TWILIO_WHATSAPP_NUMBER,
