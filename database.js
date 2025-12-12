@@ -4,7 +4,17 @@ const PENDING_TRANSCRIPTIONS_TABLE_NAME = process.env.AIRTABLE_PENDING_TRANSCRIP
 const CORRECTION_STATE_TABLE_NAME = process.env.AIRTABLE_CORRECTION_STATE_TABLE_NAME || 'CorrectionState';
 const USER_STATE_TABLE_NAME = process.env.AIRTABLE_USER_STATE_TABLE_NAME || 'UserState';
 const TRANSLATIONS_TABLE_NAME = process.env.AIRTABLE_TRANSLATIONS_TABLE_NAME || 'Translations';
-const STATE_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+const STATE_TIMEOUT = Number(process.env.USER_STATE_TTL_MS ?? (60 * 60 * 1000)); // 60 minutes
+
+// Canonicalize ShopID to digits-only (no whatsapp:, +91, 91, 0 prefixes)
+function getCanonicalShopId(fromOrDigits) {
+  const raw = String(fromOrDigits ?? '');
+  const digits = raw.replace(/^whatsapp:/, '').replace(/\D+/g, '');
+  // Strip leading country code 91 if present
+  const canon = digits.startsWith('91') && digits.length >= 12 ? digits.slice(2) : digits.replace(/^0+/, '');
+  return canon;
+}
+
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 const BASE_URL = 'https://deadstockalertwaindia-production.up.railway.app';
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
@@ -1535,9 +1545,10 @@ async function deleteCorrectionState(id) {
 async function saveUserStateToDB(shopId, mode, data = {}) {
   const context = `Save User State ${shopId}`;
   try {
+    const canonicalId = getCanonicalShopId(shopId);
     const createData = {
       fields: {
-        ShopID: shopId,
+        ShopID: canonicalId,
         StateMode: mode,
         StateData: JSON.stringify(data),
         Timestamp: new Date().toISOString()
@@ -1545,7 +1556,7 @@ async function saveUserStateToDB(shopId, mode, data = {}) {
     };
 
     // Check if record already exists
-    const filterFormula = `{ShopID} = '${shopId}'`;
+    const filterFormula = `{ShopID} = '${canonicalId}'`;
     const findResult = await airtableRequest({
       method: 'get',
       params: { filterByFormula: filterFormula },
@@ -1579,8 +1590,10 @@ async function saveUserStateToDB(shopId, mode, data = {}) {
 // Get user state from database
 async function getUserStateFromDB(shopId) {
   const context = `Get User State ${shopId}`;
-  try {
-    const filterFormula = `{ShopID} = '${shopId}'`;
+  try {        
+    const canonicalId = getCanonicalShopId(shopId);
+    const filterFormula = `{ShopID} = '${canonicalId}'`;
+
     const result = await airtableRequest({
       method: 'get',
       params: { filterByFormula: filterFormula },
@@ -1591,14 +1604,12 @@ async function getUserStateFromDB(shopId) {
       const record = result.records[0];
       const stateMode = record.fields.StateMode;
       const stateData = record.fields.StateData ? JSON.parse(record.fields.StateData) : {};
-      const timestamp = new Date(record.fields.Timestamp);
-
-      // Check if state expired (5 minutes)
-      if (Date.now() - timestamp.getTime() > STATE_TIMEOUT) {
-        // Delete expired state
-        await deleteUserStateFromDB(record.id);
-        return null;
-      }
+      const timestamp = new Date(record.fields.Timestamp);      
+            
+      // If TTL is set (> 0) and expired, return null (do not delete here)
+            if (STATE_TIMEOUT > 0 && (Date.now() - timestamp.getTime() > STATE_TIMEOUT)) {
+              return null; // caller can decide UX (e.g., prompt to continue or exit)
+            }
 
       return {
         mode: stateMode,
@@ -3065,6 +3076,33 @@ function inferTopic(userText = '') {
   return 'other';
 }
 
+// Lightweight: refresh the existing user state timestamp if present
+async function refreshUserStateTimestamp(shopId) {
+  const context = `Refresh User State ${shopId}`;
+  try {
+    const canonicalId = getCanonicalShopId(shopId);
+    const filterFormula = `{ShopID}='${canonicalId}'`;
+    const find = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula, maxRecords: 1 },
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${USER_STATE_TABLE_NAME}`
+    }, `${context} - Find`);
+    if (find.records && find.records[0]) {
+      const recordId = find.records[0].id;
+      await airtableRequest({
+        method: 'patch',
+        url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${USER_STATE_TABLE_NAME}/${recordId}`,
+        data: { fields: { Timestamp: new Date().toISOString() } }
+      }, `${context} - Patch`);
+      return { success: true, id: recordId };
+    }
+    return { success: true, id: null }; // nothing to refresh
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message };
+  }
+}
+
 module.exports = {
   updateInventory,
   testConnection,
@@ -3136,5 +3174,6 @@ module.exports = {
   isFirst50Shops, 
   isFeatureAvailable,
   upsertAuthUserDetails,
-  recordPaymentEvent
+  recordPaymentEvent,
+  refreshUserStateTimestamp
 };
