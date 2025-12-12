@@ -15,6 +15,26 @@ function getCanonicalShopId(fromOrDigits) {
   return canon;
 }
 
+// === NEW: Always store ShopID in +91########## format for all writes ===
+function normalizeShopIdForWrite(input) {
+  const canon = getCanonicalShopId(input);
+  return `+91${canon}`;
+}
+
+// === NEW: Build tolerant filters for reads (accept legacy variants) ===
+// Usage: buildShopIdVariantFilter('ShopID', shopId)
+function buildShopIdVariantFilter(fieldName, input) {
+  const canon = getCanonicalShopId(input);
+  const variants = Array.from(new Set([
+    `+91${canon}`,   // target (preferred)
+    `${canon}`,      // plain 10-digit
+    `91${canon}`,    // raw country code
+    `0${canon}`      // old local prefix
+  ])).filter(Boolean);
+  const esc = s => String(s).replace(/'/g, "''");
+  return `OR(${variants.map(v => `{${fieldName}}='${esc(v)}'`).join(', ')})`;
+}
+
 const AIRTABLE_API_KEY = process.env.AIRTABLE_API_KEY;
 const BASE_URL = 'https://deadstockalertwaindia-production.up.railway.app';
 let AIRTABLE_BASE_ID = process.env.AIRTABLE_BASE_ID || '';
@@ -280,9 +300,11 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
     
     // Normalize unit before processing
     const normalizedUnit = normalizeUnit(unit);
-    
-    // Find existing record
-    const filterFormula = 'AND({ShopID} = \'' + shopId + '\', {Product} = \'' + product + '\')';
+    const preferredShopId = normalizeShopIdForWrite(shopId);
+            
+    // Find existing record (read-tolerant to legacy formats)
+    const filterFormula = 'AND(' + buildShopIdVariantFilter('ShopID', shopId) + ", {Product} = '" + product.replace(/'/g,"''") + "')";
+
     const findResult = await airtableRequest({
       method: 'get',
       params: { filterByFormula: filterFormula }
@@ -316,7 +338,7 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
       // Create new record with normalized unit
       const createData = {
         fields: {
-          ShopID: shopId,
+          ShopID: preferredShopId,
           Product: product,
           Quantity: newQuantity,
           Units: normalizedUnit
@@ -332,7 +354,7 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
       newQuantity = quantityChange;
       const createData = {
         fields: {
-          ShopID: shopId,
+          ShopID: preferredShopId,
           Product: product,
           Quantity: newQuantity,
           Units: normalizedUnit
@@ -363,12 +385,13 @@ async function createBatchRecord(batchData) {
     
     // Normalize unit before storing
     const normalizedUnit = batchData.unit ? normalizeUnit(batchData.unit) : 'pieces';
+    const preferredShopId = normalizeShopIdForWrite(batchData.shopId);
     
     // Use provided purchase date or current timestamp
     const purchaseDate = batchData.purchaseDate || new Date().toISOString();
     
     // Generate composite key
-    const compositeKey = `${batchData.shopId}|${batchData.product}|${purchaseDate}`;
+    const compositeKey = `${preferredShopId}\n${batchData.product}\n${purchaseDate}`;
     
     // Check if batch with same composite key already exists
     const existingBatch = await getBatchByCompositeKey(compositeKey);
@@ -399,7 +422,7 @@ async function createBatchRecord(batchData) {
     // Create new record
     const expiryISO = toAirtableDateTimeUTC(batchData.expiryDate);
       const fields = {
-        ShopID: batchData.shopId,
+        ShopID: preferredShopId,
         Product: batchData.product,
         Quantity: batchData.quantity,
         PurchaseDate: toAirtableDateTimeUTC(purchaseDate) || purchaseDate, // safe either way
@@ -480,7 +503,7 @@ async function getBatchRecords(shopId, product) {
   const context = `Get Batches ${shopId} - ${product}`;
   try {
     console.log(`[${context}] Retrieving batch records`);
-    const filterFormula = 'AND({ShopID} = \'' + shopId + '\', {Product} = \'' + product + '\')';
+    const filterFormula = 'AND(' + buildShopIdVariantFilter('ShopID', shopId) + ", {Product} = '" + String(product).replace(/'/g,"''") + "')";
     const result = await airtableBatchRequest({
       method: 'get',
       params: {
@@ -501,6 +524,29 @@ async function getBatchRecords(shopId, product) {
     logError(context, error);
     return [];
   }
+}
+
+// === NEW: One-time data migration to normalize Inventory.ShopID ===
+async function normalizeAllInventoryShopIds() {
+  const context = 'Normalize Inventory ShopIDs';
+  try {
+    const result = await airtableRequest({
+      method: 'get',
+      params: { fields: ['ShopID'] }
+    }, context);
+    const updates = [];
+    for (const rec of (result.records ?? [])) {
+      const current = String(rec.fields.ShopID ?? '');
+      const preferred = normalizeShopIdForWrite(current);
+      if (current && current !== preferred) {
+        updates.push({ id: rec.id, fields: { ShopID: preferred } });
+      }
+    }
+    for (let i = 0; i < updates.length; i += 10) {
+      await airtableRequest({ method: 'patch', url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_NAME}`, data: { records: updates.slice(i, i + 10) } }, `${context}::patch_${i/10+1}`);
+    }
+    console.log(`[${context}] normalized ${updates.length} records`);
+  } catch (e) { logError(context, e); }
 }
 
 // Update batch expiry date
@@ -1113,7 +1159,7 @@ async function getDailyUpdates(shopId) {
     const endStr = endOfDay.toISOString();
     
     // Fixed field name from "created time" to "Created Time"
-    const filterFormula = `AND({ShopID} = '${shopId}', IS_AFTER({Created Time}, "${startStr}"), IS_BEFORE({Created Time}, "${endStr}"))`;
+    const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, IS_AFTER({Created Time}, "${startStr}"), IS_BEFORE({Created Time}, "${endStr}"))`;
     
     const result = await airtableRequest({
       method: 'get',
@@ -1133,7 +1179,7 @@ async function getDailyUpdates(shopId) {
 async function getCurrentInventory(shopId) {
   const context = `Get Current Inventory ${shopId}`;
   try {
-    const filterFormula = `{ShopID} = '${shopId}'`;
+    const filterFormula = buildShopIdVariantFilter('ShopID', shopId);
     const result = await airtableRequest({
       method: 'get',
       params: {
@@ -1152,7 +1198,7 @@ async function getCurrentInventory(shopId) {
 async function getShopBatchRecords(shopId) {
   const context = `Get Shop Batches ${shopId}`;
   try {
-    const filterFormula = `{ShopID} = '${shopId}'`;
+    const filterFormula = buildShopIdVariantFilter('ShopID', shopId);
     const result = await airtableBatchRequest({
       method: 'get',
       params: {
@@ -1181,7 +1227,7 @@ async function getRecentSales(shopId, days = 7) {
     const dateStr = nDaysAgo.toISOString();
     
     // Fixed field name from "created time" to "Created Time"
-    const filterFormula = `AND({ShopID} = '${shopId}', {Quantity} < 0, IS_AFTER({Created Time}, "${dateStr}"))`;
+    const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, {Quantity} < 0, IS_AFTER({Created Time}, "${dateStr}"))`;
     
     const result = await airtableRequest({
       method: 'get',
@@ -1209,7 +1255,7 @@ async function getShopSalesRecords(shopId, days = 7) {
     // Format dates for Airtable formula
     const dateStr = nDaysAgo.toISOString();
     
-    const filterFormula = `AND({ShopID} = '${shopId}', IS_AFTER({SaleDate}, "${dateStr}"))`;
+    const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, IS_AFTER({SaleDate}, "${dateStr}"))`;
     
     const result = await airtableSalesRequest({
       method: 'get',
@@ -2765,7 +2811,7 @@ async function upsertTranslationEntry({ key, language, sourceText, translatedTex
 async function getProductInventory(shopId, productName) {
   const context = `Get Product Inventory ${shopId} - ${productName}`;
   try {
-    const filterFormula = `AND({ShopID} = '${shopId.replace(/'/g,"''")}', {Product} = '${productName.replace(/'/g,"''")}')`;
+    const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, {Product} = '${productName.replace(/'/g,"''")}')`;
     const result = await airtableRequest({
       method: 'get',
       params: { filterByFormula: filterFormula, maxRecords: 1 }
@@ -2791,7 +2837,7 @@ async function getProductInventory(shopId, productName) {
 async function getStockoutItems(shopId) {
   const context = `Get Stockout Items ${shopId}`;
   try {
-    const filterFormula = `AND({ShopID} = '${shopId.replace(/'/g,"''")}', OR({Quantity} = 0, {Quantity} < 0, {Quantity} = BLANK()))`;
+    const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, OR({Quantity} = 0, {Quantity} < 0, {Quantity} = BLANK()))`;
     const result = await airtableRequest({ method: 'get', params: { filterByFormula: filterFormula } }, context);
     return result.records.map(rec => ({
       name: rec.fields.Product,
@@ -2808,7 +2854,7 @@ async function getStockoutItems(shopId) {
 async function getBatchesForProductWithRemaining(shopId, productName) {
   const context = `Get Batches For Product ${shopId} - ${productName}`;
   try {
-    const filterFormula = `AND({ShopID}='${shopId.replace(/'/g,"''")}',{Product}='${productName.replace(/'/g,"''")}', {Quantity} > 0)`;
+    const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, {Product}='${productName.replace(/'/g,"''")}', {Quantity} > 0)`;
     const result = await airtableBatchRequest({
       method: 'get',
       params: { filterByFormula: filterFormula, sort: [{ field: 'PurchaseDate', direction: 'asc' }] }
@@ -3166,6 +3212,7 @@ module.exports = {
   applySaleWithReconciliation,
   updateBatchPurchasePrice,
   reattributeSaleToBatch,    
+  normalizeAllInventoryShopIds,    
   appendTurn,
   getRecentTurns,
   inferTopic,
