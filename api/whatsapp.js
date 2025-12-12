@@ -6,58 +6,6 @@ const axios = require('axios');
 // ---------------------------------------------------------------------------
 // Placed near the top to be available to onboarding flow
 const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 3);
-
-// ===== FAST-ACK & PARSING BEHAVIOUR FLAGS ====================================
-// Keep AI-first as default (your current behaviour); allow env flip to test rule-first.
-const RULE_FIRST = String(process.env.RULE_FIRST ?? '0').toLowerCase() === '1';
-// When true, skip LLM orchestrator if the text clearly looks transaction-like.
-const ORCH_SKIP_FOR_TXN = String(process.env.ORCH_SKIP_FOR_TXN ?? '1').toLowerCase() === '1';
-
-// Per-request fast-ACK guard
-const __fastAckSent = new Set();
-function _markAckSent(requestId){ try{ if(requestId) __fastAckSent.add(requestId);}catch{} }
-function _hasAckSent(requestId){ try{ return requestId && __fastAckSent.has(requestId);}catch{ return false; } }
-
-// Immediate progress bubble (localized) sent in a non-blocking way
-async function sendFastAck(From, lang='en', requestId='ack-fast') {
-  try {
-    if (_hasAckSent(requestId)) return;
-    const raw = getStaticLabel('ack', lang);
-    const msg = finalizeForSend(await t(raw, lang, `${requestId}::ack`), lang);
-    await sendMessageViaAPI(From, msg);
-    _markAckSent(requestId);
-  } catch(e){ console.warn('[fast-ack] failed:', e?.message); }
-}
-
-// Helper: if inbound payload carries audio, send the voice ack instantly.
-async function sendFastVoiceAckIfAudio(reqBody, requestId='voice-ack') {
-  try {
-    const isAudio = Number(reqBody?.NumMedia || 0) > 0 &&
-      String(reqBody?.MediaContentType0 || '').startsWith('audio');
-    if (!isAudio) return;
-    const From = reqBody?.From;
-    if (!From) return;
-    // Resolve language best-effort (preference or fallback)
-    let lang = 'en';
-    try {
-      const shopId = String(From).replace('whatsapp:', '');
-      const pref = await getUserPreference(shopId);
-      if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-    } catch {}
-    const raw = getStaticLabel('voice_ack', lang) || getStaticLabel('ack', lang);
-    const msg = finalizeForSend(await t(raw, lang, `${requestId}::ack`), lang);
-    await sendMessageViaAPI(From, msg);
-  } catch(e){ console.warn('[voice-ack] failed:', e?.message); }
-}
-
-// ===== TWILIO EDGE+REGION (nearest to India) ==================================
-// Public Edge: 'singapore' (closest for India) + Legacy Region: 'sg1'.
-// Twilio recommends Edge Locations to reduce ingress/egress latency. [1](https://www.twilio.com/docs/global-infrastructure/edge-locations)[2](https://www.twilio.com/docs/global-infrastructure/understanding-edge-locations)
-function getTwilioClient() {
-  const opts = { edge: process.env.TWILIO_EDGE || 'singapore', region: process.env.TWILIO_REGION || 'us1' };
-  return twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN, opts);
-}
-
 const fs = require('fs');
 const crypto = require('crypto');
 const path = require('path');
@@ -681,13 +629,11 @@ async function parseMultipleUpdates(reqOrText) {
     console.log('[Parser] Not transaction-like; skipping update parsing.');
     return [];
   }
-            
-  // ---------- CHOOSE PARSING ORDER (default AI-first; RULE_FIRST=1 → rule-first) ----------
-    if (!RULE_FIRST) {
-      // === AI-first (current behaviour) ===
-      try {
-        console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);
-        const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
+        
+  // Try AI-based parsing first  
+  try {
+    console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);  
+    const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
     // Only accept AI results if they are valid inventory updates (qty > 0 + valid action)
     if (aiUpdate && aiUpdate.length > 0) {          
     const cleaned = aiUpdate.map(update => {
@@ -732,16 +678,10 @@ async function parseMultipleUpdates(reqOrText) {
     }
 
     
-    console.log(`[AI Parsing] No valid AI results, falling back to rule-based parsing`);    
-  // if valid cleaned.length > 0 → return cleaned
-      } catch (error) {
-        console.warn(`[AI Parsing] Failed, falling back to rule-based parsing:`, error.message);
-      }
-    } else {
-      // === RULE-first (fast path for verb-less lines), AI as fallback ===
-      console.log('[Rule Parsing] Trying rule-based first (RULE_FIRST=1)');
-      // (keep your existing sentence splitting + parseSingleUpdate/parseSimpleWithoutVerb logic below)
-    }
+    console.log(`[AI Parsing] No valid AI results, falling back to rule-based parsing`);
+  } catch (error) {
+    console.warn(`[AI Parsing] Failed, falling back to rule-based parsing:`, error.message);
+  }
   
   // --- Only if AI failed to produce valid updates, use rule-based parsing --- 
   // Fallback prompt if no action and no state       
@@ -1694,18 +1634,6 @@ const STATIC_LABELS = {
     kn: 'ನಿಮ್ಮ ಸಂದೇಶವನ್ನು ಸಂಸ್ಕರಿಸಲಾಗುತ್ತಿದೆ…',
     mr: 'आपला संदेश प्रक्रिया होत आहे…',
     gu: 'તમારો સંદેશ પ્રોસેસ થઈ રહ્યો છે…'
-  },    
-  // NEW: voice-specific ack (native)
-    voice_ack: {
-      en: '🎙️ Voice note received. Processing…',
-      hi: '🎙️ वॉइस नोट मिला। प्रोसेस हो रहा है…',
-      'hi-latn': '🎙️ Voice note mila. Processing…',
-      bn: '🎙️ ভয়েস নোট পাওয়া গেছে। প্রক্রিয়াকরণ চলছে…',
-      ta: '🎙️ வோய்ஸ் நோட் வந்தது. செயலாக்கம் நடக்கிறது…',
-      te: '🎙️ వాయిస్ నోట్ వచ్చింది. ప్రాసెస్ అవుతోంది…',
-      kn: '🎙️ ವಾಯ್ಸ್ ನೋಟ್ ಬಂದಿದೆ. ಸಂಸ್ಕರಣೆ ನಡೆಯುತ್ತಿದೆ…',
-      mr: '🎙️ व्हॉइस नोट मिळाले. प्रक्रिया सुरू…',
-      gu: '🎙️ વોઇસ નોટ મળી. પ્રોસેસ થતું છે…'
   },
   fallbackHint: {
     en: 'Type “mode” to switch Purchase/Sale/Return mode or make an inventory query',
@@ -3867,7 +3795,7 @@ async function sendDemoVideoAndButtons(From, lang = 'en', requestId = 'cta-demo'
 
   // 1) Send WhatsApp video via Twilio PM API (no caption)
   try {
-    const client = getTwilioClient();
+    const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
     console.log(`[demo-video] sending to ${From} url=${videoUrl}`);
     const msg = await client.messages.create({
       from: process.env.TWILIO_WHATSAPP_NUMBER, // e.g., 'whatsapp:+1415...'
@@ -10034,7 +9962,7 @@ finally {
 // Set USE_BASE64_PDF=true to force base64 path (not recommended).
 const USE_BASE64_PDF = String(process.env.USE_BASE64_PDF ?? 'false').toLowerCase() === 'true';
 async function sendPDFViaWhatsApp(to, pdfPath) {
-  const client = getTwilioClient();
+  const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
   const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
   
   console.log(`[sendPDFViaWhatsApp] Preparing to send PDF: ${pdfPath}`);
@@ -12251,7 +12179,7 @@ function sanitizeOutboundMessage(text) {
 // Function to send WhatsApp message via Twilio API (for async responses)
 async function sendMessageViaAPI(to, body) {
   try {
-    const client = getTwilioClient();
+    const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
     const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
 
     console.log(`[sendMessageViaAPI] Preparing to send message to: ${formattedTo}`);
@@ -12648,7 +12576,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       // Check if the transcript contains batch selection keywords
       if (isBatchSelectionResponse(cleanTranscript)) {
         // Send follow-up message via Twilio API
-        const client = getTwilioClient();
+        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
         await client.messages.create({
           body: 'Processing your batch selection...',
           from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -12673,7 +12601,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       });
       
       // Send confirmation request via Twilio API
-      const client = getTwilioClient();
+      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
       const confirmationResponse = await confirmTranscript(cleanTranscript, From, detectedLanguage, requestId);
       
       // Extract just the message body from the TwiML
@@ -12723,7 +12651,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           });
           
           // Confirm the first unknown product via Twilio API
-          const client = getTwilioClient();
+          const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
           const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
           
           // Extract just the message body from the TwiML
@@ -12753,7 +12681,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         }
         
         // Process the transcription and send result via Twilio API
-        const client = getTwilioClient();
+        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
         
         // Create a mock response object for processConfirmedTranscription
         const mockResponse = {
@@ -12803,7 +12731,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         console.error(`[${requestId}] Error processing high confidence transcription:`, processingError);
         
         // Send error message via Twilio API
-        const client = getTwilioClient();
+        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
         await client.messages.create({
           body: 'Sorry, I had trouble processing your voice message. Please try again.',
           from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -12816,7 +12744,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     console.error(`[${requestId}] Error processing voice message:`, error);
     
     // Send error message via Twilio API
-    const client = getTwilioClient();
+    const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
     await client.messages.create({
       body: 'Sorry, I had trouble processing your voice message. Please try again.',
       from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -12945,7 +12873,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       }
       
       // Send correction message via API
-      const client = getTwilioClient();
+      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
       await client.messages.create({
         body: correctionMessage,
         from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -13053,7 +12981,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         if (userPreference !== 'voice') {
           const greetingMessage = greetingMessages[greetingLang] || greetingMessages['en'];
           // Send via Twilio API
-          const client = getTwilioClient();
+          const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
           await client.messages.create({
             body: greetingMessage,
             from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -13076,7 +13004,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         
         const welcomeMessage = welcomeMessages[greetingLang] || welcomeMessages['en'];
         // Send via Twilio API
-        const client = getTwilioClient();
+        const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
         await client.messages.create({
           body: welcomeMessage,
           from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -13115,16 +13043,9 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       return;
     }
   
-    // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====        
-    // FAST-ACK: send progress bubble immediately (non-blocking)
-    setImmediate(() => { try { sendFastAck(From, detectedLanguage || 'en', requestId); } catch(_){} });
-    
-    // Optional pre-force: if obvious transaction-like text and flag is ON, skip orchestration
-    const __preForceInventory = ORCH_SKIP_FOR_TXN && looksLikeTxnLite(Body);
-      try {                  
-          const orch = __preForceInventory
-              ? { language: detectedLanguage, isQuestion: false, normalizedCommand: null, aiTxn: null, forceInventory: true }
-              : await applyAIOrchestration(Body, From, detectedLanguage, requestId);
+    // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====
+      try {
+        const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
           const FORCE_INVENTORY = !!orch?.forceInventory;
         // --- BEGIN TEXT HANDLER INSERT ---
         /* TEXT_HANDLER_PATCH */
@@ -13355,7 +13276,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       const confirmationResponse = await confirmProduct(unknownProducts[0], From, detectedLanguage, requestId);
       
       // Send via Twilio API
-      const client = getTwilioClient();
+      const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
       
       // Extract message body with error handling
       let messageBody;
@@ -13456,7 +13377,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     // Send error message via Twilio API        
     // STEP 6: global tail/apology guard — if a response was already sent, skip
     try { if (handledRequests.has(requestId)) return; } catch (_) {}
-    const client = getTwilioClient();
+    const client = twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
     await client.messages.create({
       body: 'Sorry, I had trouble processing your message. Please try again.',
       from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -13515,7 +13436,6 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     if (isAudio && MediaUrl0) {
       try {
         console.log(`[${requestId}] [0] Routing to voice handler (NumMedia=${NumMedia}, ct=${MediaContentType0})`);
-        await sendFastVoiceAckIfAudio(req.body); // non-blocking voice ACK (native)
         await processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState);
       } catch (e) {
         console.error(`[${requestId}] voice handler error:`, e?.message);
@@ -13662,15 +13582,8 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     } catch (_) { /* noop */ }
     
   // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====
-   // FAST-ACK: send progress bubble immediately (non-blocking)
-    setImmediate(() => { try { sendFastAck(From, detectedLanguage || 'en', requestId); } catch(_){} });
-    
-    // Optional pre-force: if obvious transaction-like text and flag is ON, skip orchestration
-    const __preForceInventory = ORCH_SKIP_FOR_TXN && looksLikeTxnLite(Body);
-   try {           
-      const orch = __preForceInventory
-          ? { language: detectedLanguage, isQuestion: false, normalizedCommand: null, aiTxn: null, forceInventory: true }
-          : await applyAIOrchestration(Body, From, detectedLanguage, requestId);
+   try {
+     const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
        let langPinned = String(orch.language ?? detectedLanguage ?? 'en').toLowerCase();        
     // Prefer the detector's script variant (e.g., hi-latn) when available
       if (/^-?latn$/i.test(String(detectedLanguage).split('-')[1]) && !String(langPinned).includes('-latn')) {
@@ -15023,15 +14936,8 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   // ✅ Text branch
   if (Body) {      
     // ===== EARLY EXIT: AI orchestrator before any inventory parse =====
-    // FAST-ACK: send progress bubble immediately (non-blocking)
-    setImmediate(() => { try { sendFastAck(From, detectedLanguage || 'en', requestId); } catch(_){} });
-    
-    // Optional pre-force: if obvious transaction-like text and flag is ON, skip orchestration
-    const __preForceInventory = ORCH_SKIP_FOR_TXN && looksLikeTxnLite(Body);
-    try {            
-      const orch = __preForceInventory
-          ? { language: detectedLanguage, isQuestion: false, normalizedCommand: null, aiTxn: null, forceInventory: true }
-          : await applyAIOrchestration(Body, From, detectedLanguage, requestId);
+    try {
+      const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
       const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
       // COPILOT-PATCH-AIQA-GUARD-HNI-ENTRY
       const FORCE_INVENTORY = !!orch?.forceInventory;
