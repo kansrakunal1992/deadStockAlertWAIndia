@@ -2722,7 +2722,6 @@ function finalizeForSend(text, lang) {
 // [UNIQ:ACK-FAST-CORE-002] — ultra-early ack helpers (no t(), no footer)
 const SEND_EARLY_ACK = String(process.env.SEND_EARLY_ACK ?? 'true').toLowerCase() === 'true';
 const EARLY_ACK_TIMEOUT_MS = Number(process.env.EARLY_ACK_TIMEOUT_MS ?? 150);
-const ACK_SILENCE_WINDOW_MS = Number(process.env.ACK_SILENCE_WINDOW_MS ?? 5000); // was 2000
 const _recentAcks = (globalThis._recentAcks = globalThis._recentAcks ?? new Map()); // from -> {at}
 
 function wasAckRecentlySent(From, windowMs = ACK_SILENCE_WINDOW_MS) {
@@ -2765,15 +2764,15 @@ async function getPreferredLangQuick(From, hint = 'en') {
 async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
   try {
     if (!SEND_EARLY_ACK) return;
-    if (wasAckRecentlySent(From)) return; // silence follow-up variants
-    const lang = await getPreferredLangQuick(From, langHint);                
-    const raw = getStaticLabel(kind === 'voice' ? 'ackVoice' : 'ack', lang)
-          ?? getStaticLabel('ack', 'en');
-        // PATCH: include localized footer so ack shows «PURCHASE • मोड» etc.
-        let withFooter = await tagWithLocalizedMode(From, raw, lang);
-        withFooter = finalizeForSend(withFooter, lang); // single script + ASCII digits
+    const lang = await getPreferredLangQuick(From, langHint);                        
+    const raw = getStaticLabel(kind === 'voice' ? 'ackVoice' : 'ack', lang) ?? getStaticLabel('ack', 'en');
+        let withFooter = await tagWithLocalizedMode(From, raw, lang);      // «PURCHASE • मोड», etc.
+        withFooter = finalizeForSend(withFooter, lang);                    // single‑script + numerals
+        // Instrument ack latency (POST→ack‑sent). The webhook sets reqStart in scope.
+        const __t0 = Date.now();
         await sendMessageViaAPI(From, withFooter);
-    markAckSent(From);
+        try { console.log('[ack]', { from: From, ms_post_to_sent: Date.now() - (globalThis.__lastPostTs ?? __t0) }); } catch {}
+        markAckSent(From);
   } catch (e) {
     try { console.warn('[ack-fast] failed:', e?.message); } catch {}
   }
@@ -13483,8 +13482,11 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       }
     } catch { /* non-blocking */ }
 
-  // (optional) quick log to confirm gate path in prod logs
-    try { console.log('[webhook]', { From, Body: String(Body).slice(0,120) }); } catch(_) {}
+  // (optional) quick log to confirm gate path in prod logs        
+    try { 
+      console.log('[webhook]', { From, Body: String(Body).slice(0,120) }); 
+      globalThis.__lastPostTs = Date.now(); 
+    } catch(_) {}
     
     // --- AUDIO-FIRST GATE (WhatsApp voice notes) ---
     // Route audio media to processVoiceMessageAsync BEFORE any text/interactive flow.
