@@ -302,8 +302,10 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
     const normalizedUnit = normalizeUnit(unit);
     const preferredShopId = normalizeShopIdForWrite(shopId);
             
-    // Find existing record (read-tolerant to legacy formats)
-    const filterFormula = 'AND(' + buildShopIdVariantFilter('ShopID', shopId) + ", {Product} = '" + product.replace(/'/g,"''") + "')";
+    // Find existing record (read-tolerant to legacy formats)        
+    const pname = String(product ?? '').trim().toLowerCase();
+     const filterFormula = 'AND(' + buildShopIdVariantFilter('ShopID', shopId)
+       + ", LOWER(TRIM({Product})) = '" + pname.replace(/'/g,"''") + "')";
 
     const findResult = await airtableRequest({
       method: 'get',
@@ -446,8 +448,10 @@ async function createBatchRecord(batchData) {
     
     // NEW: Link the batch to the inventory record
     try {
-      // Find the inventory record for this shop and product
-      const filterFormula = 'AND({ShopID} = \'' + batchData.shopId + '\', {Product} = \'' + batchData.product + '\')';
+      // Find the inventory record for this shop and product            
+      const pname = String(batchData.product ?? '').trim().toLowerCase();
+          const filterFormula = 'AND(' + buildShopIdVariantFilter('ShopID', batchData.shopId)
+            + ", LOWER(TRIM({Product})) = '" + pname.replace(/'/g,"''") + "')";
       const inventoryResult = await airtableRequest({
         method: 'get',
         params: { filterByFormula: filterFormula }
@@ -502,8 +506,10 @@ async function createBatchRecord(batchData) {
 async function getBatchRecords(shopId, product) {
   const context = `Get Batches ${shopId} - ${product}`;
   try {
-    console.log(`[${context}] Retrieving batch records`);
-    const filterFormula = 'AND(' + buildShopIdVariantFilter('ShopID', shopId) + ", {Product} = '" + String(product).replace(/'/g,"''") + "')";
+    console.log(`[${context}] Retrieving batch records`);       
+    const pname = String(product ?? '').trim().toLowerCase();
+     const filterFormula = 'AND(' + buildShopIdVariantFilter('ShopID', shopId)
+       + ", LOWER(TRIM({Product})) = '" + pname.replace(/'/g,"''") + "')";
     const result = await airtableBatchRequest({
       method: 'get',
       params: {
@@ -1287,7 +1293,10 @@ async function batchUpdateInventory(updates) {
       const normalizedUnit = normalizeUnit(unit);
       
       // Find existing record
-      const filterFormula = 'AND({ShopID} = \'' + shopId + '\', {Product} = \'' + product + '\')';
+      const pname = String(product ?? '').trim().toLowerCase();           
+      const filterFormula = 'AND({ShopID} = \'' + shopId + '\', LOWER(TRIM({Product})) = \'' 
+            + pname.replace(/'/g,"''") + '\')';
+      
       const findResult = await airtableRequest({
         method: 'get',
         params: { filterByFormula: filterFormula }
@@ -2810,8 +2819,11 @@ async function upsertTranslationEntry({ key, language, sourceText, translatedTex
 // Get inventory record for a specific product
 async function getProductInventory(shopId, productName) {
   const context = `Get Product Inventory ${shopId} - ${productName}`;
-  try {
-    const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, {Product} = '${productName.replace(/'/g,"''")}')`;
+  try {    
+    const pname = String(productName ?? '').trim().toLowerCase();
+      const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, 
+         LOWER(TRIM({Product}))='${pname.replace(/'/g,"''")}' )`;
+    
     const result = await airtableRequest({
       method: 'get',
       params: { filterByFormula: filterFormula, maxRecords: 1 }
@@ -2853,8 +2865,12 @@ async function getStockoutItems(shopId) {
 // Get positive-remaining batches for a product with purchase & expiry dates
 async function getBatchesForProductWithRemaining(shopId, productName) {
   const context = `Get Batches For Product ${shopId} - ${productName}`;
-  try {
-    const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, {Product}='${productName.replace(/'/g,"''")}', {Quantity} > 0)`;
+  try {       
+    const pname = String(productName ?? '').trim().toLowerCase();
+        const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, 
+          LOWER(TRIM({Product}))='${pname.replace(/'/g,"''")}', 
+          {Quantity} > 0)`;
+
     const result = await airtableBatchRequest({
       method: 'get',
       params: { filterByFormula: filterFormula, sort: [{ field: 'PurchaseDate', direction: 'asc' }] }
