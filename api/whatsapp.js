@@ -851,8 +851,8 @@ async function parseMultipleUpdates(reqOrText) {
           } else {
             console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
           }      
-          // Only translate if not already processed by AI
-          update.product = await translateProductName(update.product, 'rule-parsing');                                               
+          // Only translate for display; keep original product for DB writes
+          update.productDisplay = await translateProductName(update.product, 'rule-parsing');                                         
             } else if (pendingAction) {
                       // Verb-less fallback: only when sticky mode exists AND AI has already failed
                       const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
