@@ -3805,8 +3805,23 @@ const {
   getCurrentInventory,
   applySaleWithReconciliation,
   reattributeSaleToBatch,
-  upsertAuthUserDetails
+  upsertAuthUserDetails,
+  refreshUserStateTimestamp
 } = require('../database');
+
+
+// ===== Canonicalize ShopID utility (digits-only) ==============================
+function getCanonicalShopId(fromOrDigits) {
+  const raw = String(fromOrDigits ?? '');
+  const digits = raw.replace(/^whatsapp:/, '').replace(/\D+/g, '');
+  const canon = digits.startsWith('91') && digits.length >= 12 ? digits.slice(2) : digits.replace(/^0+/, '');
+  return canon;
+}
+
+// Convenience: return canonical ShopID from From
+function fromToShopId(From) {
+  return getCanonicalShopId(From);
+}
 
 // --- No-op fallback for builds where cleanupCaches isn't bundled
 if (typeof cleanupCaches === 'undefined') {
@@ -12478,8 +12493,16 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     }
 
     // Save user preference
-    const shopId = From.replace('whatsapp:', '');
+    const shopId = fromToShopId(From);
     await saveUserPreference(shopId, detectedLanguage);
+    
+    // Heartbeat: keep sticky mode fresh while user is active
+        try {
+          const st = typeof getUserStateFromDB === 'function' ? await getUserStateFromDB(shopId) : null;
+          if (st && st.mode === 'awaitingTransactionDetails' && typeof refreshUserStateTimestamp === 'function') {
+            await refreshUserStateTimestamp(shopId);
+          }
+        } catch (_) {}
         
     // === NEW: typed "demo" intent (defensive, outside orchestrator) ===
       try {
@@ -12861,7 +12884,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     
     // --- EARLY GUARD: typed "start trial" intent (same behavior as the button) ---
         try {
-          const shopId = From.replace('whatsapp:', '');
+          const shopId = fromToShopId(From);
           const planInfo = await getUserPlan(shopId);
           const plan = String(planInfo?.plan ?? '').toLowerCase();
           const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
@@ -12955,7 +12978,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       });
       
       // Save correction state to database
-      const shopId = From.replace('whatsapp:', '');
+      const shopId = fromToShopId(From);
       const saveResult = await saveCorrectionState(shopId, correctionType, pending.update, pending.detectedLanguage);
       
       if (saveResult.success) {
@@ -12990,7 +13013,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       found = parseModeSwitchLocalized(Body); // supports: 'mode', 'mode <purchased|sale|return>', localized words
     
       if (found) {
-        const shopId = From.replace('whatsapp:', '');
+        const shopId = fromToShopId(From);
     
         // best-effort: read user pref for language
         try {
@@ -13010,7 +13033,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     
     // If a direct mode set was detected, apply it and exit early
     if (found?.set) {
-      const shopId = From.replace('whatsapp:', '');
+      const shopId = fromToShopId(From);
     
       await setStickyMode(From, found.set); // 'purchased' | 'sold' | 'returned'
     
@@ -13051,12 +13074,12 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           delete globalState.conversationState[From];
         }
         // Save user preference
-        const shopId = From.replace('whatsapp:', '');
+        const shopId = fromToShopId(From);
         await saveUserPreference(shopId, greetingLang);
         console.log(`[${requestId}] Saved language preference: ${greetingLang} for user ${shopId}`);
         
         // FIX: Set greeting state
-        await setUserState(From, 'greeting', { greetingLang });
+        await setUserState(shopId, 'greeting', { greetingLang });
         
         // Get user preference
         let userPreference = 'voice'; // Default to voice
@@ -13127,7 +13150,15 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     let detectedLanguage = conversationState ? conversationState.language : 'en';
     detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
     console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
-      
+        
+    // Heartbeat: keep sticky mode fresh while user is active
+      try {
+        const st = typeof getUserStateFromDB === 'function' ? await getUserStateFromDB(fromToShopId(From)) : null;
+        if (st && st.mode === 'awaitingTransactionDetails' && typeof refreshUserStateTimestamp === 'function') {
+          await refreshUserStateTimestamp(fromToShopId(From));
+        }
+      } catch (_) {}
+     
     // --- Minimal hook: Activate Paid Plan command (text path) ---
     const lowerBodyCmd = String(Body || '').trim().toLowerCase();
     if (
@@ -13182,7 +13213,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         // Question → answer & exit
         if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
           handledRequests.add(requestId);
-          const shopId = From.replace('whatsapp:', '');
+          const shopId = fromToShopId(From);
           const ans  = await composeAISalesAnswer(shopId, Body, langExact);
           const msg0 = await tx(ans, langExact, From, Body, `${requestId}::sales-qa-text`);
           const msg  = nativeglishWrap(msg0, langExact);
@@ -13260,7 +13291,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
       
       // Process inventory updates here
-      const shopId = From.replace('whatsapp:', '');
+      const shopId = fromToShopId(From);
       const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);           
               
       // === Single-update confirmation (sale OR purchase) ===
@@ -13323,7 +13354,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
             const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
             // If normalization produced "start trial", do NOT route as a quick query—activate now.
             if (/^start\s+trial$/i.test(String(normalized))) {
-              const shopId = From.replace('whatsapp:', '');
+              const shopId = fromToShopId(From);
               try {
                 const planInfo = await getUserPlan(shopId);
                 const plan = String(planInfo?.plan ?? '').toLowerCase();
@@ -13496,7 +13527,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   const From =
     (req.body && (req.body.From || req.body.from)) ||
     (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
-  
+  const shopId = fromToShopId(From);
   let __handled = false;
     
   try {
@@ -13513,7 +13544,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
 
   // (optional) quick log to confirm gate path in prod logs        
     try { 
-      console.log('[webhook]', { From, Body: String(Body).slice(0,120) }); 
+      console.log('[webhook]', { From, shopId, Body: String(Body).slice(0,120) });
       globalThis.__lastPostTs = Date.now(); 
     } catch(_) {}
     
@@ -13534,11 +13565,15 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     
     // Optionally pull conversation state early (so voice handler can use it)
     let conversationState = null;
-    try {
-      const shopIdCheck = String(From).replace('whatsapp:', '');
-      conversationState = (typeof getUserStateFromDB === 'function')
-        ? await getUserStateFromDB(shopIdCheck)
-        : await getUserState(shopIdCheck);
+    try {         
+    const shopIdCheck = fromToShopId(From);
+        conversationState = (typeof getUserStateFromDB === 'function')
+          ? await getUserStateFromDB(shopIdCheck)
+          : await getUserState(shopIdCheck);
+        // Heartbeat: keep sticky mode fresh for voice turns too
+        if (conversationState && conversationState.mode === 'awaitingTransactionDetails' && typeof refreshUserStateTimestamp === 'function') {
+          await refreshUserStateTimestamp(shopIdCheck);
+        }
     } catch (_) { /* best-effort */ }
     
     if (isAudio && MediaUrl0) {
@@ -13637,7 +13672,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       // Run after language detection so we can respond in the user's script.
       // Only triggers when the user is NOT already activated; button flow remains unchanged.
       try {
-        const shopId = String(From).replace('whatsapp:', '');
+        const shopId = fromToShopId(From);
         const planInfo = await getUserPlan(shopId);
         const plan = String(planInfo?.plan ?? '').toLowerCase();
         const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
@@ -13659,7 +13694,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   
     // 🔒 Front-door guard: if user is in onboarding capture, consume turn here
       try {
-        const shopIdCheck = String(From).replace('whatsapp:', '');
+        const shopIdCheck = fromToShopId(From);
         const s = (typeof getUserStateFromDB === 'function')
           ? await getUserStateFromDB(shopIdCheck)
           : await getUserState(shopIdCheck);
@@ -13901,9 +13936,9 @@ async function handleRequest(req, res, response, requestId, requestStart) {
       res.status(405).send('Method Not Allowed');
       return;
     }
-    
+            
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
-    const shopId = From.replace('whatsapp:', '');
+    const shopId = fromToShopId(From);
     
     // AUTHENTICATION / SOFT GATE
         // ==========================
@@ -14102,7 +14137,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     }
             
     // 2. Get current user state (normalize to shopIdState — no "whatsapp:")
-        const shopIdState = String(From ?? '').replace('whatsapp:', '');
+        const shopIdState = fromToShopId(From);
         console.log(`[${requestId}] Checking state for ${shopIdState} in database...`);
         // Use the DB-backed helper; fallback to shim if needed
         const currentState = (typeof getUserStateFromDB === 'function')
@@ -14112,7 +14147,12 @@ async function handleRequest(req, res, response, requestId, requestStart) {
           `[${requestId}] Current state for ${shopIdState}:`,
           currentState ? currentState.mode : 'none'
         );
-           
+               
+    // Heartbeat: if sticky, refresh timestamp so 5–10 min idle doesn't clear it
+        if (currentState && currentState.mode === 'awaitingTransactionDetails' && typeof refreshUserStateTimestamp === 'function') {
+          try { await refreshUserStateTimestamp(shopIdState); } catch (_) {}
+        }
+
     // 3. EARLY GUARD: trial-onboarding capture → consume this turn and STOP
      if (currentState && currentState.mode === 'onboarding_trial_capture') {
        try {
@@ -14200,7 +14240,7 @@ Reply with "yes" or "no".`;
   await sendSystemMessage(confirmationMessage, from, detectedLanguage, requestId, response);
   
   // Store the update temporarily in global state with a different key
-  const shopId = from.replace('whatsapp:', '');
+  const shopId = fromToShopId(from);
   if (!globalState.correctedUpdates) {
     globalState.correctedUpdates = {};
   }
@@ -14216,7 +14256,7 @@ Reply with "yes" or "no".`;
 async function handleCorrectionState(Body, From, state, requestId, res) {
   console.log(`[${requestId}] Handling correction state with input: "${Body}"`);
   
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = fromToShopId(From);
   const correctionState = state.data.correctionState;
   
   // Check if user is trying to exit correction mode
@@ -14702,13 +14742,22 @@ Reply with:
 
 async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {
   console.log(`[${requestId}] Handling new interaction`);
-  const shopId = From.replace('whatsapp:', '');
+  const shopId = fromToShopId(From);
    
   // 🔒 Early guard: if trial-onboarding capture is active, consume & stop
      try {
        const s = (typeof getUserStateFromDB === 'function')
           ? await getUserStateFromDB(shopId)
           : await getUserState(shopId);
+               
+          // Heartbeat: keep sticky mode fresh in new interactions
+          try {
+            const st = typeof getUserStateFromDB === 'function' ? await getUserStateFromDB(shopId) : null;
+            if (st && st.mode === 'awaitingTransactionDetails' && typeof refreshUserStateTimestamp === 'function') {
+              await refreshUserStateTimestamp(shopId);
+            }
+          } catch (_) {}
+
         if (s && s.mode === 'onboarding_trial_capture') {                  
         // NEW: keep the session language on code-like inputs (GSTIN, etc.)
           const pref = await getUserPreference(shopId).catch(() => ({ language: 'en' }));
