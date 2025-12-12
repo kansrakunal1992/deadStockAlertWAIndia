@@ -32,7 +32,10 @@ function guessLangFromInput(s = '') {
     // ASCII Hinglish detector → Roman Hindi (hi‑latn)
     const t = text.toLowerCase();
     const isAscii = /^[\x00-\x7F]+$/.test(t);
-    const hinglishTokens = /\b(kya|kaise|kyon|kyu|kab|kitna|kitni|daam|kimat|fayda|nuksan|bana|sakte|skte|hai|h|kharid|khareed|bech|bikri|mode|dukaan|naam)\b/;
+    const hinglishTokens = /\b(kya|kaise|kyon|kyu|kab|kitna|kitni|daam|kimat|fayda|nuksan|bana|sakte|skte|hai|h|kharid|khareed|bech|bikri|dukaan|naam)\b/;        
+     // Treat one-word commands as language-neutral (prefer DB or 'en')
+     const COMMAND_ONLY = new Set(['mode','help','demo','trial','paid','activate','start']);
+     if (COMMAND_ONLY.has(text.toLowerCase())) return 'en';
     if (isAscii && hinglishTokens.test(t)) return 'hi-latn';
     return 'en';
   } catch {
@@ -278,7 +281,7 @@ function autoLatnIfRoman(languageCode, sourceText) {
     const t = raw.toLowerCase();
     
         // --- Hindi/Marathi (Hinglish) ---
-        const hiTokens = /\b(kya|kyu|kaise|kab|kitna|kitni|daam|kimat|bhav|fayda|nuksan|bana|sakte|skte|hai|h|kharid|khareed|bech|bikri|return|wapis|chalu|shuru|tod|mode|dukaan|naam)\b/;
+        const hiTokens = /\b(kya|kyu|kaise|kab|kitna|kitni|daam|kimat|bhav|fayda|nuksan|bana|sakte|skte|hai|h|kharid|khareed|bech|bikri|return|wapis|chalu|shuru|tod|dukaan|naam)\b/;
         // --- Bengali (Banglish) ---
         const bnTokens = /\b(koto|dam|dami|kimot|shuru|cholbe|kharid|kena|bikri|bikre|ferot|return)\b/;
         // --- Tamil (Tanglish) ---
@@ -2750,7 +2753,7 @@ function finalizeForSend(text, lang) {
 
 // [UNIQ:ACK-FAST-CORE-002] — ultra-early ack helpers (no t(), no footer)
 const SEND_EARLY_ACK = String(process.env.SEND_EARLY_ACK ?? 'true').toLowerCase() === 'true';
-const EARLY_ACK_TIMEOUT_MS = Number(process.env.EARLY_ACK_TIMEOUT_MS ?? 150);
+const EARLY_ACK_TIMEOUT_MS = Number(process.env.EARLY_ACK_TIMEOUT_MS ?? 500);
 const _recentAcks = (globalThis._recentAcks = globalThis._recentAcks ?? new Map()); // from -> {at}
 
 function wasAckRecentlySent(From, windowMs = ACK_SILENCE_WINDOW_MS) {
@@ -2794,11 +2797,17 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
   try {        
     if (!SEND_EARLY_ACK) return;
         // Prefer a script/hinglish guess when available; fall back to incoming hint
-        // NOTE: callers that don't pass source text should use the wrapper below.
-        const preHint = canonicalizeLang(langHint || 'en');
-        const lang = await getPreferredLangQuick(From, preHint);
-    const raw = getStaticLabel(kind === 'voice' ? 'ackVoice' : 'ack', lang) ?? getStaticLabel('ack', 'en');
-        let withFooter = await tagWithLocalizedMode(From, raw, lang);      // «PURCHASE • मोड», etc.
+        // NOTE: callers that don't pass source text should use the wrapper below.              
+        const preHint = canonicalizeLang(langHint ?? 'en');
+         // Try DB first (no race), then fall back
+         const shopId = String(From ?? '').replace('whatsapp:', '');
+         let lang = preHint;
+         try {
+           const pref = await getUserPreference(shopId);
+           if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+         } catch {}
+         const raw = getStaticLabel(kind === 'voice' ? 'ackVoice' : 'ack', lang) ?? getStaticLabel('ack', 'en');
+         let withFooter = await tagWithLocalizedMode(From, raw, lang);
         withFooter = finalizeForSend(withFooter, lang);                    // single‑script + numerals
         // Instrument ack latency (POST→ack‑sent). The webhook sets reqStart in scope.
         const __t0 = Date.now();        
@@ -2815,8 +2824,10 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
 // Keeps ultra‑early property and avoids touching all call sites’ preference logic.
 async function sendProcessingAckQuickFromText(From, kind = 'text', sourceText = '') {
   try {
-    if (!SEND_EARLY_ACK) return;
-    const hint = guessLangFromInput(sourceText);
+    if (!SEND_EARLY_ACK) return;    
+    const t = String(sourceText || '').trim().toLowerCase();
+     const isCommandOnly = ['mode','help','demo','trial','paid'].includes(t);
+     const hint = isCommandOnly ? 'en' : guessLangFromInput(sourceText);
     return await sendProcessingAckQuick(From, kind, hint);
   } catch (e) {
     try { console.warn('[ack-fast-wrapper] failed:', e?.message); } catch {}
