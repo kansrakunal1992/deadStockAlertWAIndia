@@ -54,7 +54,7 @@ async function sendFastVoiceAckIfAudio(reqBody, requestId='voice-ack') {
 // Public Edge: 'singapore' (closest for India) + Legacy Region: 'sg1'.
 // Twilio recommends Edge Locations to reduce ingress/egress latency. [1](https://www.twilio.com/docs/global-infrastructure/edge-locations)[2](https://www.twilio.com/docs/global-infrastructure/understanding-edge-locations)
 function getTwilioClient() {
-  const opts = { edge: process.env.TWILIO_EDGE || 'singapore', region: process.env.TWILIO_REGION || 'sg1' };
+  const opts = { edge: process.env.TWILIO_EDGE || 'singapore', region: process.env.TWILIO_REGION || 'us1' };
   return twilio(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN, opts);
 }
 
