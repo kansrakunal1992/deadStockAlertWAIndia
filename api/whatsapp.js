@@ -15,6 +15,31 @@ const path = require('path');
 const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
+// ---------------------------------------------------------------------------
+// Ultra‑early ack: micro language hint based on Unicode script and Hinglish ASCII
+// ---------------------------------------------------------------------------
+function guessLangFromInput(s = '') {
+  try {
+    const text = String(s || '').trim();
+    if (!text) return 'en';
+    // Script blocks → native languages
+    if (/[\u0900-\u097F]/.test(text)) return 'hi';   // Devanagari → Hindi/Marathi
+    if (/[\u0980-\u09FF]/.test(text)) return 'bn';   // Bengali
+    if (/[\u0B80-\u0BFF]/.test(text)) return 'ta';   // Tamil
+    if (/[\u0C00-\u0C7F]/.test(text)) return 'te';   // Telugu
+    if (/[\u0C80-\u0CFF]/.test(text)) return 'kn';   // Kannada
+    if (/[\u0A80-\u0AFF]/.test(text)) return 'gu';   // Gujarati
+    // ASCII Hinglish detector → Roman Hindi (hi‑latn)
+    const t = text.toLowerCase();
+    const isAscii = /^[\x00-\x7F]+$/.test(t);
+    const hinglishTokens = /\b(kya|kaise|kyon|kyu|kab|kitna|kitni|daam|kimat|fayda|nuksan|bana|sakte|skte|hai|h|kharid|khareed|bech|bikri|mode|dukaan|naam)\b/;
+    if (isAscii && hinglishTokens.test(t)) return 'hi-latn';
+    return 'en';
+  } catch {
+    return 'en';
+  }
+}
+
 // ========================================================================
 // [UNIQ:VOICE-CONF-005] Voice (STT) confidence minimum — environment-driven
 // Default to 0.60 for audio turns; upstream handlers can read this constant.
@@ -1631,6 +1656,7 @@ const STATIC_LABELS = {
   ack: {
     en: 'Processing your message…',
     hi: 'आपका संदेश प्रोसेस हो रहा है…',
+    'hi-latn': 'Aapka sandesh process ho raha hai…',
     bn: 'আপনার বার্তা প্রক্রিয়াকরণ হচ্ছে…',
     ta: 'உங்கள் செய்தி செயலாக்கப்படுகிறது…',
     te: 'మీ సందేశాన్ని ప్రాసెస్ చేస్తున్నాం…',
@@ -2765,9 +2791,12 @@ async function getPreferredLangQuick(From, hint = 'en') {
  * Safe to call multiple times — guarded by _recentAcks.
  */
 async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
-  try {
+  try {        
     if (!SEND_EARLY_ACK) return;
-    const lang = await getPreferredLangQuick(From, langHint);                        
+        // Prefer a script/hinglish guess when available; fall back to incoming hint
+        // NOTE: callers that don't pass source text should use the wrapper below.
+        const preHint = canonicalizeLang(langHint || 'en');
+        const lang = await getPreferredLangQuick(From, preHint);
     const raw = getStaticLabel(kind === 'voice' ? 'ackVoice' : 'ack', lang) ?? getStaticLabel('ack', 'en');
         let withFooter = await tagWithLocalizedMode(From, raw, lang);      // «PURCHASE • मोड», etc.
         withFooter = finalizeForSend(withFooter, lang);                    // single‑script + numerals
@@ -2779,6 +2808,18 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
         markAckSent(From);
   } catch (e) {
     try { console.warn('[ack-fast] failed:', e?.message); } catch {}
+  }
+}
+
+// Convenience wrapper: pass inbound Body to derive a better early hint.
+// Keeps ultra‑early property and avoids touching all call sites’ preference logic.
+async function sendProcessingAckQuickFromText(From, kind = 'text', sourceText = '') {
+  try {
+    if (!SEND_EARLY_ACK) return;
+    const hint = guessLangFromInput(sourceText);
+    return await sendProcessingAckQuick(From, kind, hint);
+  } catch (e) {
+    try { console.warn('[ack-fast-wrapper] failed:', e?.message); } catch {}
   }
 }
 
@@ -13463,10 +13504,10 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       const ct0 = String(req.body?.MediaContentType0 ?? '').toLowerCase();
       const isAudio = NumMedia > 0 && /audio|ogg|opus|m4a|mp3|wav/.test(ct0);
       if (isAudio) {
-        sendProcessingAckQuick(From, 'voice').catch(() => {});
+        sendProcessingAckQuickFromText(From, 'voice', Body).catch(() => {});
       } else {
         // For plain text and non-audio media, send text ack ultra-early
-        sendProcessingAckQuick(From, 'text').catch(() => {});
+        sendProcessingAckQuickFromText(From, 'text', Body).catch(() => {});
       }
     } catch { /* non-blocking */ }
 
