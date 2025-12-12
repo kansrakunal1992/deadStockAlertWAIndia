@@ -146,9 +146,14 @@ const handledRequests = new Set();            // <- used by parse-error & upsell
 if (typeof globalThis.setUserState !== 'function') {      
     globalThis.setUserState = async function setUserState(from, mode, data = {}) {
         try {
-          const shopId = String(from ?? '').replace('whatsapp:', '');
-          if (typeof saveUserStateToDB === 'function') {
-            const r = await saveUserStateToDB(shopId, mode, data);
+          const shopId = String(from ?? '').replace('whatsapp:', '');                    
+          // Auto-stamp TTL & createdAtISO ONLY for ephemeral override modes.
+                const isEphemeral = EPHEMERAL_OVERRIDE_MODES.has(String(mode ?? '').toLowerCase());
+                const payload = isEphemeral
+                  ? { ...data, createdAtISO: new Date().toISOString(), timeoutSec: (_ttlForMode(mode) / 1000) }
+                  : data;
+                if (typeof saveUserStateToDB === 'function') {
+                  const r = await saveUserStateToDB(shopId, mode, payload);
             if (r?.success) return { success: true };
           }
           console.warn('[shim] setUserState not available; skipping', { from, mode });
@@ -179,6 +184,72 @@ const LANGUAGE_CACHE_TTL = 24 * 60 * 60 * 1000;          // 24 hours
 const INVENTORY_CACHE_TTL = 5 * 60 * 1000;               // 5 minutes
 const PRODUCT_CACHE_TTL = 60 * 60 * 1000;                // 1 hour
 const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// ===== Ephemeral overrides (auto-clear only for these modes) ===================
+// We will auto-stamp TTLs, auto-expire on read, and schedule a best-effort timer.
+const EPHEMERAL_OVERRIDE_MODES = new Set(['awaitingBatchOverride','awaitingPurchaseExpiryOverride']);
+const TTL_AWAITING_BATCH_OVERRIDE_SEC =
+  Number(process.env.TTL_BATCH_OVERRIDE ?? 120); // default 120s
+const TTL_AWAITING_PURCHASE_EXP_OVERRIDE_SEC =
+  Number(process.env.TTL_PURCHASE_EXP_OVERRIDE ?? 30); // default 30s
+
+function _ttlForMode(mode) {
+  const m = String(mode ?? '').toLowerCase();
+  if (m === 'awaitingbatchoverride') return TTL_AWAITING_BATCH_OVERRIDE_SEC * 1000;
+  if (m === 'awaitingpurchaseexpiryoverride') return TTL_AWAITING_PURCHASE_EXP_OVERRIDE_SEC * 1000;
+  return 0;
+}
+
+function _isEphemeralOverride(st) {
+  const mode = String(st?.mode ?? '').toLowerCase();
+  return EPHEMERAL_OVERRIDE_MODES.has(mode);
+}
+
+function _isExpiredEphemeral(st) {
+  if (!_isEphemeralOverride(st)) return false;
+  const ttlMs = _ttlForMode(st?.mode);
+  if (!ttlMs) return false;
+  // Prefer explicit timestamp in data; fallback to createdAt fields if present.
+  const createdISO =
+    st?.data?.createdAtISO ?? st?.createdAtISO ?? st?.createdAt;
+  const createdMs = createdISO ? new Date(createdISO).getTime() : 0;
+  if (!Number.isFinite(createdMs) || createdMs <= 0) return false; // no timestamp → don’t expire
+  return (Date.now() - createdMs) > ttlMs;
+}
+
+async function clearEphemeralOverrideStateByShopId(shopId) {
+  try {
+    const st = await getUserStateFromDB(shopId);
+    if (st && _isEphemeralOverride(st)) {
+      await deleteUserStateFromDB(st.id ?? shopId);
+      console.log('[state] cleared ephemeral override', { shopId, mode: st.mode });
+      return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+async function setEphemeralOverrideState(fromOrShopId, mode, data = {}) {
+  try {
+    const shopId = String(fromOrShopId ?? '').replace('whatsapp:', '');
+    const payload = {
+      ...data,
+      createdAtISO: new Date().toISOString(),
+      timeoutSec: (_ttlForMode(mode) / 1000)
+    };
+    await setUserState(shopId, mode, payload);
+    const ttlMs = _ttlForMode(mode);
+    if (ttlMs > 0) {
+      // Best-effort timer: process-lifetime only; read-side TTL is the hard guard.
+      setTimeout(() => {
+        clearEphemeralOverrideStateByShopId(shopId).catch(() => {});
+      }, ttlMs + 250);
+    }
+    return { success: true };
+  } catch (_) {
+    return { success: false };
+  }
+}
 
 // === Feature flag: ENABLE_STREAK_MESSAGES (inline helper; no imports) ===
 let __FLAGS_CACHE; // per-file cache
@@ -1402,8 +1473,15 @@ if (typeof globalThis.getUserState !== 'function') {
   globalThis.getUserState = async function getUserState(from) {
     try {
       const shopId = String(from || '').replace('whatsapp:', '');
-      if (typeof getUserStateFromDB === 'function') {
-        return await getUserStateFromDB(shopId);
+      if (typeof getUserStateFromDB === 'function') {                  
+          const st = await getUserStateFromDB(shopId);
+                  // Auto-expire ONLY the two ephemeral override modes.
+                  if (st && _isExpiredEphemeral(st)) {
+                    try { await deleteUserStateFromDB(st.id ?? shopId); } catch (_) {}
+                    console.log('[state] auto-expired ephemeral override on read', { shopId, mode: st.mode });
+                    return null;
+                  }
+                  return st;
       }
     } catch (_) {}
     return null; // default: no state
