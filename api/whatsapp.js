@@ -2260,7 +2260,11 @@ async function setStickyMode(from, actionOrWord) {
       const normalizedFrom = waFrom.startsWith('whatsapp:')
         ? waFrom
         : `whatsapp:${waFrom.replace(/^whatsapp:/, '')}`;
-    
+          
+      // Compute shopId and proactively clear any ephemeral override modes (batch/expiry) before switching.
+        const shopIdLocal = String(normalizedFrom).replace('whatsapp:', '');
+        try { await clearEphemeralOverrideStateByShopId(shopIdLocal); } catch (_) { /* best-effort */ }
+
       // Store canonical actions exactly as downstream validators and parsers expect.
       const map = {
         purchase: 'purchased', buy: 'purchased', bought: 'purchased',
@@ -2274,10 +2278,9 @@ async function setStickyMode(from, actionOrWord) {
       await setUserState(normalizedFrom, 'awaitingTransactionDetails', { action: finalAction });
       try { console.log('[state] sticky set', { from: normalizedFrom, action: finalAction }); } catch (_) {}
     
-      // Best-effort in‑memory mirror (optional)
+      // Best-effort in‑memory mirror (optional)           
       try {
-        const shopIdLocal = String(normalizedFrom).replace('whatsapp:', '');
-        globalState.conversationState[shopIdLocal] = {
+          globalState.conversationState[shopIdLocal] = {
           mode: 'awaitingTransactionDetails',
           data: { action: finalAction },
           ts: Date.now()
@@ -3100,7 +3103,9 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
     const data = { ...(st?.data ?? {}) };
     data.peekCount = Number(data.peekCount ?? 0) + 1;
     // Persist updated peekCount; do not change mode
-    await saveUserStateToDB(shopId, st?.mode ?? 'awaitingTransactionDetails', data);
+    await saveUserStateToDB(shopId, st?.mode ?? 'awaitingTransactionDetails', data);        
+    // [PATCH: REFRESH_STICKY_TTL_ON_PEEK] Immediately refresh state timestamp (optional keep-alive)
+        try { await refreshUserStateTimestamp(shopId); } catch (_) { /* optional */ }
     st = { ...(st ?? {}), data };
   } catch (_) {}
 
