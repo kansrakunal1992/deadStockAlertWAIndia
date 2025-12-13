@@ -3055,7 +3055,6 @@ function classifyDiagnosticPeek(text) {
 }
 // ===== [PATCH:HYBRID-DIAGNOSTIC-CLASSIFY-002] END =====
 
-@@ -*** ,*** +*** ,*** @@
 // ===== [PATCH:HYBRID-DIAGNOSTIC-HANDLER-003] BEGIN =====
 /**
  * Handle diagnostic "peek" read‑only queries without changing sticky mode.
