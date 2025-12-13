@@ -1720,16 +1720,6 @@ const { generateInvoicePDF, generateInventoryShortSummaryPDF, generateSalesRawTa
 const { getShopDetails } = require('../database');
 const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS || 12000);
 
-// Hybrid option toggles (Railway envs with safe defaults)
-const ALLOW_READONLY_IN_STICKY = String(process.env.ALLOW_READONLY_IN_STICKY ?? '1') === '1';
-const STICKY_PEEK_MAX = Number(process.env.STICKY_PEEK_MAX ?? 2);                // max consecutive peeks before nudge
-const STICKY_PEEK_TTL_EXTENSION_MS = Number(process.env.STICKY_PEEK_TTL_EXTENSION_MS ?? 0); // 0 = disabled
-
-function _safeBoolean(v) {
-  const s = String(v ?? '').trim().toLowerCase();
-  return s === '1' || s === 'true' || s === 'on' || s === 'yes';
-}
-
 const languageNames = {
   'hi': 'Hindi',
   'bn': 'Bengali',
@@ -12746,7 +12736,22 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     const cleanTranscript = await validateTranscript(rawTranscript, requestId);
     console.log(`[${requestId}] [5] Detecting language...`);
     const detectedLanguage = await checkAndUpdateLanguage(cleanTranscript, From, conversationState?.language, requestId);
-        
+            
+    // ===== [PATCH:HYBRID-VOICE-ROUTE-004] BEGIN =====
+      // Hybrid: allow non‑mutating diagnostic peeks inside sticky mode (no state change)
+      try {
+        const stickyAction =
+          typeof getStickyActionQuick === 'function'
+            ? (getStickyActionQuick.length > 0 ? await getStickyActionQuick(From) : await getStickyActionQuick())
+            : null;
+        const isPeek = !!classifyDiagnosticPeek(cleanTranscript);
+        if (ALLOW_READONLY_IN_STICKY && stickyAction && isPeek) {
+          const ok = await handleDiagnosticPeek(From, cleanTranscript, requestId, stickyAction);
+          if (ok) return; // reply already sent via API; keep mode; stop voice flow
+        }
+      } catch (_) { /* best-effort */ }
+      // ===== [PATCH:HYBRID-VOICE-ROUTE-004] END =====
+
     // --- Minimal hook: Activate Paid Plan command (voice path) ---
     const lowerCmd = String(cleanTranscript || '').trim().toLowerCase();
     if (
@@ -12953,10 +12958,11 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         // Skip quick-query normalization when we're in sticky/txn context
         // or when the voice transcript looks transaction-like (qty+unit+price).
         const stickyAction = await getStickyActionQuick(); // closure version
-        const looksTxn = looksLikeTxnLite(cleanTranscript);
-        if (stickyAction || looksTxn) {
-          console.log(`[${requestId}] [voice] skipping quick-query in sticky/txn turn`);
-        } else {
+        const looksTxn = looksLikeTxnLite(cleanTranscript);                
+        const isDiag = !!classifyDiagnosticPeek(cleanTranscript);
+            if ((stickyAction && !isDiag) || looksTxn) {
+              console.log(`[${requestId}] [voice] skipping quick-query in sticky/txn turn (non-diagnostic)`);
+            } else {
           const normalized = await normalizeCommandText(cleanTranscript, detectedLanguage, requestId + ':normalize');
           const handled = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
           if (handled) return; // reply already sent
@@ -13416,7 +13422,20 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     let detectedLanguage = conversationState ? conversationState.language : 'en';
     detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
     console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
-        
+            
+    // Hybrid: allow non‑mutating diagnostic peeks inside sticky mode (no state change)
+      try {
+        const stickyAction =
+          typeof getStickyActionQuick === 'function'
+            ? (getStickyActionQuick.length > 0 ? await getStickyActionQuick(From) : await getStickyActionQuick())
+            : null;
+        const isPeek = !!classifyDiagnosticPeek(Body);
+        if (ALLOW_READONLY_IN_STICKY && stickyAction && isPeek) {
+          const ok = await handleDiagnosticPeek(From, Body, requestId, stickyAction);
+          if (ok) return; // reply already sent via API; keep mode; stop text flow
+        }
+      } catch (_) { /* best-effort */ }
+
     // Heartbeat: keep sticky mode fresh while user is active
       try {
         const st = typeof getUserStateFromDB === 'function' ? await getUserStateFromDB(fromToShopId(From)) : null;
@@ -13613,10 +13632,11 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     // Only if not an inventory update AND NOT in sticky/txn context, try quick queries
       try {
         const stickyAction = await getStickyActionQuick();
-        const looksTxn = looksLikeTxnLite(Body);
-        if (stickyAction || looksTxn) {
-          console.log(`[${requestId}] Skipping quick-query routing in sticky/txn turn`);                
-        } else {
+        const looksTxn = looksLikeTxnLite(Body);              
+        const isDiag = !!classifyDiagnosticPeek(Body);
+              if ((stickyAction && !isDiag) || looksTxn) {
+                console.log(`[${requestId}] Skipping quick-query routing in sticky/txn turn (non-diagnostic)`);
+              } else {
             const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
             // If normalization produced "start trial", do NOT route as a quick query—activate now.
             if (/^start\s+trial$/i.test(String(normalized))) {
@@ -13753,8 +13773,9 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     // Only send the generic default if nothing else handled AND it is not a sticky/transaction turn
       if (!__handled) {
         const stickyAction3 = await getStickyActionQuick();
-        const looksTxn3 = looksLikeTxnLite(Body);
-        if (stickyAction3 || looksTxn3) {
+        const looksTxn3 = looksLikeTxnLite(Body);                
+        const isDiag = !!classifyDiagnosticPeek(Body);
+            if ((stickyAction3 && !isDiag) || looksTxn3) {
           console.log(`[${requestId}] Suppressing generic default in sticky/txn turn [text]`);
         } else {
           const translatedMessage = await t(defaultMessage, detectedLanguage, requestId);
@@ -13913,8 +13934,27 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     }
   
     // Language detection (also persists preference)
-      const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
-            
+      const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);                  
+      // Hybrid: allow non‑mutating diagnostic peeks inside sticky mode (no state change)
+        if (ALLOW_READONLY_IN_STICKY) {
+          try {
+            const stickyAction =
+              typeof getStickyActionQuick === 'function'
+                ? (getStickyActionQuick.length > 0 ? await getStickyActionQuick(From) : await getStickyActionQuick())
+                : null;
+            const isPeek = !!classifyDiagnosticPeek(Body);
+            if (stickyAction && isPeek) {
+              const ok = await handleDiagnosticPeek(From, Body, requestId, stickyAction);
+              if (ok) {
+                const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+                res.type('text/xml'); resp.safeSend(200, twiml.toString());
+                safeTrackResponseTime(requestStart, requestId);
+                return; // early exit (reply sent via API)
+              }
+            }
+          } catch (_) { /* best-effort */ }
+        }
+
       // === NEW: typed "demo" intent (defensive, outside orchestrator) ===
           try {
             const langPinned = String(detectedLanguage ?? 'en').toLowerCase();
@@ -15607,8 +15647,9 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     // Only send generic default if nothing else handled AND we're not in sticky/txn context
       if (!__handled) {
         const stickyAction3 = await getStickyActionQuick();
-        const looksTxn3 = looksLikeTxnLite(Body);
-        if (stickyAction3 || looksTxn3) {
+        const looksTxn3 = looksLikeTxnLite(Body);                
+        const isDiag = !!classifyDiagnosticPeek(Body);
+            if ((stickyAction3 && !isDiag) || looksTxn3) {
           console.log(`[${requestId}] Suppressing generic default in sticky/txn turn`);
         } else {
           const defaultMessage = await t(
