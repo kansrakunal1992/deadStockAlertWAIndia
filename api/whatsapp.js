@@ -1719,6 +1719,17 @@ const { processShopSummary } = require('../dailySummary');
 const { generateInvoicePDF, generateInventoryShortSummaryPDF, generateSalesRawTablePDF } = require('../pdfGenerator'); // +new generators
 const { getShopDetails } = require('../database');
 const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS || 12000);
+
+// Hybrid option toggles (Railway envs with safe defaults)
+const ALLOW_READONLY_IN_STICKY = String(process.env.ALLOW_READONLY_IN_STICKY ?? '1') === '1';
+const STICKY_PEEK_MAX = Number(process.env.STICKY_PEEK_MAX ?? 2);                // max consecutive peeks before nudge
+const STICKY_PEEK_TTL_EXTENSION_MS = Number(process.env.STICKY_PEEK_TTL_EXTENSION_MS ?? 0); // 0 = disabled
+
+function _safeBoolean(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+  return s === '1' || s === 'true' || s === 'on' || s === 'yes';
+}
+
 const languageNames = {
   'hi': 'Hindi',
   'bn': 'Bengali',
@@ -2829,6 +2840,18 @@ function finalizeForSend(text, lang) {
   return normalizeNumeralsToLatin(withNL).trim();
 }
 
+// ===== [PATCH:HYBRID-DIAGNOSTIC-TOGGLES-001] BEGIN =====
+// Hybrid option toggles (Railway envs with safe defaults)
+const ALLOW_READONLY_IN_STICKY = String(process.env.ALLOW_READONLY_IN_STICKY ?? '1') === '1';
+const STICKY_PEEK_MAX = Number(process.env.STICKY_PEEK_MAX ?? 2);                // max consecutive peeks before nudge
+const STICKY_PEEK_TTL_EXTENSION_MS = Number(process.env.STICKY_PEEK_TTL_EXTENSION_MS ?? 0); // 0 = disabled
+
+function _safeBoolean(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+  return s === '1' || s === 'true' || s === 'on' || s === 'yes';
+}
+// ===== [PATCH:HYBRID-DIAGNOSTIC-TOGGLES-001] END =====
+
 // [UNIQ:ACK-FAST-CORE-002] — ultra-early ack helpers (no t(), no footer)
 const SEND_EARLY_ACK = String(process.env.SEND_EARLY_ACK ?? 'true').toLowerCase() === 'true';
 const EARLY_ACK_TIMEOUT_MS = Number(process.env.EARLY_ACK_TIMEOUT_MS ?? 500);
@@ -3009,6 +3032,149 @@ function renderNativeglishLabels(text, languageCode) {
   }
   return out;
 }
+
+/**
+ * Classify allowed non‑mutating diagnostic "peek" queries.
+ * Returns {kind, args} or null.
+ * Allowed inside sticky Purchase/Sale/Return:
+ *   - "stock <product>"
+ *   - "price <product>"
+ *   - "prices"
+ *   - "low stock"
+ *   - "expiring <n>"
+ *   - "short summary" / "full summary"
+ */
+function classifyDiagnosticPeek(text) {
+  const s = String(text ?? '').trim();
+  const lc = s.toLowerCase();
+  const mStock   = lc.match(/^\s*stock\s+(.+?)\s*$/i);
+  const mPrice   = lc.match(/^\s*price\s+(.+?)\s*$/i);
+  const isPrices = /^\s*prices\s*$/.test(lc);
+  const isLow    = /^\s*low\s+stock\s*$/.test(lc);
+  const mExp     = lc.match(/^\s*expiring\s+(\d+)\s*$/i);
+  const isShort  = /^\s*short\s+summary\s*$/.test(lc);
+  const isFull   = /^\s*full\s+summary\s*$/.test(lc);
+  if (mStock)  return { kind: 'stock',   args: { product: mStock[1].trim() } };
+  if (mPrice)  return { kind: 'price',   args: { product: mPrice[1].trim() } };
+  if (isPrices) return { kind: 'prices', args: {} };
+  if (isLow)    return { kind: 'low',    args: {} };
+  if (mExp)     return { kind: 'exp',    args: { days: Number(mExp[1]) } };
+  if (isShort)  return { kind: 'summary', args: { flavor: 'short' } };
+  if (isFull)   return { kind: 'summary', args: { flavor: 'full' } };
+  return null;
+}
+// ===== [PATCH:HYBRID-DIAGNOSTIC-CLASSIFY-002] END =====
+
+@@ -*** ,*** +*** ,*** @@
+// ===== [PATCH:HYBRID-DIAGNOSTIC-HANDLER-003] BEGIN =====
+/**
+ * Handle diagnostic "peek" read‑only queries without changing sticky mode.
+ * Adds "Peek • <Title>" banner and a guidance line, then keeps footer badge.
+ * Optionally refreshes TTL once per sticky session.
+ */
+async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
+  const shopId = String(From).replace('whatsapp:', '');
+  const lang   = await detectLanguageWithFallback(text, From, requestId);
+  const peek   = classifyDiagnosticPeek(text);
+  if (!peek) return false;
+
+  // Read current sticky state (do not mutate action)
+  let st = null;
+  try { st = await getUserStateFromDB(shopId); } catch (_) {}
+  const modeBadge = getModeBadge(stickyAction ?? (st?.data?.action ?? null), lang);
+
+  // Track consecutive peeks to nudge if needed
+  try {
+    const data = { ...(st?.data ?? {}) };
+    data.peekCount = Number(data.peekCount ?? 0) + 1;
+    // Persist updated peekCount; do not change mode
+    await saveUserStateToDB(shopId, st?.mode ?? 'awaitingTransactionDetails', data);
+    st = { ...(st ?? {}), data };
+  } catch (_) {}
+
+  // Optional one‑time TTL refresh (extend lifespan once)
+  try {
+    const allowExtend = STICKY_PEEK_TTL_EXTENSION_MS > 0;
+    const already = Boolean(st?.data?.peekTTLExtended);
+    if (allowExtend && !already) {
+      const data = { ...(st?.data ?? {}), peekTTLExtended: true };
+      // Bump timestamp by rewriting state (same mode)
+      await saveUserStateToDB(shopId, st?.mode ?? 'awaitingTransactionDetails', data);
+    }
+  } catch (_) {}
+
+  // Compose message based on kind
+  let header = '';
+  let body   = '';
+  if (peek.kind === 'stock') {
+    const inv = await getProductInventory(shopId, peek.args.product);
+    const qty = Number(inv?.quantity ?? 0);
+    const unitDisp = displayUnit(inv?.unit ?? 'pieces', lang);
+    const name = inv?.product ?? peek.args.product;
+    header = `Peek • Stock — ${name}`;
+    body   = `${qty} ${unitDisp}`;
+  } else if (peek.kind === 'price') {
+    const res = await getProductPrice(peek.args.product, shopId);
+    if (res?.success) {
+      header = `Peek • Price — ${peek.args.product}`;
+      body   = `₹${res.price} per ${res.unit}`;
+    } else {
+      header = `Peek • Price — ${peek.args.product}`;
+      body   = `Not found for your shop`;
+    }
+  } else if (peek.kind === 'prices') {
+    const items = await getAllProducts(shopId);
+    header = `Peek • Prices — ${items.length} items`;
+    body   = (items.slice(0, 10).map(p => `• ${p.name}: ₹${p.price} / ${p.unit}`)).join('\n') || '—';
+  } else if (peek.kind === 'low') {
+    const low = await getLowStockProducts(shopId, 5);
+    header = `Peek • Low Stock — ${low.length} items`;
+    body   = (low.slice(0, 10).map(p => `• ${p.name}: ${p.quantity} ${displayUnit(p.unit, lang)}`)).join('\n') || '—';
+  } else if (peek.kind === 'exp') {
+    const exp = await getExpiringProducts(shopId, peek.args.days ?? 7);
+    header = `Peek • Expiring ≤ ${peek.args.days}d — ${exp.length} items`;
+    body   = (exp.slice(0, 10).map(r => {
+      const d = r.expiryDate instanceof Date ? r.expiryDate : new Date(r.expiryDate);
+      const dd = d.toISOString().split('T')[0];
+      return `• ${r.name}: ${r.quantity} (exp ${dd})`;
+    }).join('\n')) || '—';
+  } else if (peek.kind === 'summary') {
+    // Minimal summaries via existing summary helpers — keep it short
+    header = peek.args.flavor === 'full' ? 'Peek • Full Summary' : 'Peek • Short Summary';
+    try {
+      const summary = await processShopSummary?.(shopId, { flavor: peek.args.flavor ?? 'short' });
+      body = String(summary ?? '').trim() || '—';
+    } catch (_) {
+      body = '—';
+    }
+  }
+
+  // Guidance line keeps user anchored in sticky action
+  const guidance = lang.startsWith('hi')
+    ? `(${modeBadge} mode me ho. Transaction line bhejo continue karne ke liye, ya “mode” likho.)`
+    : `(You’re still in ${modeBadge}. Send the transaction line to continue, or type “mode”.)`;
+
+  const composed = [header, body, '', guidance].filter(Boolean).join('\n');
+  const msg = await t(composed, lang, requestId + '::peek');
+  await sendMessageViaAPI(From, await tagWithLocalizedMode(From, msg, lang));
+
+  // Nudge if too many consecutive peeks
+  try {
+    const c = Number(st?.data?.peekCount ?? 0);
+    if (ALLOW_READONLY_IN_STICKY && STICKY_PEEK_MAX > 0 && c > STICKY_PEEK_MAX) {
+      const nudge = await t(
+        'Looks like you’re exploring—type “mode” to switch, or send the transaction line to continue.',
+        lang,
+        requestId + '::peek-nudge'
+      );
+      await sendMessageViaAPI(From, await tagWithLocalizedMode(From, nudge, lang));
+    }
+  } catch (_) {}
+
+  handledRequests?.add?.(requestId); // avoid late apology
+  return true;
+}
+// ===== [PATCH:HYBRID-DIAGNOSTIC-HANDLER-003] END =====
 
 // ---------- Composite Key Normalizer ----------
     // Many logs showed newline-delimited keys. Normalize to a single line with a pipe separator.
@@ -12978,7 +13144,6 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
 
 // Async processing for text messages
 async function processTextMessageAsync(Body, From, requestId, conversationState) {
-  
   try {
     console.log(`[${requestId}] [1] Parsing text message: "${Body}"`);
     let __handled = false;
@@ -15294,8 +15459,11 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         // COPILOT-PATCH-QQ-GUARD-HNI
         const stickyAction = await getStickyActionQuick(From);
         const looksTxn = looksLikeTxnLite(Body);
-        if (stickyAction || looksTxn) {
+        if (stickyAction || looksTxn) {                    
+            const isDiag = !!classifyDiagnosticPeek(text);
+              if (!isDiag) {
           console.log(`[${requestId}] [HNI] skipping quick-query in sticky/txn turn`);
+              }
         } else {                     
             const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
             const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
