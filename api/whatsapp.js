@@ -136,6 +136,16 @@ function canonicalizeLang(code) {
    return DISPLAY[key] ?? tok;
  }
 
+const __sentListPickerFor = new Set();
+
+async function maybeResendListPicker(From, lang, requestId) {
+  const key = `${fromToShopId(From)}::${requestId}`;
+  if (__sentListPickerFor.has(key)) return false;
+  const ok = await resendInventoryListPicker(From, lang);
+  if (ok) __sentListPickerFor.add(key);
+  return ok;
+}
+
 // ---------------------------------------------------------------------------
 // STEP 2: HOISTED GLOBALS (fix early references like "handledRequests is not defined")
 // Place all global Sets/Maps and TTLs at the very top, right after imports.
@@ -8002,7 +8012,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
     if (listMap[id]) {             
         // Route list selection → canonical command router               
         const out = await handleQuickQueryEN(listMap[id], From, detectedLanguage, `${requestId}::listfb`);
-            try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
+            try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
             return out;
     }
   }
@@ -8282,7 +8292,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
         
     if (/^\s*(?:(?:(?:total|overall|grand(?:\s*total)?|gross)\s+)?(?:inventory|stock)\s*(?:value|valuation)|value\s*summary)\s*$/i.test(text)) {               
         await handleQuickQueryEN('value summary', From, detectedLanguage, `${requestId}::alias-inv-value`);
-          try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
+          try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
        handledRequests.add(requestId);
        return true;
      }
@@ -8295,14 +8305,14 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
         const page = pm[1] ? parseInt(pm[1], 10) : 1;
         const cmdCanon = page > 1 ? `products page ${page}` : `products`;              
         await handleQuickQueryEN(cmdCanon, From, detectedLanguage, `${requestId}::alias-products`);
-        try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
+        try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
         handledRequests.add(requestId);
         return true;
       }
       if (sm) {
         const term = sm[1].trim();                
         await handleQuickQueryEN(`products search ${term}`, From, detectedLanguage, `${requestId}::alias-products-search`);
-        try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
+        try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
         handledRequests.add(requestId);
         return true;
       }
@@ -8315,7 +8325,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
         const page = pricePage[1] ? parseInt(pricePage[1], 10) : 1;
         const cmdCanon = page > 1 ? `prices page ${page}` : `prices`;               
         await handleQuickQueryEN(cmdCanon, From, detectedLanguage, `${requestId}::alias-prices`);
-          try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
+          try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
         handledRequests.add(requestId);
         return true;
       }
@@ -8328,7 +8338,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
       if (m) {
         const raw = m[1].trim();                
         await handleQuickQueryEN(`stock ${raw}`, From, detectedLanguage, `${requestId}::alias-stock`);
-          try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
+          try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
         handledRequests.add(requestId);
         return true;
       }
@@ -8337,7 +8347,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
     // 2) Low stock / Stockout    
     if (/^(?:low\s*stock|stockout|out\s*of\s*stock)$/i.test(text)) {               
        await handleQuickQueryEN('low stock', From, detectedLanguage, `${requestId}::alias-low`);
-       try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
+       try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
        handledRequests.add(requestId);
        return true;
      }
@@ -8348,7 +8358,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
       if (m) {
         const raw = m[1].trim();               
         await handleQuickQueryEN(`batches ${raw}`, From, detectedLanguage, `${requestId}::alias-batches`);
-        try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
+        try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
         handledRequests.add(requestId);
         return true;
       }
@@ -8361,7 +8371,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
            const days = m[1] !== undefined ? Math.max(0, parseInt(m[1], 10)) : 30;
            const exactCmd = days === 0 ? 'expiring 0' : (days <= 7 ? 'expiring 7' : 'expiring 30');               
           await handleQuickQueryEN(exactCmd, From, detectedLanguage, `${requestId}::alias-expiring`);
-            try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
+            try { await maybeResendListPicker(From, detectedLanguage, requestID); } catch (_) {}
            handledRequests.add(requestId);
            return true;
          }
@@ -8400,7 +8410,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
     // 7) Reorder suggestions (simple velocity heuristic)     
     if (/^(?:reorder(?:\s+suggestions)?|what\s+should\s+i\s+reorder)$/i.test(text)) {             
       await handleQuickQueryEN('reorder suggestions', From, detectedLanguage, `${requestId}::alias-reorder`);
-        try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
+        try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
        handledRequests.add(requestId);
        return true;
      }
@@ -12782,11 +12792,17 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           typeof getStickyActionQuick === 'function'
             ? (getStickyActionQuick.length > 0 ? await getStickyActionQuick(From) : await getStickyActionQuick())
             : null;
-        const isPeek = !!classifyDiagnosticPeek(cleanTranscript);
+        const isPeek = !!classifyDiagnosticPeek(cleanTranscript);              
         if (ALLOW_READONLY_IN_STICKY && stickyAction && isPeek) {
-          const ok = await handleDiagnosticPeek(From, cleanTranscript, requestId, stickyAction);
-          if (ok) return; // reply already sent via API; keep mode; stop voice flow
-        }
+           const ok = await handleDiagnosticPeek(From, cleanTranscript, requestId, stickyAction);
+           if (ok) {
+             try {
+               const langForUi = String(detectedLanguage ?? 'en').toLowerCase();
+               await maybeResendListPicker(From, langForUi, requestId);
+             } catch (_) { /* best effort */ }
+             return; // reply already sent via API; keep mode; stop voice flow
+           }
+         }
       } catch (_) { /* best-effort */ }
       // ===== [PATCH:HYBRID-VOICE-ROUTE-004] END =====
 
@@ -12866,7 +12882,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
             // B: Immediately resurface the Inventory List-Picker after terminal command
                       try {
                         const langForUi = _safeLang(orch.language, detectedLanguage, 'en');
-                        await resendInventoryListPicker(From, langForUi);
+                        await maybeResendListPicker(From, langForUi, requestId);
                       } catch (_) { /* best effort */ }
               return;
             }
@@ -13238,7 +13254,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         (conversationState?.language || 'en'),
         `${requestId}::text-summary`
       );
-      try { await resendInventoryListPicker(From, (conversationState?.language ?? 'en')); } catch (_) {}
+      try { await maybeResendListPicker(From, (conversationState?.language ?? 'en'), requestId); } catch (_) {}
       return;
     }
     if (intentAtEntry === 'full summary') {
@@ -13248,7 +13264,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         (conversationState?.language || 'en'),
         `${requestId}::text-summary`
       );
-      try { await resendInventoryListPicker(From, (conversationState?.language ?? 'en')); } catch (_) {}
+      try { await maybeResendListPicker(From, (conversationState?.language ?? 'en'), requestId); } catch (_) {}
       return;
     } 
     
@@ -13474,11 +13490,17 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           typeof getStickyActionQuick === 'function'
             ? (getStickyActionQuick.length > 0 ? await getStickyActionQuick(From) : await getStickyActionQuick())
             : null;
-        const isPeek = !!classifyDiagnosticPeek(Body);
+        const isPeek = !!classifyDiagnosticPeek(Body);                
         if (ALLOW_READONLY_IN_STICKY && stickyAction && isPeek) {
-          const ok = await handleDiagnosticPeek(From, Body, requestId, stickyAction);
-          if (ok) return; // reply already sent via API; keep mode; stop text flow
-        }
+           const ok = await handleDiagnosticPeek(From, Body, requestId, stickyAction);
+           if (ok) {
+             try {
+               const langForUi = String(detectedLanguage ?? (conversationState?.language ?? 'en')).toLowerCase();
+               await maybeResendListPicker(From, langForUi, requestId);
+             } catch (_) { /* best effort */ }
+             return; // reply already sent via API; keep mode; stop text flow
+           }
+         }
       } catch (_) { /* best-effort */ }
 
     // Heartbeat: keep sticky mode fresh while user is active
@@ -13522,7 +13544,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
             // B: Immediately resurface the Inventory List-Picker after terminal command
                       try {
                         const langForUi = _safeLang(orch.language, detectedLanguage, 'en');
-                        await resendInventoryListPicker(From, langForUi);
+                        await maybeResendListPicker(From, langForUi, requestId);
                       } catch (_) { /* best effort */ }
               return true;
             }
@@ -13992,16 +14014,21 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               typeof getStickyActionQuick === 'function'
                 ? (getStickyActionQuick.length > 0 ? await getStickyActionQuick(From) : await getStickyActionQuick())
                 : null;
-            const isPeek = !!classifyDiagnosticPeek(Body);
+            const isPeek = !!classifyDiagnosticPeek(Body);                      
             if (stickyAction && isPeek) {
-              const ok = await handleDiagnosticPeek(From, Body, requestId, stickyAction);
-              if (ok) {
-                const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
-                res.type('text/xml'); resp.safeSend(200, twiml.toString());
-                safeTrackResponseTime(requestStart, requestId);
-                return; // early exit (reply sent via API)
-              }
-            }
+               const ok = await handleDiagnosticPeek(From, Body, requestId, stickyAction);
+               if (ok) {
+                 // Immediately resurface the inventory List-Picker in the same turn
+                 try {
+                   const langForUi = String(detectedLanguage ?? 'en').toLowerCase();
+                   await maybeResendListPicker(From, langForUi, requestId);
+                 } catch (_) { /* best effort */ }
+                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+                 res.type('text/xml'); resp.safeSend(200, twiml.toString());
+                 safeTrackResponseTime(requestStart, requestId);
+                 return; // early exit (reply sent via API)
+               }
+             }
           } catch (_) { /* best-effort */ }
         }
 
@@ -14132,10 +14159,10 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
              try {
                const cmd = String(orch.normalizedCommand).toLowerCase().trim();
                 if (typeof _isTerminalCommand === 'function' && _isTerminalCommand(cmd)) {
-                  await resendInventoryListPicker(From, langPinned);
+                  await maybeResendListPicker(From, langPinned, requestId);
                 }
                 // (Optional) If you want the List‑Picker after any read‑only command:
-                // else { await resendInventoryListPicker(From, langPinned); }
+                // else { await maybeResendListPicker(From, langPinned, requestId); }
               } catch (_) { /* best effort */ }
          __handled = true;
          try { await maybeShowPaidCTAAfterInteraction(From, langPinned, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
@@ -15502,10 +15529,10 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
               try {
                 const cmd = String(orch.normalizedCommand).toLowerCase().trim();
                 if (typeof _isTerminalCommand === 'function' && _isTerminalCommand(cmd)) {
-                  await resendInventoryListPicker(From, langExact);
+                  await maybeResendListPicker(From, langExact, requestId);
                 }
                 // (Optional) If you want the List‑Picker after any read‑only command:
-                // else { await resendInventoryListPicker(From, langExact); }
+                // else { await maybeResendListPicker(From, langExact, requestId); }
               } catch (_) { /* best effort */ }
         __handled = true;
         try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
@@ -15702,11 +15729,11 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         const fullSummary = await generateFullScaleSummary(shopId, prefLang, requestId);
         summarySent = true;
         await sendMessageViaAPI(From, fullSummary);
-        try { await resendInventoryListPicker(From, prefLang); } catch (_) {}
+        try { await maybeResendListPicker(From, prefLang, requestId); } catch (_) {}
       } else {
         const instantSummary = await generateInstantSummary(shopId, prefLang, requestId);
         await sendMessageViaAPI(From, instantSummary);
-        try { await resendInventoryListPicker(From, prefLang); } catch (_) {}
+        try { await maybeResendListPicker(From, prefLang, requestId); } catch (_) {}
       }
       res.send('<Response></Response>');
       try { await maybeShowPaidCTAAfterInteraction(From, prefLang, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
