@@ -7995,8 +7995,10 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
       'list_value': 'value summary'
     };
     if (listMap[id]) {             
-        // Route list selection → canonical command router
-        return await handleQuickQueryEN(listMap[id], From, detectedLanguage, `${requestId}::listfb`);
+        // Route list selection → canonical command router               
+        const out = await handleQuickQueryEN(listMap[id], From, detectedLanguage, `${requestId}::listfb`);
+            try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
+            return out;
     }
   }
   
@@ -8273,8 +8275,9 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
         // Accepts: "inventory value", "stock value", "value summary",
         //          "total/overall/grand/gross inventory|stock value|valuation"
         
-    if (/^\s*(?:(?:(?:total|overall|grand(?:\s*total)?|gross)\s+)?(?:inventory|stock)\s*(?:value|valuation)|value\s*summary)\s*$/i.test(text)) {
-       await handleQuickQueryEN('value summary', From, detectedLanguage, `${requestId}::alias-inv-value`);
+    if (/^\s*(?:(?:(?:total|overall|grand(?:\s*total)?|gross)\s+)?(?:inventory|stock)\s*(?:value|valuation)|value\s*summary)\s*$/i.test(text)) {               
+        await handleQuickQueryEN('value summary', From, detectedLanguage, `${requestId}::alias-inv-value`);
+          try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
        handledRequests.add(requestId);
        return true;
      }
@@ -8285,14 +8288,16 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
       const sm = text.match(/^\s*(?:products\s+search|search\s+products)\s+(.+)\s*$/i);
       if (pm) {
         const page = pm[1] ? parseInt(pm[1], 10) : 1;
-        const cmdCanon = page > 1 ? `products page ${page}` : `products`;
+        const cmdCanon = page > 1 ? `products page ${page}` : `products`;              
         await handleQuickQueryEN(cmdCanon, From, detectedLanguage, `${requestId}::alias-products`);
+        try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
         handledRequests.add(requestId);
         return true;
       }
       if (sm) {
-        const term = sm[1].trim();
+        const term = sm[1].trim();                
         await handleQuickQueryEN(`products search ${term}`, From, detectedLanguage, `${requestId}::alias-products-search`);
+        try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
         handledRequests.add(requestId);
         return true;
       }
@@ -8303,8 +8308,9 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
       const pricePage = text.match(/^\s*(?:prices|price\s*updates|stale\s*prices)(?:\s+(?:page\s+)?(\d+))?\s*$/i);
       if (pricePage) {
         const page = pricePage[1] ? parseInt(pricePage[1], 10) : 1;
-        const cmdCanon = page > 1 ? `prices page ${page}` : `prices`;
+        const cmdCanon = page > 1 ? `prices page ${page}` : `prices`;               
         await handleQuickQueryEN(cmdCanon, From, detectedLanguage, `${requestId}::alias-prices`);
+          try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
         handledRequests.add(requestId);
         return true;
       }
@@ -8315,16 +8321,18 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
     {
       const m = text.match(/^(?:stock|inventory|qty)\s+(.+)$/i);
       if (m) {
-        const raw = m[1].trim();
+        const raw = m[1].trim();                
         await handleQuickQueryEN(`stock ${raw}`, From, detectedLanguage, `${requestId}::alias-stock`);
+          try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
         handledRequests.add(requestId);
         return true;
       }
     }
 
     // 2) Low stock / Stockout    
-    if (/^(?:low\s*stock|stockout|out\s*of\s*stock)$/i.test(text)) {
+    if (/^(?:low\s*stock|stockout|out\s*of\s*stock)$/i.test(text)) {               
        await handleQuickQueryEN('low stock', From, detectedLanguage, `${requestId}::alias-low`);
+       try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
        handledRequests.add(requestId);
        return true;
      }
@@ -8333,8 +8341,9 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
     {
       const m = text.match(/^(?:batches?|expiry)\s+(.+)$/i);
       if (m) {
-        const raw = m[1].trim();
+        const raw = m[1].trim();               
         await handleQuickQueryEN(`batches ${raw}`, From, detectedLanguage, `${requestId}::alias-batches`);
+        try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
         handledRequests.add(requestId);
         return true;
       }
@@ -8345,8 +8354,9 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
         m = text.match(/^expiring(?:\s+(\d+))?$/i);
          if (m) {
            const days = m[1] !== undefined ? Math.max(0, parseInt(m[1], 10)) : 30;
-           const exactCmd = days === 0 ? 'expiring 0' : (days <= 7 ? 'expiring 7' : 'expiring 30');
-           await handleQuickQueryEN(exactCmd, From, detectedLanguage, `${requestId}::alias-expiring`);
+           const exactCmd = days === 0 ? 'expiring 0' : (days <= 7 ? 'expiring 7' : 'expiring 30');               
+          await handleQuickQueryEN(exactCmd, From, detectedLanguage, `${requestId}::alias-expiring`);
+            try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
            handledRequests.add(requestId);
            return true;
          }
@@ -8383,8 +8393,9 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
   }
 
     // 7) Reorder suggestions (simple velocity heuristic)     
-    if (/^(?:reorder(?:\s+suggestions)?|what\s+should\s+i\s+reorder)$/i.test(text)) {
-       await handleQuickQueryEN('reorder suggestions', From, detectedLanguage, `${requestId}::alias-reorder`);
+    if (/^(?:reorder(?:\s+suggestions)?|what\s+should\s+i\s+reorder)$/i.test(text)) {             
+      await handleQuickQueryEN('reorder suggestions', From, detectedLanguage, `${requestId}::alias-reorder`);
+        try { await resendInventoryListPicker(From, detectedLanguage); } catch (_) {}
        handledRequests.add(requestId);
        return true;
      }
@@ -13222,6 +13233,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         (conversationState?.language || 'en'),
         `${requestId}::text-summary`
       );
+      try { await resendInventoryListPicker(From, (conversationState?.language ?? 'en')); } catch (_) {}
       return;
     }
     if (intentAtEntry === 'full summary') {
@@ -13231,6 +13243,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         (conversationState?.language || 'en'),
         `${requestId}::text-summary`
       );
+      try { await resendInventoryListPicker(From, (conversationState?.language ?? 'en')); } catch (_) {}
       return;
     } 
     
@@ -14108,8 +14121,17 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                 res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
                 return;
               }
-         handledRequests.add(requestId);
+         handledRequests.add(requestId);                  
          await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm`);
+             // B: After normalized command reply, if terminal, resurface List‑Picker
+             try {
+               const cmd = String(orch.normalizedCommand).toLowerCase().trim();
+                if (typeof _isTerminalCommand === 'function' && _isTerminalCommand(cmd)) {
+                  await resendInventoryListPicker(From, langPinned);
+                }
+                // (Optional) If you want the List‑Picker after any read‑only command:
+                // else { await resendInventoryListPicker(From, langPinned); }
+              } catch (_) { /* best effort */ }
          __handled = true;
          try { await maybeShowPaidCTAAfterInteraction(From, langPinned, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
          const twiml = new twilio.twiml.MessagingResponse();
@@ -15470,7 +15492,16 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
             try { await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-norm-text`); } catch (_) {}
             return;
           }
-          await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);          
+          await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);                  
+          // B: After normalized command reply, if terminal, resurface List‑Picker
+              try {
+                const cmd = String(orch.normalizedCommand).toLowerCase().trim();
+                if (typeof _isTerminalCommand === 'function' && _isTerminalCommand(cmd)) {
+                  await resendInventoryListPicker(From, langExact);
+                }
+                // (Optional) If you want the List‑Picker after any read‑only command:
+                // else { await resendInventoryListPicker(From, langExact); }
+              } catch (_) { /* best effort */ }
         __handled = true;
         try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
         return res.send('<Response></Response>');
@@ -15666,9 +15697,11 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         const fullSummary = await generateFullScaleSummary(shopId, prefLang, requestId);
         summarySent = true;
         await sendMessageViaAPI(From, fullSummary);
+        try { await resendInventoryListPicker(From, prefLang); } catch (_) {}
       } else {
         const instantSummary = await generateInstantSummary(shopId, prefLang, requestId);
         await sendMessageViaAPI(From, instantSummary);
+        try { await resendInventoryListPicker(From, prefLang); } catch (_) {}
       }
       res.send('<Response></Response>');
       try { await maybeShowPaidCTAAfterInteraction(From, prefLang, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
