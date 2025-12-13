@@ -3210,7 +3210,19 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
         let msgRaw = `${NO_CLAMP_MARKER}${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
                      `Try:\n• short summary\n• price list\n• "10 Parle-G sold at 11/packet"`;               
         let msgTranslated = await t(msgRaw, lang, `trial-onboard-done-${shopId}`);              
-        await sendMessageViaAPI(From, finalizeForSend(msgTranslated, lang));
+        await sendMessageViaAPI(From, finalizeForSend(msgTranslated, lang));            
+        // NEW: Standalone inventory pre-load tip (post-activation)
+        // Sends a brief line without footer; localized via t(), digits normalized via finalizeForSend().
+        try {
+          const preloadEn =
+            `To pre-load your existing inventory directly into the backend, WhatsApp the Saamagrii.AI support team: ${SUPPORT_WHATSAPP_LINK}`;
+          // Use canonical markers to keep this message standalone (no footer/mode badge).
+          const preloadSrc = NO_FOOTER_MARKER + preloadEn;
+          let preloadMsg = await t(preloadSrc, lang, `trial-preload-info-${shopId}`);
+          await sendMessageViaAPI(From, finalizeForSend(preloadMsg, lang));
+        } catch (e) {
+          console.warn('[trial-onboard] preload info send failed:', e?.message);
+        }
       try { if (requestId) handledRequests.add(requestId); } catch {}
     try {
       await ensureLangTemplates(lang);
