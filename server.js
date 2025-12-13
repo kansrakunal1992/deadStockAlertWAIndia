@@ -663,8 +663,17 @@ app.get('/api/products/needing-update', async (req, res) => {
   
   try {
     console.log(`[${requestId}] Getting products needing price update`);
-    
-    const products = await getProductsNeedingPriceUpdate();
+           
+    // ===== [PATCH:PRICES-SHOP-SCOPE-SERVER-001] BEGIN =====
+        // Optional shop scoping via ?shopId=whatsapp:+91XXXXXXXXXX or +91XXXXXXXXXX or 10-digit
+        const rawShopId = (req.query.shopId ?? '').toString().trim();
+        const canon = s => {
+          const d = String(s ?? '').replace(/\D+/g, '');
+          return d.startsWith('91') && d.length >= 12 ? d.slice(2) : d;
+        };
+        const shopId = rawShopId ? `+91${canon(rawShopId)}` : null;
+        const products = await getProductsNeedingPriceUpdate(shopId);
+        // ===== [PATCH:PRICES-SHOP-SCOPE-SERVER-001] END =====
     
     res.status(200).json({
       success: true,
@@ -696,8 +705,24 @@ app.post('/api/price-reminders', async (req, res) => {
       timestamp: new Date().toISOString()
     });
     
-    // Run the reminders in the background
-    sendPriceUpdateReminders()
+    // Run the reminders in the background        
+    // ===== [PATCH:PRICES-REMINDER-SERVER-003] BEGIN =====
+        const rawShopId = (req.query.shopId ?? req.body?.shopId ?? '').toString().trim();
+        const canon = s => {
+          const d = String(s ?? '').replace(/\D+/g, '');
+          return d.startsWith('91') && d.length >= 12 ? d.slice(2) : d;
+        };
+        const shopId = rawShopId ? `+91${canon(rawShopId)}` : null;
+        // If your DB layer supports a scoped variant, prefer it; else fall back to global.
+        const runner = typeof sendPriceUpdateReminders === 'function'
+          ? (shopId ? () => sendPriceUpdateReminders(shopId) : () => sendPriceUpdateReminders())
+          : async () => {
+              // Minimal fallback: no-op or log if function missing.
+              console.warn('[price-reminders] sendPriceUpdateReminders() not available');
+            };
+        runner()
+        // ===== [PATCH:PRICES-REMINDER-SERVER-003] END =====
+
       .then(results => {
         const successCount = results.filter(r => r.success).length;
         const failureCount = results.filter(r => !r.success).length;
@@ -963,8 +988,17 @@ app.get('/api/dashboard/reorder', async (req, res) => {
 app.get('/api/dashboard/prices/stale', async (req, res) => {
   try {
     const page = Math.max(1, Number(req.query.page || 1));
-    const PAGE_SIZE = 50;
-    const list = await getProductsNeedingPriceUpdate();
+    const PAGE_SIZE = 50;        
+    // ===== [PATCH:PRICES-SHOP-SCOPE-SERVER-002] BEGIN =====
+        // Optional filters: shopId query to scope the stale list
+        const rawShopId = (req.query.shopId ?? '').toString().trim();
+        const canon = s => {
+          const d = String(s ?? '').replace(/\D+/g, '');
+          return d.startsWith('91') && d.length >= 12 ? d.slice(2) : d;
+        };
+        const shopId = rawShopId ? `+91${canon(rawShopId)}` : null;
+        const list = await getProductsNeedingPriceUpdate(shopId);
+        // ===== [PATCH:PRICES-SHOP-SCOPE-SERVER-002] END =====
     const start = (page - 1) * PAGE_SIZE;
     const slice = list.slice(start, start + PAGE_SIZE).map(it => ({
       name: it.name,
