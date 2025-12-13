@@ -18,16 +18,17 @@ const CONTENT_API_URL = 'https://content.twilio.com/v1/Content';
 const TTL_MS = 24 * 60 * 60 * 1000; // refresh daily
 
 // --- NEW: Paid confirmation labels (<=20 chars title) ---
-const PAID_CONFIRM_LABELS = {
-  en: { body: 'Already completed the payment?', button: 'Paid' },
-  hi: { body: 'भुगतान पूरा किया?', button: 'Paid' },
-  gu: { body: 'ચુકવણી થઇ ગઈ?', button: 'Paid' },
-  ta: { body: 'பணம் செலுத்திவிட்டீர்களா?', button: 'Paid' },
-  te: { body: 'చెల్లింపు పూర్తయిందా?', button: 'Paid' },
-  kn: { body: 'ಪಾವತಿ ಪೂರ್ಣವೇ?', button: 'Paid' },
-  mr: { body: 'पेमेंट झाले का?', button: 'Paid' },
-  bn: { body: 'পেমেন্ট সম্পন্ন?', button: 'Paid' }
-};
+const PAID_CONFIRM_LABELS = { 
+  en: { body: 'Already completed the payment?', button: 'Paid' }, 
+  // Hindi body made more conversational
+  hi: { body: 'पेमेंट हो गया?', button: 'Paid' }, 
+  gu: { body: 'ચુકવણી થઇ ગઈ?', button: 'Paid' }, 
+  ta: { body: 'பணம் செலுத்திவிட்டீர்களா?', button: 'Paid' }, 
+  te: { body: 'చెల్లింపు పూర్తయిందా?', button: 'Paid' }, 
+  kn: { body: 'ಪಾವತಿ ಪೂರ್ಣವೇ?', button: 'Paid' }, 
+  mr: { body: 'पेमेंट झाले का?', button: 'Paid' }, 
+  bn: { body: 'পেমেন্ট সম্পন্ন?', button: 'Paid' } 
+ }; 
 
 if (!ACCOUNT_SID || !AUTH_TOKEN) {
    throw new Error('Missing ACCOUNT_SID or AUTH_TOKEN');
@@ -52,135 +53,136 @@ function normalizeLangForContent(lang) {
  };
  
 // === UPDATED: List labels to match new menu across all supported languages ===
-const LIST_LABELS = {
-  en: {
-    body: 'Query inventory',
-    button: 'Select an option',
-    items: {
-      short:   ['Short Summary',           ''],
-      full:    ['Full Summary',            ''],
-      low:     ['Low stock',               ''],
-      reorder: ['Reorder suggestions',     ''],
-      exp0:    ['Expiring 0',              ''],
-      exp30:   ['Expiring 30',             ''],
-      salesD:  ['Sales today',             ''],
-      salesW:  ['Sales week',              ''],
-      top:     ['Top products month',      ''],
-      value:   ['Inventory value',         '']
-    }
-  },
-  hi: {
-    body: 'इन्वेंटरी पूछें',
-    button: 'एक विकल्प चुनें',
-    items: {
-      short:   ['शॉर्ट समरी',               ''],
-      full:    ['फुल समरी',                 ''],
-      low:     ['कम स्टॉक',                  ''],
-      reorder: ['रीऑर्डर सुझाव',        ''],
-      exp0:    ['आज एक्सपायर',               ''],
-      exp30:   ['30 दिन में एक्सपायर',       ''],
-      salesD:  ['आज की बिक्री',              ''],
-      salesW:  ['साप्ताहिक बिक्री',          ''],
-      top:     ['टॉप उत्पाद (माह)',          ''],
-      value:   ['इन्वेंटरी मूल्य',            '']
-    }
-  },
-  gu: {
-    body: 'ઇન્વેન્ટરી પૂછો',
-    button: 'વિકલ્પ પસંદ કરો',
-    items: {
-      short:   ['શોર્ટ સારાંશ',               ''],
-      full:    ['ફુલ સારાંશ',                 ''],
-      low:     ['ઓછો સ્ટોક',                  ''],
-      reorder: ['રીઓર્ડર સૂચનો',              ''],
-      exp0:    ['આજે સમાપ્તિ',                ''],
-      exp30:   ['30 દિવસમાં સમાપ્તિ',         ''],
-      salesD:  ['આજની વેચાણ',                 ''],
-      salesW:  ['સાપ્તાહિક વેચાણ',            ''],
-      top:     ['ટોપ પ્રોડક્ટ્સ (મહિનો)',      ''],
-      value:   ['ઇન્વેન્ટરી મૂલ્ય',            '']
-    }
-  },
-  ta: {
-    body: 'சரக்கு கேள்வி',
-    button: 'ஒரு விருப்பத்தைத் தேர்ந்தெடுக்கவும்',
-    items: {
-      short:   ['சுருக்கமான சுருக்கம்',         ''],
-      full:    ['முழு சுருக்கம்',               ''],
-      low:     ['குறைந்த சரக்கு',                ''],
-      reorder: ['மீண்டும் ஆர்டர் பரிந்துரைகள்',    ''],
-      exp0:    ['இன்று காலாவதி',                ''],
-      exp30:   ['30 நாட்களில் காலாவதி',          ''],
-      salesD:  ['இன்றைய விற்பனை',                ''],
-      salesW:  ['வார விற்பனை',                  ''],
-      top:     ['சிறந்த பொருட்கள் (மாதம்)',      ''],
-      value:   ['சரக்கு மதிப்பு',                 '']
-    }
-  },
-  te: {
-    body: 'ఇన్వెంటరీ ప్రశ్న',
-    button: 'ఒక ఎంపికను ఎంచుకోండి',
-    items: {
-      short:   ['షార్ట్ సమరీ',                 ''],
-      full:    ['ఫుల్ సమరీ',                   ''],
-      low:     ['తక్కువ నిల్వ',                  ''],
-      reorder: ['రీఆర్డర్ సూచనలు',              ''],
-      exp0:    ['ఈ రోజు గడువు',                 ''],
-      exp30:   ['30 రోజుల్లో గడువు',             ''],
-      salesD:  ['ఈ రోజు అమ్మకాలు',               ''],
-      salesW:  ['వారపు అమ్మకాలు',                ''],
-      top:     ['టాప్ ఉత్పత్తులు (నెల)',         ''],
-      value:   ['ఇన్వెంటరీ విలువ',               '']
-    }
-  },
-  kn: {
-    body: 'ಇನ್‌ವೆಂಟರಿ ಪ್ರಶ್ನೆ',
-    button: 'ಒಂದು ಆಯ್ಕೆ ಮಾಡಿ',
-    items: {
-      short:   ['ಸಂಕ್ಷಿಪ್ತ ಸಾರಾಂಶ',             ''],
-      full:    ['ವಿಸ್ತೃತ ಸಾರಾಂಶ',               ''],
-      low:     ['ಕಡಿಮೆ ಸ್ಟಾಕ್',                   ''],
-      reorder: ['ಮರು ಆರ್ಡರ್ ಸಲಹೆಗಳು',            ''],
-      exp0:    ['ಇಂದು ಅವಧಿ',                     ''],
-      exp30:   ['30 ದಿನಗಳಲ್ಲಿ ಅವಧಿ',              ''],
-      salesD:  ['ಇಂದಿನ ಮಾರಾಟ',                   ''],
-      salesW:  ['ವಾರದ ಮಾರಾಟ',                    ''],
-      top:     ['ಅತ್ಯುತ್ತಮ ಉತ್ಪನ್ನಗಳು (ತಿಂಗಳು)',   ''],
-      value:   ['ಇನ್‌ವೆಂಟರಿ ಮೌಲ್ಯ',               '']
-    }
-  },
-  mr: {
-    body: 'इन्व्हेंटरी विचार',
-    button: 'एक पर्याय निवडा',
-    items: {
-      short:   ['लघु सारांश',                    ''],
-      full:    ['सविस्तर सारांश',                 ''],
-      low:     ['कमी साठा',                       ''],
-      reorder: ['री-ऑर्डर सूचना',                 ''],
-      exp0:    ['आज कालबाह्य',                    ''],
-      exp30:   ['30 दिवसांत कालबाह्य',            ''],
-      salesD:  ['आजची विक्री',                    ''],
-      salesW:  ['साप्ताहिक विक्री',               ''],
-      top:     ['टॉप उत्पादने (महिना)',           ''],
-      value:   ['इन्व्हेंटरी मूल्य',              '']
-    }
-  },
-  bn: {
-    body: 'ইনভেন্টরি জিজ্ঞাসা',
-    button: 'একটি অপশন বাছুন',
-    items: {
-      short:   ['সংক্ষিপ্ত সারাংশ',               ''],
-      full:    ['পূর্ণাঙ্গ সারাংশ',                ''],
-      low:     ['কম স্টক',                         ''],
-      reorder: ['রিঅর্ডার সাজেশন',                 ''],
-      exp0:    ['আজ মেয়াদোত্তীর্ণ',               ''],
-      exp30:   ['৩০ দিনে মেয়াদোত্তীর্ণ',           ''],
-      salesD:  ['আজকের বিক্রি',                    ''],
-      salesW:  ['সাপ্তাহিক বিক্রি',                 ''],
-      top:     ['শীর্ষ পণ্য (মাস)',                ''],
-      value:   ['ইনভেন্টরি মূল্য',                 '']
-    }
-  }
+const LIST_LABELS = { 
+  en: { 
+   body: 'Query inventory', 
+   button: 'Select an option', 
+   items: { 
+    short: ['Short Summary', ''], 
+    full: ['Full Summary', ''], 
+    low: ['Low stock', ''], 
+    reorder: ['Reorder suggestions', ''], 
+    // Expiry & period labels aligned to your choices
+    exp0: ['Expired', ''], 
+    exp30: ['Expires in 30 days', ''], 
+    salesD: ['Sales today', ''], 
+    salesW: ['Sales this week', ''], 
+    top: ['Top 5 this month', ''], 
+    value: ['Inventory value', ''] 
+  } 
+  },   
+hi: { 
+   body: 'इन्वेंटरी पूछें', 
+   button: 'एक विकल्प चुनें', 
+   items: { 
+    short: ['शॉर्ट समरी', ''], 
+    full: ['फुल समरी', ''], 
+    low: ['कम स्टॉक', ''], 
+    reorder: ['रीऑर्डर सुझाव', ''], 
+    exp0: ['समाप्त', ''], 
+    exp30: ['30 दिनों में समाप्त', ''], 
+    salesD: ['आज की बिक्री', ''], 
+    salesW: ['साप्ताहिक बिक्री', ''], 
+    top: ['महीने की टॉप 5 बिक्री', ''], 
+    value: ['इन्वेंटरी मूल्य', ''] 
+   } 
+  },   
+gu: { 
+   body: 'ઇન્વેન્ટરી પૂછો', 
+   button: 'વિકલ્પ પસંદ કરો', 
+   items: { 
+    short: ['શોર્ટ સારાંશ', ''], 
+    full: ['ફુલ સારાંશ', ''], 
+    low: ['ઓછો સ્ટોક', ''], 
+    reorder: ['રીઓર્ડર સૂચનો', ''], 
+    exp0: ['સમાપ્ત', ''], 
+    exp30: ['30 દિવસમાં સમાપ્ત', ''], 
+    salesD: ['આજની વેચાણ', ''], 
+    salesW: ['સાપ્તાહિક વેચાણ', ''], 
+    top: ['આ મહિને ટોપ 5', ''], 
+    value: ['ઇન્વેન્ટરી મૂલ્ય', ''] 
+   } 
+  }, 
+ta: { 
+   body: 'சரக்கு கேள்வி', 
+   button: 'ஒரு விருப்பத்தைத் தேர்ந்தெடுக்கவும்', 
+   items: { 
+    short: ['சுருக்கமான சுருக்கம்', ''], 
+    full: ['முழு சுருக்கம்', ''], 
+    low: ['குறைந்த சரக்கு', ''], 
+    reorder: ['மீண்டும் ஆர்டர் பரிந்துரைகள்', ''], 
+    exp0: ['காலாவதி', ''], 
+    exp30: ['30 நாட்களில் காலாவதி', ''], 
+    salesD: ['இன்றைய விற்பனை', ''], 
+    salesW: ['வார விற்பனை', ''], 
+    top: ['இந்த மாதம் Top 5', ''], 
+    value: ['சரக்கு மதிப்பு', ''] 
+   } 
+  },   
+te: { 
+   body: 'ఇన్వెంటరీ ప్రశ్న', 
+   button: 'ఒక ఎంపికను ఎంచుకోండి', 
+   items: { 
+    short: ['షార్ట్ సమరీ', ''], 
+    full: ['ఫుల్ సమరీ', ''], 
+    low: ['తక్కువ నిల్వ', ''], 
+    reorder: ['రీఆర్డర్ సూచనలు', ''], 
+    exp0: ['గడువు ముగిసింది', ''], 
+    exp30: ['30 రోజుల్లో గడువు', ''], 
+    salesD: ['ఈ రోజు అమ్మకాలు', ''], 
+    salesW: ['వారపు అమ్మకాలు', ''], 
+    top: ['ఈ నెల Top 5', ''], 
+    value: ['ఇన్వెంటరీ విలువు', ''] 
+   } 
+  },   
+kn: { 
+   body: 'ಇನ್‌ವೆಂಟರಿ ಪ್ರಶ್ನೆ', 
+   button: 'ಒಂದು ಆಯ್ಕೆ ಮಾಡಿ', 
+   items: { 
+    short: ['ಸಂಕ್ಷಿಪ್ತ ಸಾರಾಂಶ', ''], 
+    full: ['ವಿಸ್ತೃತ ಸಾರಾಂಶ', ''], 
+    low: ['ಕಡಿಮೆ ಸ್ಟಾಕ್', ''], 
+    reorder: ['ಮರು ಆರ್ಡರ್ ಸಲಹೆಗಳು', ''], 
+    exp0: ['ಅವಧಿ ಮುಗಿದಿದೆ', ''], 
+    exp30: ['30 ದಿನಗಳಲ್ಲಿ ಅವಧಿ', ''], 
+    salesD: ['ಇಂದಿನ ಮಾರಾಟ', ''], 
+    salesW: ['ವಾರದ ಮಾರಾಟ', ''], 
+    top: ['ಈ ತಿಂಗಳು Top 5', ''], 
+    value: ['ಇನ್‌ವೆಂಟರಿ ಮೌಲ್ಯ', ''] 
+   } 
+  }, 
+mr: { 
+   body: 'इन्व्हेंटरी विचार', 
+   button: 'एक पर्याय निवडा', 
+   items: { 
+    short: ['लघु सारांश', ''], 
+    full: ['सविस्तर सारांश', ''], 
+    low: ['कमी साठा', ''], 
+    reorder: ['री-ऑर्डर सूचना', ''], 
+    exp0: ['कालबाह्य', ''], 
+    exp30: ['30 दिवसांत कालबाह्य', ''], 
+    salesD: ['आजची विक्री', ''], 
+    salesW: ['साप्ताहिक विक्री', ''], 
+    top: ['या महिन्यात टॉप 5', ''], 
+    value: ['इन्व्हेंटरी मूल्य', ''] 
+   } 
+  },  
+bn: { 
+   body: 'ইনভেন্টরি জিজ্ঞাসা', 
+   button: 'একটি অপশন বাছুন', 
+   items: { 
+    short: ['সংক্ষিপ্ত সারাংশ', ''], 
+    full: ['পূর্ণাঙ্গ সারাংশ', ''], 
+    low: ['কম স্টক', ''], 
+    reorder: ['রিঅর্ডার পরামর্শ', ''], 
+    exp0: ['মেয়াদোত্তীর্ণ', ''], 
+    exp30: ['৩০ দিনে মেয়াদোত্তীর্ণ', ''], 
+    salesD: ['আজকের বিক্রি', ''], 
+    salesW: ['সাপ্তাহিক বিক্রি', ''], 
+    top: ['এই মাসের টপ ৫', ''], 
+    value: ['ইনভেন্টরি মূল্য', ''] 
+   } 
+  } 
 };
   
  // --- NEW: CTA labels ---
@@ -194,16 +196,19 @@ const LIST_LABELS = {
    mr: { body: 'Saamagrii.AI 3 दिवस मोफत वापरून पहा', button: 'ट्रायल प्लॅन सक्रिय करा' },
    bn: { body: 'Saamagrii.AI ৩ দিন ফ্রি ট্রাই করুন', button: 'ট্রায়াল প্ল্যান সক্রিয় করুন' }
  };
- const ACTIVATE_PAID_LABELS = {
-   en: { body: 'Upgrade to paid plan for uninterrupted access', button: 'Activate Paid Plan' },
-   hi: { body: 'निरंतर सेवा हेतु पेड प्लान सक्रिय करें', button: 'पेड प्लान सक्रिय करें' },
-   gu: { body: 'નિરંતર સેવા માટે પેઈડ પ્લાન સક્રિય કરો', button: 'પેઈડ પ્લાન સક્રિય કરો' },
-   ta: { body: 'தொடர்ச்சி சேவைக்கு Paid Plan செயல்படுத்தவும்', button: 'Paid Plan செயல்படுத்து' },
-   te: { body: 'నిరంతర సేవ కోసం Paid ప్లాన్ యాక్టివేట్ చేయండి', button: 'Paid ప్లాన్ యాక్టివేట్' },
-   kn: { body: 'ನಿರಂತರ ಸೇವೆಗೆ ಪೈಡ್ ಪ್ಲಾನ್ ಸಕ್ರಿಯಗೊಳಿಸಿ', button: 'ಪೈಡ್ ಪ್ಲಾನ್ ಸಕ್ರಿಯಗೊಳಿಸಿ' },
-   mr: { body: 'सतत सेवेसाठी पेड प्लॅन सक्रिय करा', button: 'पेड प्लॅन सक्रिय करा' },
-   bn: { body: 'অবিচ্ছিন্ন সেবার জন্য Paid Plan সক্রিয় করুন', button: 'Paid Plan সক্রিয় করুন' }
- };
+ 
+// [PATCH ANCHOR: CTA-PAID-LABELS]
+ const ACTIVATE_PAID_LABELS = { 
+  en: { body: 'Upgrade to paid plan for uninterrupted access', button: 'Activate Paid Plan' }, 
+  // Body simplified to match everyday phrasing; button shortened to avoid clamping
+  hi: { body: 'सेवा चालू रखने हेतु पेड प्लान चालू करें', button: 'पेड प्लान चालू करें' }, 
+  gu: { body: 'સેવા ચાલુ રાખવા માટે પેઇડ પ્લાન શરૂ કરો', button: 'પેઇડ પ્લાન શરૂ કરો' }, 
+  ta: { body: 'சேவை தொடர வேண்டில் கட்டண திட்டம் தொடங்கு', button: 'கட்டண திட்டம் தொடங்கு' }, 
+  te: { body: 'సేవ కొనసాగేందుకు పెయిడ్ ప్లాన్ ప్రారంభించు', button: 'పెయిడ్ ప్లాన్ ప్రారంభించు' }, 
+  kn: { body: 'ಸೇವೆ ಮುಂದುವರೆಯಲು ಪೈಡ್ ಪ್ಲಾನ್ ಸಕ್ರಿಯ ಮಾಡಿ', button: 'ಪೈಡ್ ಪ್ಲಾನ್ ಸಕ್ರಿಯ ಮಾಡಿ' }, 
+  mr: { body: 'सेवा चालू ठेवण्यासाठी पेड प्लॅन सक्रिय करा', button: 'पेड प्लॅन सक्रिय करा' }, 
+  bn: { body: 'সেবা চালু রাখতে পেইড প্ল্যান চালু করুন', button: 'পেইড প্ল্যান চালু করুন' } 
+ }; 
 
 // ——— NEW: 3-button Onboarding Quick-Reply (Start Trial • Demo • Help) ———
 // Keep titles short (≤ 20) in every language.
@@ -274,20 +279,19 @@ const l = LIST_LABELS[base] ?? LIST_LABELS.en;
     types: {
       'twilio/list-picker': {              
       body: l.body,
-      button: clampTitle(l.button),   // clamp expand button text as well
-        items: [
-                   
-         { item: clampItem(it.short[0]), id: 'list_short_summary', description: it.short[1] },
-         { item: clampItem(it.full[0]),  id: 'list_full_summary',  description: it.full[1]  },
-         { item: clampItem(it.low[0]),   id: 'list_low',           description: it.low[1]   },
-          { item: it.reorder[0], id: 'list_reorder_suggest',  description: it.reorder[1] },
-          { item: it.exp0[0],    id: 'list_expiring',         description: it.exp0[1]    },
-          { item: it.exp30[0],   id: 'list_expiring_30',      description: it.exp30[1]   },
-          { item: it.salesD[0],  id: 'list_sales_day',        description: it.salesD[1]  },
-          { item: it.salesW[0],  id: 'list_sales_week',       description: it.salesW[1]  },
-          { item: it.top[0],     id: 'list_top_month',        description: it.top[1]     },
-          { item: it.value[0],   id: 'list_value',            description: it.value[1]   }
-        ]
+      button: clampTitle(l.button),   // clamp expand button text as well              
+      items: [ 
+              { item: clampItem(it.short[0]),  id: 'list_short_summary',  description: it.short[1] }, 
+              { item: clampItem(it.full[0]),   id: 'list_full_summary',   description: it.full[1] }, 
+              { item: clampItem(it.low[0]),    id: 'list_low',            description: it.low[1] }, 
+              { item: clampItem(it.reorder[0]),id: 'list_reorder_suggest',description: it.reorder[1] }, 
+              { item: clampItem(it.exp0[0]),   id: 'list_expiring',       description: it.exp0[1] }, 
+              { item: clampItem(it.exp30[0]),  id: 'list_expiring_30',    description: it.exp30[1] }, 
+              { item: clampItem(it.salesD[0]), id: 'list_sales_day',      description: it.salesD[1] }, 
+              { item: clampItem(it.salesW[0]), id: 'list_sales_week',     description: it.salesW[1] }, 
+              { item: clampItem(it.top[0]),    id: 'list_top_month',      description: it.top[1] }, 
+              { item: clampItem(it.value[0]),  id: 'list_value',          description: it.value[1] } 
+            ] 
       }
     }
   };
