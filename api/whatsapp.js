@@ -2659,6 +2659,29 @@ function localizeQuotedCommands(text, lang) {
 const { sendContentTemplate } = require('./whatsappButtons');
 const { ensureLangTemplates, getLangSids } = require('./contentCache');
 
+/**
+ * Resurface the Inventory List-Picker right after a read-only query.
+ * Minimal blast radius: call once with From + lang.
+ */
+async function resendInventoryListPicker(From, langHint = 'en') {
+  try {
+    const toNumber = String(From).replace('whatsapp:', '');
+    // Make sure language templates exist/fresh
+    await ensureLangTemplates(langHint);
+    const sids = getLangSids(langHint);
+
+    if (sids?.listPickerSid) {
+      // Re-send the list picker so user can immediately run another query
+      await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid });
+      console.log('[list-picker] resurfaced', { to: toNumber, sid: sids.listPickerSid });
+    } else {
+      console.warn('[list-picker] missing listPickerSid for lang', { lang: langHint });
+    }
+  } catch (e) {
+    console.warn('[list-picker] resend failed', e?.response?.data ?? e?.message);
+  }
+}
+
 async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId = null)
 {
   const toNumber = From.replace('whatsapp:', '');   
@@ -12823,7 +12846,12 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                 From,
                 _safeLang(orch.language, detectedLanguage, 'en'),
                 `${requestId}::terminal-voice`
-              );
+              );              
+            // B: Immediately resurface the Inventory List-Picker after terminal command
+                      try {
+                        const langForUi = _safeLang(orch.language, detectedLanguage, 'en');
+                        await resendInventoryListPicker(From, langForUi);
+                      } catch (_) { /* best effort */ }
               return;
             }
             if (_aliasDepth(requestId) >= MAX_ALIAS_DEPTH) {
@@ -13472,7 +13500,12 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                 From,
                 _safeLang(orch.language, detectedLanguage, 'en'),
                 `${requestId}::terminal`
-              );
+              );                          
+            // B: Immediately resurface the Inventory List-Picker after terminal command
+                      try {
+                        const langForUi = _safeLang(orch.language, detectedLanguage, 'en');
+                        await resendInventoryListPicker(From, langForUi);
+                      } catch (_) { /* best effort */ }
               return true;
             }
             // Alias-depth guard → do not recurse past cap
