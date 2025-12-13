@@ -2524,11 +2524,14 @@ function escapeFormula(val) {
 // NEW: shop-scoped upsert (requires ShopID)
 async function upsertProduct(productData) {
   const context = `Upsert Product ${productData.name}`;
-  try {
+  try {        
     const { shopId, name, price, unit, category, hsnCode } = productData;
-    const nameLc = String(name).toLowerCase().trim();
+        // ===== [PATCH:PRODUCTS-SHOP-SCOPE-001] BEGIN =====
+        const preferredShopId = normalizeShopIdForWrite(shopId);
+
+    const nameLc = String(name).toLowerCase().trim();        
     const filterFormula =
-      `AND({ShopID}='${escapeFormula(shopId)}', LOWER(TRIM({Name}))='${escapeFormula(nameLc)}')`;
+          `AND(${buildShopIdVariantFilter('ShopID', shopId)}, LOWER(TRIM({Name}))='${escapeFormula(nameLc)}')`;
     const findResult = await airtableProductsRequest({
       method: 'get',
       params: { filterByFormula: filterFormula, maxRecords: 1 }
@@ -2540,7 +2543,7 @@ async function upsertProduct(productData) {
 
     const productRecord = {
       fields: {
-        ShopID: shopId,
+        ShopID: preferredShopId,
         Name: name.trim(),
         Price: sanitizedPrice,
         Unit: unit ?? 'pieces',
@@ -2577,9 +2580,9 @@ async function upsertProduct(productData) {
   async function getProductPrice(productName, shopId = null) {
     const context = `Get Product Price ${productName}`;
   try {          
-      const nameLower = productName.toLowerCase().trim();               
+      const nameLower = productName.toLowerCase().trim();                         
       const shopScoped = shopId
-            ? `AND({ShopID}='${escapeFormula(shopId)}', OR(LOWER(TRIM({Name}))='${escapeFormula(nameLower)}', FIND('${escapeFormula(nameLower)}', LOWER(TRIM({Name})))>0))`
+            ? `AND(${buildShopIdVariantFilter('ShopID', shopId)}, OR(LOWER(TRIM({Name}))='${escapeFormula(nameLower)}', FIND('${escapeFormula(nameLower)}', LOWER(TRIM({Name})))>0))`
             : `OR(LOWER(TRIM({Name}))='${escapeFormula(nameLower)}', FIND('${escapeFormula(nameLower)}', LOWER(TRIM({Name})))>0)`;
       
           // Try primary lookup; if it throws (e.g., invalid formula), fall back gracefully
@@ -2663,9 +2666,9 @@ async function upsertProduct(productData) {
   try {          
       const params = {
             sort: [{ field: 'Name', direction: 'asc' }]
-          };
-          if (shopId) {
-            params.filterByFormula = `{ShopID}='${escapeFormula(shopId)}'`;
+          };                
+      if (shopId) {
+            params.filterByFormula = `${buildShopIdVariantFilter('ShopID', shopId)}`;
           }
           const result = await airtableProductsRequest({ method: 'get', params }, context);
    
@@ -2726,10 +2729,10 @@ async function updateProductPrice(productId, newPrice) {
       {LastUpdated} = BLANK(),
       {Price} = 0,
       {Price} = BLANK()          
-      )`;
+      )`;                    
           if (shopId) {
-            filterFormula = `AND({ShopID}='${escapeFormula(shopId)}', ${filterFormula})`;
-          }
+                filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, ${filterFormula})`;
+              }
           const result = await airtableProductsRequest({
             method: 'get',
             params: {
