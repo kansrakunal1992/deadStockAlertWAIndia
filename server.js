@@ -1,6 +1,7 @@
 const express = require('express');
 const whatsappHandler = require('./api/whatsapp');
 const bodyParser = require('body-parser'); // for raw body
+const twilioLib = require('twilio'); // Twilio helper for signature validation
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -350,26 +351,36 @@ app.get('/invoice/:fileName', (req, res) => {
   }
 });
 
-// Middleware for parsing JSON and URL-encoded bodies
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Middleware for webhook verification
-app.use('/api/whatsapp', express.json({
-  verify: (req, res, buf) => {
-    const url = require('url').parse(req.url);
-    if (req.method === 'POST' && url.pathname === '/api/whatsapp') {
-      const signature = req.headers['x-twilio-signature'];
-      const params = req.body;
-      const twilio = require('twilio')(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-      
-      if (!twilio.validateRequest(process.env.AUTH_TOKEN, signature, url, buf)) {
-        console.error(`[${req.requestId}] Twilio signature validation failed`);
-        throw new Error('Invalid signature');
-      }
+/**
+ * Twilio webhook signature verification for /api/whatsapp
+ * Parse application/x-www-form-urlencoded first, then validate with full URL + params.
+ */
+app.use('/api/whatsapp', express.urlencoded({ extended: false }));
+app.use('/api/whatsapp', (req, res, next) => {
+  try {
+    if (req.method !== 'POST') return next();
+    const signature = req.headers['x-twilio-signature'];
+    if (!signature) {
+      console.error(`[${req.requestId}] Missing X-Twilio-Signature`);
+      return res.sendStatus(400);
     }
+    const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+    const ok = twilioLib.validateRequest(
+      process.env.AUTH_TOKEN,
+      signature,
+      fullUrl,
+      req.body // form-encoded params
+    );
+    if (!ok) {
+      console.error(`[${req.requestId}] Twilio signature validation failed`);
+      return res.sendStatus(403);
+    }
+    return next();
+  } catch (e) {
+    console.error(`[${req.requestId}] Twilio signature validator error:`, e.message);
+    return res.sendStatus(500);
   }
-}));
+});
 
 // Health check endpoint with detailed system information
 app.get('/health', (req, res) => {
@@ -832,7 +843,7 @@ function periodWindow(period) {
 }
 const toNum = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
 
-async function aggregateSales(periodKey) {
+async function aggregateSales(periodKey, q = {}) {
   const { start, end } = periodWindow(periodKey);
   const shopIds = await getAllShopIDs(); // from your DB layer
   const meta = await shopMetaMap(shopIds);
@@ -895,18 +906,18 @@ app.get('/api/dashboard/low-stock', async (req, res) => {
     const shopIds = await getAllShopIDs();        
     const { state, city, segment, shopId } = req.query;
     const meta = await shopMetaMap(shopIds);
-    const items = [];
-    for (const shopId of shopIds) {           
-      const m = meta.get(sid) || normalizeShopMeta({ shopId: sid });
-      if (!matchesFilter(m, { state, city, segment, shopId })) continue;
-      const low = await getLowStockProducts(shopId, 5);
+    const items = [];        
+    for (const sid of shopIds) {
+          const m = meta.get(sid) ?? normalizeShopMeta({ shopId: sid });
+          if (!matchesFilter(m, { state, city, segment, shopId })) continue;
+          const low = await getLowStockProducts(sid, 5);
       for (const p of low) {
-        items.push({
-          name: p.name || p.fields?.Product,
-          quantity: toNum(p.quantity ?? p.fields?.Quantity),
-          unit: p.unit || p.fields?.Units || 'pieces',                    
-          shopId: sid,
-          state: m.state, city: m.city, segment: m.segment
+        items.push({                      
+            name: p.name ?? p.fields?.Product,
+                      quantity: toNum(p.quantity ?? p.fields?.Quantity),
+                      unit: p.unit ?? p.fields?.Units ?? 'pieces',
+                      shopId: sid,
+                      state: m.state, city: m.city, segment: m.segment
         });
       }
     }
