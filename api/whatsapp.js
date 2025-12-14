@@ -195,6 +195,39 @@ const INVENTORY_CACHE_TTL = 5 * 60 * 1000;               // 5 minutes
 const PRODUCT_CACHE_TTL = 60 * 60 * 1000;                // 1 hour
 const PRODUCT_TRANSLATION_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 
+// --- NEW: tiny L1 TTL caches for plan/state to avoid blocking critical paths ---
+const planCache = new Map();  // shopId -> { value, ts }
+const stateCache = new Map(); // shopId -> { value, ts }
+const PLAN_CACHE_TTL  = 60 * 1000;  // 60s
+const STATE_CACHE_TTL = 30 * 1000;  // 30s
+function _cacheGet(map, key, ttl) {
+  try {
+    const hit = map.get(String(key));
+    if (!hit) return null;
+    if (Date.now() - (hit.ts ?? 0) > ttl) return null;
+    return hit.value ?? null;
+  } catch { return null; }
+}
+function _cachePut(map, key, value) {
+  try { map.set(String(key), { value, ts: Date.now() }); } catch {}
+}
+async function getUserPlanQuick(shopId) {
+  const cached = _cacheGet(planCache, shopId, PLAN_CACHE_TTL);
+  if (cached) return cached;
+  let planInfo = null;
+  try { planInfo = await getUserPlan(shopId); } catch {}
+  _cachePut(planCache, shopId, planInfo);
+  return planInfo;
+}
+async function getUserStateQuick(shopId) {
+  const cached = _cacheGet(stateCache, shopId, STATE_CACHE_TTL);
+  if (cached) return cached;
+  let st = null;
+  try { st = await getUserStateFromDB(shopId); } catch {}
+  _cachePut(stateCache, shopId, st);
+  return st;
+}
+
 // ===== Ephemeral overrides (auto-clear only for these modes) ===================
 // We will auto-stamp TTLs, auto-expire on read, and schedule a best-effort timer.
 const EPHEMERAL_OVERRIDE_MODES = new Set(['awaitingBatchOverride','awaitingPurchaseExpiryOverride']);
@@ -1400,23 +1433,23 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
   const topicForced = classifyQuestionTopic(text);
   if (topicForced) {
     o.kind = 'question';
-  }
-  // ---- NEW: attach topic + pricing flavor (tool vs inventory) for downstream use ----
-  let pricingFlavor = null; // 'tool_pricing' | 'inventory_pricing' | null
-  if (topicForced === 'pricing') {
-    let activated = false;
-    try {
-      const pref = await getUserPreference(shopId);
-      const plan = String(pref?.plan ?? '').toLowerCase();
-      activated = (plan === 'trial' || plan === 'paid');
-    } catch { /* best effort */ }
-    if (activated && looksLikeInventoryPricing(text)) {
-      pricingFlavor = 'inventory_pricing';
-    } else {
-      pricingFlavor = 'tool_pricing';
+  } 
+  // --- NEW: decide pricing flavor using parallel plan/pref, no sequential blocking ---
+    let pricingFlavor = null; // 'tool_pricing' | 'inventory_pricing' | null
+    if (topicForced === 'pricing') {
+      let activated = false;
+      try {
+        const [planInfoRes, prefRes] = await Promise.allSettled([
+          getUserPlanQuick(shopId), getUserPreference(shopId)
+        ]);
+        const planInfo = planInfoRes.status === 'fulfilled' ? planInfoRes.value : null;
+        const plan     = String((planInfo?.plan ?? prefRes?.value?.plan ?? '')).toLowerCase();
+        const end      = getUnifiedEndDate(planInfo);
+        const activeTrial = (plan === 'trial' && end && new Date(end).getTime() > Date.now());
+        activated = (plan === 'paid') || activeTrial;
+      } catch { /* best effort */ }
+      pricingFlavor = (activated && looksLikeInventoryPricing(text)) ? 'inventory_pricing' : 'tool_pricing';
     }
-  }
-
   
     // [UNIQ:ORCH-LANG-LOCK-004] Prefer the exact variant from the detector
       // Keep 'hi-latn' if the hint carries it, even when orchestrator returns 'hi'
@@ -2313,24 +2346,27 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
     const shopId = String(from).replace('whatsapp:', '');
     
 
-    // 1) Activation gate: only show badge if plan is active
+    // 1) Activation gate: only show badge if plan is active            
+    // --- NEW: parallel reads (plan + pref + state) via Promise.allSettled + TTL caches ---
+        const [planInfoRes, prefRes, stateRes] = await Promise.allSettled([
+          getUserPlanQuick(shopId),
+          getUserPreference(shopId),
+          getUserStateQuick(shopId)
+        ]);
+        const planInfo = planInfoRes.status === 'fulfilled' ? planInfoRes.value : null;
+        const pref     = prefRes.status     === 'fulfilled' ? prefRes.value     : null;
+        const state    = stateRes.status    === 'fulfilled' ? stateRes.value    : null;
         let activated = false;
         try {
-          if (typeof isUserActivated === 'function') {
-            activated = !!(await isUserActivated(shopId));
-          } else if (typeof getUserPlan === 'function') {                        
-            const planInfo = await getUserPlan(shopId);
-            const plan = String(planInfo?.plan ?? '').toLowerCase();
-            const end = getUnifiedEndDate(planInfo);
-            const expired = (plan === 'trial' && end)
-              ? (new Date(end).getTime() < Date.now())
-              : false;
-            activated = (plan === 'paid') || (plan === 'trial' && !expired);
-          }
+          const plan = String(planInfo?.plan ?? '').toLowerCase();
+          const end  = getUnifiedEndDate(planInfo);
+          const expired = (plan === 'trial' && end)
+            ? (new Date(end).getTime() < Date.now())
+            : false;
+          activated = (plan === 'paid') || (plan === 'trial' && !expired);
         } catch (_) { /* best-effort only */ }
     
     // 2) Read current state and derive the *effective* action used for footer
-    const state = await getUserStateFromDB(shopId);
     let action = null; // canonical: 'purchased' | 'sold' | 'returned' | null
     if (state) {
       switch (state.mode) {
@@ -2357,7 +2393,6 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
     // 2) Resolve language to use: prefer saved user preference; else detected hint; else 'en'
     let lang = String(detectedLanguageHint || 'en').toLowerCase();
     try {
-      const pref = await getUserPreference(shopId);
       if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
     } catch (_) { /* ignore */ }
         
@@ -3241,7 +3276,7 @@ async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en', opts = {}
   try {
     const shopId = String(from ?? '').replace('whatsapp:', '');
     // Plan info from Airtable via database.js:getUserPlan        
-    const planInfo = await getUserPlan(shopId);
+    const planInfo = await getUserPlanQuick(shopId); // use quick cache helper
     const plan = String(planInfo?.plan ?? '').toLowerCase();
     const trialEnd = getUnifiedEndDate(planInfo);
 
@@ -3249,25 +3284,18 @@ async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en', opts = {}
     const isPaid = (plan === 'paid');        
     // New guards                
         const hasNoPlan = (!plan || plan === 'none' || plan === 'demo' || plan === 'free_demo' || plan === 'free_demo_first_50');
-        const trialActive = (plan === 'trial' && trialEnd && (trialEnd.getTime() > now));                
+        const trialActive = (plan === 'trial' && trialEnd && (trialEnd.getTime() > now));                                
         const isTrialActiveLastDay =
-            (plan === 'trial' && trialEnd && (new Date(trialEnd).getTime() > now) && (new Date(trialEnd).getTime() - now <= 24 * 60 * 60 * 1000));
-          const isTrialExpired = (plan === 'trial' && trialEnd && (new Date(trialEnd).getTime() <= now));
-          // NEW: paid last-day & paid expired (using the same TrialEndDate)
-          const isPaidActiveLastDay =
-            (plan === 'paid' && trialEnd && (new Date(trialEnd).getTime() > now) && (new Date(trialEnd).getTime() - now <= 24 * 60 * 60 * 1000));
-          const isPaidExpired = (plan === 'paid' && trialEnd && (new Date(trialEnd).getTime() <= now));
+              (plan === 'trial' && trialEnd && (new Date(trialEnd).getTime() > now) && (new Date(trialEnd).getTime() - now <= 24 * 60 * 60 * 1000));
         
     // Context: if the current turn had a typed trial intent, suppress CTA
         const trialIntentNow = !!opts?.trialIntentNow;        
     // Suppress CTA for paid users, new/first-time users, or the same turn as trial intent.
-        // IMPORTANT: do NOT suppress when it's the last day of an active trial.
-        if ((isPaid || hasNoPlan || trialIntentNow) && !isTrialActiveLastDay) {
-          // Suppressed by plan/intent state
-          return;
-        }
-        // Show CTA ONLY if: last day of trial OR trial expired (post-expiry) [paid users already returned above]
-        if (!(isTrialActiveLastDay || isTrialExpired || isPaidActiveLastDay || isPaidExpired)) return;
+        // IMPORTANT: do NOT suppress when it's the last day of an active trial.            
+    // --- NEW: strictly gate to final trial day only; suppress for all other cases ---
+        if (trialIntentNow) return;
+        if (!isTrialActiveLastDay) return;
+
     // Gentle throttle so we don't overwhelm
     const last = _paidCtaThrottle.get(shopId) ?? 0;
     if (now - last < PAID_CTA_THROTTLE_MS) return;
@@ -3277,11 +3305,9 @@ async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en', opts = {}
       const pref = await getUserPreference(shopId);
       if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
     } catch (_) {}
-    // Ensure content bundle and pick Paid CTA ContentSid
+    // Ensure content bundle and pick Paid CTA ContentSid        
     await ensureLangTemplates(lang);
-    const sids = getLangSids(lang);
-    const paidSid = sids?.paidCtaSid ?? '';    
-    // Place AFTER your main reply in the thread
+        // Small delay so CTA appears after the main reply
         await new Promise(r => setTimeout(r, 250));
         await sendPaidPlanCTA(from, lang);
         _paidCtaThrottle.set(shopId, now);
@@ -3676,10 +3702,6 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                   await sendMessageViaAPI(from, fixNewlines(msgRaw));
                 }
        try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}                    
-        // STREAK (interactive: purchase/sale/return): gated
-        if (__isStreakEnabled()) {
-          try { await maybeSendStreakMessage(from, lang, `${requestId}::streak-qr-${shopId}`); } catch (_) {}
-        }
        return true;
    }
    if (payload === 'qr_sale') {                       
@@ -3700,10 +3722,6 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                       await sendMessageViaAPI(from, fixNewlines(msgRaw));
                 }
        try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}               
-        // STREAK (interactive: purchase/sale/return): gated
-        if (__isStreakEnabled()) {
-          try { await maybeSendStreakMessage(from, lang, `${requestId}::streak-qr-${shopId}`); } catch (_) {}
-        }
        return true;
    }
    if (payload === 'qr_return') {                         
@@ -3724,10 +3742,6 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                   await sendMessageViaAPI(from, fixNewlines(msgRaw));
             }
        try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}                    
-        // STREAK (interactive: purchase/sale/return): gated
-        if (__isStreakEnabled()) {
-          try { await maybeSendStreakMessage(from, lang, `${requestId}::streak-qr-${shopId}`); } catch (_) {}
-        }
        return true;
    }
  
@@ -9452,17 +9466,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                   newQuantity: result?.newQuantity,
                   unitAfter: result?.unit,
                   inlineConfirmText: confirmTextLine // hand to aggregator; no direct send here
-                });
-              if (__isStreakEnabled()) {
-        // --- Gamify toast for successful return ---
-                try {
-                  if (result?.success) {
-                    const gam = updateGamifyState(String(shopId), update.action);
-                    const toast = await t(composeGamifyToast({ action: update.action, gs: gam.snapshot, newlyAwarded: gam.newlyAwarded }), languageCode, 'gamify-toast');
-                    await sendMessageViaAPI(`whatsapp:${shopId}`, toast);
-                  }
-                } catch (e) { console.warn('[gamify] toast failed:', e.message); }}
-        
+                });        
         continue; // Move to next update
       }
 
@@ -9636,14 +9640,6 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             totalValue: finalPrice * Math.abs(update.quantity),
             inlineConfirmText: confirmTextLine
           });
-          if (__isStreakEnabled()) {
-          // --- Gamify toast for successful purchase ---
-                try {
-                  const gam = updateGamifyState(String(shopId), update.action);
-                  const toast = await t(composeGamifyToast({ action: update.action, gs: gam.snapshot, newlyAwarded: gam.newlyAwarded }), languageCode, 'gamify-toast');
-                  await sendMessageViaAPI(`whatsapp:${shopId}`, toast);
-                } catch (e) { console.warn('[gamify] toast failed:', e.message); }}
-
           continue; // done with purchase branch
         }
         // === END NEW block ===
@@ -10035,15 +10031,6 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           + `salePrice=${enriched.salePrice ?? '-'}, `
           + `totalValue=${enriched.totalValue}`
         );
-           if (__isStreakEnabled()) {  
-        // --- Gamify toast for successful non-return branch (purchase handled earlier; sale here) ---
-        try {
-          if (result && result.success) {
-            const gam = updateGamifyState(String(shopId), update.action);
-            const toast = await t(composeGamifyToast({ action: update.action, gs: gam.snapshot, newlyAwarded: gam.newlyAwarded }), languageCode, 'gamify-toast');
-            await sendMessageViaAPI(`whatsapp:${shopId}`, toast);
-          }
-        } catch (e) { console.warn('[gamify] toast failed:', e.message); }}
         results.push(enriched);
       
     } catch (error) {
@@ -12917,10 +12904,6 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                 }                  
         // PAID-CTA: show activation card after the Q&A reply (throttled)
         try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}                    
-        // STREAK (voice Q&A): gated by ENABLE_STREAK_MESSAGES
-        if (__isStreakEnabled()) {
-          try { await maybeSendStreakMessage(From, langExact, `${requestId}::streak-qa-voice`); } catch (_) {}
-        }
         return;
         }
         // Read‑only normalized command → route & exit
@@ -12936,10 +12919,6 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           handledRequests.add(requestId);
           await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-voice`);
           try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}                        
-          // STREAK (voice normalized command): gated
-            if (__isStreakEnabled()) {
-              try { await maybeSendStreakMessage(From, langExact, `${requestId}::streak-norm-voice`); } catch (_) {}
-            }
           return;
         }
       } catch (e) {
@@ -12952,13 +12931,19 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       console.log(`[${requestId}] Attempting to parse as inventory update`);            
         const parsedUpdates = await parseMultipleUpdates({ From, Body: cleanTranscript });
             if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
-        console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from voice message`);
+        console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from voice message`);        
         
-        // Process the updates
-        const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
-                 
-        // === Single-update confirmation (sale OR purchase) ===
-          const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+         // PATCH: Start translation while DB update runs; send translated confirmation after DB success
+         const header = chooseHeader(parsedUpdates.length, COMPACT_MODE, false);
+         let message = header;
+         for (const r of parsedUpdates) {
+           const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+           if (!rawLine) continue;
+           message += `${String(rawLine).trim()}\n`;
+         }
+         const translationPromise = t(message.trim(), detectedLanguage, requestId);
+         const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+         const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
           if (processed.length === 1) {
             const x = processed[0];
             const act = String(x.action).toLowerCase();
@@ -12970,28 +12955,35 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
               newQuantity: x.newQuantity
             };
             if (act === 'sold') {
-              await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);
-              try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}                               
-              // STREAK (voice sale): gated
-                if (__isStreakEnabled()) {
-                  try { await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-sale-voice`); } catch (_) {}
-                }
+              await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);                            
+              // CTA gated: only last trial day
+                   try {
+                     const planInfo = await getUserPlan(shopId);
+                     const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
+                     const daysLeft = trialEnd ? Math.ceil((trialEnd.getTime() - Date.now()) / (1000*60*60*24)) : null;
+                     if (planInfo.plan === 'trial' && daysLeft === 1) {
+                       await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: false });
+                     }
+                   } catch (_) {}               
               return;
             }
             if (act === 'purchased') {
-              await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
-              try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}                             
-              // STREAK (voice purchase): gated
-                if (__isStreakEnabled()) {
-                  try { await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-purchase-voice`); } catch (_) {}
-                }
+              await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);                           
+              // CTA gated: only last trial day
+                   try {
+                     const planInfo = await getUserPlan(shopId);
+                     const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
+                     const daysLeft = trialEnd ? Math.ceil((trialEnd.getTime() - Date.now()) / (1000*60*60*24)) : null;
+                     if (planInfo.plan === 'trial' && daysLeft === 1) {
+                       await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: false });
+                     }
+                   } catch (_) {}              
                 return;
             }
           }
-
-          const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
-          let message = header;
-          let successCount = 0;
+                   
+          // Multi-line translated confirmation built from parsedUpdates (not processed filtered)
+           let successCount = 0;
 
           for (const r of processed) {
             const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
@@ -13003,9 +12995,17 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           }
 
           message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-          const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-          await sendMessageDedup(From, formattedResponse);
-          try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}
+          const formattedResponse = await translationPromise;
+          await sendMessageDedup(From, formattedResponse);                   
+          // CTA gated: only last trial day
+           try {
+             const planInfo = await getUserPlan(shopId);
+             const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
+             const daysLeft = trialEnd ? Math.ceil((trialEnd.getTime() - Date.now()) / (1000*60*60*24)) : null;
+             if (planInfo.plan === 'trial' && daysLeft === 1) {
+               await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: false });
+             }
+           } catch (_) {}
        return;
       }
     } catch (error) {
@@ -13212,6 +13212,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   try {
     console.log(`[${requestId}] [1] Parsing text message: "${Body}"`);
     let __handled = false;
+    try { await sendProcessingAckQuickFromText(From, 'text', Body); } catch (_) {}
     
     // --- EARLY GUARD: typed "start trial" intent (same behavior as the button) ---
         try {
@@ -13522,10 +13523,14 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       await sendPaidPlanCTA(From, detectedLanguage || 'en');
       return;
     }
-  
-    // ===== EARLY EXIT: AI orchestrator decides before any inventory parse =====
-      try {
-        const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
+              
+        // PATCH: Run orchestration and parse in parallel; use parse result immediately for txn handling
+         const orchPromise = applyAIOrchestration(Body, From, detectedLanguage, requestId);
+         const parsedPromise = parseMultipleUpdates({ From, Body });
+         let parsedUpdatesEarly = [];
+         try { parsedUpdatesEarly = await parsedPromise; } catch (_) {}
+         try {
+          const orch = await orchPromise;
           const FORCE_INVENTORY = !!orch?.forceInventory;
         // --- BEGIN TEXT HANDLER INSERT ---
         /* TEXT_HANDLER_PATCH */
@@ -13566,6 +13571,31 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                 
         // [UNIQ:ORCH-VAR-LOCK-ENTRY-01] keep exact variant
         const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
+        
+        // --- NEW: single-update fast path with parallel translation + DB update ---
+            if (Array.isArray(parsedUpdatesEarly) && parsedUpdatesEarly.length === 1 && (FORCE_INVENTORY || !orch.isQuestion)) {
+              const u = parsedUpdatesEarly[0];
+              // Compose a minimal confirmation body (no stock suffix) from parsed update
+              const baseBody =
+                (String(u.action).toLowerCase() === 'sold'
+                  ? composeSaleConfirmation({ product: u.productDisplay ?? u.product, qty: u.quantity, unit: u.unit, pricePerUnit: u.pricePerUnit, newQuantity: undefined })
+                  : composePurchaseConfirmation({ product: u.productDisplay ?? u.product, qty: u.quantity, unit: u.unit, pricePerUnit: u.pricePerUnit, newQuantity: undefined }));
+              // Start translation immediately while DB update runs
+              const translateP = t(baseBody, langExact, `${requestId}::confirm-base`);
+              // Kick DB update in parallel (single-item array)
+              const shopIdLocal = fromToShopId(From);
+              const dbP = updateMultipleInventory(shopIdLocal, [u], langExact);
+              const dbRes = await dbP;                 // wait for DB only
+              const r     = (dbRes || [])[0] || {};    // first result
+              const unit  = u.unit ?? r.unitAfter ?? r.unit ?? '';
+              const stockSuffix = (r?.newQuantity != null) ? ` (Stock: ${r.newQuantity} ${unit})` : '';
+              const finalBody   = `${await translateP}${stockSuffix}`;
+              await _sendConfirmOnceByBody(From, langExact, requestId, finalBody);
+              try { await clearUserState(From); } catch (_){}
+              try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_){}
+              handledRequests.add(requestId);
+              return; // stop here; heavy work already done
+            }
 
         // Question → answer & exit
         if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
@@ -13589,10 +13619,6 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
             }
             try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}                        
-            // STREAK (text Q&A): gated
-            if (__isStreakEnabled()) {
-              try { await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-qa-text`); } catch (_) {}
-            }
           return;
         }
         // Read‑only normalized command → route & exit
@@ -13622,16 +13648,11 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                   await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
                 }
                 _handled = true;
-                try { await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-norm-text`); } catch (_) {}
                 return;
               }
               await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
           __handled = true;
           try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}          
-          // STREAK (text normalized command): gated
-            if (__isStreakEnabled()) {
-              try { await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-norm-text`); } catch (_) {}
-            }
           return;
         }
       } catch (e) {
@@ -13648,11 +13669,17 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
       
       // Process inventory updates here
-      const shopId = fromToShopId(From);
-      const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);           
-              
-      // === Single-update confirmation (sale OR purchase) ===
-          const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+      const shopId = fromToShopId(From);            
+      const header = chooseHeader(parsedUpdates.length, COMPACT_MODE, false);
+       let message = header;
+       for (const r of parsedUpdates) {
+         const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+         if (!rawLine) continue;
+         message += `${String(rawLine).trim()}\n`;
+       }
+       const translationPromise = t(message.trim(), detectedLanguage, requestId);
+       const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+       const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
           if (processed.length === 1) {
             const x = processed[0];
             const act = String(x.action).toLowerCase();
@@ -13665,22 +13692,14 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
             };
             if (act === 'sold') {
               await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);                                
-              if (__isStreakEnabled()) {
-                  try { await maybeSendStreakMessage(from, lang, `${requestId}::streak-qr-${shopId}`); } catch (_) {}
-                }
               return;
             }
             if (act === 'purchased') {
               await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
-              if (__isStreakEnabled()) {
-                  try { await maybeSendStreakMessage(from, lang, `${requestId}::streak-qr-${shopId}`); } catch (_) {}
-                }
               return;
             }
           }
 
-        const header = chooseHeader(processed.length, COMPACT_MODE, false);
-        let message = header;
         let successCount = 0;
 
         for (const r of processed) {
@@ -13693,10 +13712,18 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         }
 
         message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+        const formattedResponse = await translationPromise;
         await sendMessageDedup(From, formattedResponse);
-        __handled = true;
-        try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
+        __handled = true;                
+        // CTA gated: only last trial day
+         try {
+           const planInfo = await getUserPlan(shopId);
+           const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
+           const daysLeft = trialEnd ? Math.ceil((trialEnd.getTime() - Date.now()) / (1000*60*60*24)) : null;
+           if (planInfo.plan === 'trial' && daysLeft === 1) {
+             await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: false });
+           }
+         } catch (_) {}
      return;
     } else {
       console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);          
@@ -15277,10 +15304,17 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       const parsedUpdates = await parseMultipleUpdates({ From, Body });
       if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
         console.log(`[${requestId}] [sticky] Parsed ${parsedUpdates.length} updates`);
-        const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
-           
-    // === Single-update confirmation (sale OR purchase) ===
-      const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+              
+      const header = chooseHeader(parsedUpdates.length, COMPACT_MODE, false);
+       let message = header;
+       for (const r of parsedUpdates) {
+         const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+         if (!rawLine) continue;
+         message += `${String(rawLine).trim()}\n`;
+       }
+       const translationPromise = t(message.trim(), detectedLanguage, requestId);
+       const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+       const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
       if (processed.length === 1) {
         const x = processed[0];
         const act = String(x.action).toLowerCase();
@@ -15294,28 +15328,16 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         if (act === 'sold') {
           await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);
           __handled = true;              
-        if (__isStreakEnabled()) {
-            try {
-              await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-sticky-sale`);
-            } catch (_) {}
-          }
           return res.send('<Response></Response>');
         }
         if (act === 'purchased') {
           await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
           __handled = true;                    
-            if (__isStreakEnabled()) {
-                try {
-                  await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-sticky-purchase`);
-                } catch (_) {}
-              }
           return res.send('<Response></Response>');
         }
       }
 
         // Multi-line confirmation
-        const header = chooseHeader(processed.length, COMPACT_MODE, false);
-        let message = header;
         let successCount = 0;
         for (const r of processed) {
           const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
@@ -15326,7 +15348,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           if (r.success) successCount++;
         }
         message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;               
-        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+        const formattedResponse = await translationPromise;
         await sendMessageDedup(From, formattedResponse);
         __handled = true;
         return res.send('<Response></Response>');
@@ -15521,7 +15543,6 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
               await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
             }
             _handled = true;
-            try { await maybeSendStreakMessage(From, detectedLanguage, `${requestId}::streak-norm-text`); } catch (_) {}
             return;
           }
           await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);                  
@@ -15549,8 +15570,16 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     // COPILOT-PATCH-HNI-PARSE-FROM
     const parsedUpdates = await parseMultipleUpdates({ From, Body }); // pass req-like object
     if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
-      console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
-      const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+      console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);          
+    const header = chooseHeader(parsedUpdates.length, COMPACT_MODE, false);
+     let message = header;
+     for (const r of parsedUpdates) {
+       const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+       if (!rawLine) continue;
+       message += `${String(rawLine).trim()}\n`;
+     }
+     const translationPromise = t(message.trim(), detectedLanguage, requestId);
+     const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
 
       const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
       if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
@@ -15582,10 +15611,10 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         if (r.success) successCount++;
       }
       message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;             
-      const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+      const formattedResponse = await translationPromise;
          await sendMessageDedup(From, formattedResponse);
          __handled = true;
-        try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
+        try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: false }); } catch (_) {}
          return res.send('<Response></Response>');
     } else {
       console.log(`[${requestId}] Not a valid inventory update, checking for specialized operations`);
