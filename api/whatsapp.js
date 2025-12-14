@@ -1109,7 +1109,7 @@ async function sendDemoTranscriptLocalized(From, lang, rid = 'cta-demo') {
   // Append localized mode footer    
   const tagged = await tagWithLocalizedMode(From, wrapped, lang);
   // Send immediately, do not block on Airtable cache writes
-  await sendMessageViaAPI(From, tagged);
+  sendMessageViaAPI(From, tagged).catch(e => console.warn('[sendMessageViaAPI] fail:', e?.message));
   // Async cache write (non-blocking)
   try {
      upsertTranslationEntry({ key: cacheKey, lang, text: tagged }).catch(e =>
@@ -1138,7 +1138,12 @@ function enforceSingleScriptSafe(out, lang) {
 
 async function t(text, languageCode, requestId) {             
     const L = canonicalizeLang(languageCode);
-      const src = String(text ?? '');
+    const src = String(text ?? '');      
+    // Fast-path: English does not need translation. Return source immediately.
+      // Footer/clamp will be applied downstream by tag/finalize helpers.
+      if (L === 'en') {
+        return stripMarkers(src);
+      }
       // Race: if translation is slow, return source (keeps reply snappy)
       const out = await Promise.race([
         generateMultiLanguageResponse(src, L, requestId),
@@ -1164,6 +1169,19 @@ async function t(text, languageCode, requestId) {
 
     // If AI output is already single-script, keep original
     return out;
+}
+
+/**
+ * Fire-and-forget send wrapper: never blocks the request on Twilio delivery.
+ * Use in hot paths (ack, parse-error, examples, CTA). Logs any failure.
+ */
+function sendMessageViaAPIAsync(From, body) {
+  try {
+    // Do not await Twilio; this prevents webhook stalls.
+    sendMessageViaAPI(From, body).catch(e =>
+      console.warn('[sendMessageViaAPIAsync] fail:', e?.message)
+    );
+  } catch (_) { /* noop */ }
 }
 
 // tx: simple wrapper (no romanization/bilingual logic)
@@ -1761,7 +1779,7 @@ const authCache = new Map();
 const { processShopSummary } = require('../dailySummary');
 const { generateInvoicePDF, generateInventoryShortSummaryPDF, generateSalesRawTablePDF } = require('../pdfGenerator'); // +new generators
 const { getShopDetails } = require('../database');
-const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS || 12000);
+const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS || 1800);
 
 const languageNames = {
   'hi': 'Hindi',
@@ -2066,20 +2084,20 @@ async function safeSendParseError(From, detectedLanguage, requestId, header) {
          }
        } catch {}
     if (typeof sendParseErrorWithExamples === 'function') {
-      await sendParseErrorWithExamples(From, detectedLanguage, requestId, header);
+      sendParseErrorWithExamples(From, detectedLanguage, requestId, header);
     } else {                             
         // Ultra-compact fallback in user's language (ensure msg is defined)
               const msg = await t(
                 header ?? 'Sorry, I could not understand that. Try: "sold milk 2 ltr" or "short summary".',
                 detectedLanguage,
                 requestId + '::err-fallback'
-              );
-              // Guard: if already handled elsewhere in this cycle, do not send apology
-              if (!handledRequests.has(requestId)) {
-                await sendMessageViaAPI(From, msg);
-              } else {
-                console.log('[safeSendParseError] suppressed (already handled)', { requestId });
-              }
+              );                 
+    // Guard: if already handled elsewhere in this cycle, do not send apology
+          if (!handledRequests.has(requestId)) {
+            sendMessageViaAPIAsync(From, msg);
+          } else {
+            console.log('[safeSendParseError] suppressed (already handled)', { requestId });
+          }
     }
   } catch (e) {
     // last resort noop
@@ -2974,7 +2992,7 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
         // Instrument ack latency (POST→ack‑sent). The webhook sets reqStart in scope.
         const __t0 = Date.now();        
         const t0 = Date.now();
-        await sendMessageViaAPI(From, withFooter);
+        sendMessageViaAPIAsync(From, withFooter);
         try { console.log('[ack]', { ms_post_to_sent: Date.now() - (globalThis.__lastPostTs || t0) }); } catch {}
         markAckSent(From);
   } catch (e) {
@@ -3013,7 +3031,7 @@ async function sendPaidPlanCTA(From, lang = 'en') {
           `paid-cta::${String(From).replace('whatsapp:', '')}`
         );
         // Ensure single-script, clean newlines and ASCII digits before sending
-        await sendMessageViaAPI(From, finalizeForSend(msg, lang));
+        sendMessageViaAPIAsync(From, finalizeForSend(msg, lang));
   } catch (e) {
     console.warn('[paid-cta] failed:', e?.message);
   }
@@ -3581,13 +3599,13 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
             // LOCAL CLAMP → Single script; numerals normalization
             tagged = enforceSingleScriptSafe(tagged, lang);
             tagged = normalizeNumeralsToLatin(tagged).trim();
-            await sendMessageViaAPI(from, tagged);
+            sendMessageViaAPIAsync(from, tagged);
         } catch (e) {
           // Fallback: still send examples if tagging fails              
         let ex = fixNewlines(examplesText);
             ex = enforceSingleScriptSafe(ex, lang);
             ex = normalizeNumeralsToLatin(ex).trim();
-            await sendMessageViaAPI(from, ex);
+            sendMessageViaAPIAsync(from, ex);
         }
       }
     
@@ -13899,7 +13917,11 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
 
 
 // Main handler (exported as default). We attach helper functions below.
- const whatsappHandler = async (req, res) => {
+ const whatsappHandler = async (req, res) => {     
+  
+  const { safeSend } = makeSafeResponder(res);
+  safeSend(200, 'OK'); // respond immediately to Twilio webhook
+
   const requestStart = Date.now();
   const response = new twilio.twiml.MessagingResponse();
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;    
