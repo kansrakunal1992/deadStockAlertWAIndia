@@ -15599,8 +15599,6 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         return;
       }
 
-      const header = chooseHeader(processed.length, COMPACT_MODE, false);
-      let message = header;
       let successCount = 0;
       for (const r of processed) {
         const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
