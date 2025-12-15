@@ -155,6 +155,34 @@ async function maybeResendListPicker(From, lang, requestId) {
 // ---------------------------------------------------------------------------
 // Handled/apology guard: track per-request success to prevent late apologies
 const handledRequests = new Set();            // <- used by parse-error & upsell schedulers
+
+// ============================================================================
+// ===== [PATCH:CONFIRM-DEDUP-009] BEGIN ======================================
+// Suppress duplicate purchase/sale/return confirmations within the same request.
+// ----------------------------------------------------------------------------
+const __CONFIRM_SENT_GUARD = new Map(); // requestId -> ts
+function markConfirmSent(requestId) {
+  try { if (requestId) __CONFIRM_SENT_GUARD.set(String(requestId), Date.now()); } catch {}
+}
+function wasConfirmAlreadySent(requestId) {
+  try { return requestId ? __CONFIRM_SENT_GUARD.has(String(requestId)) : false; } catch { return false; }
+}
+/**
+ * sendMessageDedup(From, text, requestId)
+ * If a strict confirmation was already sent, drop any later "purchase/sale/return" confirms.
+ * Safe for other messages too (no-op).
+ */
+async function sendMessageDedup(From, text, requestId) {
+  const t = String(text ?? '');
+  const looksConfirm = t.startsWith('📦 ') || t.startsWith('✅ ') || /—\s*स्टॉक: \(/.test(t) || /\bStock:\s*\(/i.test(t);
+  if (looksConfirm && wasConfirmAlreadySent(requestId)) {
+    console.log('[confirm:duplicate:suppress]', { requestId });
+    return;
+  }
+  await sendMessageViaAPI(From, text);
+}
+// ===== [PATCH:CONFIRM-DEDUP-009] END ========================================
+
 // --- Defensive shim: provide a safe setUserState if not present (prevents runtime errors)
 if (typeof globalThis.setUserState !== 'function') {      
     globalThis.setUserState = async function setUserState(from, mode, data = {}) {
@@ -567,6 +595,64 @@ function displayUnit(unit, lang) {
 }
 
 // ============================================================================
+// ===== [PATCH:CONFIRM-FORMAT-008] BEGIN =====================================
+// Deterministic confirmation (Hindi/Hinglish/English) with help footer.
+// No AI translation; single-script normalization happens in finalizeForSend().
+// ----------------------------------------------------------------------------
+function composeConfirmLocalizedStrict({ action, qty, unit, product, newQty, lang }) {
+  const lc = String(lang ?? 'en').toLowerCase();
+  const uDisp = displayUnit(unit ?? 'pieces', lc);
+  const isHi = lc.startsWith('hi');
+  const verb =
+    isHi
+      ? (action === 'purchased' ? 'खरीदा'
+         : action === 'sold'    ? 'बेचा'
+         : action === 'returned'? 'वापसी'
+         : 'अपडेट')
+      : (action === 'purchased' ? 'Purchased'
+         : action === 'sold'    ? 'Sold'
+         : action === 'returned'? 'Returned'
+         : 'Updated');
+  const stockLabel = isHi ? 'स्टॉक' : 'Stock';
+  // Use 📦 (box) as requested; keep ASCII numerals (normalized later)
+  return `📦 ${qty} ${uDisp} ${product} ${verb} — ${stockLabel}: (${newQty} ${uDisp})`;
+}
+
+function composeHelpFooter(lang = 'hi') {
+  const lc = String(lang ?? 'hi').toLowerCase();
+  if (lc.startsWith('hi')) {
+    return 'मदद चाहिए? Saamagrii.AI सपोर्ट: "https://wa.link/6q3ol7"। "मोड" लिखें—खरीद/बिक्री/रिटर्न बदलें या इन्वेंटरी पूछें।';
+  }
+  // Fallback EN; keep exactly one paragraph
+  return 'Need help? Saamagrii.AI Support: "https://wa.link/6q3ol7". Type "mode" to switch Purchase/Sale/Return or ask inventory.';
+}
+
+/**
+ * sendTxnConfirmStrict(From, lang, update, newQty, requestId)
+ * update: { action, product, productDisplay?, quantity, unit }
+ * Sends ONE message: confirmation + blank line + help, tagged with mode.
+ */
+async function sendTxnConfirmStrict(From, lang, update, newQty, requestId) {
+  const line = composeConfirmLocalizedStrict({
+    action:  String(update?.action ?? '').toLowerCase(),
+    qty:     Number(update?.quantity ?? 0),
+    unit:    update?.unit ?? 'pieces',
+    product: update?.productDisplay ?? update?.product ?? '—',
+    newQty:  Number(newQty ?? 0),
+    lang
+  });
+  const help = composeHelpFooter(lang);
+  const body = [line, '', help].join('\n');
+  const tagged  = await tagWithLocalizedMode(From, body, lang);   // appends «खरीद • मोड» etc.
+  const message = finalizeForSend(tagged, lang);                  // single-script + ASCII digits
+  await sendMessageViaAPI(From, message);
+  try { console.log('[confirm:strict]', { lang, length: message?.length ?? 0, requestId }); } catch {}
+  // Mark this request as having sent a confirm (used by dedup guard below)
+  try { markConfirmSent(requestId); } catch {}
+}
+// ===== [PATCH:CONFIRM-FORMAT-008] END =======================================
+
+// ============================================================================
 // ===== [PATCH:CONFIRM-DETERMINISTIC-004] BEGIN ===============================
 // Purpose: Compose "✅ ... — Stock: (...)" deterministically (no AI translation)
 // and send with a single-script + ASCII-numerals normalization.
@@ -976,18 +1062,22 @@ async function parseMultipleUpdates(reqOrText) {
               }
               // Translate only for display; keep original product for DB writes
               tx.productDisplay = await translateProductName(tx.product, 'ai-onecall-sticky');
-              if (isValidInventoryUpdate(tx)) {                              
-              try {
-                          const from      = (reqOrText?.body?.From ?? reqOrText?.From ?? `whatsapp:${String(shopId)}`);
-                          const lang      = await detectLanguageWithFallback(transcript, from, (reqOrText?.requestId ?? 'req') + '::confirm-sticky');
-                          const invPost   = await getProductInventory(shopId, tx.product).catch(() => null);
-                          const newQty    = Number(invPost?.quantity ?? 0);
-                          await sendTxnConfirm(from, lang, tx, newQty);
-                        } catch (e) {
-                          console.warn('[confirm:deterministic:sticky] failed:', e?.message);
-                        }
-                        updates.push(tx);
-                        return updates;
+              if (isValidInventoryUpdate(tx)) {                                                            
+                // Apply tx to DB (existing code does batch + inventory write here)
+                          // -- [PATCH:CONFIRM-FORMAT-008A] SEND STRICT CONFIRMATION AFTER UPDATE
+                          try {
+                            const shopId = String((reqOrText?.body?.From ?? reqOrText?.From ?? '').replace('whatsapp:', ''));
+                            const from   = (reqOrText?.body?.From ?? reqOrText?.From ?? `whatsapp:${shopId}`);
+                            const rid    = String(reqOrText?.requestId ?? `req-${Date.now()}`);
+                            const lang   = await detectLanguageWithFallback(transcript, from, rid + '::confirm-sticky');
+                            const invPost = await getProductInventory(shopId, tx.product).catch(() => null);
+                            const newQty  = Number(invPost?.quantity ?? 0);
+                            await sendTxnConfirmStrict(from, lang, tx, newQty, rid);
+                          } catch (e) {
+                            console.warn('[confirm:strict:sticky] failed:', e?.message);
+                          }
+                          updates.push(tx);
+                          return updates;
               }
             }
             console.log('[AI Parsing] ONE-CALL sticky produced no valid update; will fall back.');
@@ -1120,17 +1210,19 @@ async function parseMultipleUpdates(reqOrText) {
         }
         if (isValidInventoryUpdate(update)) {
           updates.push(update);          
-          // [PATCH:CONFIRM-DETERMINISTIC-004B] INVOKE CONFIRMATION AFTER UPDATE
-                    // Read back latest quantity for this product and send deterministic confirm.
-                    try {
-                      const from    = (reqOrText?.body?.From ?? reqOrText?.From ?? `whatsapp:${String(shopId)}`);
-                      const lang    = await detectLanguageWithFallback(trimmed, from, (reqOrText?.requestId ?? 'req') + '::confirm-rule');
-                      const invPost = await getProductInventory(shopId, update.product).catch(() => null);
-                      const newQty  = Number(invPost?.quantity ?? 0);
-                      await sendTxnConfirm(from, lang, update, newQty);
-                    } catch (e) {
-                      console.warn('[confirm:deterministic:rule] failed:', e?.message);
-                    }
+                      
+            // -- [PATCH:CONFIRM-FORMAT-008B] SEND STRICT CONFIRMATION AFTER UPDATE
+                      try {
+                        const shopId = String((reqOrText?.body?.From ?? reqOrText?.From ?? '').replace('whatsapp:', ''));
+                        const from   = (reqOrText?.body?.From ?? reqOrText?.From ?? `whatsapp:${shopId}`);
+                        const rid    = String(reqOrText?.requestId ?? `req-${Date.now()}`);
+                        const lang   = await detectLanguageWithFallback(trimmed, from, rid + '::confirm-rule');
+                        const invPost = await getProductInventory(shopId, update.product).catch(() => null);
+                        const newQty  = Number(invPost?.quantity ?? 0);
+                        await sendTxnConfirmStrict(from, lang, update, newQty, rid);
+                      } catch (e) {
+                        console.warn('[confirm:strict:rule] failed:', e?.message);
+                      }
         }
       } catch (err) {
         console.warn(`[parseMultipleUpdates] Failed to parse sentence: "${trimmed}"`, err.message);
@@ -12204,6 +12296,17 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         handledRequests.add(requestId);
         return res.send(response.toString());
       }
+
+      // ============================================================================
+      // ===== [PATCH:CONFIRM-DEDUP-009A] SHORT-CIRCUIT SUMMARY IF CONFIRM SENT ====
+      // If we already sent the strict per-item confirmation in this request,
+      // skip sending legacy translated confirm/summary to avoid duplicates.
+      // ----------------------------------------------------------------------------
+      if (wasConfirmAlreadySent(requestId)) {
+        handledRequests.add(requestId);
+        return res.send(response.toString()); // Twilio ACK; no second message
+      }
+      // ============================================================================
 
 // Get user's preferred language for the response
      let userLanguage = detectedLanguage;
