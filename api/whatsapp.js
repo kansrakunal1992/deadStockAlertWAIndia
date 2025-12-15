@@ -566,6 +566,60 @@ function displayUnit(unit, lang) {
   return lang.startsWith('hi') ? (UNIT_MAP_HI[u] ?? unit) : unit;
 }
 
+// ============================================================================
+// ===== [PATCH:CONFIRM-DETERMINISTIC-004] BEGIN ===============================
+// Purpose: Compose "✅ ... — Stock: (...)" deterministically (no AI translation)
+// and send with a single-script + ASCII-numerals normalization.
+// ----------------------------------------------------------------------------
+/**
+ * composeConfirmLocalized({ action, qty, unit, product, newQty, lang })
+ * Returns a single-line confirmation using localized verbs/labels and your unit map.
+ */
+function composeConfirmLocalized({ action, qty, unit, product, newQty, lang }) {
+  const lc = String(lang ?? 'en').toLowerCase();
+  const uDisp = displayUnit(unit ?? 'pieces', lc); // e.g., 'लीटर' or 'ltr'
+  const act =
+    lc.startsWith('hi') ? (
+      action === 'purchased' ? 'खरीदा' :
+      action === 'sold'      ? 'बेचा'   :
+      action === 'returned'  ? 'वापसी'  : 'अपडेट'
+    ) : (
+      action === 'purchased' ? 'Purchased' :
+      action === 'sold'      ? 'Sold'      :
+      action === 'returned'  ? 'Returned'  : 'Updated'
+    );
+  const stockLabel = lc.startsWith('hi') ? 'स्टॉक' : 'Stock';
+  // Deterministic confirmation (no t()/AI):
+  // NOTE: normalizeNumeralsToLatin() will convert any non-ASCII digits later.
+  return `✅ ${qty} ${uDisp} ${product} ${act} — ${stockLabel}: (${newQty} ${uDisp})`;
+}
+
+/**
+ * sendTxnConfirm(From, lang, update, newQty)
+ * Uses the deterministic composer and sends with footer & normalization.
+ * @param update shape: { action, product, quantity, unit }
+ */
+async function sendTxnConfirm(From, lang, update, newQty) {
+  try {
+    const line = composeConfirmLocalized({
+      action:   String(update?.action ?? '').toLowerCase(),
+      qty:      update?.quantity ?? 0,
+      unit:     update?.unit ?? 'pieces',
+      product:  update?.productDisplay ?? update?.product ?? '—',
+      newQty:   newQty ?? 0,
+      lang
+    });
+    // Append localized mode footer and finalize (single script + ASCII digits)
+    const tagged  = await tagWithLocalizedMode(From, line, lang);
+    const message = finalizeForSend(tagged, lang);
+    await sendMessageViaAPI(From, message);
+    console.log('[confirm:deterministic]', { lang, length: message?.length ?? 0 });
+  } catch (e) {
+    console.warn('[confirm:deterministic] send failed:', e?.message);
+  }
+}
+// ===== [PATCH:CONFIRM-DETERMINISTIC-004] END =================================
+
  // ========================================================================
  // [UNIQ:WORDS-TO-DIGITS-002] English number words → digits (voice-friendly)
  // Handles compounds ("twenty five"), hyphens, "point five", and Indian scales.
@@ -922,10 +976,18 @@ async function parseMultipleUpdates(reqOrText) {
               }
               // Translate only for display; keep original product for DB writes
               tx.productDisplay = await translateProductName(tx.product, 'ai-onecall-sticky');
-              if (isValidInventoryUpdate(tx)) {
-                updates.push(tx);
-                console.log('[AI Parsing] ONE-CALL sticky parsed 1 update.');
-                return updates;
+              if (isValidInventoryUpdate(tx)) {                              
+              try {
+                          const from      = (reqOrText?.body?.From ?? reqOrText?.From ?? `whatsapp:${String(shopId)}`);
+                          const lang      = await detectLanguageWithFallback(transcript, from, (reqOrText?.requestId ?? 'req') + '::confirm-sticky');
+                          const invPost   = await getProductInventory(shopId, tx.product).catch(() => null);
+                          const newQty    = Number(invPost?.quantity ?? 0);
+                          await sendTxnConfirm(from, lang, tx, newQty);
+                        } catch (e) {
+                          console.warn('[confirm:deterministic:sticky] failed:', e?.message);
+                        }
+                        updates.push(tx);
+                        return updates;
               }
             }
             console.log('[AI Parsing] ONE-CALL sticky produced no valid update; will fall back.');
@@ -1057,7 +1119,18 @@ async function parseMultipleUpdates(reqOrText) {
                       }
         }
         if (isValidInventoryUpdate(update)) {
-          updates.push(update);
+          updates.push(update);          
+          // [PATCH:CONFIRM-DETERMINISTIC-004B] INVOKE CONFIRMATION AFTER UPDATE
+                    // Read back latest quantity for this product and send deterministic confirm.
+                    try {
+                      const from    = (reqOrText?.body?.From ?? reqOrText?.From ?? `whatsapp:${String(shopId)}`);
+                      const lang    = await detectLanguageWithFallback(trimmed, from, (reqOrText?.requestId ?? 'req') + '::confirm-rule');
+                      const invPost = await getProductInventory(shopId, update.product).catch(() => null);
+                      const newQty  = Number(invPost?.quantity ?? 0);
+                      await sendTxnConfirm(from, lang, update, newQty);
+                    } catch (e) {
+                      console.warn('[confirm:deterministic:rule] failed:', e?.message);
+                    }
         }
       } catch (err) {
         console.warn(`[parseMultipleUpdates] Failed to parse sentence: "${trimmed}"`, err.message);
@@ -2925,7 +2998,6 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
   
   // 2) Plan gating: only show menus for activated users (trial/paid).
      //    Unactivated users receive a concise CTA to start the trial/paid plan.
-         
     let plan = 'demo';
       try {
         // Batch plan + pref in one go
