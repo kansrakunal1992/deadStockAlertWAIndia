@@ -4636,8 +4636,10 @@ function formatResultLine(r, compact = true, includeStockPart = true) {
       ? ` (Stock: ${r.newQuantity} ${unit})`
       : '';
   const act = capitalize(r.action ?? '');
-  if (compact) {
-    if (r.success) {          
+  if (compact) {        
+    // Treat success === undefined as "not a failure yet".
+    // Only render an error line when success is explicitly false.
+    if (r.success !== false) {
     // Unified symbol map for actions          
     const SYMBOLS = { purchased: '📦', sold: '🛒', returned: '↩️' };
           const actionLc = String(r.action ?? '').toLowerCase();
@@ -4646,7 +4648,7 @@ function formatResultLine(r, compact = true, includeStockPart = true) {
     }
     return `❌ ${r.product} — ${r.error ?? 'Error'}`;
   }
-  const tail = r.success ? '✅' : `❌ ${r.error ?? 'Error'}`;
+  const tail = (r.success === false) ? `❌ ${r.error ?? 'Error'}` : '✅';
   return `• ${r.product}: ${qty} ${unit} ${act}${stockPart} ${tail}`.trim();
 }
 
