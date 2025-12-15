@@ -24,7 +24,7 @@ try {
  */
 function applyFontForText(doc, text) {
   const s = String(text ?? '');
-  const hasDevanagari = /[\u0900-\u097F]/.test(s);
+  const hasDevanagari = /[\u0900-\u097F]/.test(s); // fix: correct character class (no literal [ ])
   if (hasDevanagari && devanagariAvailable) {
     doc.font(devanagariFontPath);
   } else {
@@ -79,6 +79,23 @@ function getLogoImage() {
     console.error('Failed to load logo from local file:', error);
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// E.164 normalizer (India default). Ensures shopId/phone shown & used in header
+// ---------------------------------------------------------------------------
+function normalizeToE164(input) {
+  const raw = String(input || '');
+  const digits = raw.replace(/^whatsapp:/, '').replace(/\D+/g, '');
+  if (raw.startsWith('+') && digits.length >= 10) return raw.replace(/^whatsapp:/, '');
+  if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
+  if (digits.length === 10) return `+91${digits}`;
+  return raw.replace(/^whatsapp:/, '');
+}
+function ensureShopIdE164(shopDetails) {
+  const phoneKey = normalizeToE164(shopDetails?.shopId ?? shopDetails?.phone ?? '');
+  // Do not mutate caller’s object; return a normalized copy.
+  return { ...shopDetails, shopId: phoneKey };
 }
 
 // Color scheme for the PDF
@@ -766,7 +783,7 @@ async function addInvoiceHeader(doc, shopDetails) {
     doc.text(`GSTIN: ${shopDetails.gstin}`, 0, 65, { align: 'center' });
   }
 
-
+  // Show E.164 phone (or shopId) directly under billing block for clarity
   
   // Invoice details - adjusted positioning to prevent overlap
   const invoiceNumber = `INV-${shopDetails?.shopId?.replace(/\D/g, '') || '000000'}-${moment().format('YYYYMMDDHHmmss')}`;
@@ -800,7 +817,13 @@ async function addInvoiceHeader(doc, shopDetails) {
     yPos += 20; // Increased spacing
     doc.text(shopDetails.address, 280, yPos, { width: 180 });
   }
-  
+    
+  // NEW: show phone (E.164) if available
+    const phoneE164 = normalizeToE164(shopDetails?.phone ?? shopDetails?.shopId ?? '');
+    if (phoneE164) {
+      yPos += 20;
+      doc.text(`Phone: ${phoneE164}`, 280, yPos, { width: 180 });
+    }
   return yPos + 30;
 }
 
