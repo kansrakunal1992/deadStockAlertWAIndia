@@ -652,60 +652,6 @@ async function sendTxnConfirmStrict(From, lang, update, newQty, requestId) {
 }
 // ===== [PATCH:CONFIRM-FORMAT-008] END =======================================
 
-// ============================================================================
-// ===== [PATCH:CONFIRM-DETERMINISTIC-004] BEGIN ===============================
-// Purpose: Compose "✅ ... — Stock: (...)" deterministically (no AI translation)
-// and send with a single-script + ASCII-numerals normalization.
-// ----------------------------------------------------------------------------
-/**
- * composeConfirmLocalized({ action, qty, unit, product, newQty, lang })
- * Returns a single-line confirmation using localized verbs/labels and your unit map.
- */
-function composeConfirmLocalized({ action, qty, unit, product, newQty, lang }) {
-  const lc = String(lang ?? 'en').toLowerCase();
-  const uDisp = displayUnit(unit ?? 'pieces', lc); // e.g., 'लीटर' or 'ltr'
-  const act =
-    lc.startsWith('hi') ? (
-      action === 'purchased' ? 'खरीदा' :
-      action === 'sold'      ? 'बेचा'   :
-      action === 'returned'  ? 'वापसी'  : 'अपडेट'
-    ) : (
-      action === 'purchased' ? 'Purchased' :
-      action === 'sold'      ? 'Sold'      :
-      action === 'returned'  ? 'Returned'  : 'Updated'
-    );
-  const stockLabel = lc.startsWith('hi') ? 'स्टॉक' : 'Stock';
-  // Deterministic confirmation (no t()/AI):
-  // NOTE: normalizeNumeralsToLatin() will convert any non-ASCII digits later.
-  return `✅ ${qty} ${uDisp} ${product} ${act} — ${stockLabel}: (${newQty} ${uDisp})`;
-}
-
-/**
- * sendTxnConfirm(From, lang, update, newQty)
- * Uses the deterministic composer and sends with footer & normalization.
- * @param update shape: { action, product, quantity, unit }
- */
-async function sendTxnConfirm(From, lang, update, newQty) {
-  try {
-    const line = composeConfirmLocalized({
-      action:   String(update?.action ?? '').toLowerCase(),
-      qty:      update?.quantity ?? 0,
-      unit:     update?.unit ?? 'pieces',
-      product:  update?.productDisplay ?? update?.product ?? '—',
-      newQty:   newQty ?? 0,
-      lang
-    });
-    // Append localized mode footer and finalize (single script + ASCII digits)
-    const tagged  = await tagWithLocalizedMode(From, line, lang);
-    const message = finalizeForSend(tagged, lang);
-    await sendMessageViaAPI(From, message);
-    console.log('[confirm:deterministic]', { lang, length: message?.length ?? 0 });
-  } catch (e) {
-    console.warn('[confirm:deterministic] send failed:', e?.message);
-  }
-}
-// ===== [PATCH:CONFIRM-DETERMINISTIC-004] END =================================
-
  // ========================================================================
  // [UNIQ:WORDS-TO-DIGITS-002] English number words → digits (voice-friendly)
  // Handles compounds ("twenty five"), hyphens, "point five", and Indian scales.
