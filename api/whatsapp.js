@@ -15,6 +15,9 @@ const path = require('path');
 const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
+const CAPTURE_SHOP_DETAILS_ON = String(process.env.CAPTURE_SHOP_DETAILS_ON ?? 'paid').toLowerCase();
+// 'paid' → capture after payment; 'trial' → capture during trial onboarding
+
 // ---------------------------------------------------------------------------
 // Ultra‑early ack: micro language hint based on Unicode script and Hinglish ASCII
 // ---------------------------------------------------------------------------
@@ -184,6 +187,16 @@ if (typeof globalThis.getUserState !== 'function') {
     return null;
   };
 }
+
+if (typeof globalThis.clearUserState !== 'function') {
+  globalThis.clearUserState = async function clearUserState(shopIdOrFrom) {
+    try {
+      const key = String(shopIdOrFrom ?? '').replace('whatsapp:', '');
+      await deleteUserStateFromDB(key);
+    } catch (_) {}
+  };
+}
+
 // Caches
 const languageCache = new Map();
 const productMatchCache = new Map();
