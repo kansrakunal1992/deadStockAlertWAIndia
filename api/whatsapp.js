@@ -3508,6 +3508,7 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
 
   handledRequests?.add?.(requestId); // avoid late apology
   return true;
+} catch (_) {}
 }
 // ===== [PATCH:HYBRID-DIAGNOSTIC-HANDLER-003] END =====
 
