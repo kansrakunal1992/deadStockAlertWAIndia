@@ -332,6 +332,51 @@ async function setEphemeralOverrideState(fromOrShopId, mode, data = {}) {
 // === Feature flag: ENABLE_STREAK_MESSAGES (inline helper; no imports) ===
 let __FLAGS_CACHE; // per-file cache
 
+// ============================================================================
+// ===== [PATCH:AI-MERGE-ONECALL-002] GLOBAL TOGGLE + TXN PARSER ==============
+// Purpose: prefer ONE AI call. In sticky mode use txn-only parser once.
+// ----------------------------------------------------------------------------
+const AI_ONECALL_ENABLED = String(process.env.AI_ONECALL_ENABLED ?? 'true')
+  .toLowerCase() === 'true';
+
+/**
+ * [PATCH:AI-MERGE-ONECALL-002] aiParseTxnOnce(text):
+ * Deterministic single-call parser for transaction lines.
+ * Returns { action, product, quantity, unit, pricePerUnit, expiry } or null.
+ */
+async function aiParseTxnOnce(text) {
+  const sys = [
+    'You are a deterministic parser.',
+    'Return ONLY JSON: {"action":"purchased|sold|returned","product":"<name>","quantity":<number>,"unit":"<unit>","pricePerUnit":<number|null>,"expiry":"<ISO or +Nd or +Nm|null>"}',
+    'No prose, no extra keys.'
+  ].join(' ');
+  const user = String(text ?? '').trim();
+  try {
+    const resp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+      model: 'deepseek-chat',
+      messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
+      temperature: 0.0, max_tokens: 180
+    }, { headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 2500 });
+    const raw = String(resp?.data?.choices?.[0]?.message?.content ?? '').trim();
+    const out = (raw && raw.startsWith('{')) ? JSON.parse(raw) : null;
+    if (!out || typeof out !== 'object') return null;
+    // Shape guard
+    const tx = {
+      action: out.action ?? null,
+      product: out.product ?? null,
+      quantity: Number.isFinite(out.quantity) ? out.quantity : null,
+      unit: out.unit ?? null,
+      pricePerUnit: Number.isFinite(out.pricePerUnit) ? out.pricePerUnit : null,
+      expiry: out.expiry ?? null
+    };
+    return tx;
+  } catch (e) {
+    console.warn('[aiParseTxnOnce] fail:', e?.message);
+    return null;
+  }
+}
+// ===== [PATCH:AI-MERGE-ONECALL-002] END =====================================
+
 function __toBool(v) {
   const s = String(v ?? '').trim().toLowerCase();
   return s === '1' || s === 'true' || s === 'yes' || s === 'on';
@@ -813,54 +858,77 @@ async function parseMultipleUpdates(reqOrText) {
   }
         
   // Try AI-based parsing first  
-  try {
-    console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);  
-    const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
-    // Only accept AI results if they are valid inventory updates (qty > 0 + valid action)
-    if (aiUpdate && aiUpdate.length > 0) {          
-    const cleaned = aiUpdate.map(update => {
-        try {
-          // Apply state override with validation            
-          const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
-          const ACTION_MAP = {                     
-            purchase: 'purchased',
-            purchased: 'purchased',
-            buy: 'purchased',
-            bought: 'purchased',
-            sold: 'sold',
-            sale: 'sold',
-            return: 'returned',
-            returned: 'returned'
+  try {    
+      console.log(`[AI Parsing] Attempting to parse (ONE-CALL policy=${AI_ONECALL_ENABLED}): "${transcript}"`);
+      
+          const ACTION_MAP = {
+            purchase:'purchased', purchased:'purchased', buy:'purchased', bought:'purchased',
+            sold:'sold', sale:'sold', return:'returned', returned:'returned'
           };
-          
-          const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
-          
-          if (['purchased', 'sold', 'returned'].includes(finalAction)) {
-            update.action = finalAction;
-            console.log(`[AI Parsing] Overriding AI action with normalized state action: ${update.action}`);
+      
+          const haveSticky = !!pendingAction;
+          let updates = [];
+      
+          if (AI_ONECALL_ENABLED && haveSticky) {
+            // ----------------------------------------------------------------------
+            // [PATCH:AI-MERGE-ONECALL-002B] STICKY: single-call txn-only parser
+            // ----------------------------------------------------------------------
+            const tx = await aiParseTxnOnce(transcript);
+            if (tx && tx.product && Number.isFinite(tx.quantity)) {
+              const finalAction = ACTION_MAP[String(pendingAction).toLowerCase()] ?? String(pendingAction).toLowerCase();
+              if (['purchased','sold','returned'].includes(finalAction)) {
+                tx.action = finalAction;
+              }
+              // Translate only for display; keep original product for DB writes
+              tx.productDisplay = await translateProductName(tx.product, 'ai-onecall-sticky');
+              if (isValidInventoryUpdate(tx)) {
+                updates.push(tx);
+                console.log('[AI Parsing] ONE-CALL sticky parsed 1 update.');
+                return updates;
+              }
+            }
+            console.log('[AI Parsing] ONE-CALL sticky produced no valid update; will fall back.');
+          } else if (AI_ONECALL_ENABLED && !haveSticky) {
+            // ----------------------------------------------------------------------
+            // [PATCH:AI-MERGE-ONECALL-002C] NON-STICKY: use orchestrator's transaction
+            // ----------------------------------------------------------------------
+            const o = await aiOrchestrate(transcript);
+            if (o?.transaction && o.transaction.product && Number.isFinite(o.transaction.quantity)) {
+              const tx = o.transaction;
+              tx.productDisplay = await translateProductName(tx.product, 'ai-onecall-orch');
+              if (isValidInventoryUpdate(tx)) {
+                console.log('[AI Parsing] ONE-CALL orchestrator provided transaction.');
+                return [tx];
+              }
+            }
+            console.log('[AI Parsing] ONE-CALL orchestrator had no transaction; will fall back.');
           } else {
-            console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
+            // Legacy dual-call path (kept for safety if toggle OFF)
+            const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
+            if (aiUpdate && aiUpdate.length > 0) {
+              const cleaned = aiUpdate.map(update => {
+                try {
+                  const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
+                  const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
+                  if (['purchased','sold','returned'].includes(finalAction)) {
+                    update.action = finalAction;
+                    console.log(`[AI Parsing] Overriding AI action with normalized state action: ${update.action}`);
+                  } else {
+                    console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
+                  }
+                  return update;
+                } catch (error) {
+                  console.warn(`[AI Parsing] Error processing update:`, error.message);
+                  return update;
+                }
+              }).filter(isValidInventoryUpdate);
+              if (cleaned.length > 0) {
+                console.log(`[AI Parsing] Successfully parsed ${cleaned.length} valid updates using AI (legacy path)`);
+                return cleaned;
+              }
+            }
+            console.log('[AI Parsing] Legacy path produced no valid updates; will fall back.');
           }
-          return update;
-        } catch (error) {
-          console.warn(`[AI Parsing] Error processing update:`, error.message);
-          return update;
-        }
-      }).filter(isValidInventoryUpdate);
-      if (cleaned.length > 0) {
-        console.log(`[AI Parsing] Successfully parsed ${cleaned.length} valid updates using AI`);              
-        //if (userState?.mode === 'awaitingTransactionDetails') {
-        //          await deleteUserStateFromDB(userState.id);
-        //        }
-        // STICKY MODE: keep awaitingTransactionDetails until user switches/resets
-        return cleaned;
-      } else {
-        console.log(`[AI Parsing] AI produced ${aiUpdate.length} updates but none were valid. Falling back to rule-based parsing.`);
-      }
-    }
-
-    
-    console.log(`[AI Parsing] No valid AI results, falling back to rule-based parsing`);
   } catch (error) {
     console.warn(`[AI Parsing] Failed, falling back to rule-based parsing:`, error.message);
   }
@@ -1405,16 +1473,46 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
       } catch {}
     if (!USE_AI_ORCHESTRATOR) return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
       const shopId = shopIdFrom(From);
-      // ---- Sticky-mode clamp: if user is in purchase/sale/return, force inventory routing
+      
+    // ===== [PATCH:AI-MERGE-ONECALL-002A] ONE-CALL POLICY (non-sticky) ==========
+      // If AI_ONECALL_ENABLED, we will NOT call aiDetectLangIntent in the same turn
+      // as aiOrchestrate. Heuristics/hints supply language; orchestrator yields txn
+      // and language if needed. This avoids double model hits.
+      // ----------------------------------------------------------------------------
+      const ONECALL = AI_ONECALL_ENABLED && USE_AI_ORCHESTRATOR;
+      // (No code here; the skip happens by *not* invoking aiDetectLangIntent below)
+      // ===== [PATCH:AI-MERGE-ONECALL-002A] END ===================================
+  
+      // ===== [PATCH:ORCH-STICKY-SHORTCIRCUIT-001] BEGIN ===========================
+      // Hard short-circuit: if user is in sticky Purchase/Sale/Return AND the text
+      // looks transactional, SKIP aiOrchestrate() entirely and force inventory path.
+      // This guarantees no Deepseek orchestration call under sticky mode.
+      // ----------------------------------------------------------------------------
       try {
         const stickyAction = await getStickyActionQuick(From);
-        if (stickyAction && looksLikeTxnLite(text)) {
+        const txnLike      = looksLikeTxnLite(text);
+        if (stickyAction && txnLike) {
           const language = ensureLangExact(detectedLanguageHint ?? 'en');
-          console.log('[orchestrator]', { requestId, language, kind: 'transaction', normalizedCommand: '—', topicForced: null, pricingFlavor: null, sticky: stickyAction });
-          // Force router away from Sales-Q&A; downstream inventory parser will consume this turn
-          return { language, isQuestion: false, normalizedCommand: null, aiTxn: null, questionTopic: null, pricingFlavor: null, forceInventory: true };
+          // Minimal diagnostic log; distinct tag for production grep:
+          console.log('[orchestrator:skip-sticky]', {
+            requestId, language, sticky: stickyAction, forced: true
+          });
+          return {
+            language,
+            isQuestion: false,
+            normalizedCommand: null,
+            aiTxn: null,
+            questionTopic: null,
+            pricingFlavor: null,
+            forceInventory: true
+          };
         }
-      } catch (_) { /* best-effort; fall through to AI orchestrator */ }
+      } catch (e) {
+        console.warn('[orchestrator:skip-sticky] failed', e?.message);
+        // If sticky probe fails, we will still attempt AI below.
+      }
+      // ===== [PATCH:ORCH-STICKY-SHORTCIRCUIT-001] END =============================
+      
       const o = await aiOrchestrate(text);
     
     // --- NEW: Normalize summary intent into the command contract ---------------
@@ -2034,18 +2132,26 @@ async function detectLanguageWithFallback(text, from, requestId) {
       }
             
       // 2) AI pass for Romanized Indic / ambiguous ASCII
-            const useAI = _shouldUseAI(text, detectedLanguage);
-            if (useAI) {
-              const ai = await aiDetectLangIntent(text);            
-              if (ai.language) detectedLanguage = ai.language;
-                        // Re-enable *-latn auto-detection (single-script only; no bilingual generation)
-                        detectedLanguage = autoLatnIfRoman(detectedLanguage, text);
-              try {
-                const shopId = String(from ?? '').replace('whatsapp:', '');
-                if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, detectedLanguage);
-              } catch (_e) {}
-              console.log(`[${requestId}] AI lang=${ai.language} intent=${ai.intent}`);
-            }
+                  
+      const useAI = _shouldUseAI(text, detectedLanguage);
+        // ============================================================================
+        // ===== [PATCH:AI-DETECT-MERGE-002A] Avoid extra detect when ONE-CALL on ====
+        // If AI_ONECALL_ENABLED is ON, and non-sticky routing will use aiOrchestrate(),
+        // skip aiDetectLangIntent here to prevent a 2nd model hit in the same turn.
+        // ----------------------------------------------------------------------------
+        const ONECALL = AI_ONECALL_ENABLED && USE_AI_ORCHESTRATOR;
+        if (useAI && !ONECALL) {
+          const ai = await aiDetectLangIntent(text);
+          if (ai.language) detectedLanguage = ai.language;
+          detectedLanguage = autoLatnIfRoman(detectedLanguage, text);
+          try {
+            const shopId = String(from ?? '').replace('whatsapp:', '');
+            if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, detectedLanguage);
+          } catch (_e) {}
+          console.log(`[${requestId}] AI lang=${ai.language} intent=${ai.intent}`);
+        } // else ONECALL → orchestrator will provide language/txn in a single call
+        // ===== [PATCH:AI-DETECT-MERGE-002A] END ====================================
+
             // 3) Optional AI if non-ASCII but heuristics left it at 'en'
             if (!useAI && detectedLanguage === 'en' && !/^[a-z0-9\s.,!?'\"@:/\-]+$/i.test(lowerText)) {
               try {
