@@ -155,34 +155,6 @@ async function maybeResendListPicker(From, lang, requestId) {
 // ---------------------------------------------------------------------------
 // Handled/apology guard: track per-request success to prevent late apologies
 const handledRequests = new Set();            // <- used by parse-error & upsell schedulers
-
-// ============================================================================
-// ===== [PATCH:CONFIRM-DEDUP-009] BEGIN ======================================
-// Suppress duplicate purchase/sale/return confirmations within the same request.
-// ----------------------------------------------------------------------------
-const __CONFIRM_SENT_GUARD = new Map(); // requestId -> ts
-function markConfirmSent(requestId) {
-  try { if (requestId) __CONFIRM_SENT_GUARD.set(String(requestId), Date.now()); } catch {}
-}
-function wasConfirmAlreadySent(requestId) {
-  try { return requestId ? __CONFIRM_SENT_GUARD.has(String(requestId)) : false; } catch { return false; }
-}
-/**
- * sendMessageDedup(From, text, requestId)
- * If a strict confirmation was already sent, drop any later "purchase/sale/return" confirms.
- * Safe for other messages too (no-op).
- */
-async function sendMessageDedup(From, text, requestId) {
-  const t = String(text ?? '');
-  const looksConfirm = t.startsWith('📦 ') || t.startsWith('✅ ') || /—\s*स्टॉक: \(/.test(t) || /\bStock:\s*\(/i.test(t);
-  if (looksConfirm && wasConfirmAlreadySent(requestId)) {
-    console.log('[confirm:duplicate:suppress]', { requestId });
-    return;
-  }
-  await sendMessageViaAPI(From, text);
-}
-// ===== [PATCH:CONFIRM-DEDUP-009] END ========================================
-
 // --- Defensive shim: provide a safe setUserState if not present (prevents runtime errors)
 if (typeof globalThis.setUserState !== 'function') {      
     globalThis.setUserState = async function setUserState(from, mode, data = {}) {
@@ -360,87 +332,6 @@ async function setEphemeralOverrideState(fromOrShopId, mode, data = {}) {
 // === Feature flag: ENABLE_STREAK_MESSAGES (inline helper; no imports) ===
 let __FLAGS_CACHE; // per-file cache
 
-// ============================================================================
-// ===== [PATCH:AI-MERGE-ONECALL-002] GLOBAL TOGGLE + TXN PARSER ==============
-// Purpose: prefer ONE AI call. In sticky mode use txn-only parser once.
-// ----------------------------------------------------------------------------
-const AI_ONECALL_ENABLED = String(process.env.AI_ONECALL_ENABLED ?? 'true')
-  .toLowerCase() === 'true';
-
-/**
- * [PATCH:AI-MERGE-ONECALL-002] aiParseTxnOnce(text):
- * Deterministic single-call parser for transaction lines.
- * Returns { action, product, quantity, unit, pricePerUnit, expiry } or null.
- */
-async function aiParseTxnOnce(text) {
-  const sys = [
-    'You are a deterministic parser.',
-    'Return ONLY JSON: {"action":"purchased|sold|returned","product":"<name>","quantity":<number>,"unit":"<unit>","pricePerUnit":<number|null>,"expiry":"<ISO or +Nd or +Nm|null>"}',
-    'No prose, no extra keys.'
-  ].join(' ');
-  const user = String(text ?? '').trim();
-  try {
-    const resp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-      model: 'deepseek-chat',
-      messages: [{ role: 'system', content: sys }, { role: 'user', content: user }],
-      temperature: 0.0, max_tokens: 180
-    }, { headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 2500 });
-    const raw = String(resp?.data?.choices?.[0]?.message?.content ?? '').trim();
-    const out = (raw && raw.startsWith('{')) ? JSON.parse(raw) : null;
-    if (!out || typeof out !== 'object') return null;
-    // Shape guard
-    const tx = {
-      action: out.action ?? null,
-      product: out.product ?? null,
-      quantity: Number.isFinite(out.quantity) ? out.quantity : null,
-      unit: out.unit ?? null,
-      pricePerUnit: Number.isFinite(out.pricePerUnit) ? out.pricePerUnit : null,
-      expiry: out.expiry ?? null
-    };
-    return tx;
-  } catch (e) {
-    console.warn('[aiParseTxnOnce] fail:', e?.message);
-    return null;
-  }
-}
-// ===== [PATCH:AI-MERGE-ONECALL-002] END =====================================
-
-// ============================================================================
-// ===== [PATCH:PARALLEL-PREFLIGHT-003] BEGIN =================================
-// Purpose: run all early reads in parallel (auth, plan, state, preference).
-// Use this helper at the start of request handling / orchestration / parsing.
-// ----------------------------------------------------------------------------
-/**
- * parallelPreflightReads(from):
- * Returns { auth, planInfo, state, pref } with best-effort nulls if any fail.
- * NOTE: Uses lightweight caches where available (e.g., getUserPlanQuick/getUserStateQuick).
- */
-async function parallelPreflightReads(from) {
-  const shopId = shopIdFrom(from);
-  const tasks = [
-    // If your codebase has a no-op or soft-auth in some paths, keep it here.
-    (typeof checkAuth === 'function' ? checkAuth(from) : Promise.resolve(null)),
-    getUserPlanQuick(shopId),      // TTL cache (PLAN_CACHE_TTL)
-    getUserStateQuick(shopId),     // TTL cache (STATE_CACHE_TTL)
-    getUserPreference(shopId)      // DB read
-  ];
-  const [authRes, planRes, stateRes, prefRes] = await Promise.allSettled(tasks);
-  const pre = {
-    auth:     authRes.status  === 'fulfilled' ? authRes.value   : null,
-    planInfo: planRes.status  === 'fulfilled' ? planRes.value   : null,
-    state:    stateRes.status === 'fulfilled' ? stateRes.value  : null,
-    pref:     prefRes.status  === 'fulfilled' ? prefRes.value   : null
-  };
-  try {
-    console.log('[preflight]', {
-      shopId, hasAuth: !!pre.auth, hasPlan: !!pre.planInfo,
-      hasState: !!pre.state, hasPref: !!pre.pref
-    });
-  } catch (_) {}
-  return pre;
-}
-// ===== [PATCH:PARALLEL-PREFLIGHT-003] END ===================================
-
 function __toBool(v) {
   const s = String(v ?? '').trim().toLowerCase();
   return s === '1' || s === 'true' || s === 'yes' || s === 'on';
@@ -593,64 +484,6 @@ function displayUnit(unit, lang) {
   const u = String(unit ?? '').toLowerCase().trim();
   return lang.startsWith('hi') ? (UNIT_MAP_HI[u] ?? unit) : unit;
 }
-
-// ============================================================================
-// ===== [PATCH:CONFIRM-FORMAT-008] BEGIN =====================================
-// Deterministic confirmation (Hindi/Hinglish/English) with help footer.
-// No AI translation; single-script normalization happens in finalizeForSend().
-// ----------------------------------------------------------------------------
-function composeConfirmLocalizedStrict({ action, qty, unit, product, newQty, lang }) {
-  const lc = String(lang ?? 'en').toLowerCase();
-  const uDisp = displayUnit(unit ?? 'pieces', lc);
-  const isHi = lc.startsWith('hi');
-  const verb =
-    isHi
-      ? (action === 'purchased' ? 'खरीदा'
-         : action === 'sold'    ? 'बेचा'
-         : action === 'returned'? 'वापसी'
-         : 'अपडेट')
-      : (action === 'purchased' ? 'Purchased'
-         : action === 'sold'    ? 'Sold'
-         : action === 'returned'? 'Returned'
-         : 'Updated');
-  const stockLabel = isHi ? 'स्टॉक' : 'Stock';
-  // Use 📦 (box) as requested; keep ASCII numerals (normalized later)
-  return `📦 ${qty} ${uDisp} ${product} ${verb} — ${stockLabel}: (${newQty} ${uDisp})`;
-}
-
-function composeHelpFooter(lang = 'hi') {
-  const lc = String(lang ?? 'hi').toLowerCase();
-  if (lc.startsWith('hi')) {
-    return 'मदद चाहिए? Saamagrii.AI सपोर्ट: "https://wa.link/6q3ol7"। "मोड" लिखें—खरीद/बिक्री/रिटर्न बदलें या इन्वेंटरी पूछें।';
-  }
-  // Fallback EN; keep exactly one paragraph
-  return 'Need help? Saamagrii.AI Support: "https://wa.link/6q3ol7". Type "mode" to switch Purchase/Sale/Return or ask inventory.';
-}
-
-/**
- * sendTxnConfirmStrict(From, lang, update, newQty, requestId)
- * update: { action, product, productDisplay?, quantity, unit }
- * Sends ONE message: confirmation + blank line + help, tagged with mode.
- */
-async function sendTxnConfirmStrict(From, lang, update, newQty, requestId) {
-  const line = composeConfirmLocalizedStrict({
-    action:  String(update?.action ?? '').toLowerCase(),
-    qty:     Number(update?.quantity ?? 0),
-    unit:    update?.unit ?? 'pieces',
-    product: update?.productDisplay ?? update?.product ?? '—',
-    newQty:  Number(newQty ?? 0),
-    lang
-  });
-  const help = composeHelpFooter(lang);
-  const body = [line, '', help].join('\n');
-  const tagged  = await tagWithLocalizedMode(From, body, lang);   // appends «खरीद • मोड» etc.
-  const message = finalizeForSend(tagged, lang);                  // single-script + ASCII digits
-  await sendMessageViaAPI(From, message);
-  try { console.log('[confirm:strict]', { lang, length: message?.length ?? 0, requestId }); } catch {}
-  // Mark this request as having sent a confirm (used by dedup guard below)
-  try { markConfirmSent(requestId); } catch {}
-}
-// ===== [PATCH:CONFIRM-FORMAT-008] END =======================================
 
  // ========================================================================
  // [UNIQ:WORDS-TO-DIGITS-002] English number words → digits (voice-friendly)
@@ -914,13 +747,8 @@ async function parseMultipleUpdates(reqOrText) {
      // ----------------------------------------------------------------------
      let t = String(transcript ?? '').trim();
      t = wordsToNumber(t);     
-  // Prefer DB state; use in-memory fallback if DB read is transiently null   
-  // ===== [PATCH:PARALLEL-PREFLIGHT-003B] Batched reads for state/prefs/plan ====
-    let pre = null;
-    try { pre = await parallelPreflightReads(from); } catch (_) { pre = null; }
-    const userState = (pre?.state)
-      || globalState.conversationState[shopId]
-      || null;  
+  // Prefer DB state; use in-memory fallback if DB read is transiently null
+  const userState = (await getUserStateFromDB(shopId)) || globalState.conversationState[shopId] || null;      
   
   // --- [NEW EARLY EXIT: trial-onboarding capture] ---------------------------------
   // If user is in onboarding flow, consume this message and do not parse as inventory        
@@ -985,89 +813,54 @@ async function parseMultipleUpdates(reqOrText) {
   }
         
   // Try AI-based parsing first  
-  try {    
-      console.log(`[AI Parsing] Attempting to parse (ONE-CALL policy=${AI_ONECALL_ENABLED}): "${transcript}"`);
-      
-          const ACTION_MAP = {
-            purchase:'purchased', purchased:'purchased', buy:'purchased', bought:'purchased',
-            sold:'sold', sale:'sold', return:'returned', returned:'returned'
+  try {
+    console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);  
+    const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
+    // Only accept AI results if they are valid inventory updates (qty > 0 + valid action)
+    if (aiUpdate && aiUpdate.length > 0) {          
+    const cleaned = aiUpdate.map(update => {
+        try {
+          // Apply state override with validation            
+          const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
+          const ACTION_MAP = {                     
+            purchase: 'purchased',
+            purchased: 'purchased',
+            buy: 'purchased',
+            bought: 'purchased',
+            sold: 'sold',
+            sale: 'sold',
+            return: 'returned',
+            returned: 'returned'
           };
-      
-          const haveSticky = !!pendingAction;
-          let updates = [];
-      
-          if (AI_ONECALL_ENABLED && haveSticky) {
-            // ----------------------------------------------------------------------
-            // [PATCH:AI-MERGE-ONECALL-002B] STICKY: single-call txn-only parser
-            // ----------------------------------------------------------------------
-            const tx = await aiParseTxnOnce(transcript);
-            if (tx && tx.product && Number.isFinite(tx.quantity)) {
-              const finalAction = ACTION_MAP[String(pendingAction).toLowerCase()] ?? String(pendingAction).toLowerCase();
-              if (['purchased','sold','returned'].includes(finalAction)) {
-                tx.action = finalAction;
-              }
-              // Translate only for display; keep original product for DB writes
-              tx.productDisplay = await translateProductName(tx.product, 'ai-onecall-sticky');
-              if (isValidInventoryUpdate(tx)) {                                                            
-                // Apply tx to DB (existing code does batch + inventory write here)
-                          // -- [PATCH:CONFIRM-FORMAT-008A] SEND STRICT CONFIRMATION AFTER UPDATE
-                          try {
-                            const shopId = String((reqOrText?.body?.From ?? reqOrText?.From ?? '').replace('whatsapp:', ''));
-                            const from   = (reqOrText?.body?.From ?? reqOrText?.From ?? `whatsapp:${shopId}`);
-                            const rid    = String(reqOrText?.requestId ?? `req-${Date.now()}`);
-                            const lang   = await detectLanguageWithFallback(transcript, from, rid + '::confirm-sticky');
-                            const invPost = await getProductInventory(shopId, tx.product).catch(() => null);
-                            const newQty  = Number(invPost?.quantity ?? 0);
-                            await sendTxnConfirmStrict(from, lang, tx, newQty, rid);
-                          } catch (e) {
-                            console.warn('[confirm:strict:sticky] failed:', e?.message);
-                          }
-                          updates.push(tx);
-                          return updates;
-              }
-            }
-            console.log('[AI Parsing] ONE-CALL sticky produced no valid update; will fall back.');
-          } else if (AI_ONECALL_ENABLED && !haveSticky) {
-            // ----------------------------------------------------------------------
-            // [PATCH:AI-MERGE-ONECALL-002C] NON-STICKY: use orchestrator's transaction
-            // ----------------------------------------------------------------------
-            const o = await aiOrchestrate(transcript);
-            if (o?.transaction && o.transaction.product && Number.isFinite(o.transaction.quantity)) {
-              const tx = o.transaction;
-              tx.productDisplay = await translateProductName(tx.product, 'ai-onecall-orch');
-              if (isValidInventoryUpdate(tx)) {
-                console.log('[AI Parsing] ONE-CALL orchestrator provided transaction.');
-                return [tx];
-              }
-            }
-            console.log('[AI Parsing] ONE-CALL orchestrator had no transaction; will fall back.');
+          
+          const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
+          
+          if (['purchased', 'sold', 'returned'].includes(finalAction)) {
+            update.action = finalAction;
+            console.log(`[AI Parsing] Overriding AI action with normalized state action: ${update.action}`);
           } else {
-            // Legacy dual-call path (kept for safety if toggle OFF)
-            const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
-            if (aiUpdate && aiUpdate.length > 0) {
-              const cleaned = aiUpdate.map(update => {
-                try {
-                  const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
-                  const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
-                  if (['purchased','sold','returned'].includes(finalAction)) {
-                    update.action = finalAction;
-                    console.log(`[AI Parsing] Overriding AI action with normalized state action: ${update.action}`);
-                  } else {
-                    console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
-                  }
-                  return update;
-                } catch (error) {
-                  console.warn(`[AI Parsing] Error processing update:`, error.message);
-                  return update;
-                }
-              }).filter(isValidInventoryUpdate);
-              if (cleaned.length > 0) {
-                console.log(`[AI Parsing] Successfully parsed ${cleaned.length} valid updates using AI (legacy path)`);
-                return cleaned;
-              }
-            }
-            console.log('[AI Parsing] Legacy path produced no valid updates; will fall back.');
+            console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
           }
+          return update;
+        } catch (error) {
+          console.warn(`[AI Parsing] Error processing update:`, error.message);
+          return update;
+        }
+      }).filter(isValidInventoryUpdate);
+      if (cleaned.length > 0) {
+        console.log(`[AI Parsing] Successfully parsed ${cleaned.length} valid updates using AI`);              
+        //if (userState?.mode === 'awaitingTransactionDetails') {
+        //          await deleteUserStateFromDB(userState.id);
+        //        }
+        // STICKY MODE: keep awaitingTransactionDetails until user switches/resets
+        return cleaned;
+      } else {
+        console.log(`[AI Parsing] AI produced ${aiUpdate.length} updates but none were valid. Falling back to rule-based parsing.`);
+      }
+    }
+
+    
+    console.log(`[AI Parsing] No valid AI results, falling back to rule-based parsing`);
   } catch (error) {
     console.warn(`[AI Parsing] Failed, falling back to rule-based parsing:`, error.message);
   }
@@ -1155,20 +948,7 @@ async function parseMultipleUpdates(reqOrText) {
                       }
         }
         if (isValidInventoryUpdate(update)) {
-          updates.push(update);          
-                      
-            // -- [PATCH:CONFIRM-FORMAT-008B] SEND STRICT CONFIRMATION AFTER UPDATE
-                      try {
-                        const shopId = String((reqOrText?.body?.From ?? reqOrText?.From ?? '').replace('whatsapp:', ''));
-                        const from   = (reqOrText?.body?.From ?? reqOrText?.From ?? `whatsapp:${shopId}`);
-                        const rid    = String(reqOrText?.requestId ?? `req-${Date.now()}`);
-                        const lang   = await detectLanguageWithFallback(trimmed, from, rid + '::confirm-rule');
-                        const invPost = await getProductInventory(shopId, update.product).catch(() => null);
-                        const newQty  = Number(invPost?.quantity ?? 0);
-                        await sendTxnConfirmStrict(from, lang, update, newQty, rid);
-                      } catch (e) {
-                        console.warn('[confirm:strict:rule] failed:', e?.message);
-                      }
+          updates.push(update);
         }
       } catch (err) {
         console.warn(`[parseMultipleUpdates] Failed to parse sentence: "${trimmed}"`, err.message);
@@ -1614,60 +1394,27 @@ function looksLikeTxnLite(s) {
  * - aiTxn: parsed transaction skeleton (NEVER auto-applied; deterministic parser still decides).
  * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
  */
-async function applyAIOrchestration(text, From, detectedLanguageHint, requestId) {                     
+async function applyAIOrchestration(text, From, detectedLanguageHint, requestId) {             
     try {
         const shopId = String(From ?? '').replace('whatsapp:', '');
-        // ===== [PATCH:PARALLEL-PREFLIGHT-003A] Use batched preflight reads =====
-        const pre = await parallelPreflightReads(From);
-        const st  = pre.state;
+        const st = await getUserStateFromDB(shopId).catch(() => null);
         if (st?.mode === 'onboarding_trial_capture') {
-          const pinned = st?.data?.lang ?? pre?.pref?.language;
+          const pinned = st?.data?.lang ?? (await getUserPreference(shopId).catch(() => ({})))?.language;
           if (pinned) detectedLanguageHint = String(pinned).toLowerCase();
         }
-      } catch { }
-
+      } catch {}
     if (!USE_AI_ORCHESTRATOR) return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
       const shopId = shopIdFrom(From);
-      
-    // ===== [PATCH:AI-MERGE-ONECALL-002A] ONE-CALL POLICY (non-sticky) ==========
-      // If AI_ONECALL_ENABLED, we will NOT call aiDetectLangIntent in the same turn
-      // as aiOrchestrate. Heuristics/hints supply language; orchestrator yields txn
-      // and language if needed. This avoids double model hits.
-      // ----------------------------------------------------------------------------
-      const ONECALL = AI_ONECALL_ENABLED && USE_AI_ORCHESTRATOR;
-      // (No code here; the skip happens by *not* invoking aiDetectLangIntent below)
-      // ===== [PATCH:AI-MERGE-ONECALL-002A] END ===================================
-  
-      // ===== [PATCH:ORCH-STICKY-SHORTCIRCUIT-001] BEGIN ===========================
-      // Hard short-circuit: if user is in sticky Purchase/Sale/Return AND the text
-      // looks transactional, SKIP aiOrchestrate() entirely and force inventory path.
-      // This guarantees no Deepseek orchestration call under sticky mode.
-      // ----------------------------------------------------------------------------
+      // ---- Sticky-mode clamp: if user is in purchase/sale/return, force inventory routing
       try {
         const stickyAction = await getStickyActionQuick(From);
-        const txnLike      = looksLikeTxnLite(text);
-        if (stickyAction && txnLike) {
+        if (stickyAction && looksLikeTxnLite(text)) {
           const language = ensureLangExact(detectedLanguageHint ?? 'en');
-          // Minimal diagnostic log; distinct tag for production grep:
-          console.log('[orchestrator:skip-sticky]', {
-            requestId, language, sticky: stickyAction, forced: true
-          });
-          return {
-            language,
-            isQuestion: false,
-            normalizedCommand: null,
-            aiTxn: null,
-            questionTopic: null,
-            pricingFlavor: null,
-            forceInventory: true
-          };
+          console.log('[orchestrator]', { requestId, language, kind: 'transaction', normalizedCommand: '—', topicForced: null, pricingFlavor: null, sticky: stickyAction });
+          // Force router away from Sales-Q&A; downstream inventory parser will consume this turn
+          return { language, isQuestion: false, normalizedCommand: null, aiTxn: null, questionTopic: null, pricingFlavor: null, forceInventory: true };
         }
-      } catch (e) {
-        console.warn('[orchestrator:skip-sticky] failed', e?.message);
-        // If sticky probe fails, we will still attempt AI below.
-      }
-      // ===== [PATCH:ORCH-STICKY-SHORTCIRCUIT-001] END =============================
-      
+      } catch (_) { /* best-effort; fall through to AI orchestrator */ }
       const o = await aiOrchestrate(text);
     
     // --- NEW: Normalize summary intent into the command contract ---------------
@@ -2287,26 +2034,18 @@ async function detectLanguageWithFallback(text, from, requestId) {
       }
             
       // 2) AI pass for Romanized Indic / ambiguous ASCII
-                  
-      const useAI = _shouldUseAI(text, detectedLanguage);
-        // ============================================================================
-        // ===== [PATCH:AI-DETECT-MERGE-002A] Avoid extra detect when ONE-CALL on ====
-        // If AI_ONECALL_ENABLED is ON, and non-sticky routing will use aiOrchestrate(),
-        // skip aiDetectLangIntent here to prevent a 2nd model hit in the same turn.
-        // ----------------------------------------------------------------------------
-        const ONECALL = AI_ONECALL_ENABLED && USE_AI_ORCHESTRATOR;
-        if (useAI && !ONECALL) {
-          const ai = await aiDetectLangIntent(text);
-          if (ai.language) detectedLanguage = ai.language;
-          detectedLanguage = autoLatnIfRoman(detectedLanguage, text);
-          try {
-            const shopId = String(from ?? '').replace('whatsapp:', '');
-            if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, detectedLanguage);
-          } catch (_e) {}
-          console.log(`[${requestId}] AI lang=${ai.language} intent=${ai.intent}`);
-        } // else ONECALL → orchestrator will provide language/txn in a single call
-        // ===== [PATCH:AI-DETECT-MERGE-002A] END ====================================
-
+            const useAI = _shouldUseAI(text, detectedLanguage);
+            if (useAI) {
+              const ai = await aiDetectLangIntent(text);            
+              if (ai.language) detectedLanguage = ai.language;
+                        // Re-enable *-latn auto-detection (single-script only; no bilingual generation)
+                        detectedLanguage = autoLatnIfRoman(detectedLanguage, text);
+              try {
+                const shopId = String(from ?? '').replace('whatsapp:', '');
+                if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, detectedLanguage);
+              } catch (_e) {}
+              console.log(`[${requestId}] AI lang=${ai.language} intent=${ai.intent}`);
+            }
             // 3) Optional AI if non-ASCII but heuristics left it at 'en'
             if (!useAI && detectedLanguage === 'en' && !/^[a-z0-9\s.,!?'\"@:/\-]+$/i.test(lowerText)) {
               try {
@@ -3036,12 +2775,11 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
   
   // 2) Plan gating: only show menus for activated users (trial/paid).
      //    Unactivated users receive a concise CTA to start the trial/paid plan.
-    let plan = 'demo';
-      try {
-        // Batch plan + pref in one go
-        const pre = await parallelPreflightReads(From);
-        const pref = pre?.pref;
-        if (pref?.success && pref.plan) plan = String(pref.plan).toLowerCase();
+     let plan = 'demo';
+     try {
+       const pref = await getUserPreference(toNumber);
+       if (pref?.success && pref.plan) plan = String(pref.plan).toLowerCase();
+     } catch { /* ignore plan read */ }
      const isActivated = (plan === 'trial' || plan === 'paid');
           
       if (!isActivated) {
@@ -3151,7 +2889,6 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
       }
 
   try { markWelcomed(toNumber); } catch {}
-} catch {}
 }
 
 // ---------------------------------------------------------------------------
@@ -3445,13 +3182,11 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
   const shopId = shopIdFrom(From);
   const lang   = await detectLanguageWithFallback(text, From, requestId);
   const peek   = classifyDiagnosticPeek(text);
-  if (!peek) return false;  
-  
-  // Read current sticky state (do not mutate action) — batched
-    let st = null;
-    try {
-      const pre = await parallelPreflightReads(From);
-      st = pre?.state ?? null;
+  if (!peek) return false;
+
+  // Read current sticky state (do not mutate action)
+  let st = null;
+  try { st = await getUserStateFromDB(shopId); } catch (_) {}
   const modeBadge = getModeBadge(stickyAction ?? (st?.data?.action ?? null), lang);
 
   // Track consecutive peeks to nudge if needed
@@ -3546,7 +3281,6 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
 
   handledRequests?.add?.(requestId); // avoid late apology
   return true;
-} catch (_) {}
 }
 // ===== [PATCH:HYBRID-DIAGNOSTIC-HANDLER-003] END =====
 
@@ -12242,17 +11976,6 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         handledRequests.add(requestId);
         return res.send(response.toString());
       }
-
-      // ============================================================================
-      // ===== [PATCH:CONFIRM-DEDUP-009A] SHORT-CIRCUIT SUMMARY IF CONFIRM SENT ====
-      // If we already sent the strict per-item confirmation in this request,
-      // skip sending legacy translated confirm/summary to avoid duplicates.
-      // ----------------------------------------------------------------------------
-      if (wasConfirmAlreadySent(requestId)) {
-        handledRequests.add(requestId);
-        return res.send(response.toString()); // Twilio ACK; no second message
-      }
-      // ============================================================================
 
 // Get user's preferred language for the response
      let userLanguage = detectedLanguage;
