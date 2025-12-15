@@ -377,6 +377,42 @@ async function aiParseTxnOnce(text) {
 }
 // ===== [PATCH:AI-MERGE-ONECALL-002] END =====================================
 
+// ============================================================================
+// ===== [PATCH:PARALLEL-PREFLIGHT-003] BEGIN =================================
+// Purpose: run all early reads in parallel (auth, plan, state, preference).
+// Use this helper at the start of request handling / orchestration / parsing.
+// ----------------------------------------------------------------------------
+/**
+ * parallelPreflightReads(from):
+ * Returns { auth, planInfo, state, pref } with best-effort nulls if any fail.
+ * NOTE: Uses lightweight caches where available (e.g., getUserPlanQuick/getUserStateQuick).
+ */
+async function parallelPreflightReads(from) {
+  const shopId = shopIdFrom(from);
+  const tasks = [
+    // If your codebase has a no-op or soft-auth in some paths, keep it here.
+    (typeof checkAuth === 'function' ? checkAuth(from) : Promise.resolve(null)),
+    getUserPlanQuick(shopId),      // TTL cache (PLAN_CACHE_TTL)
+    getUserStateQuick(shopId),     // TTL cache (STATE_CACHE_TTL)
+    getUserPreference(shopId)      // DB read
+  ];
+  const [authRes, planRes, stateRes, prefRes] = await Promise.allSettled(tasks);
+  const pre = {
+    auth:     authRes.status  === 'fulfilled' ? authRes.value   : null,
+    planInfo: planRes.status  === 'fulfilled' ? planRes.value   : null,
+    state:    stateRes.status === 'fulfilled' ? stateRes.value  : null,
+    pref:     prefRes.status  === 'fulfilled' ? prefRes.value   : null
+  };
+  try {
+    console.log('[preflight]', {
+      shopId, hasAuth: !!pre.auth, hasPlan: !!pre.planInfo,
+      hasState: !!pre.state, hasPref: !!pre.pref
+    });
+  } catch (_) {}
+  return pre;
+}
+// ===== [PATCH:PARALLEL-PREFLIGHT-003] END ===================================
+
 function __toBool(v) {
   const s = String(v ?? '').trim().toLowerCase();
   return s === '1' || s === 'true' || s === 'yes' || s === 'on';
@@ -792,8 +828,13 @@ async function parseMultipleUpdates(reqOrText) {
      // ----------------------------------------------------------------------
      let t = String(transcript ?? '').trim();
      t = wordsToNumber(t);     
-  // Prefer DB state; use in-memory fallback if DB read is transiently null
-  const userState = (await getUserStateFromDB(shopId)) || globalState.conversationState[shopId] || null;      
+  // Prefer DB state; use in-memory fallback if DB read is transiently null   
+  // ===== [PATCH:PARALLEL-PREFLIGHT-003B] Batched reads for state/prefs/plan ====
+    let pre = null;
+    try { pre = await parallelPreflightReads(from); } catch (_) { pre = null; }
+    const userState = (pre?.state)
+      || globalState.conversationState[shopId]
+      || null;  
   
   // --- [NEW EARLY EXIT: trial-onboarding capture] ---------------------------------
   // If user is in onboarding flow, consume this message and do not parse as inventory        
@@ -1462,15 +1503,18 @@ function looksLikeTxnLite(s) {
  * - aiTxn: parsed transaction skeleton (NEVER auto-applied; deterministic parser still decides).
  * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
  */
-async function applyAIOrchestration(text, From, detectedLanguageHint, requestId) {             
+async function applyAIOrchestration(text, From, detectedLanguageHint, requestId) {                     
     try {
         const shopId = String(From ?? '').replace('whatsapp:', '');
-        const st = await getUserStateFromDB(shopId).catch(() => null);
+        // ===== [PATCH:PARALLEL-PREFLIGHT-003A] Use batched preflight reads =====
+        const pre = await parallelPreflightReads(From);
+        const st  = pre.state;
         if (st?.mode === 'onboarding_trial_capture') {
-          const pinned = st?.data?.lang ?? (await getUserPreference(shopId).catch(() => ({})))?.language;
+          const pinned = st?.data?.lang ?? pre?.pref?.language;
           if (pinned) detectedLanguageHint = String(pinned).toLowerCase();
         }
-      } catch {}
+      } catch { }
+
     if (!USE_AI_ORCHESTRATOR) return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
       const shopId = shopIdFrom(From);
       
@@ -2881,11 +2925,13 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
   
   // 2) Plan gating: only show menus for activated users (trial/paid).
      //    Unactivated users receive a concise CTA to start the trial/paid plan.
-     let plan = 'demo';
-     try {
-       const pref = await getUserPreference(toNumber);
-       if (pref?.success && pref.plan) plan = String(pref.plan).toLowerCase();
-     } catch { /* ignore plan read */ }
+         
+    let plan = 'demo';
+      try {
+        // Batch plan + pref in one go
+        const pre = await parallelPreflightReads(From);
+        const pref = pre?.pref;
+        if (pref?.success && pref.plan) plan = String(pref.plan).toLowerCase();
      const isActivated = (plan === 'trial' || plan === 'paid');
           
       if (!isActivated) {
@@ -3288,11 +3334,13 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
   const shopId = shopIdFrom(From);
   const lang   = await detectLanguageWithFallback(text, From, requestId);
   const peek   = classifyDiagnosticPeek(text);
-  if (!peek) return false;
-
-  // Read current sticky state (do not mutate action)
-  let st = null;
-  try { st = await getUserStateFromDB(shopId); } catch (_) {}
+  if (!peek) return false;  
+  
+  // Read current sticky state (do not mutate action) — batched
+    let st = null;
+    try {
+      const pre = await parallelPreflightReads(From);
+      st = pre?.state ?? null;
   const modeBadge = getModeBadge(stickyAction ?? (st?.data?.action ?? null), lang);
 
   // Track consecutive peeks to nudge if needed
