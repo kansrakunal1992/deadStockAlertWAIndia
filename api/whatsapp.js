@@ -156,7 +156,7 @@ const handledRequests = new Set();            // <- used by parse-error & upsell
 if (typeof globalThis.setUserState !== 'function') {      
     globalThis.setUserState = async function setUserState(from, mode, data = {}) {
         try {
-          const shopId = String(from ?? '').replace('whatsapp:', '');                    
+          const shopId = shopIdFrom(from);                   
           // Auto-stamp TTL & createdAtISO ONLY for ephemeral override modes.
                 const isEphemeral = EPHEMERAL_OVERRIDE_MODES.has(String(mode ?? '').toLowerCase());
                 const payload = isEphemeral
@@ -176,7 +176,7 @@ if (typeof globalThis.setUserState !== 'function') {
 if (typeof globalThis.getUserState !== 'function') {
   globalThis.getUserState = async function getUserState(from) {
     try {
-      const shopId = String(from ?? '').replace('whatsapp:', '');
+      const shopId = shopIdFrom(from);
       if (typeof getUserStateFromDB === 'function') {
         return await getUserStateFromDB(shopId);
       }
@@ -3166,7 +3166,7 @@ function classifyDiagnosticPeek(text) {
  * Optionally refreshes TTL once per sticky session.
  */
 async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
-  const shopId = String(From).replace('whatsapp:', '');
+  const shopId = shopIdFrom(From);
   const lang   = await detectLanguageWithFallback(text, From, requestId);
   const peek   = classifyDiagnosticPeek(text);
   if (!peek) return false;
@@ -3884,9 +3884,15 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
               await sendMessageViaAPI(from, fixNewlines(msg));
               try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: true }); } catch {}
               return true;
-            }
-            await beginTrialOnboarding(from, lang);
-            return true;
+            }                        
+            if (CAPTURE_SHOP_DETAILS_ON === 'paid') {
+                // Immediate trial activation (no capture)
+                await activateTrialFlow(from, lang);
+              } else {
+                // Legacy behavior: capture during trial
+                await beginTrialOnboarding(from, lang);
+              }
+              return true;
   }
   
   // --- NEW: Demo button ---     
