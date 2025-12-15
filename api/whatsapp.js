@@ -228,6 +228,28 @@ async function getUserStateQuick(shopId) {
   return st;
 }
 
+// ---------------------------------------------------------------------------
+// E.164 normalizer (India default). Always pass E.164 to Airtable/DB lookups.
+// Accepts: "whatsapp:+919013283687", "+919013283687", "9013283687", "91XXXXXXXXXX"
+// Returns: "+919013283687" (best-effort)
+// ---------------------------------------------------------------------------
+function toE164(input) {
+  const raw = String(input || '');
+  const noPrefix = raw.replace(/^whatsapp:/, '');
+  const digits = noPrefix.replace(/\D+/g, '');
+  // Already E.164-ish with leading '+'
+  if (noPrefix.startsWith('+') && digits.length >= 10) return noPrefix;
+  // 91XXXXXXXXXX → +91XXXXXXXXXX
+  if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
+  // 10-digit local Indian number → +91XXXXXXXXXX
+  if (digits.length === 10) return `+91${digits}`;
+  // Fallback: return without the 'whatsapp:' prefix
+  return noPrefix;
+}
+
+// Convenience: always prefer E.164 for DB-facing shopId derivations
+const shopIdFrom = (From) => toE164(From);
+
 // ===== Ephemeral overrides (auto-clear only for these modes) ===================
 // We will auto-stamp TTLs, auto-expire on read, and schedule a best-effort timer.
 const EPHEMERAL_OVERRIDE_MODES = new Set(['awaitingBatchOverride','awaitingPurchaseExpiryOverride']);
@@ -1367,7 +1389,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
         }
       } catch {}
     if (!USE_AI_ORCHESTRATOR) return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
-      const shopId = String(From ?? '').replace('whatsapp:', '');
+      const shopId = shopIdFrom(From);
       // ---- Sticky-mode clamp: if user is in purchase/sale/return, force inventory routing
       try {
         const stickyAction = await getStickyActionQuick(From);
@@ -2343,7 +2365,7 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
     // Guard: if footer already present, do not append again
     if (/«.+\s•\s.+»$/.test(text)) return text;
 
-    const shopId = String(from).replace('whatsapp:', '');
+    const shopId = shopIdFrom(from);
     
 
     // 1) Activation gate: only show badge if plan is active            
@@ -3030,7 +3052,7 @@ const PAID_CONFIRM_TTL_MS = Number(process.env.PAID_CONFIRM_TTL_MS ?? (5 * 60 * 
 function _hash(s) { try { return crypto.createHash('sha256').update(String(s ?? '')).digest('hex'); } catch { return String(s ?? '').length.toString(16); } }
 async function sendWhatsAppPaidConfirmation(From) {
   try {
-    const shopId = String(From).replace('whatsapp:', '');
+    const shopId = shopIdFrom(From);
     // Resolve language
     let lang = 'en';
     try {
@@ -3330,7 +3352,7 @@ function _isSkipGST(s) {
 }
 
 async function beginTrialOnboarding(From, lang = 'en') {
-  const shopId = String(From).replace('whatsapp:', '');
+  const shopId = shopIdFrom(From);
   // ✅ Always store by shopId (without "whatsapp:") to match DB readers
   await setUserState(shopId, 'onboarding_trial_capture', { step: 'name', collected: {}, lang });
   try { await saveUserPreference(shopId, lang); } catch {}
@@ -3469,7 +3491,7 @@ if (typeof globalThis.startTrialForAuthUser !== 'function') {
 
 // --- typed path now begins capture (no immediate activation)
 async function activateTrialFlow(From, lang = 'en') {
-  const shopId = String(From).replace('whatsapp:', '');
+  const shopId = shopIdFrom(From);
   try {
     const planInfo = await getUserPlan(shopId);
     const plan = String(planInfo?.plan ?? '').toLowerCase();
@@ -3500,7 +3522,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
     const from = rawFrom && String(rawFrom).startsWith('whatsapp:')
        ? String(rawFrom)
        : `whatsapp:${String(rawFrom ?? '').replace(/^whatsapp:/, '')}`;
-     const shopIdTop = String(from ?? '').replace('whatsapp:', '');
+    const shopIdTop = shopIdFrom(from);
      
     // STEP 12: 3s duplicate‑tap guard (per shop + payload)
     const _recentTaps = (globalThis._recentTaps ||= new Map()); // shopId -> { payload, at }
@@ -4117,23 +4139,39 @@ const {
   refreshUserStateTimestamp
 } = require('../database');
 
-
-// ===== Canonicalize ShopID utility (digits-only) ==============================
-function getCanonicalShopId(fromOrDigits) {
+// ===== ShopID helpers ========================================================
+// Keep digits-only only for non-DB use (e.g., filenames, local keys).
+function toDigitsOnly(fromOrDigits) {
   const raw = String(fromOrDigits ?? '');
-  const digits = raw.replace(/^whatsapp:/, '').replace(/\D+/g, '');
-  const canon = digits.startsWith('91') && digits.length >= 12 ? digits.slice(2) : digits.replace(/^0+/, '');
-  return canon;
+  return raw.replace(/^whatsapp:/, '').replace(/\D+/g, '');
 }
-
-// Convenience: return canonical ShopID from From
+// Return E.164 for DB calls; used by shopIdFrom(From) above
 function fromToShopId(From) {
-  return getCanonicalShopId(From);
+  return shopIdFrom(From); // now E.164 (e.g., "+919013283687")
 }
 
 // --- No-op fallback for builds where cleanupCaches isn't bundled
 if (typeof cleanupCaches === 'undefined') {
   function cleanupCaches() { /* noop */ }
+}
+
+// ---------------------------------------------------------------------------
+// Guarded invoice shop-details fetch (always E.164). Use upstream where needed.
+// ---------------------------------------------------------------------------
+async function ensureShopDetailsForInvoice(From) {
+  const phoneE164 = shopIdFrom(From);
+  let details = null;
+  try {
+    // getShopDetails expects the phone key used in Airtable (E.164)
+    details = await getShopDetails(phoneE164);
+  } catch (_) {}
+  if (!details) {
+    // Friendly nudge instead of silent failure
+    await sendMessageViaAPI(From, '⚠️ Shop details not found. Please complete onboarding (name, address, GSTIN) before generating invoices.');
+    return null;
+  }
+  // Ensure the generator sees E.164 as shopId; it will strip for filenames itself.
+  return { ...details, shopId: phoneE164 };
 }
 
 /**
@@ -4272,7 +4310,7 @@ function getBenefitsVideoUrl(lang = 'en') {
  */
 async function sendOnboardingBenefitsVideo(From, lang = 'en') {
   try {
-    const toNumber    = String(From).replace('whatsapp:', '');
+    const toNumber = shopIdFrom(From);
     const L           = String(lang ?? 'en').toLowerCase();
     const rawUrl      = getBenefitsVideoUrl(L);
     if (!rawUrl) { console.warn('[onboard-benefits] No video URL configured; skipping'); return; }
@@ -4745,7 +4783,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       handledRequests.add(String(source || 'qq') + '::terminal'); // suppress late apologies in-cycle
     }
   } catch (_) { /* noop */ }
-  const shopId = String(From).replace('whatsapp:', '');
+  const shopId = shopIdFrom(From);
 
   const sendTagged = async (body) => {    
 // keep existing per-command cache key (already unique & scoped)            
