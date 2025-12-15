@@ -3113,6 +3113,7 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
       }
 
   try { markWelcomed(toNumber); } catch {}
+} catch {}
 }
 
 // ---------------------------------------------------------------------------
