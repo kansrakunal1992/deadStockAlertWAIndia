@@ -738,16 +738,18 @@ async function parseMultipleUpdates(reqOrText) {
   const userState = (await getUserStateFromDB(shopId)) || globalState.conversationState[shopId] || null;      
   
   // --- [NEW EARLY EXIT: trial-onboarding capture] ---------------------------------
-  // If user is in onboarding flow, consume this message and do not parse as inventory
-      if (userState && userState.mode === 'onboarding_trial_capture') {
-        try {
-          const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'trial-capture');
-          await handleTrialOnboardingStep(from || `whatsapp:${shopId}`, transcript, langHint, requestId);
-        } catch (e) {
-          console.warn('[onboard-capture] step failed:', e?.message);
-        }
-        return []; // nothing to parse downstream
-      }
+  // If user is in onboarding flow, consume this message and do not parse as inventory        
+  if (userState && (userState.mode === 'onboarding_trial_capture' || userState.mode === 'onboarding_paid_capture')) {
+     try {
+       const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'onboard-capture');
+       if (userState.mode === 'onboarding_trial_capture') {
+         await handleTrialOnboardingStep(from ?? `whatsapp:${shopId}`, transcript, langHint, requestId);
+       } else {
+         await handlePaidOnboardingStep(from ?? `whatsapp:${shopId}`, transcript, langHint, requestId);
+       }
+     } catch (e) { console.warn('[onboard-capture] step failed:', e?.message); }
+     return []; // consume onboarding messages
+   }
     
   // Standardize valid actions (canonical: purchased, sold, returned)
   const VALID_ACTIONS = ['purchased', 'sold', 'returned'];
@@ -3079,7 +3081,16 @@ async function sendWhatsAppPaidConfirmation(From) {
     const h = _hash(body); const prev = _paidConfirmGuard.get(shopId); const now = Date.now();
     if (prev && (now - prev.at) < PAID_CONFIRM_TTL_MS && prev.lastHash === h) { console.log('[paid-confirm] suppressed duplicate', { shopId }); return; }
     _paidConfirmGuard.set(shopId, { at: now, lastHash: h });
-    await sendMessageDedup(From, body);
+    await sendMessageDedup(From, body);        
+    // If configured for paid capture and details are incomplete, start capture
+      try {
+        if (CAPTURE_SHOP_DETAILS_ON === 'paid') {
+          const shopId = shopIdFrom(From);
+          const details = await getShopDetails(shopId).catch(() => null);
+          const missing = !details || !details.name || !details.address; // keep GSTIN optional
+          if (missing) { await beginPaidOnboarding(From, lang); }
+        }
+      } catch (_) {}
   } catch (e) {
     console.warn('[paid-confirm] failed:', e?.message);
   }
@@ -3479,6 +3490,87 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
   return false;
 }
 
+// === Paid onboarding (collect details after payment) ===
+async function beginPaidOnboarding(From, lang = 'en') {
+  const shopId = shopIdFrom(From);
+  await setUserState(shopId, 'onboarding_paid_capture', { step: 'name', collected: {}, lang });
+  try { await saveUserPreference(shopId, lang); } catch {}
+  const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `paid-onboard-name-${shopId}`);
+  await sendMessageViaAPI(From, askName);
+}
+
+async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = null) {
+  const shopId = String(From).replace('whatsapp:', '');
+  const state = await getUserStateFromDB(shopId);
+  if (!state || state.mode !== 'onboarding_paid_capture') return false;
+
+  const data = state.data?.collected ?? {};
+  const step = state.data?.step ?? 'name';
+
+  // Keep language stable for code-like inputs (GSTIN)
+  try {
+    const pref = await getUserPreference(shopId).catch(() => ({ language: lang }));
+    const currentLang = String(pref?.language ?? lang ?? 'en').toLowerCase();
+    lang = await checkAndUpdateLanguageSafe(String(text ?? ''), From, currentLang, `paid-onboard-${shopId}`);
+  } catch (_) {}
+
+  if (step === 'name') {
+    data.name = String(text ?? '').trim();
+    await setUserState(shopId, 'onboarding_paid_capture', { step: 'gstin', collected: data, lang });
+    const askGstin = await t(
+      NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'Enter your *GSTIN* (type "*NA*" or *skip* if not available).',
+      lang, `paid-onboard-gstin-${shopId}`
+    );
+    await sendMessageViaAPI(From, finalizeForSend(askGstin, lang));
+    try { if (requestId) handledRequests.add(requestId); } catch {}
+    return true;
+  }
+
+  if (step === 'gstin') {
+    const raw = String(text ?? '').trim();
+    data.gstin = _isSkipGST(raw) ? null : raw;
+    await setUserState(shopId, 'onboarding_paid_capture', { step: 'address', collected: data, lang });
+    const askAddr = await t(
+      NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'Please share your *Shop Address* (area, city).',
+      lang, `paid-onboard-address-${shopId}`
+    );
+    await sendMessageViaAPI(From, finalizeForSend(askAddr, lang));
+    try { if (requestId) handledRequests.add(requestId); } catch {}
+    return true;
+  }
+
+  if (step === 'address') {
+    data.address = String(text ?? '').trim();
+
+    // Save details
+    try { await upsertAuthUserDetails(shopId, { name: data.name, gstin: data.gstin, address: data.address, phone: shopId }); }
+    catch (e) { console.warn('[paid-onboard] upsertAuthUserDetails failed:', e?.message); }
+
+    // Mark paid (prefer markAuthUserPaid; fallback saveUserPlan)
+    try { await markAuthUserPaid(shopId); }
+    catch (e) { console.warn('[paid-onboard] markAuthUserPaid failed:', e?.message); try { await saveUserPlan(shopId, 'paid'); } catch {} }
+
+    try { await clearUserState(shopId); } catch {}
+
+    let msg0 = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + '✅ Paid Plan activated. Thank you! Your details are saved.', lang, `paid-onboard-done-${shopId}`);
+    await sendMessageViaAPI(From, finalizeForSend(msg0, lang));
+
+    // Normal paid confirmation + menus
+    try { await sendWhatsAppPaidConfirmation(From); } catch {}
+    try {
+      await ensureLangTemplates(lang);
+      const sids = getLangSids(lang);
+      if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
+      if (sids?.listPickerSid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.listPickerSid });
+    } catch (e) { console.warn('[paid-onboard] menu orchestration failed', e?.response?.status, e?.response?.data); }
+
+    try { if (requestId) handledRequests.add(requestId); } catch {}
+    return true;
+  }
+
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // (Optional) Defensive shims: never throw if helpers are absent during rollout
 // ---------------------------------------------------------------------------
@@ -3502,9 +3594,26 @@ async function activateTrialFlow(From, lang = 'en') {
       await sendMessageViaAPI(From, msg);
       return { success: true, already: true };
     }
-  } catch { /* continue */ }
-  await beginTrialOnboarding(From, lang);
-  return { success: true, startedCapture: true };
+  } catch { /* continue */ }    
+  if (CAPTURE_SHOP_DETAILS_ON === 'paid') {
+      // Activate trial immediately (no capture)
+      try { await startTrialForAuthUser(shopId, TRIAL_DAYS); } catch (_) {}
+      const msgRaw = `${NO_CLAMP_MARKER}${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
+                     `Try:\n• short summary\n• price list\n• "10 Parle-G sold at 11/packet"`;
+      let msgTranslated = await t(msgRaw, lang, `trial-activated-${shopId}`);
+      await sendMessageViaAPI(From, finalizeForSend(msgTranslated, lang));
+      try { (globalThis._recentActivations = globalThis._recentActivations ?? new Map()).set(shopId, Date.now()); } catch {}
+      try {
+        await ensureLangTemplates(lang);
+        const sids = getLangSids(lang);
+        if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
+        if (sids?.listPickerSid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.listPickerSid });
+      } catch (_) {}
+      return { success: true, activatedTrial: true };
+    }
+    // legacy: capture on trial if toggle != 'paid'
+    await beginTrialOnboarding(From, lang);
+    return { success: true, startedCapture: true };
 }
 
 // Map button taps / list selections to your existing quick‑query router
@@ -3857,7 +3966,11 @@ if (payload === 'confirm_paid') {
     }
   } catch (e) {
     console.warn('[confirm_paid] re-send failed', e?.response?.status, e?.response?.data);
-  }
+  }    
+  // Begin paid onboarding capture (shop name, GSTIN, address)
+    if (CAPTURE_SHOP_DETAILS_ON === 'paid') {
+      try { await beginPaidOnboarding(from, langPref); } catch (e) { console.warn('[confirm_paid] beginPaidOnboarding failed:', e?.message); }
+    }
   return true;
 }
      
