@@ -661,6 +661,19 @@ function normalizeUserTextForKey(s) {
     .replace(/\s+/g, ' ')
     .replace(/[^\p{L}\p{N}\s₹\.]/gu, '');
 }
+
+ // ===== NEW: Safe normalizer to avoid "text is not defined" =====
+ function safeNormalizeForQuickQuery(input) {
+   const msg = String(input ?? '').trim();
+   try {
+     const canon = normalizeUserTextForKey(msg);
+     return canon;
+   } catch (e) {
+     console.warn('[quick-query normalize] failed:', e?.message);
+     return msg;
+   }
+ }
+
 // Build a robust Sales-QA key that separates language variants & topics
 // Using base64 for log readability (your logs show base64 promptHash values)
 
@@ -1493,6 +1506,74 @@ function isPriceLikeMessage(s) {
   return false;
 }
 
+// ===== NEW: Skip-message detector (multilingual) =====
+function isSkipMessage(s) {
+  const t = String(s ?? '').trim();
+  if (!t) return false;
+
+  // Accept pure English signals
+  const en = /^(skip|na|n\/a|none|no)$/i;
+  if (en.test(t)) return true;
+
+  // Hinglish (Romanized Hindi) common forms
+  const hiLatn = /\b(skip|chhod|chod|chhodo|bypass)\b/i;
+  if (hiLatn.test(t.toLowerCase())) return true;
+
+  // Hindi (Devanagari): “स्किप”, “छोड़ें”, “छोड़ो”, “बायपास”
+  const hiNative = /(\u0938\u094d\u0915\u093f\u092a|स्किप|छोड़ें|छोड़ो|बायपास)/u;
+  if (hiNative.test(t)) return true;
+
+  // Bengali: “স্কিপ”, “ছাড়ুন”
+  const bnNative = /(স্কিপ|ছাড়ুন)/u;
+  if (bnNative.test(t)) return true;
+
+  // Tamil: “ஸ்கிப்”, “தவிர்”
+  const taNative = /(ஸ்கிப்|தவிர்)/u;
+  if (taNative.test(t)) return true;
+
+  // Telugu: “స్కిప్”, “వదిలేయి”
+  const teNative = /(స్కిప్|వదిలేయి)/u;
+  if (teNative.test(t)) return true;
+
+  // Kannada: “ಸ್ಕಿಪ್”, “ಬಿಟ್ಟಿಡಿ”
+  const knNative = /(ಸ್ಕಿಪ್|ಬಿಟ್ಟಿಡಿ)/u;
+  if (knNative.test(t)) return true;
+
+  // Marathi: “स्किप”, “सोडा”
+  const mrNative = /(स्किप|सोडा)/u;
+  if (mrNative.test(t)) return true;
+
+  // Gujarati: “સ્કિપ”, “છોડી દો”
+  const guNative = /(સ્કિપ|છોડી દો)/u;
+  if (guNative.test(t)) return true;
+
+  return false;
+}
+
+// ===== NEW: Dedup correction writes (TTL) =====
+const CORR_DEDUPE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+const _corrSeen = new Map(); // key -> { ts }
+function _corrKey(shopId, payload) {
+  const base = `${shopId}::${String(payload?.product ?? '')}::${String(payload?.quantity ?? '')}::${String(payload?.unit ?? '')}`;
+  let h = 2166136261;
+  for (let i = 0; i < base.length; i++) {
+    h ^= base.charCodeAt(i);
+    h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+  }
+  return String(h >>> 0);
+}
+function seenDuplicateCorrection(shopId, payload) {
+  const k = _corrKey(shopId, payload);
+  const now = Date.now();
+  const hit = _corrSeen.get(k);
+  if (hit && (now - hit.ts) < CORR_DEDUPE_TTL_MS) return true;
+  _corrSeen.set(k, { ts: now });
+  if (_corrSeen.size > 1000) {
+    for (const [kk, vv] of _corrSeen) if ((now - vv.ts) > CORR_DEDUPE_TTL_MS) _corrSeen.delete(kk);
+  }
+  return false;
+}
+
 // ===== NEW: price-await helpers (auto-park previous item, rupee default) =====
 const DEFAULT_CURRENCY_SYMBOL = '₹';
 
@@ -1518,7 +1599,11 @@ async function parkPendingPriceDraft(shopId, st, langHint = 'en') {
       quantity: st.data.quantity ?? null,
       unit: st.data.unit ?? null,
       createdAtISO: st.data.createdAtISO ?? new Date().toISOString()
-    };
+    };   
+    // NEW: TTL dedupe — skip writing duplicate “pricePending” rows
+    if (seenDuplicateCorrection(shopId, payload)) {
+      return;
+    }
     await saveCorrectionState(shopId, 'pricePending', payload, langHint);
     // We keep the ephemeral state intact so user can still reply with price;
     // parking here only records the pending task.
