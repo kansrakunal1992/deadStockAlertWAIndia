@@ -472,17 +472,56 @@ function autoLatnIfRoman(languageCode, sourceText) {
   }
 }
 
-// ==== NEW: Units mapping + low-stock composer (Hindi/Nativeglish) ===========
-const UNIT_MAP_HI = {
-  kg: 'किलो', g: 'ग्राम', gm: 'ग्राम', ml: 'एमएल', l: 'लीटर', ltr: 'लीटर',
-  packet: 'पैकेट', packets: 'पैकेट', piece: 'पीस', pieces: 'पीस',
-  box: 'बॉक्स', boxes: 'बॉक्स', bottle: 'बोतल', bottles: 'बोतल', dozen: 'दर्जन',
-  metre: 'मीटर', metres: 'मीटर'
+// ==== NEW: Units mapping for all supported languages (base code only) ===========
+const UNIT_MAP = {
+  hi: {
+    kg: 'किलो', g: 'ग्राम', gm: 'ग्राम', ml: 'एमएल', l: 'लीटर', ltr: 'लीटर',
+    packet: 'पैकेट', packets: 'पैकेट', piece: 'पीस', pieces: 'पीस',
+    box: 'बॉक्स', boxes: 'बॉक्स', bottle: 'बोतल', bottles: 'बोतल', dozen: 'दर्जन',
+    metre: 'मीटर', metres: 'मीटर'
+  },
+  bn: {
+    kg: 'কেজি', g: 'গ্রাম', gm: 'গ্রাম', ml: 'এমএল', l: 'লিটার', ltr: 'লিটার',
+    packet: 'প্যাকেট', packets: 'প্যাকেট', piece: 'পিস', pieces: 'পিস',
+    box: 'বাক্স', boxes: 'বাক্স', bottle: 'বোতল', bottles: 'বোতল', dozen: 'ডজন',
+    metre: 'মিটার', metres: 'মিটার'
+  },
+  ta: {
+    kg: 'கி', g: 'கிராம்', gm: 'கிராம்', ml: 'எம்எல்', l: 'லிட்டர்', ltr: 'லிட்டர்',
+    packet: 'பாக்கெட்', packets: 'பாக்கெட்', piece: 'பீஸ்', pieces: 'பீஸ்',
+    box: 'பெட்டி', boxes: 'பெட்டிகள்', bottle: 'பாட்டில்', bottles: 'பாட்டில்கள்', dozen: 'டஜன்',
+    metre: 'மீட்டர்', metres: 'மீட்டர்'
+  },
+  te: {
+    kg: 'కిలో', g: 'గ్రామ్', gm: 'గ్రామ్', ml: 'ఎంఎల్', l: 'లీటర్', ltr: 'లీటర్',
+    packet: 'ప్యాకెట్', packets: 'ప్యాకెట్లు', piece: 'పీసు', pieces: 'పీసులు',
+    box: 'డబ్బా', boxes: 'డబ్బాలు', bottle: 'సీసా', bottles: 'సీసాలు', dozen: 'డజన్',
+    metre: 'మీటరు', metres: 'మీటర్లు'
+  },
+  kn: {
+    kg: 'ಕೆಜಿ', g: 'ಗ್ರಾಂ', gm: 'ಗ್ರಾಂ', ml: 'ಎಂಎಲ್', l: 'ಲೀಟರ್', ltr: 'ಲೀಟರ್',
+    packet: 'ಪ್ಯಾಕೆಟ್', packets: 'ಪ್ಯಾಕೆಟ್‌ಗಳು', piece: 'ಪೀಸ್', pieces: 'ಪೀಸ್‌ಗಳು',
+    box: 'ಬಾಕ್ಸ್', boxes: 'ಬಾಕ್ಸ್‌ಗಳು', bottle: 'ಬಾಟಲ್', bottles: 'ಬಾಟಲಿಗಳು', dozen: 'ಡಜನ್',
+    metre: 'ಮೀಟರ್', metres: 'ಮೀಟರ್'
+  },
+  mr: {
+    kg: 'किलो', g: 'ग्रॅम', gm: 'ग्रॅम', ml: 'एमएल', l: 'लिटर', ltr: 'लिटर',
+    packet: 'पॅकेट', packets: 'पॅकेट', piece: 'पीस', pieces: 'पीस',
+    box: 'बॉक्स', boxes: 'बॉक्स', bottle: 'बाटली', bottles: 'बाटल्या', dozen: 'डझन',
+    metre: 'मीटर', metres: 'मीटर'
+  },
+  gu: {
+    kg: 'કિલો', g: 'ગ્રામ', gm: 'ગ્રામ', ml: 'એમએલ', l: 'લિટર', ltr: 'લિટર',
+    packet: 'પેકેટ', packets: 'પેકેટ', piece: 'પીસ', pieces: 'પીસ',
+    box: 'બોક્સ', boxes: 'બોક્સ', bottle: 'બોટલ', bottles: 'બોટલો', dozen: 'ડઝન',
+    metre: 'મીટર', metres: 'મીટર'
+  }
 };
-
-function displayUnit(unit, lang) {
+function displayUnit(unit, lang = 'en') {
+  const base = String(lang).toLowerCase().replace(/-latn$/, ''); // hi-latn -> hi
   const u = String(unit ?? '').toLowerCase().trim();
-  return lang.startsWith('hi') ? (UNIT_MAP_HI[u] ?? unit) : unit;
+  const map = UNIT_MAP[base];
+  return map ? (map[u] ?? unit) : unit;
 }
 
  // ========================================================================
@@ -1488,19 +1527,24 @@ async function parkPendingPriceDraft(shopId, st) {
   }
 }
 
+// UNIQ:PRICE-REMINDER-BODY-GENERIC-001
+// Generic composer: keep examples universal; let t(...) render in detected language.
+function composePriceReminderTextGeneric(lang, { prod, unit }) {
+  const uDisp = displayUnit(unit || 'unit', lang);
+  // Anchors kept as-is: ₹, "…", per, and "/"
+  return `Price pending for “${prod}” — please send: “₹70”, “₹70 per ${uDisp}”, or “70/${uDisp}”.\nType “skip” to bypass.`;
+}
+
 async function sendPendingPriceReminder(From, st, langHint = 'en') {
-  // Localized, concise, with rupee default examples
-  const prod = String(st?.data?.product ?? '').trim() || 'आइटम';
-  const unit = String(st?.data?.unit ?? '').trim() || 'यूनिट';
-  const qty  = st?.data?.quantity != null ? String(st.data.quantity) : '';
+  
   const example = `${DEFAULT_CURRENCY_SYMBOL}70 प्रति ${unit}`; // e.g., ₹70 प्रति पैकेट
-  const skipCmd = 'skip';
-  const bodySrc =
-    `«${prod}» के ${qty ? qty + ' ' : ''}${unit} के लिए कीमत बाकी है — `
-    + `कृपया “${example}” भेजें या “${skipCmd}” लिखें.\n`
-    + `नया आइटम जारी रखा गया है।`;
-  try {
-    const msg = await t(bodySrc, langHint, 'price-reminder::' + (st?.data?.product ?? 'item'));
+  const skipCmd = 'skip';    
+  const prod = String(st?.data?.product ?? '').trim() || 'item';
+    const unit = String(st?.data?.unit ?? '').trim() || 'unit';
+    const bodySrc = composePriceReminderTextGeneric(langHint, { prod, unit });
+  try {        
+    const msg0 = await t(bodySrc, langHint, 'price-reminder::' + (st?.data?.product ?? 'item'));
+    const msg = finalizeForSend(nativeglishWrap(msg0, langHint), langHint);
     const tagged = await tagWithLocalizedMode(From, msg, langHint);
     await sendMessageViaAPI(From, tagged);
   } catch (e) {
@@ -2553,10 +2597,22 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
     if (action === 'purchase') action = 'purchased';    
 
     // 2) Resolve language to use: prefer saved user preference; else detected hint; else 'en'
-    let lang = String(detectedLanguageHint || 'en').toLowerCase();
-    try {
-      if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-    } catch (_) { /* ignore */ }
+    let lang = String(detectedLanguageHint || 'en').toLowerCase();        
+    // UNIQ:FOOTER-LANG-RESPECT-001
+        // In transactional states, do not override the current turn language with preference.
+        const transactionalModes = new Set([
+          'awaitingtransactiondetails',
+          'awaitingbatchoverride',
+          'awaitingpurchaseexpiryoverride',
+          'awaitingpriceexpiry'
+        ]);
+        const stateModeLc = String(state?.mode ?? '').toLowerCase();
+        const allowPrefOverride = !transactionalModes.has(stateModeLc);
+        try {
+          if (allowPrefOverride && pref?.success && pref.language) {
+            lang = String(pref.language).toLowerCase();
+          }
+        } catch (_) { /* ignore */ }
         
     // 4) If not activated, or effective action is none, do NOT append badge
         const isNone = !action || String(action).trim().length === 0;
@@ -7322,13 +7378,13 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
     }
     
     // ===== NEW: Gate price-handling — if reply isn't price-like, gently re-prompt with ₹ examples =====
-    if (!isPriceLikeMessage(Body)) {
-      const prod = String(state?.data?.product ?? '').trim() || 'आइटम';
-      const unit = String(state?.data?.unit ?? 'यूनिट');
-      const hint = await t(
-        `कृपया «${prod}» के लिए कीमत भेजें — उदाहरण: “₹70”, “₹70 प्रति ${unit}”, या “70/${unit}”.\nनया आइटम लिखने पर उसे अलग से कैप्चर कर दूँगा।`,
-        detectedLanguage, 'price-gate-hint'
-      );
+    if (!isPriceLikeMessage(Body)) {         
+    const prod = String(state?.data?.product ?? '').trim() || 'item';
+        const unit = String(state?.data?.unit ?? 'unit');
+        const gateSrc = composePriceReminderTextGeneric(detectedLanguage, { prod, unit })
+          + `\nIf you type a new item line, I’ll capture it separately.`; // extra guidance
+        const hint0 = await t(gateSrc, detectedLanguage, 'price-gate-hint');
+        const hint = finalizeForSend(nativeglishWrap(hint0, detectedLanguage), detectedLanguage);
       // ANCHOR: UNIQ:PRICE-EXPIRY-ASKGATE-001
       await sendMessageViaAPI(From, finalizeForSend(hint, detectedLanguage));
       return true; // stay in price-await
@@ -12214,7 +12270,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         }
         if (orch.normalizedCommand) {
           handledRequests.add(requestId);
-          await handleQuickQueryEN(orch.normalizedCommand, from, langExact, `${requestId}::ai-norm-confirmed`);
+          await routeQuickQueryRaw(orch.normalizedCommand, from, langExact, `${requestId}::ai-norm-confirmed`);
           return res.send(response.toString());
         }
       } catch (e) {
@@ -13395,7 +13451,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                 return;
               }
           handledRequests.add(requestId);
-          await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-voice`);
+          await routeQuickQueryRaw(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-voice`);
           try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}                        
           return;
         }
@@ -14123,12 +14179,12 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                 } catch (e) {
                   console.warn('[low-stock] compose failed:', e?.message);
                   // Fallback to previous path
-                  await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
+                  await routeQuickQueryRaw(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
                 }
                 _handled = true;
                 return;
               }
-              await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
+              await routeQuickQueryRaw(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
           __handled = true;
           try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}          
           return;
@@ -16032,12 +16088,12 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
             } catch (e) {
               console.warn('[low-stock] compose failed:', e?.message);
               // Fallback to previous path
-              await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
+              await routeQuickQueryRaw(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
             }
             _handled = true;
             return;
           }
-          await handleQuickQueryEN(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);                  
+          await routeQuickQueryRaw(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);                  
           // B: After normalized command reply, if terminal, resurface List‑Picker
               try {
                 const cmd = String(orch.normalizedCommand).toLowerCase().trim();
