@@ -10110,8 +10110,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           ? ` (Stock: ${newQty}${unitText2})`
           : '';
         confirmTextLine = `↩️ Returned ${Math.abs(update.quantity)}${unitText2} ${product}${stockText2}`;
-        console.log(`[return-ack] inlineConfirmText="${confirmTextLine}"`);
-        
+                
         // Collect per-update result for aggregator
         results.push({
           product,
@@ -13339,9 +13338,11 @@ async function sendMessageViaAPI(to, body) {
             
     // If the message fits, (conditionally) tag and send
         if (bodyStripped.length <= MAX_LENGTH) {
+          console.log('[sendMessageViaAPI] Body (raw before tag):', JSON.stringify(bodyStripped));
           const finalText = noFooter
             ? bodyStripped                       // do NOT tag footer
             : await tagWithLocalizedMode(formattedTo, bodyStripped, 'en');
+          console.log('[sendMessageViaAPI] Body (final after tag):', JSON.stringify(finalText));
       const message = await client.messages.create({
         body: finalText,
         from: process.env.TWILIO_WHATSAPP_NUMBER,
