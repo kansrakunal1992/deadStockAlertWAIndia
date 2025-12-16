@@ -263,6 +263,20 @@ function toE164(input) {
 // Convenience: always prefer E.164 for DB-facing shopId derivations
 const shopIdFrom = (From) => toE164(From);
 
+// [PATCH:LANG-FOR-TURN-001] — prefer saved user language for micro-flows (skip/reminder)
+// Context above: toE164, shopIdFrom
+// Context below: EPHEMERAL_OVERRIDE_MODES, TTL helpers
+async function languageForTurn(From, detectedHint = 'en') {
+  try {
+    const shopId = shopIdFrom(From);
+    const pref = await getUserPreference(shopId).catch(() => null);
+    if (pref?.success && pref.language) {
+      return canonicalizeLang(pref.language);
+    }
+  } catch { /* noop */ }
+  return canonicalizeLang(detectedHint ?? 'en');
+}
+
 // ===== Ephemeral overrides (auto-clear only for these modes) ===================
 // We will auto-stamp TTLs, auto-expire on read, and schedule a best-effort timer.
 const EPHEMERAL_OVERRIDE_MODES = new Set(['awaitingBatchOverride','awaitingPurchaseExpiryOverride']);
@@ -655,11 +669,16 @@ function isSafeAnchor(text) {
 }
 
 // Normalize user question for cache key purposes
-function normalizeUserTextForKey(s) {
-  return String(s || '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .replace(/[^\p{L}\p{N}\s₹\.]/gu, '');
+function normalizeUserTextForKey(s) {      
+    // [PATCH:NORMALIZE-SAFE-002] — delegate to safe normalizer everywhere
+      // Context above: helpers & caches
+      // Context below: quick-query cache builder
+      try {
+        return safeNormalizeForQuickQuery(s);
+      } catch (e) {
+        console.warn('[normalizeUserTextForKey] failed:', e?.message);
+        return String(s ?? '').trim().toLowerCase();
+      }
 }
 
  // ===== NEW: Safe normalizer to avoid "text is not defined" =====
@@ -862,7 +881,34 @@ async function parseMultipleUpdates(reqOrText) {
   
   // ===== NEW: Auto-park previous item when awaiting price and a new transaction arrives =====
   try {
-    const stPrice = await getUserStateFromDB(shopId);
+    const stPrice = await getUserStateFromDB(shopId);        
+    // [PATCH:SKIP-PRICEAWAIT-004] — first-class skip handling inside price-await
+        // Context above: price-await detection; below: parkPendingPriceDraft/sendPendingPriceReminder
+        if (isPriceAwaitState(stPrice) && isSkipMessage(t)) {
+          // 1) Clear price-await, keep sticky Purchase mode
+          try { await clearUserState(shopId); } catch { /* noop */ }
+          await setUserState(from, 'awaitingTransactionDetails', { action: 'purchased' });
+          // 2) Resume last transaction-like candidate if we stashed one
+          try {
+            const candidate = stPrice?.data?.pendingNextTxn;
+            if (candidate && looksLikeTxnLite(candidate)) {
+              const resumed = await parseMultipleUpdates(candidate);
+              if (resumed?.length) {
+                // applyInventoryUpdates exists in your flow; use your standard updater
+                await applyInventoryUpdates(from, resumed, 'skip-resume::' + Date.now());
+              }
+            }
+          } catch (e) {
+            console.warn('[skip-resume] failed:', e?.message);
+          }
+          // 3) Localized confirmation honoring preference
+          const langOk = await languageForTurn(from, 'en');
+          const okText = await t('✅ Price step skipped. You can continue adding items.', langOk, 'skip-ok::' + shopId);
+          const okBody = await tagWithLocalizedMode(from, finalizeForSend(okText, langOk), langOk);
+          await sendMessageViaAPI(from, okBody);
+          handledRequests?.add?.('skip-ok::' + shopId);
+          return []; // short-circuit this turn
+        }
     if (isPriceAwaitState(stPrice)) {
       // Detect language once for reminder
       const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'price-await');
@@ -870,7 +916,12 @@ async function parseMultipleUpdates(reqOrText) {
         // 1) Park previous draft so it appears in correction/pending lists
         await parkPendingPriceDraft(shopId, stPrice);
         // 2) Send a localized reminder (uses ₹ by default in examples)
-        await sendPendingPriceReminder(from, stPrice, langHint);
+        await sendPendingPriceReminder(from, stPrice, langHint);                
+        // [PATCH:STASH-NEXT-TXN-005] — remember candidate so a following "skip" can resume
+                try {
+                  const data = { ...(stPrice?.data ?? {}) , pendingNextTxn: transcript };
+                  await setUserState(shopId, stPrice.mode, data);
+                } catch { /* noop */ }
         // 3) Do NOT treat this message as price; let it flow into normal transaction parsing
         //    (fall-through: the rest of parseMultipleUpdates will process this as a fresh line)
       } else {
@@ -1039,6 +1090,32 @@ async function parseMultipleUpdates(reqOrText) {
   //  }
   // STICKY MODE: keep awaitingTransactionDetails until user switches/resets
   return updates;
+}
+
+// [PATCH:CONFIRM-STOCK-006] — consistent stock line in purchase confirmations
+// Context above: parseMultipleUpdates end; below: nativeglishWrap etc.
+function composePurchaseConfirmation(update, inventoryAfter, lang) {
+  try {
+    const product = update?.productDisplay ?? update?.product ?? 'item';
+    const qty = Number(update?.quantity ?? 0);
+    const unitDisp = displayUnit(update?.unit ?? 'pieces', lang);
+    let body = `📦 Purchased ${qty} ${unitDisp} ${product}`;
+    if (inventoryAfter && Number.isFinite(inventoryAfter.quantity)) {
+      const stockUnit = displayUnit(inventoryAfter.unit ?? update?.unit ?? 'pieces', lang);
+      body += `\n\n(Stock: ${inventoryAfter.quantity} ${stockUnit})`;
+    }
+    return body;
+  } catch {
+    return `📦 Purchased ${update?.quantity ?? ''} ${update?.unit ?? ''} ${update?.productDisplay ?? update?.product ?? ''}`.trim();
+  }
+}
+
+// Example integration hook (call this after your inventory update completes)
+async function sendPurchaseConfirmationWithStock(From, update, postInv, lang, requestId) {
+  const msg = composePurchaseConfirmation(update, postInv, lang);
+  const tagged = await tagWithLocalizedMode(From, finalizeForSend(msg, lang), lang);
+  await sendMessageViaAPI(From, tagged);
+  handledRequests?.add?.(requestId + '::purchase-ok');
 }
 
 // "Nativeglish": keep helpful English anchors (units, brand words) in otherwise localized text.
@@ -1650,13 +1727,17 @@ async function sendPendingPriceReminder(From, st, langHint = 'en') {
     try {
       const shopId = String(From ?? '').replace('whatsapp:', '');
       if (seenDuplicateReminder(shopId, prodText)) return;
-    } catch (_) {}
-  const bodySrc = composePriceReminderTextGeneric(langHint, { prod: prodText, unit: unitText });
+    } catch (_) {}  
+// [PATCH:REMINDER-LANG-003] — honor saved language preference
+  // Context above: DEFAULT_CURRENCY_SYMBOL, dedupe helpers
+  // Context below: sendMessageViaAPI pipeline
+  const langPref = await languageForTurn(From, langHint);
+  const bodySrc = composePriceReminderTextGeneric(langPref, { prod: prodText, unit: unitText });
 
-  try {        
-    const msg0 = await t(bodySrc, langHint, 'price-reminder::' + (st?.data?.product ?? 'item'));
-    const msg = finalizeForSend(nativeglishWrap(msg0, langHint), langHint);
-    const tagged = await tagWithLocalizedMode(From, msg, langHint);
+  try {                
+    const msg0 = await t(bodySrc, langPref, 'price-reminder::' + (st?.data?.product ?? 'item'));
+    const msg = finalizeForSend(nativeglishWrap(msg0, langPref), langPref);
+    const tagged = await tagWithLocalizedMode(From, msg, langPref);
     await sendMessageViaAPI(From, tagged);
   } catch (e) {
     console.warn('[price-await] reminder send failed:', e?.message);
