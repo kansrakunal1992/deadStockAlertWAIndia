@@ -1412,8 +1412,15 @@ function looksLikeTxnLite(s) {
 const DEFAULT_CURRENCY_SYMBOL = '₹';
 
 function isPriceAwaitState(st) {
-  try {
-    return st && String(st.mode).toLowerCase() === 'awaitingpriceforitem' && st.data && st.data.product;
+  try {          
+      if (!st) return false;
+          const m = String(st.mode).toLowerCase();
+          // Treat all current prod modes that mean "price is pending" as price-await
+          // (observed in logs: 'awaitingPriceExpiry')
+          return (
+            (m === 'awaitingpriceforitem' || m === 'awaitingpriceexpiry' || m === 'awaitingpriceonly') &&
+            st.data && st.data.product
+          );
   } catch { return false; }
 }
 
@@ -7234,6 +7241,22 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
       );
       await sendMessageViaAPI(From, ok);
       return true;
+    }
+  
+   // ===== NEW: Auto-park guard (transaction text while price is pending) =====
+    try {
+      const tNorm = String(Body ?? '').trim();
+      if (looksLikeTxnLite(tNorm)) {
+        // 1) Park previous draft so it appears in correction/pending lists
+        await parkPendingPriceDraft(shopId, state);
+        // 2) Localized reminder with ₹ default in examples
+        const langHint = detectedLanguage || await detectLanguageWithFallback(Body, From, 'price-await-exp');
+        await sendPendingPriceReminder(From, state, langHint);
+        // 3) Return false: let main routing parse this message as a fresh transaction
+        return false;
+      }
+    } catch (e) {
+      console.warn('[awaitingPriceExpiry] auto-park guard failed:', e?.message);
     }
   
   console.log(`[awaitingPriceExpiry] Raw reply for ${shopId}:`, JSON.stringify(Body));
