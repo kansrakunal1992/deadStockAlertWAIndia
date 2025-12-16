@@ -1196,6 +1196,32 @@ function enforceSingleScriptSafe(out, lang) {
       return normalizeNumeralsToLatin(out);
 }
 
+// ===== NEW: Idempotency (dedupe) for price turns =====
+const PRICE_DEDUPE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const _priceTurnSeen = new Map(); // key -> { ts }
+function _priceKey(shopId, batchId, text) {
+  const base = `${shopId}|${batchId}|${String(text ?? '').trim()}`;
+  // Simple stable hash (FNV-1a-ish)
+  let h = 2166136261;
+  for (let i = 0; i < base.length; i++) {
+    h ^= base.charCodeAt(i);
+    h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+  }
+  return String(h >>> 0);
+}
+function seenDuplicatePriceTurn(shopId, batchId, text) {
+  const k = _priceKey(shopId, batchId, text);
+  const now = Date.now();
+  const hit = _priceTurnSeen.get(k);
+  if (hit && (now - hit.ts) < PRICE_DEDUPE_TTL_MS) return true;
+  _priceTurnSeen.set(k, { ts: now });
+  // Sweep occasionally (cheap)
+  if (_priceTurnSeen.size > 1000) {
+    for (const [kk, vv] of _priceTurnSeen) if ((now - vv.ts) > PRICE_DEDUPE_TTL_MS) _priceTurnSeen.delete(kk);
+  }
+  return false;
+}
+
 async function t(text, languageCode, requestId) {             
     const L = canonicalizeLang(languageCode);
       const src = String(text ?? '');
@@ -1399,13 +1425,33 @@ async function getStickyActionQuick(from) {
   } catch { return null; }
 }
 function looksLikeTxnLite(s) {
-  const t = String(s ?? '').toLowerCase();
-  const hasNum = /\d/.test(t);
-  const hasUnit = /\b(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes)\b/i.test(t);
+  const t = String(s ?? '').toLowerCase();    
+  // Detect ASCII digits and Indic (Devanagari) digits
+    const hasNum = /(\d|[\u0966-\u096F])/.test(t);
+    // English unit tokens
+    const UNIT_RX_EN = /\b(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes)\b/i;
+    // Hindi unit tokens (avoid \b because word-boundaries are unreliable on Indic scripts)
+    const UNIT_RX_HI = /(लीटर|किलो|ग्राम|एमएल|पैकेट|पीस|बॉक्स|डिब्बा)/u;
+    const hasUnit = UNIT_RX_EN.test(t) || UNIT_RX_HI.test(t);
   const hasPrice = /\b(?:@|at)\s*\d+(?:\.\d+)?(?:\s*\/\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes))?/i.test(t)
                  || /(?:₹|rs\.?|inr)\s*\d+(?:\.\d+)?/i.test(t);
-  // Verb-less acceptance: number + unit is sufficient in sticky mode; price is optional
-  return (hasNum && hasUnit) || (hasUnit && hasPrice);
+  // Verb-less acceptance: number + unit is sufficient in sticky mode; price is optional 
+  // We treat "price only" (e.g., ₹60+  // We treat "price only" (e.g., ₹60) as NOT transaction-like to avoid false parking.
+    return (hasNum && hasUnit) || (hasUnit && hasPrice);
+}
+
+// ===== NEW: Hindi-aware price-like detector (used to gate price handling in awaitingPriceExpiry) =====
+function isPriceLikeMessage(s) {
+  const t = String(s ?? '').trim();
+  if (!t) return false;
+  // Accept explicit currency markers
+  if (/(₹|rs\.?|inr)\s*\d+(?:\.\d+)?/i.test(t)) return true;
+  // Accept "70 / unit" or "70 प्रति unit"
+  if (/(\d+(?:\.\d+)?)\s*(\/|\bper\b|प्रति)\s*\S+/i.test(t)) return true;
+  // Accept bare numeric (ASCII or Indic digits) ONLY when there is no unit token attached
+  const isNumericOnly = /^(\s*)(\d|[\u0966-\u096F])+(?:\.\d+)?(\s*)$/u.test(t);
+  if (isNumericOnly) return true;
+  return false;
 }
 
 // ===== NEW: price-await helpers (auto-park previous item, rupee default) =====
@@ -7243,6 +7289,22 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
       return true;
     }
   
+    // ===== NEW: Allow "skip" to bypass price step entirely =====
+      try {
+        const b = String(Body ?? '').trim().toLowerCase();
+        // Accept "skip" (en), and a simple Hindi transliteration "स्किप"
+        if (b === 'skip' || b === 'स्किप') {
+          // Clear state and confirm
+          await deleteUserStateFromDB(state.id);
+          const msg = await t(`✅ कीमत चरण स्किप किया गया। आप नया आइटम दर्ज कर सकते हैं।`, detectedLanguage, 'price-skip');
+          await sendMessageViaAPI(From, finalizeForSend(msg, detectedLanguage));
+          // Return false so router can continue with normal parsing in the same chat
+          return false;
+        }
+      } catch (e) {
+        console.warn('[awaitingPriceExpiry] skip handling failed:', e?.message);
+      }
+  
    // ===== NEW: Auto-park guard (transaction text while price is pending) =====
     try {
       const tNorm = String(Body ?? '').trim();
@@ -7258,7 +7320,20 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
     } catch (e) {
       console.warn('[awaitingPriceExpiry] auto-park guard failed:', e?.message);
     }
-  
+    
+    // ===== NEW: Gate price-handling — if reply isn't price-like, gently re-prompt with ₹ examples =====
+    if (!isPriceLikeMessage(Body)) {
+      const prod = String(state?.data?.product ?? '').trim() || 'आइटम';
+      const unit = String(state?.data?.unit ?? 'यूनिट');
+      const hint = await t(
+        `कृपया «${prod}» के लिए कीमत भेजें — उदाहरण: “₹70”, “₹70 प्रति ${unit}”, या “70/${unit}”.\nनया आइटम लिखने पर उसे अलग से कैप्चर कर दूँगा।`,
+        detectedLanguage, 'price-gate-hint'
+      );
+      // ANCHOR: UNIQ:PRICE-EXPIRY-ASKGATE-001
+      await sendMessageViaAPI(From, finalizeForSend(hint, detectedLanguage));
+      return true; // stay in price-await
+    }
+
   console.log(`[awaitingPriceExpiry] Raw reply for ${shopId}:`, JSON.stringify(Body));
   const data = state.data || {};
   const { batchId, product, unit, quantity, purchaseDate, autoExpiry, needsPrice, isPerishable } = data;
@@ -7292,7 +7367,18 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
   if (parsed.price && parsed.price > 0) {
     updatedPrice = parsed.price;
   }
-
+  
+  // ===== NEW: Idempotency guard (skip duplicate price application) =====
+    if (updatedPrice && state?.data?.batchId) {
+      if (seenDuplicatePriceTurn(shopId, state.data.batchId, Body)) {
+        console.log(`[${requestId}] Duplicate price turn suppressed for batch=${state.data.batchId}`);
+        // Confirm we received it, but avoid re-applying
+        const ack = await t(`ℹ️ कीमत संदेश मिला — डुप्लिकेट था, इसलिए दोबारा लागू नहीं किया।`, detectedLanguage, 'price-dup-ack');
+        await sendMessageViaAPI(From, finalizeForSend(ack, detectedLanguage));
+        return true; // consumed, stay/clear as per your normal path
+      }
+    }
+  
   // If user didn’t give a price but we still need one, prompt again (with examples)
   if (needsPrice && !updatedPrice) { 
     let again = await t(
@@ -7320,12 +7406,30 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
           } 
     try {
                 await updateInventory(shopId, product, quantity, unit);
-                console.log(`[handleAwaitingPriceExpiry] Inventory updated for ${product}: +${quantity} ${unit}`);
-                    
-    // ✅ ADD: Confirmation message to user                            
-            let confirmation = `✅ Done:\n📦 Purchased ${quantity} ${unit} ${product} (Stock: updated)\n\n✅ Successfully updated 1 of 1 items`;
+                console.log(`[handleAwaitingPriceExpiry] Inventory updated for ${product}: +${quantity} ${unit}`);                    
+          
+      // ✅ ADD: Confirmation message to user (₹ default, include price if available)
+            let confirmation = `✅ Done:\n📦 Purchased ${quantity} ${unit} ${product} (Stock: updated)`;
+            if (updatedPrice) confirmation += `\n💰 Price: ₹${updatedPrice}`;
+            confirmation += `\n\n✅ Successfully updated 1 of 1 items`;
             // ANCHOR: UNIQ:PRICE-EXPIRY-CONFIRM-001
-            await sendMessageViaAPI(From, finalizeForSend(confirmation, detectedLanguage));
+            await sendMessageViaAPI(From, finalizeForSend(confirmation, detectedLanguage));      
+            // ===== NEW: Finalize — clear price-await state & return to sticky purchase mode =====
+                  try {
+                    await deleteUserStateFromDB(state.id);
+                  } catch (e) {
+                    console.warn('[awaitingPriceExpiry] failed to clear state:', e?.message);
+                  }
+                  // Re-set sticky "purchased" mode so user can continue verb-less lines
+                  try {
+                    await setUserStateInDB(shopId, {
+                      mode: 'awaitingTransactionDetails',
+                      data: { action: 'purchased' }
+                    });
+                    console.log(`[State] Sticky mode restored for ${shopId}: awaitingTransactionDetails`);
+                  } catch (e) {
+                    console.warn('[awaitingPriceExpiry] failed to set sticky purchase mode:', e?.message);
+                  }
             } catch (e) {
                 console.error(`[handleAwaitingPriceExpiry] Failed to update inventory:`, e.message);
             }
@@ -7343,6 +7447,12 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
     const shown = updatedExpiryISO ? formatDateForDisplay(updatedExpiryISO) : '—';
     lines.push(`Expiry: ${shown}`);
   }      
+    
+    // ===== NEW: Avoid double-notification if we already sent the confirmation above =====
+    if (updatedPrice || updatedExpiryISO !== undefined) {
+      // We already sent a "✅ Done" confirmation including ₹ and/or expiry.
+      // To reduce noise, skip the secondary 'Saved' message unless there were no changes.
+    } else {
     let done = await t(
       `✅ Saved for ${product} ${quantity} ${unit}\n` + (lines.length ? lines.join('\n') : 'No changes.'),
       detectedLanguage, 'saved-price-expiry'
@@ -7350,6 +7460,7 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
     // ANCHOR: UNIQ:PRICE-EXPIRY-SAVED-001
     await sendMessageViaAPI(From, finalizeForSend(done, detectedLanguage));
   return true;
+      }
 }
 
 // Helper function to format dates for Airtable (YYYY-MM-DDTHH:mm:ss.sssZ)
