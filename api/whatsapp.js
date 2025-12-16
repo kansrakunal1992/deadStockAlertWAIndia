@@ -10109,16 +10109,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         const stockText2 = (newQty !== undefined && newQty !== null)
           ? ` (Stock: ${newQty}${unitText2})`
           : '';
-                
-        // 👇 SIMPLE RUNTIME CHECK
-        const _len = typeof stockText2 === 'string' ? stockText2.length : -1;
-        console.log(
-          `[return-ack] stockText2 populated=${Boolean(stockText2)} len=${_len}; ` +
-          `newQty=${newQty ?? 'null'}; unit=${u ?? 'null'}; product=${product}`
-        );
-
         confirmTextLine = `↩️ Returned ${Math.abs(update.quantity)}${unitText2} ${product}${stockText2}`;
-      
+        console.log(`[return-ack] inlineConfirmText="${confirmTextLine}"`);
+        
         // Collect per-update result for aggregator
         results.push({
           product,
