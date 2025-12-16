@@ -2994,7 +2994,24 @@ async function getPreferredLangQuick(From, hint = 'en') {
  */
 async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
   try {        
-    if (!SEND_EARLY_ACK) return;
+    if (!SEND_EARLY_ACK) return;            
+        
+        // Activation gate (ALL kinds): suppress ultra‑early ack until Trial/Paid is active
+            const shopId = String(From ?? '').replace('whatsapp:', '');
+            try {
+              // Fast L1 cache read; avoids blocking the critical path
+              const planInfo = await getUserPlanQuick(shopId);
+              const plan = String(planInfo?.plan ?? '').toLowerCase();
+              const end  = getUnifiedEndDate(planInfo);
+              const activated =
+                (plan === 'paid') ||
+                (plan === 'trial' && end && new Date(end).getTime() > Date.now());
+              if (!activated) return; // skip any ack before activation (trial or paid)
+            } catch (_) {
+              // Best‑effort: if plan can't be resolved quickly, avoid sending ack pre‑activation
+              return;
+            }
+
         // Prefer a script/hinglish guess when available; fall back to incoming hint
         // NOTE: callers that don't pass source text should use the wrapper below.              
         const preHint = canonicalizeLang(langHint ?? 'en');
