@@ -10700,17 +10700,6 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       });
     }
   }
-  
-  // ✅ NEW: Compose the ack body strictly from inlineConfirmText (preserves Stock suffix)
-  try {
-    const lines = results.map(r => r.inlineConfirmText).filter(Boolean);
-    const body = lines.length ? lines.join('\n') : '✅ Updated.';
-    console.log('[updateMultipleInventory] Ack body composed:', JSON.stringify(body));
-    await sendMessageViaAPI(`whatsapp:${shopId}`, finalizeForSend(body, languageCode));
-  } catch (e) {
-    console.warn('[updateMultipleInventory] ack compose/send failed:', e?.message);
-  }
-
   return results;
 }
 
@@ -14602,7 +14591,26 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
   const shopId = fromToShopId(From);
   let __handled = false;
-    
+  
+  // --- NEW: in-memory per-request dedupe guard (keep near the top) ---
+  globalThis.handledRequests = globalThis.handledRequests || new Set();
+  const hasBeenHandled = () => globalThis.handledRequests.has(requestId);
+  const markHandled    = () => globalThis.handledRequests.add(requestId);
+
+  // --- NEW: single-source inventory ack builder ---
+  async function sendInventoryAck(toWhatsApp, results, languageCode) {
+    try {
+      const lines = Array.isArray(results)
+        ? results.map(r => r?.inlineConfirmText).filter(Boolean)
+        : [];
+      const body  = lines.length ? lines.join('\n') : '✅ Updated.';
+      // Rely on finalizeForSend + sendMessageViaAPI to tag footer and CTA appropriately
+      await sendMessageViaAPI(toWhatsApp, finalizeForSend(body, languageCode));
+    } catch (e) {
+      console.warn('[router] inventory ack send failed:', e?.message);
+    }
+  }
+
   try {
       const NumMedia = Number(req.body?.NumMedia ?? 0);
       const ct0 = String(req.body?.MediaContentType0 ?? '').toLowerCase();
