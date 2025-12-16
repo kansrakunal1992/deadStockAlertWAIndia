@@ -681,19 +681,21 @@ function normalizeUserTextForKey(s) {
  const DISABLE_SALES_QA_CACHE_HIT =
    String(process.env.DISABLE_SALES_QA_CACHE_HIT ?? '1').toLowerCase() === '1';
 
- function buildSalesQaCacheKey({ langExact, topicForced, pricingFlavor, text }) {
-   // crypto is already imported in your file; reuse it here
-   const payload = [
-     'sales-qa',
-     String(langExact ?? 'en'),
-     String(topicForced ?? 'none'),
-     String(pricingFlavor ?? 'none'),
-     normalizeUserTextForKey(text)
-   ].join('::');
-   const base = crypto.createHash('sha1').update(payload).digest('base64');
-   // Return a per-request unique key when disabling cache hits
-   // (ensures lookups never match previous writes; minimal blast radius)
-   return DISABLE_SALES_QA_CACHE_HIT ? `${base}::${Date.now()}` : base;
+function buildSalesQaCacheKey({ langExact, topicForced, pricingFlavor, text }) {
+  // crypto is already imported in your file; reuse it here
+  // Use the SAFE normalizer to avoid "text is not defined" or shape errors.
+  const normalized = safeNormalizeForQuickQuery(text);
+  const payload = [
+    'sales-qa',
+    String(langExact ?? 'en'),
+    String(topicForced ?? 'none'),
+    String(pricingFlavor ?? 'none'),
+    normalized
+  ].join('::');
+  const base = crypto.createHash('sha1').update(payload).digest('base64');
+  // Return a per-request unique key when disabling cache hits
+  // (ensures lookups never match previous writes; minimal blast radius)
+  return DISABLE_SALES_QA_CACHE_HIT ? `${base}::${Date.now()}` : base;
  }
 
 // Lightweight pricing validator (optional use downstream)
@@ -1620,9 +1622,35 @@ function composePriceReminderTextGeneric(lang, { prod, unit }) {
   return `Price pending for “${prod}” — please send: “₹70”, “₹70 per ${uDisp}”, or “70/${uDisp}”.\nType “skip” to bypass.`;
 }
 
+// === NEW: TTL guard for price reminders (per shop+product) ===
+ const REMINDER_DEDUPE_TTL_MS = 2 * 60 * 1000; // 2 min
+ const _reminderSeen = new Map(); // key -> { ts }
+ function _reminderKey(shopId, prod) {
+   const base = `${shopId}::${String(prod ?? '').trim()}`;
+   let h = 2166136261;
+   for (let i = 0; i < base.length; i++) {
+     h ^= base.charCodeAt(i);
+     h += (h<<1) + (h<<4) + (h<<7) + (h<<8) + (h<<24);
+   }
+   return String(h >>> 0);
+ }
+ function seenDuplicateReminder(shopId, prod) {
+   const k = _reminderKey(shopId, prod);
+   const now = Date.now();
+   const hit = _reminderSeen.get(k);
+   if (hit && (now - hit.ts) < REMINDER_DEDUPE_TTL_MS) return true;
+   _reminderSeen.set(k, { ts: now });
+   // Cheap sweep if needed (optional; small map here, so we skip)
+   return false;
+ }
 async function sendPendingPriceReminder(From, st, langHint = 'en') {
   const prodText = String(st?.data?.product ?? '').trim() || 'item';
-  const unitText = String(st?.data?.unit ?? '').trim() || 'unit';
+  const unitText = String(st?.data?.unit ?? '').trim() || 'unit';    
+  // NEW: skip if the same reminder was sent very recently
+    try {
+      const shopId = String(From ?? '').replace('whatsapp:', '');
+      if (seenDuplicateReminder(shopId, prodText)) return;
+    } catch (_) {}
   const bodySrc = composePriceReminderTextGeneric(langHint, { prod: prodText, unit: unitText });
 
   try {        
