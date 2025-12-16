@@ -1538,10 +1538,11 @@ function composePriceReminderTextGeneric(lang, { prod, unit }) {
 async function sendPendingPriceReminder(From, st, langHint = 'en') {
   
   const example = `${DEFAULT_CURRENCY_SYMBOL}70 प्रति ${unit}`; // e.g., ₹70 प्रति पैकेट
-  const skipCmd = 'skip';    
-  const prod = String(st?.data?.product ?? '').trim() || 'item';
-    const unit = String(st?.data?.unit ?? '').trim() || 'unit';
-    const bodySrc = composePriceReminderTextGeneric(langHint, { prod, unit });
+  const skipCmd = 'skip';        
+  const prodText = String(st?.data?.product ?? '').trim() || 'item';
+  const unitText = String(st?.data?.unit ?? '').trim() || 'unit';
+  const bodySrc = composePriceReminderTextGeneric(langHint, { prod: prodText, unit: unitText });
+
   try {        
     const msg0 = await t(bodySrc, langHint, 'price-reminder::' + (st?.data?.product ?? 'item'));
     const msg = finalizeForSend(nativeglishWrap(msg0, langHint), langHint);
@@ -7344,7 +7345,11 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
       await sendMessageViaAPI(From, ok);
       return true;
     }
-  
+      
+    // HOIST: Prepare safe product/unit hints to avoid TDZ when reminder runs
+    const __prodHint = String(state?.data?.product ?? 'item');
+    const __unitHint = String(state?.data?.unit ?? 'unit');
+
     // ===== NEW: Allow "skip" to bypass price step entirely =====
       try {
         const b = String(Body ?? '').trim().toLowerCase();
@@ -7368,8 +7373,12 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
         // 1) Park previous draft so it appears in correction/pending lists
         await parkPendingPriceDraft(shopId, state);
         // 2) Localized reminder with ₹ default in examples
-        const langHint = detectedLanguage || await detectLanguageWithFallback(Body, From, 'price-await-exp');
-        await sendPendingPriceReminder(From, state, langHint);
+        const langHint = detectedLanguage || await detectLanguageWithFallback(Body, From, 'price-await-exp');                
+        await sendPendingPriceReminder(
+                From,
+                { data: { product: __prodHint, unit: __unitHint, quantity: state?.data?.quantity } },
+                langHint
+              );
         // 3) Return false: let main routing parse this message as a fresh transaction
         return false;
       }
