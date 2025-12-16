@@ -1509,7 +1509,7 @@ function isPriceAwaitState(st) {
   } catch { return false; }
 }
 
-async function parkPendingPriceDraft(shopId, st) {
+async function parkPendingPriceDraft(shopId, st, langHint = 'en') {
   // Persist a correction task so the previous item can be resumed later
   try {
     const payload = {
@@ -1519,7 +1519,7 @@ async function parkPendingPriceDraft(shopId, st) {
       unit: st.data.unit ?? null,
       createdAtISO: st.data.createdAtISO ?? new Date().toISOString()
     };
-    await saveCorrectionState(shopId, 'pricePending', payload, st.data.lang ?? 'en');
+    await saveCorrectionState(shopId, 'pricePending', payload, langHint);
     // We keep the ephemeral state intact so user can still reply with price;
     // parking here only records the pending task.
   } catch (e) {
@@ -1536,9 +1536,6 @@ function composePriceReminderTextGeneric(lang, { prod, unit }) {
 }
 
 async function sendPendingPriceReminder(From, st, langHint = 'en') {
-  
-  const example = `${DEFAULT_CURRENCY_SYMBOL}70 प्रति ${unit}`; // e.g., ₹70 प्रति पैकेट
-  const skipCmd = 'skip';        
   const prodText = String(st?.data?.product ?? '').trim() || 'item';
   const unitText = String(st?.data?.unit ?? '').trim() || 'unit';
   const bodySrc = composePriceReminderTextGeneric(langHint, { prod: prodText, unit: unitText });
@@ -7370,11 +7367,10 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
     try {
       const tNorm = String(Body ?? '').trim();
       if (looksLikeTxnLite(tNorm)) {
-        // 1) Park previous draft so it appears in correction/pending lists
-        await parkPendingPriceDraft(shopId, state);
-        // 2) Localized reminder with ₹ default in examples
+        // 1) Park previous draft so it appears in correction/pending lists               
         const langHint = detectedLanguage || await detectLanguageWithFallback(Body, From, 'price-await-exp');                
-        await sendPendingPriceReminder(
+              await parkPendingPriceDraft(shopId, state, langHint);
+              await sendPendingPriceReminder(
                 From,
                 { data: { product: __prodHint, unit: __unitHint, quantity: state?.data?.quantity } },
                 langHint
@@ -7383,7 +7379,9 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
         return false;
       }
     } catch (e) {
-      console.warn('[awaitingPriceExpiry] auto-park guard failed:', e?.message);
+      console.warn('[awaitingPriceExpiry] auto-park guard failed:', e?.message);            
+      // Even if reminder fails, allow main router to process the fresh transaction:
+      return false;
     }
     
     // ===== NEW: Gate price-handling — if reply isn't price-like, gently re-prompt with ₹ examples =====
