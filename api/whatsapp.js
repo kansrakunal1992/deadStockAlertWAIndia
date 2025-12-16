@@ -10700,6 +10700,17 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       });
     }
   }
+  
+  // ✅ NEW: Compose the ack body strictly from inlineConfirmText (preserves Stock suffix)
+  try {
+    const lines = results.map(r => r.inlineConfirmText).filter(Boolean);
+    const body = lines.length ? lines.join('\n') : '✅ Updated.';
+    console.log('[updateMultipleInventory] Ack body composed:', JSON.stringify(body));
+    await sendMessageViaAPI(`whatsapp:${shopId}`, finalizeForSend(body, languageCode));
+  } catch (e) {
+    console.warn('[updateMultipleInventory] ack compose/send failed:', e?.message);
+  }
+
   return results;
 }
 
