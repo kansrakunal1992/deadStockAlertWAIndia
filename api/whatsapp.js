@@ -1515,8 +1515,10 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
         requestId, language, kind: o.kind,
         normalizedCommand: normalizedCommand ?? '—',
         topicForced, pricingFlavor
-      });
-      return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor };
+      });         
+    // NEW: identity question signal for router (prevents cachey generic replies)
+      const identityAsked = isNameQuestion(text);
+      return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
 }
 
 // Decide if AI should be used (cost guard)
@@ -2725,6 +2727,54 @@ const CMD_LABELS = {
     'stock value': 'સ્ટોક મૂલ્ય',
   },
 };
+
+// [SALES-QA-IDENTITY-003] Localized identity line for all languages/variants
+// Saamagrii.AI stays Latin; "friend" varies by language/script; "Name" label localized.
+function identityTextByLanguage(langCode = 'en') {
+  const L = String(langCode).toLowerCase().trim();
+  // Localized 'Name' label
+  const NAME_LABEL = {
+    en: 'Name',
+    hi: 'नाम',
+    mr: 'नाव',
+    bn: 'নাম',
+    ta: 'பெயர்',
+    te: 'పేరు',
+    kn: 'ಹೆಸರು',
+    gu: 'નામ',
+    // Romanized variants
+    'hi-latn': 'Naam',
+    'mr-latn': 'Naav',
+    'bn-latn': 'Nam',
+    'ta-latn': 'Peyar',
+    'te-latn': 'Peru',
+    'kn-latn': 'Hesaru',
+    'gu-latn': 'Naam'
+  };
+  // Localized 'friend' word—kept simple/neutral; adjust if you prefer alternate synonyms
+  const FRIEND_WORD = {
+    en: 'friend',
+    hi: 'मित्र',
+    mr: 'मित्र',
+    bn: 'বন্ধু',
+    ta: 'நண்பர்',
+    te: 'స్నేహితుడు',
+    kn: 'ಸ್ನೇಹಿತ',
+    gu: 'મિત્ર',
+    // Romanized variants
+    'hi-latn': 'friend',
+    'mr-latn': 'mitra',
+    'bn-latn': 'bandhu',
+    'ta-latn': 'nanbar',
+    'te-latn': 'snehitudu',
+    'kn-latn': 'snehita',
+    'gu-latn': 'mitra'
+  };
+  const nameLabel = NAME_LABEL[L] ?? NAME_LABEL.en;
+  const friend = FRIEND_WORD[L] ?? FRIEND_WORD.en;
+  // Final: Name - <AGENT_NAME>, Saamagrii.AI <friend>   (Saamagrii.AI stays Latin)
+  return `${nameLabel} - ${AGENT_NAME}, Saamagrii.AI ${friend}`;
+}
 
 // Helper: localize quoted commands → keeps the double quotes
 function localizeQuotedCommands(text, lang) {
@@ -4138,6 +4188,18 @@ function resolveSummaryIntent(raw) {
   return null;
 }
 
+// [SALES-QA-IDENTITY-002] Detector for "what's your name / tumhara naam kya hai / तुम्हारा नाम क्या है"
+function isNameQuestion(s = '') {
+  const t = String(s).trim().toLowerCase();
+  // English
+  const en = /\b((what('?s)?|whats)\s+your\s+name|who\s+are\s+you)\b/;
+  // Hinglish (Latin)
+  const hing = /\btumhara\s+naam\s+kya\s+hai\b|\btera\s+naam\b/;
+  // Hindi (Devanagari)
+  const hiNative = /(तुम्हारा|आपका)\s+नाम\s+क्या\s+है/;
+  return en.test(t) || hing.test(t) || hiNative.test(s);
+}
+
 // ---- READ-ONLY / TXN GUARDS -------------------------------------------------
 function isReadOnlyQuery(text) {
   const t = String(text || '').trim().toLowerCase();
@@ -4341,6 +4403,7 @@ const COMPACT_MODE = String(process.env.COMPACT_MODE ?? 'true').toLowerCase() ==
 const SINGLE_SCRIPT_MODE = String(process.env.SINGLE_SCRIPT_MODE ?? 'true').toLowerCase() === 'true';
 // Optional debug switch for QA sanitize instrumentation
 const DEBUG_QA_SANITIZE = String(process.env.DEBUG_QA_SANITIZE ?? 'false').toLowerCase() === 'true';
+const AGENT_NAME = process.env.AGENT_NAME ?? 'Suhani';
 // ===== Paywall / Trial / Links (env-driven) =====
 const PAYTM_NUMBER = String(process.env.PAYTM_NUMBER ?? '9013283687');
 const PAYTM_NAME   = String(process.env.PAYTM_NAME   ?? 'Saamagrii.AI Support Team');
@@ -5953,7 +6016,11 @@ const lang = canonicalizeLang(language ?? 'en');
     Be concise (3–5 short sentences). Use ONLY MANIFEST facts; never invent features.
     If pricing/cost is asked, include: Saamagrii.AI offers free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month.
     Answer directly to the user's question topic; do not repeat onboarding slogans.
-    ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''}
+    ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''}        
+    Identity: If the user asks for your name or who you are (e.g., "what's your name", "tumhara naam kya hai", "तुम्हारा नाम क्या है"),
+        reply with exactly: "Name - ${process.env.AGENT_NAME ?? 'Suhani'}, Saamagrii.AI <friend>".
+        Localize the leading label ("Name"/localized equivalent) and the word "friend" to the user's language/script (hi → Devanagari; hi-Latn → Hinglish; bn/ta/te/kn/mr/gu → native),
+        but always keep "Saamagrii.AI" in Latin. One sentence only; no emojis, no upsell; do not consult or reuse any translation caches.
     STYLE (respectful, professional):
     - In Hindi or Hinglish or any Native+English, ALWAYS address the user with “aap / aapki / aapke / aapko / aapse”.
     - NEVER use “tum / tumhari / tumhara / tumhare / tumko / tumse”.
@@ -11918,6 +11985,16 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       try {
         const orch = await applyAIOrchestration(transcript, from, detectedLanguage, requestId);
         const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
+        
+        // [SALES-QA-IDENTITY-ROUTER] short-circuit identity questions
+          if (orch.identityAsked === true) {
+            handledRequests.add(requestId);
+            const idLine = identityTextByLanguage(langExact); // Saamagrii.AI stays Latin; "friend" localized
+            const tagged = await tagWithLocalizedMode(From, idLine, langExact);
+            await sendMessageViaAPI(From, finalizeForSend(tagged, langExact));
+            return;
+          }
+
         if (orch.isQuestion === true || orch.kind === 'question') {
           handledRequests.add(requestId);
           const ans = await composeAISalesAnswer(shopId, transcript, langExact);
@@ -13076,6 +13153,15 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                
         // [UNIQ:ORCH-VAR-LOCK-ENTRY-02] keep exact variant
         const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
+
+        // [SALES-QA-IDENTITY-ROUTER] short-circuit identity questions (voice path)
+         if (orch.identityAsked === true) {
+           handledRequests.add(requestId);
+           const idLine = identityTextByLanguage(langExact); // Saamagrii.AI stays Latin; "friend" localized
+           const tagged = await tagWithLocalizedMode(From, idLine, langExact);
+           await sendMessageDedup(From, finalizeForSend(tagged, langExact));
+           return;
+         }
 
         // Question → answer & exit
         if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
@@ -14332,6 +14418,21 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       }           
     // If orchestrator forced inventory (sticky txn turn), SKIP Q&A and normalized-command routing.
       const FORCE_INVENTORY = !!orch?.forceInventory;
+            
+      // [SALES-QA-IDENTITY-ROUTER] short-circuit identity questions (exact reply, no caches)
+         if (orch.identityAsked === true) {
+           handledRequests.add(requestId);
+           const idLine = identityTextByLanguage(langPinned); // Saamagrii.AI stays Latin; "friend" localized
+           const tagged = await tagWithLocalizedMode(From, idLine, langPinned);
+           await sendMessageDedup(From, finalizeForSend(tagged, langPinned));
+           // match this block's TwiML ack style
+           const twiml = new twilio.twiml.MessagingResponse();
+           twiml.message('');
+           res.type('text/xml');
+           resp.safeSend(200, twiml.toString());
+           safeTrackResponseTime(requestStart, requestId);
+           return;
+         }
 
        // Question → answer & exit
        if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
@@ -15681,6 +15782,15 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
       // COPILOT-PATCH-AIQA-GUARD-HNI-ENTRY
       const FORCE_INVENTORY = !!orch?.forceInventory;
+            
+      // [SALES-QA-IDENTITY-ROUTER] short-circuit identity questions (exact reply, no caches)
+         if (orch.identityAsked === true) {
+           handledRequests.add(requestId);
+           const idLine = identityTextByLanguage(langExact); // Saamagrii.AI stays Latin; "friend" localized
+           const tagged = await tagWithLocalizedMode(From, idLine, langExact);
+           await sendMessageDedup(From, finalizeForSend(tagged, langExact));
+           return res.send('<Response></Response>');
+         }
 
       // Question → answer & exit
       if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
