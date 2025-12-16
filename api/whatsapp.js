@@ -10079,9 +10079,26 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           result = await updateInventory(shopId, product, Math.abs(update.quantity), update.unit);
           // Fetch post-update for confirmation
           const invAfter = await getProductInventory(shopId, product);
-          const unitText = update.unit ? ` ${update.unit}` : '';
-          const newQty = invAfter?.quantity ?? result?.newQuantity;
-          const u = invAfter?.unit ?? result?.unit ?? update.unit;                             
+          const unitText = update.unit ? ` ${update.unit}` : '';                    
+          let newQty = invAfter?.quantity ?? result?.newQuantity;
+            let u = invAfter?.unit ?? result?.unit ?? update.unit;
+          
+            // Fallback: if return flow did not yield updated stock, peek current inventory from DB.
+            if (newQty === undefined || newQty === null) {
+              try {
+                const invPeek = await getProductInventory(shopId, product);
+                if (invPeek?.success) {
+                  // normalize typical DB field shapes
+                  const q  = invPeek.quantity ?? invPeek.fields?.Quantity;
+                  const uu = invPeek.unit     ?? invPeek.fields?.Units;
+                  if (q !== undefined && q !== null) {
+                    newQty = q;
+                    u = uu ?? u;
+                  }
+                }
+              } catch (_) { /* best-effort: keep silent and continue */ }
+            }
+                         
         // Build a single emoji-style confirmation line; let the caller aggregate & send.
                   const unitText2  = u ? ` ${u}` : '';
                   const stockText2 = (newQty !== undefined && newQty !== null)
