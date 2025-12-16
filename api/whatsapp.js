@@ -10109,8 +10109,28 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         const stockText2 = (newQty !== undefined && newQty !== null)
           ? ` (Stock: ${newQty}${unitText2})`
           : '';
-        confirmTextLine = `↩️ Returned ${Math.abs(update.quantity)}${unitText2} ${product}${stockText2}`;
-                
+        confirmTextLine = `↩️ Returned ${Math.abs(update.quantity)}${unitText2} ${product}${stockText2}`;                        
+        
+          // --- Option B: for single-item returns, send ONE dedicated confirmation and suppress aggregated ---
+          try {
+            if (Array.isArray(updates) && updates.length === 1) {
+              await sendReturnConfirmationOnce(
+                `whatsapp:${shopId}`,
+                languageCode,
+                'return-confirmation',
+                {
+                  product: product,
+                  qty: Math.abs(update.quantity),
+                  unit: u || update.unit,
+                  newQuantity: newQty ?? null,
+                  reason: update.reason ?? null
+                }
+              );
+              // Prevent duplicate: omit this inline line from the aggregated ack for single-item return
+              confirmTextLine = '';
+            }
+          } catch (_) { /* best-effort */ }
+
         // Collect per-update result for aggregator
         results.push({
           product,
@@ -13422,9 +13442,38 @@ async function sendMessageQueued(toWhatsApp, body) {
   }
 }
 
+// --- Dedicated, single-send Return confirmation (Option B: only for single-item) ----
+async function sendReturnConfirmationOnce(
+  toWhatsApp,
+  languageCode,
+  requestScope = 'return-confirmation',
+  payload /* { product, qty, unit, newQuantity, reason } */
+) {
+  try {
+    globalThis.__returnConfirmSent = globalThis.__returnConfirmSent || new Set();
+    const key = `${toWhatsApp}::${requestScope}::${String(payload.product).toLowerCase()}::${payload.qty}::${payload.unit}`;
+    if (__returnConfirmSent.has(key)) return false;
+    __returnConfirmSent.add(key);
+
+    const qty   = Math.abs(Number(payload.qty ?? 0)) || 0;
+    const unit  = String(payload.unit ?? '').trim();
+    const prod  = String(payload.product ?? '').trim();
+    const stock = (payload.newQuantity != null)
+      ? ` · Stock: ${payload.newQuantity} ${unit || ''}`.trim()
+      : '';
+    const reasonLine = payload.reason ? `\nReason: ${payload.reason}` : '';
+
+    const line = `↩️ Returned ${qty} ${unit} ${prod}${stock}${reasonLine}`;
+    await sendMessageViaAPI(toWhatsApp, finalizeForSend(line, languageCode));
+    return true;
+  } catch (e) {
+    console.warn('[return-confirmation] send failed:', e?.message);
+    return false;
+  }
+}
+
 // Async processing for voice messages
 async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState) {
-  
   try {
     console.log(`[${requestId}] [1] Downloading audio...`);
     const audioBuffer = await downloadAudio(MediaUrl0);
