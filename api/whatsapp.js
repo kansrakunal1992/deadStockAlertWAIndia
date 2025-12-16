@@ -3016,7 +3016,6 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
         // NOTE: callers that don't pass source text should use the wrapper below.              
         const preHint = canonicalizeLang(langHint ?? 'en');
          // Try DB first (no race), then fall back
-         const shopId = String(From ?? '').replace('whatsapp:', '');
          let lang = preHint;
          try {
            const pref = await getUserPreference(shopId);
