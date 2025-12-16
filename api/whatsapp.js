@@ -10081,8 +10081,8 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           const invAfter = await getProductInventory(shopId, product);
           const unitText = update.unit ? ` ${update.unit}` : '';                                        
           // Prefer inventory peek for authoritative stock numbers
-          let newQty = invAfter?.quantity ?? result?.newQuantity;
-          let u      = invAfter?.unit     ?? result?.unit ?? update.unit;
+          const newQty = invAfter?.quantity ?? result?.newQuantity;
+          const u      = invAfter?.unit     ?? result?.unit ?? update.unit;
           
             // Fallback: if return flow did not yield updated stock, peek current inventory from DB.
             if (newQty === undefined || newQty === null) {
