@@ -10071,58 +10071,60 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       console.log(`[Update ${shopId}] Using translated product: "${translatedProduct}"`);
       // Use translated product for all operations
       const product = translatedProduct;
-      
-      // === NEW: Handle customer returns (simple add-back; no batch, no price/expiry) ===
+                  
+      // === Handle customer returns (simple add-back; no batch, no price/expiry) ===
       if (update.action === 'returned') {
-        let result;
+        let result;          // hoisted
+        let newQty = null;   // hoisted, mutable
+        let u = update.unit; // hoisted default
         try {
+          // Persist the return (add back to stock)
           result = await updateInventory(shopId, product, Math.abs(update.quantity), update.unit);
-          // Fetch post-update for confirmation
+      
+          // Peek authoritative post-update inventory
           const invAfter = await getProductInventory(shopId, product);
-          const unitText = update.unit ? ` ${update.unit}` : '';                                        
-          // Prefer inventory peek for authoritative stock numbers
-          const newQty = invAfter?.quantity ?? result?.newQuantity;
-          const u      = invAfter?.unit     ?? result?.unit ?? update.unit;
-          
-            // Fallback: if return flow did not yield updated stock, peek current inventory from DB.
-            if (newQty === undefined || newQty === null) {
-              try {
-                const invPeek = await getProductInventory(shopId, product);
-                if (invPeek?.success) {
-                  // normalize typical DB field shapes
-                  const q  = invPeek.quantity ?? invPeek.fields?.Quantity;
-                  const uu = invPeek.unit     ?? invPeek.fields?.Units;
-                  if (q !== undefined && q !== null) {
-                    newQty = q;
-                    u = uu ?? u;
-                  }
+          newQty = invAfter?.quantity ?? result?.newQuantity ?? null;
+          u      = invAfter?.unit     ?? result?.unit       ?? u;
+      
+          // Fallback: second peek if the first didn’t yield usable numbers
+          if (newQty === undefined || newQty === null) {
+            try {
+              const invPeek = await getProductInventory(shopId, product);
+              if (invPeek?.success) {
+                const q  = invPeek.quantity ?? invPeek.fields?.Quantity ?? null;
+                const uu = invPeek.unit     ?? invPeek.fields?.Units    ?? null;
+                if (q !== undefined && q !== null) {
+                  newQty = q;
+                  u = uu ?? u;
                 }
-              } catch (_) { /* best-effort: keep silent and continue */ }
-            }
-                         
-        // Build a single emoji-style confirmation line; let the caller aggregate & send.
-                  const unitText2  = u ? ` ${u}` : '';
-                  const stockText2 = (newQty !== undefined && newQty !== null)
-                    ? ` (Stock: ${newQty}${unitText2})`
-                    : '';
-                  confirmTextLine = `↩️ Returned ${Math.abs(update.quantity)}${unitText2} ${product}${stockText2}`;
+              }
+            } catch (_) { /* best-effort: continue silently */ }
+          }
         } catch (e) {
           console.warn(`[Update ${shopId} - ${product}] Return failed:`, e.message);
         }
-                
+      
+        // Build confirmation with the best-known stock numbers
+        const unitText2  = u ? ` ${u}` : '';
+        const stockText2 = (newQty !== undefined && newQty !== null)
+          ? ` (Stock: ${newQty}${unitText2})`
+          : '';
+        confirmTextLine = `↩️ Returned ${Math.abs(update.quantity)}${unitText2} ${product}${stockText2}`;
+      
+        // Collect per-update result for aggregator
         results.push({
-                  product,
-                  quantity: Math.abs(update.quantity),
-                  unit: update.unit,
-                  action: 'returned',
-                  success: !!result?.success,                                    
-                  newQuantity: newQty,
-                  unitAfter: u,
-                  inlineConfirmText: confirmTextLine // hand to aggregator; no direct send here
-                });        
+          product,
+          quantity: Math.abs(update.quantity),
+          unit: update.unit,
+          action: 'returned',
+          success: !!result?.success,
+          newQuantity: newQty,
+          unitAfter: u,
+          inlineConfirmText: confirmTextLine,
+        });
+      
         continue; // Move to next update
       }
-
       let needsPriceInput = false;
       // Get product price from database           
       let productPrice = 0;
