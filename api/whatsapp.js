@@ -10133,7 +10133,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 inlineConfirmText: confirmTextLine // hand to aggregator; no direct send here
               });
               continue; // Move to next update
-      } catch () {}
+      } catch (_) {}
       let needsPriceInput = false;
       // Get product price from database           
       let productPrice = 0;
