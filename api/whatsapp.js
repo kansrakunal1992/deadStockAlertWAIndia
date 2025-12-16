@@ -10072,68 +10072,59 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       // Use translated product for all operations
       const product = translatedProduct;
                   
-      // === Handle customer returns (simple add-back; no batch, no price/expiry) ===      
-      // Hoisted/mutable locals to survive across try/fallback scopes
-              let result = null;
-              let newQty = null;
-              let u = normalizeUnit(update.unit);
-              let invAfter = null;
-              let invPeek = null;
-              try {
-                // Persist the return (add back to stock)
-                result = await updateInventory(shopId, product, Math.abs(update.quantity), update.unit);
-                console.log(`[Update ${shopId} - ${product}] Return persisted: quantity=${Math.abs(update.quantity)} unit=${update.unit} result=`, result);
+      // === Handle customer returns (simple add-back; no batch, no price/expiry) ===
+      if (update.action === 'returned') {
+        let result;          // hoisted
+        let newQty = null;   // hoisted, mutable
+        let u = update.unit; // hoisted default
+        try {
+          // Persist the return (add back to stock)
+          result = await updateInventory(shopId, product, Math.abs(update.quantity), update.unit);
       
-                // Peek authoritative post-update inventory
-                invAfter = await getProductInventory(shopId, product);
-                console.log(`[Update ${shopId} - ${product}] invAfter=`, invAfter);
+          // Peek authoritative post-update inventory
+          const invAfter = await getProductInventory(shopId, product);
+          newQty = invAfter?.quantity ?? result?.newQuantity ?? null;
+          u      = invAfter?.unit     ?? result?.unit       ?? u;
       
-                newQty = toNumberSafe(invAfter?.quantity ?? result?.newQuantity ?? null);
-                u      = normalizeUnit(invAfter?.unit ?? result?.unit ?? u);
-      
-                // Fallback: second peek if the first didn’t yield usable numbers
-                if (newQty === undefined || newQty === null) {
-                  try {
-                    invPeek = await getProductInventory(shopId, product);
-                    console.log(`[Update ${shopId} - ${product}] invPeek=`, invPeek);
-                    if (invPeek?.success) {
-                      const q  = invPeek.quantity ?? invPeek.fields?.Quantity ?? null;
-                      const uu = invPeek.unit     ?? invPeek.fields?.Units    ?? null;
-                      if (q !== undefined && q !== null) {
-                        newQty = toNumberSafe(q);
-                        u = normalizeUnit(uu ?? u);
-                      }
-                    }
-                  } catch (pe) {
-                    console.warn(`[Update ${shopId} - ${product}] Fallback peek failed:`, pe.message);
-                  }
+          // Fallback: second peek if the first didn’t yield usable numbers
+          if (newQty === undefined || newQty === null) {
+            try {
+              const invPeek = await getProductInventory(shopId, product);
+              if (invPeek?.success) {
+                const q  = invPeek.quantity ?? invPeek.fields?.Quantity ?? null;
+                const uu = invPeek.unit     ?? invPeek.fields?.Units    ?? null;
+                if (q !== undefined && q !== null) {
+                  newQty = q;
+                  u = uu ?? u;
                 }
-              } catch (e) {
-                console.warn(`[Update ${shopId} - ${product}] Return failed:`, e.message);
               }
+            } catch (_) { /* best-effort: continue silently */ }
+          }
+        } catch (e) {
+          console.warn(`[Update ${shopId} - ${product}] Return failed:`, e.message);
+        }
       
-              // Build confirmation after values are stabilized
-              const unitText2  = u ? ` ${u}` : '';
-              const stockText2 = (newQty !== undefined && newQty !== null)
-                ? ` (Stock: ${newQty}${unitText2})`
-                : '';
-              confirmTextLine = `↩️ Returned ${Math.abs(update.quantity)}${unitText2} ${product}${stockText2}`;
+        // Build confirmation with the best-known stock numbers
+        const unitText2  = u ? ` ${u}` : '';
+        const stockText2 = (newQty !== undefined && newQty !== null)
+          ? ` (Stock: ${newQty}${unitText2})`
+          : '';
+        confirmTextLine = `↩️ Returned ${Math.abs(update.quantity)}${unitText2} ${product}${stockText2}`;
       
-              console.log(`[Update ${shopId} - ${product}] confirmTextLine=${confirmTextLine}`);
-              console.log(`[Update ${shopId} - ${product}] computed newQty=${newQty}, unit=${u}`);
+        // Collect per-update result for aggregator
+        results.push({
+          product,
+          quantity: Math.abs(update.quantity),
+          unit: update.unit,
+          action: 'returned',
+          success: !!result?.success,
+          newQuantity: newQty,
+          unitAfter: u,
+          inlineConfirmText: confirmTextLine,
+        });
       
-              results.push({
-                product,
-                quantity: Math.abs(update.quantity),
-                unit: update.unit,
-                action: 'returned',
-                success: !!result?.success,
-                newQuantity: newQty,
-                unitAfter: u,
-                inlineConfirmText: confirmTextLine // hand to aggregator; no direct send here
-              });
-              continue; // Move to next update
-      } catch (_) {}
+        continue; // Move to next update
+      }
       let needsPriceInput = false;
       // Get product price from database           
       let productPrice = 0;
@@ -10142,7 +10133,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               const priceResult = await getProductPrice(product, shopId);
               if (priceResult?.success) {
                 productPrice     = toNumberSafe(priceResult.price);
-                productPriceUnit = normalizeUnit(priceResult.unit || null);
+                productPriceUnit = priceResult.unit || null;
               }
             } catch (error) {
               console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
@@ -13349,12 +13340,7 @@ async function sendMessageViaAPI(to, body) {
         if (bodyStripped.length <= MAX_LENGTH) {
           const finalText = noFooter
             ? bodyStripped                       // do NOT tag footer
-            : await tagWithLocalizedMode(formattedTo, bodyStripped, 'en');                
-      // LOG: show the exact outgoing body (single-part) to verify stock brackets
-        try {
-          console.log('[sendMessageViaAPI] Outgoing body:', finalText);
-        } catch (_) {}
-
+            : await tagWithLocalizedMode(formattedTo, bodyStripped, 'en');
       const message = await client.messages.create({
         body: finalText,
         from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -13389,11 +13375,7 @@ async function sendMessageViaAPI(to, body) {
             text = await tagWithLocalizedMode(formattedTo, text, 'en');
           }
 
-      console.log(`[sendMessageViaAPI] Sending part ${i+1}/${final.length} (${text.length} chars)`);           
-      // LOG: show the exact outgoing chunk body (multi-part)
-          try {
-            console.log('[sendMessageViaAPI] Outgoing part body:', text);
-          } catch (_) {}
+      console.log(`[sendMessageViaAPI] Sending part ${i+1}/${final.length} (${text.length} chars)`);
       const message = await client.messages.create({
         body: text,
         from: process.env.TWILIO_WHATSAPP_NUMBER,
