@@ -804,7 +804,30 @@ async function parseMultipleUpdates(reqOrText) {
   if (isReadOnlyQuery(t)) {
     console.log('[Parser] Read-only query detected; skipping update parsing.');
     return [];
-  }  
+  }
+  
+  // ===== NEW: Auto-park previous item when awaiting price and a new transaction arrives =====
+  try {
+    const stPrice = await getUserStateFromDB(shopId);
+    if (isPriceAwaitState(stPrice)) {
+      // Detect language once for reminder
+      const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'price-await');
+      if (looksLikeTxnLite(t)) {
+        // 1) Park previous draft so it appears in correction/pending lists
+        await parkPendingPriceDraft(shopId, stPrice);
+        // 2) Send a localized reminder (uses ₹ by default in examples)
+        await sendPendingPriceReminder(from, stPrice, langHint);
+        // 3) Do NOT treat this message as price; let it flow into normal transaction parsing
+        //    (fall-through: the rest of parseMultipleUpdates will process this as a fresh line)
+      } else {
+        // Not a transaction-looking message: keep price-await flow (handled in subsequent parts)
+        // We deliberately do not consume it here in Part 1.
+      }
+    }
+  } catch (e) {
+    console.warn('[price-await] state check failed:', e?.message);
+  }
+
  // NEW: only attempt update parsing if message looks like a transaction   
  // Relax when we already have a sticky mode OR an inferred action (consume verb-less lines)
     if (!looksLikeTransaction(t) && !hasAnyAction) {
@@ -1383,6 +1406,53 @@ function looksLikeTxnLite(s) {
                  || /(?:₹|rs\.?|inr)\s*\d+(?:\.\d+)?/i.test(t);
   // Verb-less acceptance: number + unit is sufficient in sticky mode; price is optional
   return (hasNum && hasUnit) || (hasUnit && hasPrice);
+}
+
+// ===== NEW: price-await helpers (auto-park previous item, rupee default) =====
+const DEFAULT_CURRENCY_SYMBOL = '₹';
+
+function isPriceAwaitState(st) {
+  try {
+    return st && String(st.mode).toLowerCase() === 'awaitingpriceforitem' && st.data && st.data.product;
+  } catch { return false; }
+}
+
+async function parkPendingPriceDraft(shopId, st) {
+  // Persist a correction task so the previous item can be resumed later
+  try {
+    const payload = {
+      type: 'pricePending',
+      product: st.data.product,
+      quantity: st.data.quantity ?? null,
+      unit: st.data.unit ?? null,
+      createdAtISO: st.data.createdAtISO ?? new Date().toISOString()
+    };
+    await saveCorrectionState(shopId, 'pricePending', payload, st.data.lang ?? 'en');
+    // We keep the ephemeral state intact so user can still reply with price;
+    // parking here only records the pending task.
+  } catch (e) {
+    console.warn('[price-await] parkPendingPriceDraft failed:', e?.message);
+  }
+}
+
+async function sendPendingPriceReminder(From, st, langHint = 'en') {
+  // Localized, concise, with rupee default examples
+  const prod = String(st?.data?.product ?? '').trim() || 'आइटम';
+  const unit = String(st?.data?.unit ?? '').trim() || 'यूनिट';
+  const qty  = st?.data?.quantity != null ? String(st.data.quantity) : '';
+  const example = `${DEFAULT_CURRENCY_SYMBOL}70 प्रति ${unit}`; // e.g., ₹70 प्रति पैकेट
+  const skipCmd = 'skip';
+  const bodySrc =
+    `«${prod}» के ${qty ? qty + ' ' : ''}${unit} के लिए कीमत बाकी है — `
+    + `कृपया “${example}” भेजें या “${skipCmd}” लिखें.\n`
+    + `नया आइटम जारी रखा गया है।`;
+  try {
+    const msg = await t(bodySrc, langHint, 'price-reminder::' + (st?.data?.product ?? 'item'));
+    const tagged = await tagWithLocalizedMode(From, msg, langHint);
+    await sendMessageViaAPI(From, tagged);
+  } catch (e) {
+    console.warn('[price-await] reminder send failed:', e?.message);
+  }
 }
 
 /**
@@ -15554,16 +15624,6 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         }
       } catch (_) { /* soft-fail: continue */ }
     
-  // ✅ Sticky-mode helpers (scoped to function)
-  function looksLikeTxnLite(s) {
-    const t = String(s ?? '').toLowerCase();
-    const hasNum = /\d/.test(t);
-    const hasUnit = /\b(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes)\b/i.test(t);
-    const hasPrice =
-      /\b(?:@|at)\s*\d+(?:\.\d+)?(?:\s*\/\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes))?/i.test(t) ||
-      /(?:₹|rs\.?|inr)\s*\d+(?:\.\d+)?/i.test(t);
-    return (hasNum && hasUnit) || (hasUnit && hasPrice);
-  }
   async function getStickyActionQuick() {
     try {        
     // ✅ read state by shopId (same key used to store/read)
