@@ -157,6 +157,54 @@ async function maybeResendListPicker(From, lang, requestId) {
 // ---------------------------------------------------------------------------
 // Handled/apology guard: track per-request success to prevent late apologies
 const handledRequests = new Set();            // <- used by parse-error & upsell schedulers
+
+// --- [PATCH:TXN-CONFIRM-DEDUP-001] Begin ---
+// Suppress duplicate transaction confirmations (Purchased/Sold/Returned)
+// sent within a short window for the same shopId + normalized text.
+const TXN_CONFIRM_TTL_MS = Number(process.env.TXN_CONFIRM_TTL_MS ?? 7000);
+const __txnConfirmSeen = new Map(); // key -> { ts }
+
+function _isTxnConfirmationText(s = '') {
+  const t = String(s || '').toLowerCase();
+  // emoji ↩️ (U+21A9) or common check/box icons, then verb
+  return /^(↩️|\u21a9|✅|📦)\s*(returned|sold|purchased)\b/.test(t);
+}
+
+function _txnKey(from, body) {
+  try {
+    const shopId = String(from || '').replace('whatsapp:', '');
+    const raw = String(body || '');
+    // strip stock annotation e.g., "(Stock: 402 litres)"
+    const main = raw.replace(/\(Stock:[^)]+\)/i, '').trim();
+    // reuse existing light normalizers
+    const norm = _normLite(normalizeNumeralsToLatin(main));
+    return `${shopId}::${norm}`;
+  } catch {
+    return `${from}::${body}`;
+  }
+}
+
+function _shouldSuppressTxnDuplicate(from, body) {
+  try {
+    if (!_isTxnConfirmationText(body)) return false;
+    const k = _txnKey(from, body);
+    const prev = __txnConfirmSeen.get(k);
+    const now = Date.now();
+    if (prev && (now - prev.ts) < TXN_CONFIRM_TTL_MS) {
+      return true;
+    }
+    __txnConfirmSeen.set(k, { ts: now });
+    // cheap sweep
+    if (__txnConfirmSeen.size > 1000) {
+      for (const [kk, vv] of __txnConfirmSeen) {
+        if (now - vv.ts > TXN_CONFIRM_TTL_MS) __txnConfirmSeen.delete(kk);
+      }
+    }
+  } catch {}
+  return false;
+}
+// --- [PATCH:TXN-CONFIRM-DEDUP-001] End ---
+
 // --- Defensive shim: provide a safe setUserState if not present (prevents runtime errors)
 if (typeof globalThis.setUserState !== 'function') {      
     globalThis.setUserState = async function setUserState(from, mode, data = {}) {
@@ -13399,6 +13447,16 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
             ? bodyStripped                       // do NOT tag footer
             : await tagWithLocalizedMode(formattedTo, bodyStripped, 'en', tagOpts);
           console.log('[sendMessageViaAPI] Body (final after tag):', JSON.stringify(finalText));
+                
+      // [PATCH:TXN-CONFIRM-DEDUP-001] — suppress duplicate confirmations
+                try {
+                  if (_shouldSuppressTxnDuplicate(formattedTo, finalText)) {
+                    console.log('[sendMessageViaAPI] Suppressed duplicate txn confirmation', { to: formattedTo });
+                    await appendCTA(); // keep CTA behavior consistent
+                    return { suppressed: true };
+                  }
+                } catch (_) {}
+
       const message = await client.messages.create({
         body: finalText,
         from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -13432,6 +13490,15 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
           if (isLast && !noFooter) {
             text = await tagWithLocalizedMode(formattedTo, text, 'en', tagOpts);
           }
+    
+    // [PATCH:TXN-CONFIRM-DEDUP-001] — suppress duplicates even in multipart (rare for confirmations)
+          try {
+            if (_shouldSuppressTxnDuplicate(formattedTo, text)) {
+              console.log('[sendMessageViaAPI] Suppressed duplicate txn confirmation (multipart)', { to: formattedTo });
+              await appendCTA();
+              return { suppressed: true };
+            }
+          } catch (_) {}
 
       console.log(`[sendMessageViaAPI] Sending part ${i+1}/${final.length} (${text.length} chars)`);
       const message = await client.messages.create({
