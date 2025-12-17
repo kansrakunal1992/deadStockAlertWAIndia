@@ -2657,7 +2657,7 @@ async function setStickyMode(from, actionOrWord) {
 }
 
 // ===== LOCALIZED FOOTER TAG: append «<MODE_BADGE> • <SWITCH_WORD>» to every message =====
-async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
+async function tagWithLocalizedMode(from, text, detectedLanguageHint = null, opts = {}) {
   try {
     // NOTE: badge will be shown only if the user is activated (paid or trial & not expired)
     // Marker to opt-out of footer for specific messages (onboarding/upsell)
@@ -2736,15 +2736,16 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
     // 4) If not activated, or effective action is none, do NOT append badge
         const isNone = !action || String(action).trim().length === 0;
         if (!activated || isNone) return String(text);
-        
-    // --- NEW: Append compact Help CTA to transactional confirmations (first ack) ---
+               
+    // --- NEW: Append Help CTA conditionally (only where explicitly requested) ---
         // Avoid duplication if CTA already present.
         const switchWord = getSwitchWordFor(lang);
         const HELP_CTA = `\n\nNeed help? WhatsApp Saamagrii.AI support: "https://wa.link/6q3ol7". ` +
-                         `Type "${switchWord}" to switch Purchase/Sale/Return or ask an inventory query.`;
-        if (!/Need help\?/i.test(text)) {
-          text = String(text) + HELP_CTA;
-        }
+                         `Type "${switchWord}" to switch Purchase/Sale/Return or ask an inventory query.`;                
+        const wantHelpCta = opts?.helpCta === true;
+            if (wantHelpCta && !/Need help\?/i.test(text)) {
+              text = String(text) + HELP_CTA;
+            }
     
         // Build badge in user language                
         const badge = getModeBadge(action, lang); // e.g., 'बिक्री', 'விற்பனை', 'SALE'
@@ -3352,7 +3353,13 @@ async function getPreferredLangQuick(From, hint = 'en') {
 async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
   try {        
     if (!SEND_EARLY_ACK) return;            
-        
+            
+    // NEW: suppress ack for Return sticky mode
+        try {
+          const sticky = await getStickyActionQuick(From);
+          if (sticky === 'returned') return;
+        } catch { /* noop */ }
+
         // Activation gate (ALL kinds): suppress ultra‑early ack until Trial/Paid is active
             const shopId = String(From ?? '').replace('whatsapp:', '');
             try {
@@ -3396,7 +3403,15 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
 // Keeps ultra‑early property and avoids touching all call sites’ preference logic.
 async function sendProcessingAckQuickFromText(From, kind = 'text', sourceText = '') {
   try {
-    if (!SEND_EARLY_ACK) return;    
+    if (!SEND_EARLY_ACK) return;
+        
+    // NEW: do not send early ack for Returns (sticky or inferred from text)
+        try {
+          const sticky = await getStickyActionQuick(From);
+          const looksReturn = /\b(return|returned|refund|exchange)\b/i.test(String(sourceText));
+          if (sticky === 'returned' || looksReturn) return; // suppress ack for Return cases
+        } catch { /* noop */ }
+
     const t = String(sourceText || '').trim().toLowerCase();
      const isCommandOnly = ['mode','help','demo','trial','paid'].includes(t);
      const hint = isCommandOnly ? 'en' : guessLangFromInput(sourceText);
@@ -13308,7 +13323,7 @@ function sanitizeOutboundMessage(text) {
 }
 
 // Function to send WhatsApp message via Twilio API (for async responses)
-async function sendMessageViaAPI(to, body) {
+async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tagWithLocalizedMode */) {
   try {
     const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
 
@@ -13327,7 +13342,7 @@ async function sendMessageViaAPI(to, body) {
 
     // We will append the localized footer ONLY to the final part.
     // Measure footer length by tagging an empty string once.
-    const emptyTagged = await tagWithLocalizedMode(formattedTo, '', 'en');
+    const emptyTagged = await tagWithLocalizedMode(formattedTo, '', 'en', tagOpts);
     const footerLen = emptyTagged.length; // e.g., «SALE • mode»
 
     // Smart line-based splitter that respects a given safe limit
@@ -13395,7 +13410,7 @@ async function sendMessageViaAPI(to, body) {
           console.log('[sendMessageViaAPI] Body (raw before tag):', JSON.stringify(bodyStripped));
           const finalText = noFooter
             ? bodyStripped                       // do NOT tag footer
-            : await tagWithLocalizedMode(formattedTo, bodyStripped, 'en');
+            : await tagWithLocalizedMode(formattedTo, bodyStripped, 'en', tagOpts);
           console.log('[sendMessageViaAPI] Body (final after tag):', JSON.stringify(finalText));
       const message = await client.messages.create({
         body: finalText,
@@ -13428,7 +13443,7 @@ async function sendMessageViaAPI(to, body) {
       let text = final[i] + PART_SUFFIX(i + 1, final.length);       
     // Append footer ONLY on the last part — unless NO_FOOTER was requested
           if (isLast && !noFooter) {
-            text = await tagWithLocalizedMode(formattedTo, text, 'en');
+            text = await tagWithLocalizedMode(formattedTo, text, 'en', tagOpts);
           }
 
       console.log(`[sendMessageViaAPI] Sending part ${i+1}/${final.length} (${text.length} chars)`);
@@ -13491,14 +13506,15 @@ async function sendReturnConfirmationOnce(
 
     const qty   = Math.abs(Number(payload.qty ?? 0)) || 0;
     const unit  = String(payload.unit ?? '').trim();
-    const prod  = String(payload.product ?? '').trim();
+    const prod  = String(payload.product ?? '').trim();        
     const stock = (payload.newQuantity != null)
-      ? ` · Stock: ${payload.newQuantity} ${unit || ''}`.trim()
-      : '';
+          ? ` (Stock: ${payload.newQuantity}${unit ? ' ' + unit : ''})`
+          : '';
     const reasonLine = payload.reason ? `\nReason: ${payload.reason}` : '';
 
-    const line = `↩️ Returned ${qty} ${unit} ${prod}${stock}${reasonLine}`;
-    await sendMessageViaAPI(toWhatsApp, finalizeForSend(line, languageCode));
+    const line = `↩️ Returned ${qty} ${unit} ${prod}${stock}${reasonLine}`;        
+    const prepared = finalizeForSend(line, languageCode);
+    await sendMessageViaAPI(toWhatsApp, prepared, { helpCta: true });
     return true;
   } catch (e) {
     console.warn('[return-confirmation] send failed:', e?.message);
