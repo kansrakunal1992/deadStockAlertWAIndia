@@ -57,7 +57,9 @@ const STT_CONFIDENCE_MIN_VOICE = Number(process.env.STT_CONFIDENCE_MIN_VOICE ?? 
 // --------------------------------------------------------------------------------
 function canonicalizeLang(code) {
   const s = String(code ?? 'en').trim().toLowerCase();
-  const map = {
+  const map = {        
+    // English
+    'english': 'en',
     // Hindi / Hinglish
     'hindi': 'hi',
     'hinglish': 'hi-latn',
@@ -2372,7 +2374,13 @@ async function detectLanguageWithFallback(text, from, requestId) {
 
 // Safe wrapper so missing function can’t crash the request
 async function safeSendParseError(From, detectedLanguage, requestId, header) {
-  try {          
+  try {             
+    // NEW: if this requestId was handled (e.g., skip processed), suppress fallback
+        if (handledRequests?.has?.(requestId)) {
+          console.log('[safeSendParseError] suppressed (already handled)', { requestId });
+          return;
+        }
+
     // Do not send apologies/examples during trial onboarding capture
        try {
          const shopId = String(From).replace('whatsapp:', '');
@@ -7464,13 +7472,21 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
       try {
         const b = String(Body ?? '').trim().toLowerCase();
         // Accept "skip" (en), and a simple Hindi transliteration "स्किप"
-        if (b === 'skip' || b === 'स्किप') {
-          // Clear state and confirm
-          await deleteUserStateFromDB(state.id);
-          const msg = await t(`✅ कीमत चरण स्किप किया गया। आप नया आइटम दर्ज कर सकते हैं।`, detectedLanguage, 'price-skip');
-          await sendMessageViaAPI(From, finalizeForSend(msg, detectedLanguage));
-          // Return false so router can continue with normal parsing in the same chat
-          return false;
+        if (b === 'skip' || b === 'स्किप') {                      
+            // Clear price-await state and restore sticky Purchase mode (avoid 'none' → generic prompt)
+                try { await deleteUserStateFromDB(state.id); } catch {}
+                await setUserState(shopId, 'awaitingTransactionDetails', { action: 'purchased' });
+            
+                // Use exact language of THIS turn; prevents 'english'→Hindi drift
+                const turnLang = await detectLanguageWithFallback(Body, From, requestId);
+                const msg0 = await t('✅ Price step skipped. You can enter a new item.', turnLang, 'price-skip');
+                const msg1 = finalizeForSend(msg0, turnLang);
+                const tagged = await tagWithLocalizedMode(From, msg1, turnLang);
+                await sendMessageViaAPI(From, tagged);
+            
+                // Suppress any late parse-error/default path on this same requestId
+                try { handledRequests.add(requestId); } catch {}
+                return true; // consume this turn
         }
       } catch (e) {
         console.warn('[awaitingPriceExpiry] skip handling failed:', e?.message);
@@ -7582,14 +7598,23 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
           } 
     try {
                 await updateInventory(shopId, product, quantity, unit);
-                console.log(`[handleAwaitingPriceExpiry] Inventory updated for ${product}: +${quantity} ${unit}`);                    
-          
-      // ✅ ADD: Confirmation message to user (₹ default, include price if available)
-            let confirmation = `✅ Done:\n📦 Purchased ${quantity} ${unit} ${product} (Stock: updated)`;
-            if (updatedPrice) confirmation += `\n💰 Price: ₹${updatedPrice}`;
-            confirmation += `\n\n✅ Successfully updated 1 of 1 items`;
-            // ANCHOR: UNIQ:PRICE-EXPIRY-CONFIRM-001
-            await sendMessageViaAPI(From, finalizeForSend(confirmation, detectedLanguage));      
+                console.log(`[handleAwaitingPriceExpiry] Inventory updated for ${product}: +${quantity} ${unit}`);                                         
+                 
+            // ✅ Confirmation: include current stock total if available; fallback to "(updated)"
+              let stockLine = ' (Stock: updated)';
+              try {
+                const invNow = await getProductInventory(shopId, product);
+                if (Number.isFinite(invNow?.quantity)) {
+                  const unitDisp = displayUnit(unit, detectedLanguage);
+                  stockLine = ` (Stock: now ${invNow.quantity} ${unitDisp})`;
+                }
+              } catch { /* keep fallback */ }
+              let confirmation = `✅ Done:\n📦 Purchased ${quantity} ${unit} ${product}${stockLine}`;
+              if (updatedPrice) confirmation += `\n💰 Price: ₹${updatedPrice}`;
+              confirmation += `\n\n✅ Successfully updated 1 of 1 items`;
+              // ANCHOR: UNIQ:PRICE-EXPIRY-CONFIRM-001
+              const confTagged = await tagWithLocalizedMode(From, finalizeForSend(confirmation, detectedLanguage), detectedLanguage);
+    
             // ===== NEW: Finalize — clear price-await state & return to sticky purchase mode =====
                   try {
                     await deleteUserStateFromDB(state.id);
