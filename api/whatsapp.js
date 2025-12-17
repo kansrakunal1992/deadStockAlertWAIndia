@@ -3352,13 +3352,7 @@ async function getPreferredLangQuick(From, hint = 'en') {
  */
 async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
   try {        
-    if (!SEND_EARLY_ACK) return;            
-            
-    // NEW: suppress ack for Return sticky mode
-        try {
-          const sticky = await getStickyActionQuick(From);
-          if (sticky === 'returned') return;
-        } catch { /* noop */ }
+    if (!SEND_EARLY_ACK) return;           
 
         // Activation gate (ALL kinds): suppress ultra‑early ack until Trial/Paid is active
             const shopId = String(From ?? '').replace('whatsapp:', '');
@@ -3404,13 +3398,6 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
 async function sendProcessingAckQuickFromText(From, kind = 'text', sourceText = '') {
   try {
     if (!SEND_EARLY_ACK) return;
-        
-    // NEW: do not send early ack for Returns (sticky or inferred from text)
-        try {
-          const sticky = await getStickyActionQuick(From);
-          const looksReturn = /\b(return|returned|refund|exchange)\b/i.test(String(sourceText));
-          if (sticky === 'returned' || looksReturn) return; // suppress ack for Return cases
-        } catch { /* noop */ }
 
     const t = String(sourceText || '').trim().toLowerCase();
      const isCommandOnly = ['mode','help','demo','trial','paid'].includes(t);
