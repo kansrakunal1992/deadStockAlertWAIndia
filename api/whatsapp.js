@@ -2736,10 +2736,19 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null) {
     // 4) If not activated, or effective action is none, do NOT append badge
         const isNone = !action || String(action).trim().length === 0;
         if (!activated || isNone) return String(text);
+        
+    // --- NEW: Append compact Help CTA to transactional confirmations (first ack) ---
+        // Avoid duplication if CTA already present.
+        const switchWord = getSwitchWordFor(lang);
+        const HELP_CTA = `\n\nNeed help? WhatsApp Saamagrii.AI support: "https://wa.link/6q3ol7". ` +
+                         `Type "${switchWord}" to switch Purchase/Sale/Return or ask an inventory query.`;
+        if (!/Need help\?/i.test(text)) {
+          text = String(text) + HELP_CTA;
+        }
     
-        // Build badge in user language
-        const badge = getModeBadge(action, lang);        // e.g., 'बिक्री', 'விற்பனை', 'SALE'
-        const switchWord = getSwitchWordFor(lang);       // e.g., 'मोड', 'மோட்', 'mode'
+        // Build badge in user language                
+        const badge = getModeBadge(action, lang); // e.g., 'बिक्री', 'விற்பனை', 'SALE'
+        // switchWord defined above for CTA
         const tag = `«${badge} • ${switchWord}»`;
 
     // 4) Append on a new line; keep WA length constraints safe
@@ -16617,27 +16626,30 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
             return;
           }
     const results = await updateMultipleInventory(shopId, inventoryUpdates, detectedLanguage);
-              
-    
-// INLINE-CONFIRM aware single message
-      const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-      const header = chooseHeader(processed.length, COMPACT_MODE, false);
-      let message = header;
-      let successCount = 0;
-
-      for (const r of processed) {
-        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
-        if (!rawLine) continue;
-        const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-        const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
-        message += `${rawLine}${stockPart}\n`;
-        if (r.success) successCount++;
+                 
+    // If inline confirmations were already produced (per item),
+      // suppress the aggregated "second message" to avoid duplication.
+      const hasInline = Array.isArray(results) && results.some(r => r?.inlineConfirmText);
+      if (hasInline) {
+        console.log(`[${requestId}] Suppressed aggregated ack (inline confirmations present)`);
+      } else {          
+    // Existing aggregated ack path retained when no inline confirms existed:
+        const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+        const header = chooseHeader(processed.length, COMPACT_MODE, false);
+        let message = header;
+        let successCount = 0;
+        for (const r of processed) {
+          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
+          if (!rawLine) continue;
+          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+          message += `${rawLine}${stockPart}\n`;
+          if (r.success) successCount++;
+        }
+        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+        await sendMessageDedup(From, formattedResponse);
       }
-
-      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`
-      
-      const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-      await sendMessageDedup(From, formattedResponse);
     
     // Clear state after processing
     await clearUserState(From);
@@ -16706,31 +16718,34 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
       const updates = await parseMultipleUpdates(pendingTranscript);
       if (updates.length > 0) {
         
-// Process the confirmed updates
-          const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-          const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-          
-          const header = chooseHeader(processed.length, COMPACT_MODE, false);
-          let message = header;
-          let successCount = 0;
-
-          for (const r of processed) {
-            const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
-            if (!rawLine) continue;
-            const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-            const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
-            message += `${rawLine}${stockPart}\n`;
-            if (r.success) successCount++;
-          }
-
-          message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-          
-          // FIX: Send via WhatsApp API instead of synchronous response
-          const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-          await sendMessageDedup(From, formattedResponse);
-        
-        // Clear state after processing
-        await clearUserState(From);
+    // Process the confirmed updates
+              
+    const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+    
+              // --- GUARD: suppress aggregated ack when inline confirmations already exist ---
+              const hasInline = Array.isArray(results) && results.some(r => r?.inlineConfirmText);
+              if (hasInline) {
+                console.log(`[${requestId}] [voice-agg-guard] Suppressed aggregated ack (inline confirmations present)`);
+              } else {
+                const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+                const header = chooseHeader(processed.length, COMPACT_MODE, false);
+                let message = header;
+                let successCount = 0;
+                for (const r of processed) {
+                  const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
+                  if (!rawLine) continue;
+                  const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+                  const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+                  message += `${rawLine}${stockPart}\n`;
+                  if (r.success) successCount++;
+                }
+                message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+                // FIX: Send via WhatsApp API instead of synchronous response
+                const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+                await sendMessageDedup(From, formattedResponse);
+              }
+              // Clear state after processing (both branches)
+              await clearUserState(From);
       } else {
         // If parsing failed, ask to retry
         const errorMessage = await t(
@@ -16897,40 +16912,47 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
     try {
       const updates = await parseMultipleUpdates(pendingTranscript);     
       if (updates.length > 0) {
-                // Process the confirmed updates
-                const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-      
-                // Consider only non-pending items for rendering & counts
-                const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-                const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
-                let message = header;
-                let successCount = 0;
-      
-                for (const r of processed) {
-                  // Prefer inlineConfirmText (buffered in updateMultipleInventory)
-                  const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
-                  if (!rawLine) continue;
-      
-                  // In Compact, ensure stock is shown once, if not already present
-                  const needsStock = COMPACT_MODE
-                    && r.newQuantity !== undefined
-                    && !/\(Stock:/.test(rawLine);
-                  const stockPart = needsStock
-                    ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})`
-                    : '';
-      
-                  message += `${rawLine}${stockPart}\n`;
-                  if (r.success) successCount++;
-                }
-      
-                // Tail line once, based on processed items only
-                message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-      
-                const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-                await sendMessageDedup(From, formattedResponse);
-      
-                // Clear state after processing
-                await clearUserState(From);
+                    
+    // Process the confirmed updates
+    const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+    
+    // --- GUARD: suppress aggregated ack when inline confirmations already exist ---
+    const hasInline = Array.isArray(results) && results.some(r => r?.inlineConfirmText);
+    if (hasInline) {
+      console.log(`[${requestId}] [text-agg-guard] Suppressed aggregated ack (inline confirmations present)`);
+    } else {
+      // Consider only non-pending items for rendering & counts
+      const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+      const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
+      let message = header;
+      let successCount = 0;
+    
+      for (const r of processed) {
+        // Prefer inlineConfirmText (buffered in updateMultipleInventory)
+        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
+        if (!rawLine) continue;
+    
+        // In Compact, ensure stock is shown once, if not already present
+        const needsStock = COMPACT_MODE
+          && r.newQuantity !== undefined
+          && !/\(Stock:/.test(rawLine);
+        const stockPart = needsStock
+          ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})`
+          : '';
+    
+        message += `${rawLine}${stockPart}\n`;
+        if (r.success) successCount++;
+      }
+    
+      // Tail line once, based on processed items only
+      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+    
+      const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+      await sendMessageDedup(From, formattedResponse);
+    }
+    
+    // Clear state after processing (both branches)
+    await clearUserState(From);
               } else {
         // If parsing failed, ask to retry
         const errorMessage = await t(
