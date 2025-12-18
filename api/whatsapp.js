@@ -5824,44 +5824,56 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
                 }
                 return true;
               }
-    
-      // --------------------------------------
-      // NEW: Reorder Suggestions (velocity-based)
-      // --------------------------------------
-      if (cmd === 'reorder suggestions') {
-        try {         
-            const sug = await getReorderSuggestions(shopId) ?? [];
-                const count = sug.length;
-                if (!count) {
-                  await sendTagged('📦 Reorder Suggestions — No items need attention right now.');
-                  return true;
-                }
-                const LINES_MAX = 10;
-                const lines = sug.slice(0, LINES_MAX).map(s => {
-                  const name = s.name ?? s.fields?.Product ?? '—';
-                  const qty  = s.reorderQty ?? s.fields?.ReorderQty ?? null;
-                  const unit = s.unit ?? s.fields?.Units ?? '';
-                  const lead = s.leadDays ?? s.fields?.LeadDays ?? null;
-                  const saf  = s.safetyQty ?? s.fields?.SafetyQty ?? null;
-                  const base = qty ? `${qty}${unit ? ' ' + unit : ''}` : null;
-                  const ctx  = [ lead ? `${lead}d lead` : null, saf ? `+${saf} safety` : null ]
-                    .filter(Boolean)
-                    .join(', ');
-                  if (base && ctx) return `• ${name} — ${base} (${ctx})`;
-                  if (base)        return `• ${name} — ${base}`;
-                  return `• ${name}`;
-                }).join('\n');
-                const moreTail = count > LINES_MAX ? `\n• +${count - LINES_MAX} more` : '';
-                const header = `📦 Reorder Suggestions — ${count} ${count === 1 ? 'item' : 'items'}`;
-                const body   = `${header}\n${lines}${moreTail}\n\n➡️ Action: place purchase orders for suggested quantities.`;
-                const NO_CLAMP_MARKER = globalThis.NO_CLAMP_MARKER || '[[NO_CLAMP]]';
-                const safeBody = `${NO_CLAMP_MARKER}${body}`;
-                await sendMessageDedup(shopId, safeBody);
-        } catch (_) {
-          await sendTagged('📦 Reorder Suggestions — snapshot unavailable. Try later.');
-        }
-        return true;
-      }
+                    
+          // --------------------------------------
+          // NEW: Reorder Suggestions (velocity-based) — FIXED
+          // --------------------------------------
+          if (cmd === 'reorder suggestions') {
+            try {
+              const { success, suggestions, days, leadTimeDays, safetyDays, error } =
+                await getReorderSuggestions(shopId, { days: 30, leadTimeDays: 3, safetyDays: 2 });
+          
+              if (!success) {
+                await sendTagged('📦 Reorder Suggestions — snapshot unavailable. Try later.');
+                return true;
+              }
+          
+              const count = suggestions.length;
+              if (!count) {
+                await sendTagged('📦 Reorder Suggestions — No items need attention right now.');
+                return true;
+              }
+          
+              const LINES_MAX = 10;
+              const lines = suggestions.slice(0, LINES_MAX).map(s => {
+                const name = s.name ?? s.fields?.Product ?? '—';
+                const qty  = s.reorderQty ?? s.fields?.ReorderQty ?? null;  // returned field
+                const unit = s.unit ?? s.fields?.Units ?? '';                // returned field
+                const base = qty ? `${qty}${unit ? ' ' + unit : ''}` : null;
+                if (base) return `• ${name} — ${base}`;
+                return `• ${name}`;
+              }).join('\n');
+          
+              const moreTail = count > LINES_MAX ? `\n• +${count - LINES_MAX} more` : '';
+              const header   = `📦 Reorder Suggestions — ${count} ${count === 1 ? 'item' : 'items'}`
+                + ` (based on ${days}d sales, lead ${leadTimeDays}d, safety ${safetyDays}d)`;
+          
+              // Unify marker with global constant used by clamp/strip logic
+              const NO_CLAMP_MARKER = globalThis.NO_CLAMP_MARKER || '<!NO_CLAMP!>';
+              const body = `${NO_CLAMP_MARKER}${header}\n${lines}${moreTail}\n\n➡️ Action: place purchase orders for suggested quantities.`;
+          
+              // Optional: localize & append mode badge
+              const detectedLanguage = await detectLanguageWithFallback(body, `whatsapp:${shopId}`, 'reorder-suggestions');
+              const msgLocalized     = await t(body, detectedLanguage, 'reorder-suggestions');
+              const msgFinal         = await tagWithLocalizedMode(`whatsapp:${shopId}`, msgLocalized, detectedLanguage);
+          
+              await sendMessageDedup(shopId, msgFinal);
+            } catch (e) {
+              await sendTagged('📦 Reorder Suggestions — snapshot unavailable. Try later.');
+            }
+            return true;
+          }
+
     
       // -----------------------------------
       // NEW: Expiring (0/7/30 days window)
@@ -9490,27 +9502,30 @@ try{
   }
 
   // 7) Reorder suggestions (velocity + lead/safety)
-  if (/^what\s+should\s+i\s+reorder$|^reorder(\s+suggestions?)?$/i.test(text)) {
-    const { success, suggestions, days, leadTimeDays, safetyDays, error } =
-      await getReorderSuggestions(shopId, { days: 30, leadTimeDays: 3, safetyDays: 2 });
-    if (!success) {
-      const msg = await t(`Error creating suggestions: ${error}`, detectedLanguage, requestId);
-      await sendMessageQueued(From, msg);
-      await scheduleUpsell(gate?.upsellReason);
-      return true;
-    }
-    let message = `📋 Reorder Suggestions (based on ${days}d sales, lead ${leadTimeDays}d, safety ${safetyDays}d):\n`;
-    if (suggestions.length === 0) {
-      message += `No urgent reorders detected.`;
-    } else {
-      message += suggestions.slice(0, 10).map(s =>
-        `• ${s.name}: stock ${s.currentQty} ${s.unit}, ~${s.dailyRate}/day → reorder ~${s.reorderQty} ${singularize(s.unit)}`
-      ).join('\n');
-      message += `\n\n💡 Advice: Confirm supplier lead-times. Increase safety days for volatile items.`;
-    }
-    const msg = await t(message, detectedLanguage, requestId);
+  if (/^what\s+should\s+i\s+reorder$|^reorder(\s+suggestions?)?$/i.test(text)) {      
+  const { success, suggestions, days, leadTimeDays, safetyDays, error } =
+    await getReorderSuggestions(shopId, { days: 30, leadTimeDays: 3, safetyDays: 2 /*, minDailyRate: 0.2 */ });
+  
+  if (!success) {
+    const msg = await t(`Error creating suggestions: ${error}`, detectedLanguage, requestId);
     await sendMessageQueued(From, msg);
     await scheduleUpsell(gate?.upsellReason);
+    return true;
+  }
+  
+  let message = `📋 Reorder Suggestions (based on ${days}d sales, lead ${leadTimeDays}d, safety ${safetyDays}d):\n`;
+  if (suggestions.length === 0) {
+    message += `No urgent reorders detected.`;
+  } else {
+    message += suggestions.slice(0, 10).map(s =>
+      `• ${s.name}: stock ${s.currentQty} ${s.unit}, ~${s.dailyRate}/day → reorder ~${s.reorderQty} ${singularize(s.unit)}`
+    ).join('\n');
+    message += `\n\n💡 Advice: Confirm supplier lead-times. Increase safety days for volatile items.`;
+  }
+  const msg = await t(message, detectedLanguage, requestId);
+  await sendMessageQueued(From, msg);
+  awaitawait scheduleUpsell(gate?.upsellReason);
+
     return true;
   }
 
