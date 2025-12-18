@@ -2297,7 +2297,10 @@ async function getLowStockProducts(shopId, threshold = 5) {
 // Get expiring products
 // FIX: variant-aware + timezone-safe expiry queries for DateTime field
 async function getExpiringProducts(shopId, daysAhead = 7, { strictExpired = false } = {}) {
-  const context = `Get Expiring Products ${shopId}`;
+  const context = `Get Expiring Products ${shopId}`;    
+  const targetTable =
+      process.env.AIRTABLE_TABLE_INVENTORY_BATCHES || 'InventoryBatches';
+
   try {
     const shopFilter = buildShopIdVariantFilter('ShopID', shopId);
 
@@ -2333,10 +2336,10 @@ async function getExpiringProducts(shopId, daysAhead = 7, { strictExpired = fals
       )`;
     }
 
-    console.log(`[${context}]`, { table: TABLES.InventoryBatches ?? 'InventoryBatches', filterByFormula });
+    console.info(`[${context}]`, { table: targetTable, filterByFormula });
     const result = await airtableBatchRequest({
       method: 'get',
-      table: TABLES.InventoryBatches,
+      table: targetTable,
       params: {
         filterByFormula: filterFormula,
         sort: [{ field: 'ExpiryDate', direction: 'asc' }]
@@ -2351,7 +2354,7 @@ async function getExpiringProducts(shopId, daysAhead = 7, { strictExpired = fals
       expiryDate: r.fields.ExpiryDate ? new Date(r.fields.ExpiryDate) : null
     }));
   } catch (error) {
-    logError(context, error);
+    (typeof logError === 'function' ? logError : console.error)(context, error);
     return [];
    }
 }
