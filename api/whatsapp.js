@@ -5393,7 +5393,49 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
         msg = normalizeNumeralsToLatin(msg).trim();
         await sendMessageViaAPI(From, msg);
   };
-    
+   
+  // ---- NEW: Expiring / Expired handler ------------------------------------
+    try {
+      const cmdLc = String(cmd).trim().toLowerCase();
+      const m = cmdLc.match(/^expiring(?:\s+(\d+))?$/);
+      if (m) {
+        // Parse days; default to 30 if missing (aligned with your normalizer)
+        const days = Number(m[1] ?? 30);
+        const strictExpired = (days === 0);
+        // Fetch from Batch table via database helper (already patched to pin URL & sanitize formula)
+        const rows = await getExpiringProducts(shopId, days, { strictExpired });
+  
+        // Format header: "Expired" for 0; else "Expiring N"
+        const header = strictExpired ? '⏳ Expired' : `⏳ Expiring ${days}`;
+  
+        if (!rows || rows.length === 0) {
+          await sendTagged(noClamp(`${header}\nNone.`));
+          return true;
+        }
+  
+        // Build list; clamp to a reasonable size for WhatsApp messages
+        const lines = [];
+        for (const r of rows.slice(0, 40)) {
+          const name = String(r.name ?? '').trim();
+          const qty  = Number(r.quantity ?? 0);
+          const unitDisp = displayUnit(r.unit ?? 'pieces', lang);
+          // Date formatting (existing helper): show IST-friendly date/time
+          const expShown = r.expiryDate ? formatDateForDisplay(r.expiryDate) : '—';
+          const line = strictExpired
+            ? `• ${name} — ${qty} ${unitDisp} — expired on ${expShown}`
+            : `• ${name} — ${qty} ${unitDisp} — expires on ${expShown}`;
+          lines.push(line);
+        }
+  
+        const body = `${header}\n${lines.join('\n')}`;
+        await sendTagged(noClamp(body));
+        return true;
+      }
+    } catch (e) {
+      console.warn('[expiring-handler] failed:', e?.message);
+      // Fail gracefully and let other branches run if needed
+    }
+ 
 // Helper no-op: clamp removed, keep numerals-only normalization elsewhere
   const noClamp = (s) => String(s);
               
