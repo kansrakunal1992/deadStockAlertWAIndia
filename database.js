@@ -2303,22 +2303,21 @@ async function getExpiringProducts(shopId, daysAhead = 7, { strictExpired = fals
 
   try {
     const shopFilter = buildShopIdVariantFilter('ShopID', shopId);
-
-    // Use symmetrical timezone on both sides to avoid any accidental display-offset artifacts.
-    // Airtable stores absolute datetimes; this keeps comparisons intuitive for IST users.
-    let filterFormula;
-    if (strictExpired) {
-      // Already expired as of "now" in Asia/Kolkata
-      filterFormula = `AND(
-        ${shopFilter},
-        {Quantity} > 0,
-        NOT({ExpiryDate} = BLANK()),
-        IS_BEFORE(
-          SET_TIMEZONE({ExpiryDate}, 'Asia/Kolkata'),
-          SET_TIMEZONE(NOW(), 'Asia/Kolkata')
-        )
-      )`;
-    } else {
+          
+      // DateTime comparisons in IST — FIX: make days=0 a strict "expired as-of-now" check
+          let filterFormula;
+          if (Number(daysAhead) === 0) {
+            // Strict expired: anything with ExpiryDate earlier than NOW (IST)
+            filterFormula = `AND(
+              ${shopFilter},
+              {Quantity} > 0,
+              NOT({ExpiryDate} = BLANK()),
+              IS_BEFORE(
+                SET_TIMEZONE({ExpiryDate}, 'Asia/Kolkata'),
+                SET_TIMEZONE(NOW(), 'Asia/Kolkata')
+              )
+            )`;
+          } else {
       // Expiring within the next N days (now .. now+daysAhead), IST
       const days = Number(daysAhead || 0);
       filterFormula = `AND(
