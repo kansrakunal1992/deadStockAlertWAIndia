@@ -9524,8 +9524,7 @@ try{
   }
   const msg = await t(message, detectedLanguage, requestId);
   await sendMessageQueued(From, msg);
-  awaitawait scheduleUpsell(gate?.upsellReason);
-
+  await scheduleUpsell(gate?.upsellReason);
     return true;
   }
 
