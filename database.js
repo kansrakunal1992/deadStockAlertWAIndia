@@ -2929,80 +2929,92 @@ async function getTopSellingProductsForPeriod(shopId, period = 'month', limit = 
 }
 
 // Heuristic reorder suggestions: velocity-based with lead & safety days
+
+// --- inside database.js ---
 async function getReorderSuggestions(shopId, { days = 30, leadTimeDays = 3, safetyDays = 2, minDailyRate = 0.2 } = {}) {
   const context = `Get Reorder Suggestions ${shopId}`;
   try {
     const now = new Date();
-    const start = new Date(now);
-    start.setDate(now.getDate() - days);
+    const start = new Date(now); start.setDate(now.getDate() - days);
+
+    // Pull inputs
     const sales = await getSalesDataForPeriod(shopId, start, now);
     const inventoryRecords = await getCurrentInventory(shopId);
 
-    const soldMap = new Map(); // product -> qty sold
+    // --- FIX #3: canonicalize product keys when aggregating velocity ---
+    const soldMap = new Map(); // key = lower-trim product, val = sold qty (base-unit)
     for (const rec of (sales.records ?? [])) {
-      const p = rec.fields.Product;
-      const q = Math.abs(rec.fields.Quantity ?? 0);
-      if (!p) continue;
-      soldMap.set(p, (soldMap.get(p) ?? 0) + q);
-    }
-    const dayCount = Math.max(1, Math.round((now - start) / (24 * 60 * 60 * 1000)));        
-    const suggestions = [];
-    
-        // Tunables: more forgiving defaults for general retail
-        const MIN_DAILY_RATE = Math.min(0.05, minDailyRate ?? 0.05); // don’t skip too aggressively
-        const BUFFER_DAYS = 2;                                      // extra beyond lead+safety
-        const TARGET_COVER_DAYS = leadTimeDays + safetyDays + BUFFER_DAYS;
-        const MIN_QTY_PER_ORDER = 1;     // floor
-        const ROUND_TO_PACK_SIZE = 1;    // set to e.g., 6, 12, 24 if packs/cartons
-    
-        for (const rec of (inventoryRecords ?? [])) {
-          const product = rec.fields.Product;
-          const currentQty = Number(rec.fields.Quantity ?? 0);
-          const unit = rec.fields.Units ?? 'pieces';
-          const soldQty = Number(soldMap.get(product) ?? 0);
-          const dailyRate = soldQty / dayCount; // avg per day
-    
-          // Ignore truly dormant items (no movement & plenty stock)
-          if (dailyRate < MIN_DAILY_RATE && currentQty > 0) continue;
-    
-          const effectiveRate = Math.max(dailyRate, MIN_DAILY_RATE / 2); // tiny epsilon to compute cover
-          const daysCover = currentQty / effectiveRate; // how many days current stock lasts
-          if (daysCover >= TARGET_COVER_DAYS) continue; // enough cover; skip
-    
-          // Order so that projected cover reaches TARGET_COVER_DAYS
-          const deficitDays = TARGET_COVER_DAYS - daysCover; // > 0
-          const rawQty = deficitDays * effectiveRate;
-          let reorderQty = Math.ceil(rawQty);
-    
-          // Apply floors and pack rounding
-          reorderQty = Math.max(reorderQty, MIN_QTY_PER_ORDER);
-          if (ROUND_TO_PACK_SIZE > 1) {
-            reorderQty = Math.ceil(reorderQty / ROUND_TO_PACK_SIZE) * ROUND_TO_PACK_SIZE;
-          }
-    
-          if (reorderQty > 0) {
-            suggestions.push({
-              name: product,
-              unit,
-              currentQty,
-              dailyRate: Number(dailyRate.toFixed(2)),
-              daysCover: Number(daysCover.toFixed(1)),
-              targetCoverDays: TARGET_COVER_DAYS,
-              reorderQty
-            });
-          }
-        }
+      const pRaw = rec.fields.Product;
+      const uRaw = rec.fields.Units ?? '';              // <-- grab units from sales
+      const qRaw = Math.abs(rec.fields.Quantity ?? 0);
+      if (!pRaw || !Number.isFinite(qRaw)) continue;
 
-    // Sort by (reorderQty descending, dailyRate descending)   
+      const pKey = String(pRaw).trim().toLowerCase();
+
+      // --- FIX #2: convert sales qty to base unit before aggregating ---
+      const qBase = convertToBaseUnit(qRaw, uRaw);      // existing helper
+      soldMap.set(pKey, (soldMap.get(pKey) ?? 0) + qBase);
+    }
+
+    const dayCount = Math.max(1, Math.round((now - start) / (24 * 60 * 60 * 1000)));
+    const suggestions = [];
+
+    // --- FIX #1: honor caller's minDailyRate (with a true minimum floor, not max cap) ---
+    const MIN_DAILY_RATE = Math.max(0.05, Number(minDailyRate ?? 0.05)); // was Math.min(...)
+    const BUFFER_DAYS = 2;
+    const TARGET_COVER_DAYS = leadTimeDays + safetyDays + BUFFER_DAYS;
+    const MIN_QTY_PER_ORDER = 1;
+    const ROUND_TO_PACK_SIZE = 1;
+
+    for (const rec of (inventoryRecords ?? [])) {
+      const productRaw = rec.fields.Product;
+      const unitInv = rec.fields.Units ?? 'pieces';
+      const qtyInvRaw = Number(rec.fields.Quantity ?? 0);
+
+      if (!productRaw) continue;
+      const productKey = String(productRaw).trim().toLowerCase();
+
+      // --- FIX #2: compute cover & rate in base units consistently ---
+      const qtyInvBase = convertToBaseUnit(qtyInvRaw, unitInv);
+      const soldQtyBase = Number(soldMap.get(productKey) ?? 0);
+      const dailyRate = soldQtyBase / dayCount;
+
+      // Dormant skip
+      if (dailyRate < MIN_DAILY_RATE && qtyInvBase > 0) continue;
+
+      // Consider dropping epsilon; or keep as-is but in base units
+      const effectiveRate = Math.max(dailyRate, MIN_DAILY_RATE / 2);
+      const daysCover = qtyInvBase / effectiveRate;
+
+      if (daysCover >= TARGET_COVER_DAYS) continue;
+
+      const deficitDays = TARGET_COVER_DAYS - daysCover;
+      let reorderQtyBase = Math.ceil(deficitDays * effectiveRate);
+
+      reorderQtyBase = Math.max(reorderQtyBase, MIN_QTY_PER_ORDER);
+      if (ROUND_TO_PACK_SIZE > 1) {
+        reorderQtyBase = Math.ceil(reorderQtyBase / ROUND_TO_PACK_SIZE) * ROUND_TO_PACK_SIZE;
+      }
+
+      // --- Report in inventory's display unit ---
+      const unitOneBase = convertToBaseUnit(1, unitInv) || 1;
+      const reorderQtyDisplay = Math.ceil(reorderQtyBase / unitOneBase); // integer units
+
+      if (reorderQtyDisplay > 0) {
+        suggestions.push({
+          name: productRaw,
+          unit: unitInv,
+          currentQty: qtyInvRaw,                           // original unit
+          dailyRate: Number(dailyRate.toFixed(2)),
+          daysCover: Number(daysCover.toFixed(1)),
+          targetCoverDays: TARGET_COVER_DAYS,
+          reorderQty: reorderQtyDisplay                    // in inventory unit
+        });
+      }
+    }
+
     suggestions.sort((a, b) => (b.reorderQty - a.reorderQty) || (b.dailyRate - a.dailyRate));
-        return {
-          success: true,
-          suggestions,
-          days,
-          leadTimeDays,
-          safetyDays,
-          targetCoverDays: TARGET_COVER_DAYS
-        };
+    return { success: true, suggestions, days, leadTimeDays, safetyDays, targetCoverDays: TARGET_COVER_DAYS };
   } catch (error) {
     logError(context, error);
     return { success: false, error: error.message, suggestions: [] };
