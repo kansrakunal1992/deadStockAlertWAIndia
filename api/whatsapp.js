@@ -9578,7 +9578,7 @@ try{
   }
 
   // 8) Inventory value summary    
-  if (/^(?:inventory\s*valuestock\s*valuevalue\s*summary)$/i.test(text)) {
+  if (/^(?:inventory\s*value|stock\s*value|value\s*summary)$/i.test(text)) {
      const inv = await getInventorySummary(shopId);
      // NEW: inclusive low-stock count (≤ threshold, includes 0/negatives)
      const lowItems = await getLowStockProducts(shopId, 5);
