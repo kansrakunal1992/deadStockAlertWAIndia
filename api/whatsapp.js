@@ -4073,11 +4073,25 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
        ? String(rawFrom)
        : `whatsapp:${String(rawFrom ?? '').replace(/^whatsapp:/, '')}`;
     const shopIdTop = shopIdFrom(from);    
-  // Detect inventory list selections (e.g., "list_low", "list_short_summary") up front.
-    const _payloadId = String(
-      raw.Body ?? raw.ListId ?? raw.EventId ?? raw.ContentSid ?? ''
-    ).toLowerCase();
-    const _isInventoryListSelection = /^list_/.test(_payloadId);
+  
+    // Detect inventory list selections (e.g., "list_low", "list_sales_day").
+      const _payloadId = String(
+        raw.Body ?? raw.ListId ?? raw.EventId ?? raw.ContentSid ?? ''
+      ).toLowerCase();
+      const _isInventoryListSelection = /^list_/.test(_payloadId);
+    
+      // Fire-and-forget: resurface List-Picker AFTER the main reply, regardless of early returns.
+      // Tiny delay so the buttons appear immediately after the text reply in WA clients.
+      try {
+        if (_isInventoryListSelection) {
+          setTimeout(async () => {
+            try {
+              const langHint = await getPreferredLangQuick(from, 'en');
+              await maybeResendListPicker(from, langHint, raw.requestId ?? 'interactive');
+            } catch (_) { /* noop */ }
+          }, 350);
+        }
+      } catch (_) { /* noop */ }
      
     // STEP 12: 3s duplicate‑tap guard (per shop + payload)
     const _recentTaps = (globalThis._recentTaps ||= new Map()); // shopId -> { payload, at }
@@ -4472,13 +4486,6 @@ if (payload === 'confirm_paid') {
 }     
   // If Twilio only sent text (rare), you can optionally pattern‑match:
     if (/record\s+purchase/i.test(text)) { /* ... */ }
-    // Before returning, resurface the List‑Picker after read‑only inventory selections.
-    try {
-      if (_isInventoryListSelection) {
-        const langHint = await getPreferredLangQuick(from, 'en');
-        await maybeResendListPicker(from, langHint, raw.requestId ?? 'interactive');
-      }
-    } catch (_) { /* noop */ }
     return false;
   }
 
