@@ -1293,9 +1293,10 @@ async function batchUpdateInventory(updates) {
       const normalizedUnit = normalizeUnit(unit);
       
       // Find existing record
-      const pname = String(product ?? '').trim().toLowerCase();           
-      const filterFormula = 'AND({ShopID} = \'' + shopId + '\', LOWER(TRIM({Product})) = \'' 
-            + pname.replace(/'/g,"''") + '\')';
+      const pname = String(product ?? '').trim().toLowerCase();                       
+      const filterFormula = 'AND(' + buildShopIdVariantFilter('ShopID', shopId)
+      + ", LOWER(TRIM({Product})) = '" + pname.replace(/'/g,"''") + "')";
+
       
       const findResult = await airtableRequest({
         method: 'get',
@@ -1421,7 +1422,7 @@ async function savePendingTranscription(shopId, transcript, detectedLanguage) {
 async function getPendingTranscription(shopId) {
   const context = `Get Pending Transcription ${shopId}`;
   try {
-    const filterFormula = `{ShopID} = '${shopId}'`;
+    const filterFormula = buildShopIdVariantFilter('ShopID', shopId);
     const result = await airtableRequest({
       method: 'get',
       params: { 
@@ -1712,11 +1713,12 @@ async function isUserAuthorized(shopId, authCode = null) {
     // Escape single quotes in the values for Airtable formula
     const escapedShopId = shopId.replace(/'/g, "''");
     const escapedAuthCode = authCode ? authCode.replace(/'/g, "''") : '';
-    
-    const conditions = [
-  `{ShopID} = '${escapedShopId.replace(/'/g, "''")}'`,
-  `{StatusUser} = 'active'`
-    ];
+           
+    const shopFilter = buildShopIdVariantFilter('ShopID', escapedShopId);
+        const conditions = [
+          shopFilter,
+          `{StatusUser} = 'active'`
+        ];
     if (authCode) {
       conditions.push(`{AuthCode} = '${escapedAuthCode.replace(/'/g, "''")}'`);
     }
@@ -2010,7 +2012,7 @@ async function touchUserLastUsed(shopId) {
   const context = `Touch LastUsed ${shopId}`;
   try {
     const escapedShopId = shopId.replace(/'/g, "''");
-    const filterFormula = `{ShopID} = '${escapedShopId}'`;
+    const filterFormula = buildShopIdVariantFilter('ShopID', escapedShopId);
     const find = await airtableRequest({
       method: 'get',
       params: { filterByFormula: filterFormula },
@@ -2071,7 +2073,7 @@ async function deactivateUser(shopId) {
   const context = `Deactivate User ${shopId}`;
   try {
     const escapedShopId = shopId.replace(/'/g, "''");
-    const filterFormula = `{ShopID} = '${escapedShopId}'`;
+    const filterFormula = buildShopIdVariantFilter('ShopID', escapedShopId);
     
     console.log(`[${context}] Using filter formula: ${filterFormula}`);
     
@@ -2110,9 +2112,9 @@ async function deactivateUser(shopId) {
 async function getTodaySalesSummary(shopId) {
   const context = `Get Today Sales Summary ${shopId}`;
   try {    
-    // Timezone-safe Airtable formula: treat 'today' in Asia/Kolkata (IST)
-        const filterFormula = `AND(
-          {ShopID} = '${shopId}',
+    // Timezone-safe Airtable formula: treat 'today' in Asia/Kolkata (IST)                  
+          const filterFormula = `AND(
+          ${buildShopIdVariantFilter('ShopID', shopId)},
           {Quantity} < 0,
           IS_SAME(SET_TIMEZONE({SaleDate}, 'Asia/Kolkata'), TODAY(), 'day')
         )`;
@@ -2177,7 +2179,7 @@ async function getInventorySummary(shopId) {
   const context = `Get Inventory Summary ${shopId}`;
   try {
     // 1) Pull inventory records for this shop
-    const filterFormula = `{ShopID} = '${shopId.replace(/'/g, "''")}'`;
+    const filterFormula = buildShopIdVariantFilter('ShopID', shopId);
     const invResult = await airtableRequest({
       method: 'get',
       params: { filterByFormula: filterFormula }
@@ -2258,7 +2260,7 @@ async function getInventorySummary(shopId) {
 async function getLowStockProducts(shopId, threshold = 5) {
   const context = `Get Low Stock Products ${shopId}`;
   try {
-    const filterFormula = `{ShopID} = '${shopId}'`;
+    const filterFormula = buildShopIdVariantFilter('ShopID', shopId);
     
     const result = await airtableRequest({
       method: 'get',
@@ -2274,18 +2276,20 @@ async function getLowStockProducts(shopId, threshold = 5) {
       const product = record.fields.Product;
       const quantity = record.fields.Quantity || 0;
       const unit = record.fields.Units || '';
-      
-      if (quantity < threshold && quantity > 0) {
+                
+    // Include stockouts (≤0) and true low-stock (1..threshold)
+    if (Number(quantity) <= Number(threshold)) {
         lowStockProducts.push({
           name: product,
           quantity,
-          unit
+          unit,
+          isStockout: quantity <= 0
         });
       }
     });
-    
-    // Sort by quantity (lowest first)
-    lowStockProducts.sort((a, b) => a.quantity - b.quantity);
+          
+  // Put most critical at the top
+  lowStockProducts.sort((a, b) => a.quantity - b.quantity);
     
     return lowStockProducts;
   } catch (error) {
@@ -2368,9 +2372,9 @@ async function getSalesDataForPeriod(shopId, startDate, endDate) {
     // Format dates for Airtable formula
     const startStr = startDate.toISOString();
     const endStr = endDate.toISOString();      
-        
+                
     const filterFormula = `AND(
-          {ShopID} = '${shopId}',
+    ${buildShopIdVariantFilter('ShopID', shopId)},
           {Quantity} < 0,
           IS_AFTER(SET_TIMEZONE({SaleDate}, 'Asia/Kolkata'), DATETIME_PARSE(\"${startStr}\")),
           IS_BEFORE(SET_TIMEZONE({SaleDate}, 'Asia/Kolkata'), DATETIME_PARSE(\"${endStr}\"))
@@ -2441,7 +2445,7 @@ async function getPurchaseDataForPeriod(shopId, startDate, endDate) {
     const startStr = startDate.toISOString();
     const endStr = endDate.toISOString();
     
-    const filterFormula = `AND({ShopID} = '${shopId}', IS_AFTER({PurchaseDate}, "${startStr}"), IS_BEFORE({PurchaseDate}, "${endStr}"))`;
+    const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, IS_AFTER({PurchaseDate}, "${startStr}"), IS_BEFORE({PurchaseDate}, "${endStr}"))`;
     
     const result = await airtableBatchRequest({
       method: 'get',
@@ -2506,7 +2510,7 @@ async function getShopDetails(shopId) {
   const context = `Get Shop Details ${shopId}`;
   try {
     const escapedShopId = shopId.replace(/'/g, "''");
-    const filterFormula = `{ShopID} = '${escapedShopId}'`;
+    const filterFormula = buildShopIdVariantFilter('ShopID', escapedShopId);
     
     const result = await airtableRequest({
       method: 'get',
