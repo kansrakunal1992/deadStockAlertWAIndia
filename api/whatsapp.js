@@ -3665,7 +3665,7 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
     header = `Peek • Low Stock — ${low.length} items`;
     body   = (low.slice(0, 10).map(p => `• ${p.name}: ${p.quantity} ${displayUnit(p.unit, lang)}`)).join('\n') || '—';
   } else if (peek.kind === 'exp') {
-    const exp = await getExpiringProducts(shopId, peek.args.days ?? 7);
+    const exp = await getExpiringProducts(shopId, peek.args.days ?? 7, { strictExpired: true });
     header = `Peek • Expiring ≤ ${peek.args.days}d — ${exp.length} items`;
     body   = (exp.slice(0, 10).map(r => {
       const d = r.expiryDate instanceof Date ? r.expiryDate : new Date(r.expiryDate);
@@ -5490,7 +5490,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     
         // 3) Expiring soon (7 days) with days left if available
         try {
-          const eRaw = await getExpiringProducts(shopId, 7) || [];                  
+          const eRaw = await getExpiringProducts(shopId, 7, { strictExpired: false }) || [];                  
           const e = sanitizeProductRows(eRaw);
           const seen = new Set();
           const unique = [];
@@ -5561,7 +5561,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       if (cmd === 'expiring 30' || cmd === 'expiring 7' || cmd === 'expiring 0') {
         const days = cmd.endsWith('30') ? 30 : (cmd.endsWith('7') ? 7 : 0);
         try {
-          const raw  = await getExpiringProducts(shopId, days) ?? [];
+          const raw  = await getExpiringProducts(shopId, days, { strictExpired: false }) ?? [];
           const rows = sanitizeProductRows(raw);
           if (!rows.length) { await sendTagged(`⏳ Expiring ${days}\nNo items are expiring in ${days} days. ✅`); return true; }
           const fmt = r => {
@@ -5881,20 +5881,23 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     if (cmd === 'expiring 0' || cmd === 'expiring 7' || cmd === 'expiring 30') {
       // Exact-match to avoid "30" being misread as ending with "0"
       const days = (cmd === 'expiring 0') ? 0 : (cmd === 'expiring 7') ? 7 : 30;
-        try {
-          const rows = sanitizeProductRows(await getExpiringProducts(shopId, days) ?? []);
-          if (!rows.length) {
-            await sendTagged(`⏳ Expiring ${days} — None.`);
-            return true;
-          }
-          const fmt = (r) => {
-            const d = r?.fields?.DaysLeft ?? r?.daysLeft ?? null;
-            return Number.isFinite(d) ? `${r.name} (${d}d)` : r.name;
-          };
-          const list = rows.slice(0, 10).map(fmt).join(', ');
-          await sendTagged(noClamp(`⏳ Expiring ${days}\n${list}`));
-        } catch (_) {
-          await sendTagged(noClamp(`⏳ Expiring ${days} — snapshot unavailable.`));
+        try {                  
+              const rowsRaw = await getExpiringProducts(shopId, days) ?? [];
+              const rows = sanitizeProductRows(rowsRaw);
+              if (!rows.length) {
+                await sendTagged(`${days === 0 ? '⏳ Expired' : `⏳ Expiring ${days}`} — None.`);
+                return true;
+              }
+              const fmt = (r) => {
+                const d = r?.fields?.DaysLeft ?? r?.daysLeft ?? null; // may be null (we still show names)
+                return Number.isFinite(d) ? `${r.name} (${d}d)` : r.name;
+              };
+              const list = rows.slice(0, 10).map(fmt).join(', ');
+              const header = (days === 0) ? '⏳ Expired' : `⏳ Expiring ${days}`;
+              await sendTagged(noClamp(`${header}\n${list}`));
+        } catch (_) {                  
+              const header = (days === 0) ? '⏳ Expired' : `⏳ Expiring ${days}`;
+              await sendTagged(noClamp(`${header} — snapshot unavailable.`));
         }
         return true;
       }
@@ -8962,7 +8965,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
   // ==================================
   if (/^(expired(?:\s+items?)?|show\s+expired\s+stock)$/i.test(text)) {
     const shopId = From.replace('whatsapp:', '');
-    const exp = await getExpiringProducts(shopId, 0);
+    const exp = await getExpiringProducts(shopId, 0, { strictExpired: true });
     let message = COMPACT_MODE ? `❌ Expired:` : `❌ Already expired:\n`;
     message += exp.length
       ? exp.map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n')
@@ -9301,7 +9304,7 @@ try{
   // ==================================
   if (/^expired(?:\s+items?)?$/i.test(text)) {
     const shopId = From.replace('whatsapp:', '');
-    const exp = await getExpiringProducts(shopId, 0);
+    const exp = await getExpiringProducts(shopId, 0, { strictExpired: true });
     let message = `❌ Already expired:\n`;
     message += exp.length
       ? exp.map(p => `• ${p.name}: ${formatDateForDisplay(p.expiryDate)} (qty ${p.quantity})`).join('\n')
@@ -9447,7 +9450,7 @@ try{
   const expMatch = text.match(/^expiring(?:\s+(\d+))?$/i);
     if (expMatch) {
       const days = (expMatch[1] !== undefined) ? Math.max(0, parseInt(expMatch[1], 10)) : 30; // allow 0
-      const expiring = await getExpiringProducts(shopId, days);
+      const expiring = await getExpiringProducts(shopId, days, { strictExpired: false });
       const header = days === 0
         ? `❌ Already expired:`
         : `⏰ Expiring in next ${days} day(s):`;
@@ -11699,7 +11702,7 @@ async function generateInstantSummary(shopId, languageCode, requestId) {
       const wtdSales = await getSalesDataForPeriod(shopId, weekStartUTC, new Date()); // week-to-date
       const inventorySummary = await getInventorySummary(shopId);
       const lowStockProducts = await getLowStockProducts(shopId, 5);
-      const expiringProducts = await getExpiringProducts(shopId, 7);
+      const expiringProducts = await getExpiringProducts(shopId, 7, { strictExpired: false });
   
       // --- Compute deltas
       const tItems = todaySales?.totalItems ?? 0;
@@ -11795,7 +11798,7 @@ async function generateFullScaleSummary(shopId, languageCode, requestId) {
     // Get low stock products
     const lowStockProducts = await getLowStockProducts(shopId, 5);
     // Get expiring products
-    const expiringProducts = await getExpiringProducts(shopId, 7);
+    const expiringProducts = await getExpiringProducts(shopId, 7, { strictExpired: false });
     
     // Prepare data for AI analysis
     const contextData = {
