@@ -2295,45 +2295,53 @@ async function getLowStockProducts(shopId, threshold = 5) {
 }
 
 // Get expiring products
-async function getExpiringProducts(shopId, daysAhead = 7) {
+// FIX: variant-aware, timezone-safe, strict expired filter
+async function getExpiringProducts(shopId, daysAhead = 7, { strictExpired = false } = {}) {
   const context = `Get Expiring Products ${shopId}`;
   try {
-    // Calculate date N days ahead
-    const today = new Date();
-    const nDaysAhead = new Date(today);
-    nDaysAhead.setDate(today.getDate() + daysAhead);
-    
-    // Format date for Airtable formula
-    const dateStr = nDaysAhead.toISOString();
-    
-    const filterFormula = `AND({ShopID} = '${shopId}', IS_BEFORE({ExpiryDate}, "${dateStr}"), {ExpiryDate} != BLANK())`;
-    
+    const esc = (s) => String(s).replace(/'/g, "''");
+    const shopFilter = buildShopIdVariantFilter('ShopID', shopId);
+
+    let filterFormula;
+    if (strictExpired) {
+      // Strict: already expired as of local (IST) "today"
+      filterFormula = `AND(
+        ${shopFilter},
+        {Quantity} > 0,
+        NOT({ExpiryDate}=BLANK()),
+        OR(
+          IS_BEFORE(SET_TIMEZONE({ExpiryDate}, 'Asia/Kolkata'), TODAY()),
+          IS_SAME(SET_TIMEZONE({ExpiryDate}, 'Asia/Kolkata'), TODAY(), 'day')
+        )
+      )`;
+    } else {
+      // Expiring within N days ahead (IST)
+      const threshold = new Date();
+      threshold.setDate(threshold.getDate() + Number(daysAhead || 0));
+      const iso = esc(threshold.toISOString());
+      filterFormula = `AND(
+        ${shopFilter},
+        {Quantity} > 0,
+        NOT({ExpiryDate}=BLANK()),
+        IS_BEFORE(
+          SET_TIMEZONE({ExpiryDate}, 'Asia/Kolkata'),
+          DATETIME_PARSE('${iso}', 'YYYY-MM-DDTHH:mm:ss.SSSZ')
+        )
+      )`;
+    }
+
     const result = await airtableBatchRequest({
       method: 'get',
-      params: {
-        filterByFormula: filterFormula,
-        sort: [{ field: 'ExpiryDate', direction: 'asc' }]
-      }
+      params: { filterByFormula: filterFormula, sort: [{ field: 'ExpiryDate', direction: 'asc' }] }
     }, context);
-    
-    // Process expiring products
-    const expiringProducts = [];
-    
-    result.records.forEach(record => {
-      const product = record.fields.Product;
-      const expiryDate = record.fields.ExpiryDate;
-      const quantity = record.fields.Quantity || 0;
-      
-      if (quantity > 0) {
-        expiringProducts.push({
-          name: product,
-          expiryDate: new Date(expiryDate),
-          quantity
-        });
-      }
-    });
-    
-    return expiringProducts;
+
+    return (result.records ?? []).map(r => ({
+      name: r.fields.Product,
+      quantity: r.fields.Quantity ?? 0,
+      unit: r.fields.Units ?? 'pieces',
+      expiryDate: r.fields.ExpiryDate ? new Date(r.fields.ExpiryDate) : null,
+      id: r.id
+    }));
   } catch (error) {
     logError(context, error);
     return [];
