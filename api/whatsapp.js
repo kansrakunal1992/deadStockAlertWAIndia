@@ -6009,12 +6009,15 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       if (cmd === 'value summary' || cmd === 'inventory value' || cmd === 'stock value') {
         try {
           const inv = await getInventorySummary(shopId);
-          const total = Number(inv?.totalValue ?? 0).toFixed(0);
-          const items = Number(inv?.totalItems ?? inv?.count ?? 0);
-          const lowCt = Number(inv?.lowStock?.length ?? 0);
+          const total = Number(inv?.totalValue ?? 0).toFixed(0);                    
+          // Prefer canonical unique product count; keep fallbacks for compatibility
+                    const items = Number(inv?.totalProducts ?? inv?.totalItems ?? inv?.count ?? 0);
+                    // Optional: compute inclusive low-stock from DB helper (≤ threshold, includes 0/negatives)
+                    const lowList = await getLowStockProducts?.(shopId, 5);
+                    const lowCt = Array.isArray(lowList) ? lowList.length : Number(inv?.lowStock?.length ?? 0);
           const lines = [
             `💰 Total Value: ₹${total}`,
-            items ? `📦 Items: ${items}` : null,
+            items ? `📦 Unique Products: ${items}` : null,
             `🟠 Low Stock Alerts: ${lowCt}`
           ].filter(Boolean).join('\n');
           await sendTagged(noClamp(lines || '💰 Inventory Value — No data yet.'));
