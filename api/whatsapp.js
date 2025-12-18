@@ -5409,7 +5409,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
         const header = strictExpired ? '⏳ Expired' : `⏳ Expiring ${days}`;
   
         if (!rows || rows.length === 0) {
-          await sendTagged(noClamp(`${header}\nNone.`));
+         await sendTagged(`${header}\nNone.`);
           return true;
         }
   
@@ -5428,7 +5428,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
         }
   
         const body = `${header}\n${lines.join('\n')}`;
-        await sendTagged(noClamp(body));
+        await sendTagged(body);
         return true;
       }
     } catch (e) {
