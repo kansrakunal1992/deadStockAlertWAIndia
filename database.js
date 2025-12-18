@@ -2352,6 +2352,7 @@ async function getExpiringProducts(shopId, daysAhead = 7, { strictExpired = fals
     logError(context, error);
     return [];
    }
+}
 
 // Get sales data for a period
 async function getSalesDataForPeriod(shopId, startDate, endDate) {
