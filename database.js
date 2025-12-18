@@ -2295,58 +2295,63 @@ async function getLowStockProducts(shopId, threshold = 5) {
 }
 
 // Get expiring products
-// FIX: variant-aware, timezone-safe, strict expired filter
+// FIX: variant-aware + timezone-safe expiry queries for DateTime field
 async function getExpiringProducts(shopId, daysAhead = 7, { strictExpired = false } = {}) {
   const context = `Get Expiring Products ${shopId}`;
   try {
-    const esc = (s) => String(s).replace(/'/g, "''");
     const shopFilter = buildShopIdVariantFilter('ShopID', shopId);
 
+    // Use symmetrical timezone on both sides to avoid any accidental display-offset artifacts.
+    // Airtable stores absolute datetimes; this keeps comparisons intuitive for IST users.
     let filterFormula;
     if (strictExpired) {
-      // Strict: already expired as of local (IST) "today"
+      // Already expired as of "now" in Asia/Kolkata
       filterFormula = `AND(
         ${shopFilter},
         {Quantity} > 0,
-        NOT({ExpiryDate}=BLANK()),
-        OR(
-          IS_BEFORE(SET_TIMEZONE({ExpiryDate}, 'Asia/Kolkata'), TODAY()),
-          IS_SAME(SET_TIMEZONE({ExpiryDate}, 'Asia/Kolkata'), TODAY(), 'day')
+        NOT({ExpiryDate} = BLANK()),
+        IS_BEFORE(
+          SET_TIMEZONE({ExpiryDate}, 'Asia/Kolkata'),
+          SET_TIMEZONE(NOW(), 'Asia/Kolkata')
         )
       )`;
     } else {
-      // Expiring within N days ahead (IST)
-      const threshold = new Date();
-      threshold.setDate(threshold.getDate() + Number(daysAhead || 0));
-      const iso = esc(threshold.toISOString());
+      // Expiring within the next N days (now .. now+daysAhead), IST
+      const days = Number(daysAhead || 0);
       filterFormula = `AND(
         ${shopFilter},
         {Quantity} > 0,
-        NOT({ExpiryDate}=BLANK()),
+        NOT({ExpiryDate} = BLANK()),
+        IS_AFTER(
+          SET_TIMEZONE({ExpiryDate}, 'Asia/Kolkata'),
+          SET_TIMEZONE(NOW(), 'Asia/Kolkata')
+        ),
         IS_BEFORE(
           SET_TIMEZONE({ExpiryDate}, 'Asia/Kolkata'),
-          DATETIME_PARSE('${iso}', 'YYYY-MM-DDTHH:mm:ss.SSSZ')
+          SET_TIMEZONE(DATEADD(NOW(), ${days}, 'days'), 'Asia/Kolkata')
         )
       )`;
     }
 
     const result = await airtableBatchRequest({
       method: 'get',
-      params: { filterByFormula: filterFormula, sort: [{ field: 'ExpiryDate', direction: 'asc' }] }
+      params: {
+        filterByFormula: filterFormula,
+        sort: [{ field: 'ExpiryDate', direction: 'asc' }]
+      }
     }, context);
 
     return (result.records ?? []).map(r => ({
+      id: r.id,
       name: r.fields.Product,
       quantity: r.fields.Quantity ?? 0,
       unit: r.fields.Units ?? 'pieces',
-      expiryDate: r.fields.ExpiryDate ? new Date(r.fields.ExpiryDate) : null,
-      id: r.id
+      expiryDate: r.fields.ExpiryDate ? new Date(r.fields.ExpiryDate) : null
     }));
   } catch (error) {
     logError(context, error);
     return [];
-  }
-}
+   }
 
 // Get sales data for a period
 async function getSalesDataForPeriod(shopId, startDate, endDate) {
