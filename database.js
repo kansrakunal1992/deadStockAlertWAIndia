@@ -2333,7 +2333,7 @@ async function getExpiringProducts(shopId, daysAhead = 7, { strictExpired = fals
       )`;
     }
 
-    logInfo(context, { table: 'InventoryBatches', filterByFormula: filterFormula });
+    console.log(`[${context}]`, { table: TABLES.InventoryBatches ?? 'InventoryBatches', filterByFormula });
     const result = await airtableBatchRequest({
       method: 'get',
       table: TABLES.InventoryBatches,
