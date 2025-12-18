@@ -246,19 +246,19 @@ async function createOnboardingQuickReplyForLang(lang) {
   return data.sid;
 }
 
- async function createQuickReplyForLang(lang) {
+ async function createQuickReplyForLang(lang) {       
    const base = normalizeLangForContent(lang);
    const l = QR_LABELS[base] ?? QR_LABELS.en;
    const payload = {
     friendly_name: `saamagrii_welcome_qr_${base}_${Date.now()}`,
-     language: 'en', // metadata only; labels are already localized
+     language: base, // stamp correct metadata for diagnostics/consistency
      types: {
        'twilio/quick-reply': {
          body: l.body,
-         actions: [
-           { type: 'QUICK_REPLY', title: l.purchase, id: 'qr_purchase' },
-           { type: 'QUICK_REPLY', title: l.sale,     id: 'qr_sale'     },
-           { type: 'QUICK_REPLY', title: l.ret,      id: 'qr_return'   }
+         actions: [                         
+              { type: 'QUICK_REPLY', title: clampTitle(l.purchase), id: 'qr_purchase' },
+              { type: 'QUICK_REPLY', title: clampTitle(l.sale),     id: 'qr_sale'     },
+              { type: 'QUICK_REPLY', title: clampTitle(l.ret),      id: 'qr_return'   }
          ]
        }
      }
@@ -275,22 +275,22 @@ const l = LIST_LABELS[base] ?? LIST_LABELS.en;
   const it = l.items;
   const payload = {
     friendly_name: `saamagrii_query_list_${base}_${Date.now()}`, // force NEW ContentSid
-    language: 'en',
+    language: base, // metadata aligned to base language
     types: {
       'twilio/list-picker': {              
       body: l.body,
       button: clampTitle(l.button),   // clamp expand button text as well              
-      items: [ 
-              { item: clampItem(it.short[0]),  id: 'list_short_summary',  description: it.short[1] }, 
-              { item: clampItem(it.full[0]),   id: 'list_full_summary',   description: it.full[1] }, 
-              { item: clampItem(it.low[0]),    id: 'list_low',            description: it.low[1] }, 
-              { item: clampItem(it.reorder[0]),id: 'list_reorder_suggest',description: it.reorder[1] }, 
-              { item: clampItem(it.exp0[0]),   id: 'list_expiring',       description: it.exp0[1] }, 
-              { item: clampItem(it.exp30[0]),  id: 'list_expiring_30',    description: it.exp30[1] }, 
-              { item: clampItem(it.salesD[0]), id: 'list_sales_day',      description: it.salesD[1] }, 
-              { item: clampItem(it.salesW[0]), id: 'list_sales_week',     description: it.salesW[1] }, 
-              { item: clampItem(it.top[0]),    id: 'list_top_month',      description: it.top[1] }, 
-              { item: clampItem(it.value[0]),  id: 'list_value',          description: it.value[1] } 
+      items: [                             
+              { item: clampItem(it.short[0]),  id: 'list_short_summary',   description: it.short[1]  },
+              { item: clampItem(it.full[0]),   id: 'list_full_summary',    description: it.full[1]   },
+              { item: clampItem(it.low[0]),    id: 'list_low',             description: it.low[1]    },
+              { item: clampItem(it.reorder[0]),id: 'list_reorder_suggest', description: it.reorder[1]},
+              { item: clampItem(it.exp0[0]),   id: 'list_expiring',        description: it.exp0[1]   },
+              { item: clampItem(it.exp30[0]),  id: 'list_expiring_30',     description: it.exp30[1]  },
+              { item: clampItem(it.salesD[0]), id: 'list_sales_day',       description: it.salesD[1] },
+              { item: clampItem(it.salesW[0]), id: 'list_sales_week',      description: it.salesW[1] },
+              { item: clampItem(it.top[0]),    id: 'list_top_month',       description: it.top[1]    },
+              { item: clampItem(it.value[0]),  id: 'list_value',           description: it.value[1]  }
             ] 
       }
     }
