@@ -2333,8 +2333,10 @@ async function getExpiringProducts(shopId, daysAhead = 7, { strictExpired = fals
       )`;
     }
 
+    logInfo(context, { table: 'InventoryBatches', filterByFormula: filterFormula });
     const result = await airtableBatchRequest({
       method: 'get',
+      table: TABLES.InventoryBatches,
       params: {
         filterByFormula: filterFormula,
         sort: [{ field: 'ExpiryDate', direction: 'asc' }]
