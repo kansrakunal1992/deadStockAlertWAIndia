@@ -9577,12 +9577,17 @@ try{
     return true;
   }
 
-  // 8) Inventory value summary
-  if (/^(?:inventory\s*value|stock\s*value|value\s*summary)$/i.test(text)) {
-    const inv = await getInventorySummary(shopId);   
-    let message = COMPACT_MODE
-        ? `📦 Inventory: ${inv.totalProducts} items • ₹${(inv.totalValue ?? 0).toFixed(2)}`
-        : `📦 Inventory Summary:\n• Unique products: ${inv.totalProducts}\n• Total value: ₹${(inv.totalValue ?? 0).toFixed(2)}`;
+  // 8) Inventory value summary    
+  if (/^(?:inventory\s*value
+   stock\s*value
+   value\s*summary)$/i.test(text)) {
+     const inv = await getInventorySummary(shopId);
+     // NEW: inclusive low-stock count (≤ threshold, includes 0/negatives)
+     const lowItems = await getLowStockProducts(shopId, 5);
+     const lowCount = Array.isArray(lowItems) ? lowItems.length : 0;
+     let message = COMPACT_MODE
+     ? `📦 Inventory: ${inv.totalProducts} items • ₹${(inv.totalValue ?? 0).toFixed(2)} • 🟠 Low Stock Alerts: ${lowCount}`
+     : `📦 Inventory Summary:\n• Unique products: ${inv.totalProducts}\n• Total value: ₹${(inv.totalValue ?? 0).toFixed(2)}\n• 🟠 Low Stock Alerts: ${lowCount}`;
     
     if ((inv.totalPurchaseValue ?? 0) > 0) {
       message += `\n• Total cost: ₹${inv.totalPurchaseValue.toFixed(2)}`;
