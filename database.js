@@ -2297,27 +2297,28 @@ async function getLowStockProducts(shopId, threshold = 5) {
 // Get expiring products
 // FIX: variant-aware + timezone-safe expiry queries for DateTime field
 async function getExpiringProducts(shopId, daysAhead = 7, { strictExpired = false } = {}) {
-  const context = `Get Expiring Products ${shopId}`;    
-  const targetTable =
-      process.env.AIRTABLE_TABLE_INVENTORY_BATCHES || 'InventoryBatches';
+  const context = `Get Expiring Products ${shopId}`;
 
   try {
     const shopFilter = buildShopIdVariantFilter('ShopID', shopId);
-          
-      // DateTime comparisons in IST — FIX: make days=0 a strict "expired as-of-now" check
-          let filterFormula;
-          if (Number(daysAhead) === 0) {
-            // Strict expired: anything with ExpiryDate earlier than NOW (IST)
-            filterFormula = `AND(
-              ${shopFilter},
-              {Quantity} > 0,
-              NOT({ExpiryDate} = BLANK()),
-              IS_BEFORE(
-                SET_TIMEZONE({ExpiryDate}, 'Asia/Kolkata'),
-                SET_TIMEZONE(NOW(), 'Asia/Kolkata')
-              )
-            )`;
-          } else {
+    
+    // Pin to the Batch table explicitly (same pattern as createBatchRecord)
+    const targetUrl = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}`;
+
+    // DateTime comparisons in IST — strict expired for 0 or when requested
+    let filterFormula;
+    if (strictExpired || Number(daysAhead) === 0) {
+      // Strict expired: anything with ExpiryDate earlier than NOW (IST)
+      filterFormula = `AND(
+        ${shopFilter},
+        {Quantity} > 0,
+        NOT({ExpiryDate} = BLANK()),
+        IS_BEFORE(
+          SET_TIMEZONE({ExpiryDate}, 'Asia/Kolkata'),
+          SET_TIMEZONE(NOW(), 'Asia/Kolkata')
+        )
+      )`;
+    } else {
       // Expiring within the next N days (now .. now+daysAhead), IST
       const days = Number(daysAhead || 0);
       filterFormula = `AND(
@@ -2335,10 +2336,12 @@ async function getExpiringProducts(shopId, daysAhead = 7, { strictExpired = fals
       )`;
     }
 
-    console.info(`[${context}]`, { table: targetTable, filterFormula });
+    // Ensure no HTML entity leakage in the formula string
+    filterFormula = filterFormula.replace(/&gt;/g, '>').replace(/&lt;/g, '<');
+    console.info(`[${context}]`, { table: BATCH_TABLE_NAME, filterFormula });
     const result = await airtableBatchRequest({
       method: 'get',
-      table: targetTable,
+      url: targetUrl,
       params: {
         filterByFormula: filterFormula,
         sort: [{ field: 'ExpiryDate', direction: 'asc' }]
