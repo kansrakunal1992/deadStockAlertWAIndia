@@ -143,12 +143,15 @@ function canonicalizeLang(code) {
 
 const __sentListPickerFor = new Set();
 
-async function maybeResendListPicker(From, lang, requestId) {
-  const key = `${fromToShopId(From)}::${requestId}`;
-  if (__sentListPickerFor.has(key)) return false;
-  const ok = await resendInventoryListPicker(From, lang);
-  if (ok) __sentListPickerFor.add(key);
-  return ok;
+async function maybeResendListPicker(From, lang, requestId) {      
+    // Use the canonical E.164 normalizer already defined above.
+      const shopKey = shopIdFrom(From); // e.g., "+919013283687"
+      const rid = String(requestId ?? Date.now());
+      const key = `${shopKey}::${rid}`;
+      if (__sentListPickerFor.has(key)) return false;
+      const ok = await resendInventoryListPicker(From, lang);
+      if (ok) __sentListPickerFor.add(key);
+      return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -3686,8 +3689,10 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
     : `(You’re still in ${modeBadge}. Send the transaction line to continue, or type “mode”.)`;
 
   const composed = [header, body, '', guidance].filter(Boolean).join('\n');
-  const msg = await t(composed, lang, requestId + '::peek');
+  const msg = await t(composed, lang, requestId + '::peek');    
   await sendMessageViaAPI(From, await tagWithLocalizedMode(From, msg, lang));
+  // Resurface the inventory List-Picker so the user can run the next query immediately.
+  await maybeResendListPicker(From, lang, requestId);
 
   // Nudge if too many consecutive peeks
   try {
@@ -4067,7 +4072,12 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
     const from = rawFrom && String(rawFrom).startsWith('whatsapp:')
        ? String(rawFrom)
        : `whatsapp:${String(rawFrom ?? '').replace(/^whatsapp:/, '')}`;
-    const shopIdTop = shopIdFrom(from);
+    const shopIdTop = shopIdFrom(from);    
+  // Detect inventory list selections (e.g., "list_low", "list_short_summary") up front.
+    const _payloadId = String(
+      raw.Body ?? raw.ListId ?? raw.EventId ?? raw.ContentSid ?? ''
+    ).toLowerCase();
+    const _isInventoryListSelection = /^list_/.test(_payloadId);
      
     // STEP 12: 3s duplicate‑tap guard (per shop + payload)
     const _recentTaps = (globalThis._recentTaps ||= new Map()); // shopId -> { payload, at }
@@ -4459,12 +4469,18 @@ if (payload === 'confirm_paid') {
         
           case 'list_value':
             await route('value summary'); return true;
-}
-
-   // If Twilio only sent text (rare), you can optionally pattern‑match:
-   if (/record\s+purchase/i.test(text)) { /* ... */ }
-   return false;
- }
+}     
+  // If Twilio only sent text (rare), you can optionally pattern‑match:
+    if (/record\s+purchase/i.test(text)) { /* ... */ }
+    // Before returning, resurface the List‑Picker after read‑only inventory selections.
+    try {
+      if (_isInventoryListSelection) {
+        const langHint = await getPreferredLangQuick(from, 'en');
+        await maybeResendListPicker(from, langHint, raw.requestId ?? 'interactive');
+      }
+    } catch (_) { /* noop */ }
+    return false;
+  }
 
 // --- Tiny edit distance (Damerau-Levenshtein would be nicer; classic Levenshtein is fine here)
 function _editDistance(a, b) {
