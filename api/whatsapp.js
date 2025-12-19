@@ -1726,83 +1726,195 @@ async function sendPendingPriceReminder(From, st, langHint = 'en') {
  * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
  */
 async function applyAIOrchestration(text, From, detectedLanguageHint, requestId) {             
+// ===PATCH START: UNIQ:DS-ORCH-REWIRE-ENV-20251219===
+  try {
+    // --- LEGACY: pinned language from onboarding_trial_capture (PRESERVED) ---
     try {
-        const shopId = String(From ?? '').replace('whatsapp:', '');
-        const st = await getUserStateFromDB(shopId).catch(() => null);
-        if (st?.mode === 'onboarding_trial_capture') {
-          const pinned = st?.data?.lang ?? (await getUserPreference(shopId).catch(() => ({})))?.language;
-          if (pinned) detectedLanguageHint = String(pinned).toLowerCase();
-        }
-      } catch {}
-    if (!USE_AI_ORCHESTRATOR) return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
-      const shopId = shopIdFrom(From);
-      // ---- Sticky-mode clamp: if user is in purchase/sale/return, force inventory routing
-      try {
-        const stickyAction = await getStickyActionQuick(From);
-        if (stickyAction && looksLikeTxnLite(text)) {
-          const language = ensureLangExact(detectedLanguageHint ?? 'en');
-          console.log('[orchestrator]', { requestId, language, kind: 'transaction', normalizedCommand: '—', topicForced: null, pricingFlavor: null, sticky: stickyAction });
-          // Force router away from Sales-Q&A; downstream inventory parser will consume this turn
-          return { language, isQuestion: false, normalizedCommand: null, aiTxn: null, questionTopic: null, pricingFlavor: null, forceInventory: true };
-        }
-      } catch (_) { /* best-effort; fall through to AI orchestrator */ }
-      const o = await aiOrchestrate(text);
-    
-    // --- NEW: Normalize summary intent into the command contract ---------------
-      // Router recognizes only: greeting | question | transaction | command | other.
-      // If resolveSummaryIntent sees a summary, force it into 'command'.
+      const shopIdTmp = String(From ?? '').replace('whatsapp:', '');
+      const st = await getUserStateFromDB(shopIdTmp).catch(() => null);
+      if (st?.mode === 'onboarding_trial_capture') {
+        const pinned = st?.data?.lang ?? (await getUserPreference(shopIdTmp).catch(() => ({})))?.language;
+        if (pinned) detectedLanguageHint = String(pinned).toLowerCase();
+      }
+    } catch {}
+
+    // --- LEGACY: short-circuit when orchestrator disabled (PRESERVED) ---
+    if (!USE_AI_ORCHESTRATOR) {
+      return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
+    }
+
+    const shopId = shopIdFrom(From);
+
+    // --- LEGACY: sticky-mode clamp before any AI (PRESERVED) ---
+    try {
+      const stickyAction = await getStickyActionQuick(From);
+      if (stickyAction && looksLikeTxnLite(text)) {
+        const language = ensureLangExact(detectedLanguageHint ?? 'en');
+        console.log('[orchestrator]', { requestId, language, kind: 'transaction', normalizedCommand: '—', topicForced: null, pricingFlavor: null, sticky: stickyAction });
+        // Force router away from Sales-Q&A; downstream inventory parser will consume this turn
+        return { language, isQuestion: false, normalizedCommand: null, aiTxn: null, questionTopic: null, pricingFlavor: null, forceInventory: true };
+      }
+    } catch (_) { /* best-effort; fall through to AI orchestrator */ }
+
+    // ---- NEW FAST PATH (Deepseek single call) when ENABLE_FAST_CLASSIFIER=true ----
+    if (ENABLE_FAST_CLASSIFIER) {
+      // One short Deepseek call (≤1.2s), else heuristics inside classifyAndRoute
+      const out = await classifyAndRoute(text, detectedLanguageHint);
+
+      // --- LEGACY: Normalize summary intent into command (PRESERVED) ---
+      let o = {
+        language: ensureLangExact(out?.language ?? detectedLanguageHint ?? 'en'),
+        kind: out?.kind ?? 'other',
+        command: out?.command ?? null,
+        transaction: out?.transaction ?? null
+      };
       try {
         const summaryCmd = resolveSummaryIntent(text); // 'short summary' | 'full summary' | null
         if (summaryCmd) {
-          // Never use kind='summary' in orchestrator output.
           o.kind = 'command';
           o.command = { normalized: summaryCmd };
         }
-      } catch (_) {
-        // best-effort: ignore if resolver throws
-      }
-    
-// ---- NEW: topic detection helpers (pricing/benefits/capabilities) ----
-  function isPricingQuestion(msg) {
-    const t = String(msg ?? '').toLowerCase();
-    const en = /\b(price|cost|charge|charges|rate)\b/;
-    const hing = /\b(kimat|daam|rate|price kya|kitna|kitni)\b/;
-    const hiNative = /(कीमत|दाम|भाव|रेट|कितना|कितनी)/;
-    return en.test(t) || hing.test(t) || hiNative.test(msg);
-  }
-  function isBenefitQuestion(msg) {
-    const t = String(msg ?? '').toLowerCase();
-    return /\b(benefit|daily benefit|value|help|use case)\b/.test(t)
-        || /(फ़ायदा|लाभ|मदद|दैनिक)/.test(msg)
-        || /\b(fayda)\b/.test(t);
-  }
-  function isCapabilitiesQuestion(msg) {
-    const t = String(msg ?? '').toLowerCase();
-    return /\b(what.*do|what does it do|exactly.*does|how does it work|kya karta hai)\b/.test(t)
-        || /(क्या करता है|किस काम का है|कैसे चलता है)/.test(msg)
-        || /\b(kya karta hai)\b/.test(t);
-  }
-  function classifyQuestionTopic(msg) {
-    if (isPricingQuestion(msg)) return 'pricing';
-    if (isBenefitQuestion(msg)) return 'benefits';
-    if (isCapabilitiesQuestion(msg)) return 'capabilities';
-    return null;
-  }
-  // inventory-looking text: product names/units/money hints
-  function looksLikeInventoryPricing(msg) {
-    const s = String(msg ?? '').toLowerCase();
-    const unitRx = /(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|बॉक्स|टुकड़ा|नंग)/i;
-    const moneyRx = /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i;
-    const brandRx = /(milk|doodh|parle\-g|maggi|amul|oreo|frooti|marie gold|good day|dabur|tata|nestle)/i;
-    return unitRx.test(s) || moneyRx.test(s) || brandRx.test(s);
-  }
+      } catch (_) {}
 
-  // ---- NEW: force question routing when a topic is detected ----
-  const topicForced = classifyQuestionTopic(text);
-  if (topicForced) {
-    o.kind = 'question';
-  } 
-  // --- NEW: decide pricing flavor using parallel plan/pref, no sequential blocking ---
+      // --- LEGACY: topic detection helpers (PRESERVED) ---
+      function isPricingQuestion(msg) {
+        const t = String(msg ?? '').toLowerCase();
+        const en = /\b(price|cost|charge|charges|rate)\b/;
+        const hing = /\b(kimat|daam|rate|price kya|kitna|kitni)\b/;
+        const hiNative = /(कीमत|दाम|भाव|रेट|कितना|कितनी)/;
+        return en.test(t) || hing.test(t) || hiNative.test(msg);
+      }
+      function isBenefitQuestion(msg) {
+        const t = String(msg ?? '').toLowerCase();
+        return /\b(benefit|daily benefit|value|help|use case)\b/.test(t)
+            || /(फ़ायदा|लाभ|मदद|दैनिक)/.test(msg)
+            || /\b(fayda)\b/.test(t);
+      }
+      function isCapabilitiesQuestion(msg) {
+        const t = String(msg ?? '').toLowerCase();
+        return /\b(what.*do|what does it do|exactly.*does|how does it work|kya karta hai)\b/.test(t)
+            || /(क्या करता है|किस काम का है|कैसे चलता है)/.test(msg)
+            || /\b(kya karta hai)\b/.test(t);
+      }
+      function classifyQuestionTopic(msg) {
+        if (isPricingQuestion(msg)) return 'pricing';
+        if (isBenefitQuestion(msg)) return 'benefits';
+        if (isCapabilitiesQuestion(msg)) return 'capabilities';
+        return null;
+      }
+      function looksLikeInventoryPricing(msg) {
+        const s = String(msg ?? '').toLowerCase();
+        const unitRx = /(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|बॉक्स|टुकड़ा|नंग)/i;
+        const moneyRx = /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i;
+        const brandRx = /(milk|doodh|parle\-g|maggi|amul|oreo|frooti|marie gold|good day|dabur|tata|nestle)/i;
+        return unitRx.test(s) || moneyRx.test(s) || brandRx.test(s);
+      }
+
+      // --- LEGACY: force question routing when topic is detected (PRESERVED) ---
+      const topicForced = classifyQuestionTopic(text);
+      if (topicForced) {
+        o.kind = 'question';
+      }
+
+      // --- LEGACY: decide pricing flavor using parallel plan/pref (PRESERVED) ---
+      let pricingFlavor = null; // 'tool_pricing' | 'inventory_pricing' | null
+      if (topicForced === 'pricing') {
+        let activated = false;
+        try {
+          const [planInfoRes, prefRes] = await Promise.allSettled([
+            getUserPlanQuick(shopId), getUserPreference(shopId)
+          ]);
+          const planInfo = planInfoRes.status === 'fulfilled' ? planInfoRes.value : null;
+          const plan     = String((planInfo?.plan ?? prefRes?.value?.plan ?? '')).toLowerCase();
+          const end      = getUnifiedEndDate(planInfo);
+          const activeTrial = (plan === 'trial' && end && new Date(end).getTime() > Date.now());
+          activated = (plan === 'paid') || activeTrial;
+        } catch { /* best effort */ }
+        pricingFlavor = (activated && looksLikeInventoryPricing(text)) ? 'inventory_pricing' : 'tool_pricing';
+      }
+
+      // --- LEGACY: language exact variant lock + save preference (PRESERVED) ---
+      const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
+      const orchestratedLang = ensureLangExact(o.language ?? hintedLang);
+      const language = hintedLang.endsWith('-latn') ? hintedLang : orchestratedLang;
+      try {
+        if (typeof saveUserPreference === 'function') {
+          await saveUserPreference(shopId, language);
+        }
+      } catch (_) {}
+
+      // --- LEGACY: derive router fields (PRESERVED) ---
+      let isQuestion = o.kind === 'question';
+      let normalizedCommand = o.kind === 'command' && o?.command?.normalized ? o.command.normalized : null;
+      const aiTxn = o.kind === 'transaction' ? o.transaction : null;
+
+      // --- LEGACY: final sticky-mode safety (PRESERVED) ---
+      try {
+        const stickyAction = await getStickyActionQuick(From);
+        if (stickyAction) { isQuestion = false; normalizedCommand = null; }
+      } catch (_) { /* noop */ }
+
+      console.log('[orchestrator]', {
+        requestId, language, kind: o.kind,
+        normalizedCommand: normalizedCommand ?? '—',
+        topicForced, pricingFlavor
+      });
+
+      const identityAsked = isNameQuestion(text); // PRESERVED
+      return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
+    }
+
+    // ---- LEGACY PATH (Gate OFF): original Deepseek orchestrator call (FULLY PRESERVED) ----
+    const o = await aiOrchestrate(text);
+
+    // --- LEGACY: Normalize summary intent into command (PRESERVED) ---
+    try {
+      const summaryCmd = resolveSummaryIntent(text); // 'short summary' | 'full summary' | null
+      if (summaryCmd) {
+        o.kind = 'command';
+        o.command = { normalized: summaryCmd };
+      }
+    } catch (_) { /* best-effort */ }
+
+    // --- LEGACY: topic detection helpers (PRESERVED) ---
+    function isPricingQuestion(msg) {
+      const t = String(msg ?? '').toLowerCase();
+      const en = /\b(price|cost|charge|charges|rate)\b/;
+      const hing = /\b(kimat|daam|rate|price kya|kitna|kitni)\b/;
+      const hiNative = /(कीमत|दाम|भाव|रेट|कितना|कितनी)/;
+      return en.test(t) || hing.test(t) || hiNative.test(msg);
+    }
+    function isBenefitQuestion(msg) {
+      const t = String(msg ?? '').toLowerCase();
+      return /\b(benefit|daily benefit|value|help|use case)\b/.test(t)
+          || /(फ़ायदा|लाभ|मदद|दैनिक)/.test(msg)
+          || /\b(fayda)\b/.test(t);
+    }
+    function isCapabilitiesQuestion(msg) {
+      const t = String(msg ?? '').toLowerCase();
+      return /\b(what.*do|what does it do|exactly.*does|how does it work|kya karta hai)\b/.test(t)
+          || /(क्या करता है|किस काम का है|कैसे चलता है)/.test(msg)
+          || /\b(kya karta hai)\b/.test(t);
+    }
+    function classifyQuestionTopic(msg) {
+      if (isPricingQuestion(msg)) return 'pricing';
+      if (isBenefitQuestion(msg)) return 'benefits';
+      if (isCapabilitiesQuestion(msg)) return 'capabilities';
+      return null;
+    }
+    function looksLikeInventoryPricing(msg) {
+      const s = String(msg ?? '').toLowerCase();
+      const unitRx = /(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|बॉक्स|टुकड़ा|नंग)/i;
+      const moneyRx = /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i;
+      const brandRx = /(milk|doodh|parle\-g|maggi|amul|oreo|frooti|marie gold|good day|dabur|tata|nestle)/i;
+      return unitRx.test(s) || moneyRx.test(s) || brandRx.test(s);
+    }
+
+    const topicForced = classifyQuestionTopic(text);
+    if (topicForced) {
+      o.kind = 'question';
+    }
+
     let pricingFlavor = null; // 'tool_pricing' | 'inventory_pricing' | null
     if (topicForced === 'pricing') {
       let activated = false;
@@ -1818,38 +1930,43 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
       } catch { /* best effort */ }
       pricingFlavor = (activated && looksLikeInventoryPricing(text)) ? 'inventory_pricing' : 'tool_pricing';
     }
-  
-    // [UNIQ:ORCH-LANG-LOCK-004] Prefer the exact variant from the detector
-      // Keep 'hi-latn' if the hint carries it, even when orchestrator returns 'hi'
-      // ---------------------------------------------------------------------
-      const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');              
-      const orchestratedLang = ensureLangExact(o.language ?? hintedLang);
-      const language = hintedLang.endsWith('-latn') ? hintedLang : orchestratedLang;
-    
-      // Persist language preference best-effort (with exact variant)
-      try {
-        if (typeof saveUserPreference === 'function') {
-          await saveUserPreference(shopId, language);
-        }
-      } catch (_) {}
-      
-  let isQuestion = o.kind === 'question';
-  let normalizedCommand = o.kind === 'command' && o?.command?.normalized ? o.command.normalized : null;
-  const aiTxn = o.kind === 'transaction' ? o.transaction : null;
-  // Note: summaries now appear as kind='command' with normalizedCommand.  
-  // Final sticky-mode safety: never let Sales-Q&A trigger in active transaction mode
-   try {
-    const stickyAction = await getStickyActionQuick(From);
-    if (stickyAction) { isQuestion = false; normalizedCommand = null; }
-  } catch (_) { /* noop */ }
+
+    // [UNIQ:ORCH-LANG-LOCK-004] Prefer the exact variant from the detector (PRESERVED)
+    const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
+    const orchestratedLang = ensureLangExact(o.language ?? hintedLang);
+    const language = hintedLang.endsWith('-latn') ? hintedLang : orchestratedLang;
+
+    try {
+      if (typeof saveUserPreference === 'function') {
+        await saveUserPreference(shopId, language);
+      }
+    } catch (_) {}
+
+    let isQuestion = o.kind === 'question';
+    let normalizedCommand = o.kind === 'command' && o?.command?.normalized ? o.command.normalized : null;
+    const aiTxn = o.kind === 'transaction' ? o.transaction : null;
+
+    try {
+      const stickyAction = await getStickyActionQuick(From);
+      if (stickyAction) { isQuestion = false; normalizedCommand = null; }
+    } catch (_) { /* noop */ }
+
     console.log('[orchestrator]', {
-        requestId, language, kind: o.kind,
-        normalizedCommand: normalizedCommand ?? '—',
-        topicForced, pricingFlavor
-      });         
-    // NEW: identity question signal for router (prevents cachey generic replies)
-      const identityAsked = isNameQuestion(text);
-      return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
+      requestId, language, kind: o.kind,
+      normalizedCommand: normalizedCommand ?? '—',
+      topicForced, pricingFlavor
+    });
+
+    const identityAsked = isNameQuestion(text);
+    return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
+  } catch (e) {
+    console.warn('[applyAIOrchestration] fallback due to error:', e?.message);
+    const language = ensureLangExact(detectedLanguageHint ?? 'en');
+    const normalizedCommand = resolveSummaryIntent(text) ?? null;
+    const identityAsked = isNameQuestion?.(text) ?? false;
+    return { language, isQuestion: await looksLikeQuestion(text, language), normalizedCommand, aiTxn: null, questionTopic: null, pricingFlavor: null, identityAsked };
+  }
+// ===PATCH END: UNIQ:DS-ORCH-REWIRE-ENV-20251219===
 }
 
 // Decide if AI should be used (cost guard)
@@ -2132,6 +2249,91 @@ const { processShopSummary } = require('../dailySummary');
 const { generateInvoicePDF, generateInventoryShortSummaryPDF, generateSalesRawTablePDF } = require('../pdfGenerator'); // +new generators
 const { getShopDetails } = require('../database');
 const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS || 12000);
+
+// ===PATCH START: UNIQ:DS-CLASSIFIER-ENV-20251219===
+/**
+ * Env-governed Deepseek fast classifier: language + kind + command.normalized + transaction skeleton.
+ * - Single Deepseek call (model: deepseek-chat), temperature:0, max_tokens:64, timeout ≤ 1.2s.
+ * - On error/timeout, falls back to heuristics. Returns { language, kind, command, transaction }.
+ * Toggle with ENABLE_FAST_CLASSIFIER (true/false).
+ */
+function __toBoolLocal(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+  return s === '1' || s === 'true' || s === 'on' || s === 'yes';
+}
+const __bool = (typeof __toBool === 'function') ? __toBool : __toBoolLocal;
+
+// ---- Env toggles & params ----
+const ENABLE_FAST_CLASSIFIER = __bool(process.env.ENABLE_FAST_CLASSIFIER ?? 'true');        // main gate
+const FAST_CLASSIFIER_TIMEOUT_MS = Number(process.env.FAST_CLASSIFIER_TIMEOUT_MS ?? 1200);  // 1.2s default
+const FAST_CLASSIFIER_MODEL_DEEPSEEK = process.env.FAST_CLASSIFIER_MODEL_DEEPSEEK ?? 'deepseek-chat';
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+
+// ---- Deepseek unified classification ----
+async function _classifyViaDeepseek(text) {
+  const axios = require('axios');
+  const sys = [
+    'You are a deterministic router.',
+    'Return STRICT JSON object with keys:',
+    '- language: ISO code or exact variant (e.g., "en", "hi", "hi-latn")',
+    '- kind: one of ["greeting","question","transaction","command","other"]',
+    '- command: { normalized: string } or null',
+    '- transaction: { action, product, quantity, unit, pricePerUnit, expiry } or null',
+    'No prose. No markdown. No extra keys.'
+  ].join(' ');
+  const body = {
+    model: FAST_CLASSIFIER_MODEL_DEEPSEEK,
+    messages: [{ role: 'system', content: sys }, { role: 'user', content: String(text ?? '').trim() }],
+    temperature: 0,
+    max_tokens: 64
+  };
+  const resp = await axios.post(
+    'https://api.deepseek.com/v1/chat/completions',
+    body,
+    { headers: { Authorization: `Bearer ${DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' }, timeout: FAST_CLASSIFIER_TIMEOUT_MS }
+  );
+  const raw = String(resp?.data?.choices?.[0]?.message?.content ?? '').trim();
+
+  // Try strict parse; if the model included extra text, extract the first balanced JSON block
+  let jsonStr = raw;
+  const firstBrace = raw.indexOf('{');
+  const lastBrace = raw.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    jsonStr = raw.slice(firstBrace, lastBrace + 1);
+  }
+  try { return JSON.parse(jsonStr); } catch { return null; }
+}
+
+/**
+ * classifyAndRoute(text, detectedLanguageHint):
+ * - Returns null when gate is OFF (callers should use legacy path).
+ * - Returns unified {language, kind, command, transaction} when gate is ON.
+ */
+async function classifyAndRoute(text, detectedLanguageHint) {
+  if (!ENABLE_FAST_CLASSIFIER) return null;
+
+  try {
+    const out = await _classifyViaDeepseek(text);
+    if (out && out.language && out.kind) {
+      return {
+        language: ensureLangExact(out.language ?? detectedLanguageHint ?? 'en'),
+        kind: out.kind ?? 'other',
+        command: out.command ?? null,
+        transaction: out.transaction ?? null
+      };
+    }
+  } catch { /* fall through to heuristics */ }
+
+  // Final fallback under gate ON: heuristics (deterministic & fast)
+  const user = String(text ?? '').trim();
+  return {
+    language: ensureLangExact(detectedLanguageHint ?? guessLangFromInput(user) ?? 'en'),
+    kind: (await looksLikeQuestion(user) ? 'question' : 'other'),
+    command: { normalized: resolveSummaryIntent(user) || null },
+    transaction: null
+  };
+}
+// ===PATCH END: UNIQ:DS-CLASSIFIER-ENV-20251219===
 
 const languageNames = {
   'hi': 'Hindi',
