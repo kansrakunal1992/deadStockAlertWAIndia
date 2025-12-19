@@ -2271,7 +2271,8 @@ const TERMINAL_COMMANDS = new Set([
   'top products month',
   'value summary',
   'inventory value',
-  'stock value'
+  'stock value',
+  'reset'
 ]);
 
 // Robust alias-depth counter (handles ':alias' and '::ai-norm' forms).
@@ -15501,12 +15502,15 @@ async function handleRequest(req, res, response, requestId, requestStart) {
       // Send reset confirmation
       const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
       const resetMessage = await t(
-        'Flow has been reset. How would you like to send your inventory update?',
+        'Flow has been reset. Type "mode" to select flow mode (Purchase/Sale/Return).',
         detectedLanguage,
         requestId
       );
       await sendMessageViaAPI(From, finalizeForSend(resetMessage, detectedLanguage));
       res.send('<Response></Response>');
+      try { 
+        handledRequests.add(requestId); 
+      } catch (_) { /* noop */ }
       return;
     }
             
