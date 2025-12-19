@@ -1725,8 +1725,53 @@ async function sendPendingPriceReminder(From, st, langHint = 'en') {
  * - aiTxn: parsed transaction skeleton (NEVER auto-applied; deterministic parser still decides).
  * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
  */
-async function applyAIOrchestration(text, From, detectedLanguageHint, requestId, stickyActionCached) {             
-// ===PATCH START: UNIQ:DS-ORCH-REWIRE-ENV-20251219===
+
+async function applyAIOrchestration(text, From, detectedLanguageHint, requestId, stickyActionCached) {
+  // === Helpers (defined once) ===
+  function withTimeout(promise, ms, fallback) {
+    return Promise.race([
+      promise,
+      new Promise((resolve) =>
+        setTimeout(() => resolve(typeof fallback === 'function' ? fallback() : fallback), ms)
+      ),
+    ]).catch(() => (typeof fallback === 'function' ? fallback() : fallback));
+  }
+  function inBackground(label, fn) {
+    Promise.resolve().then(fn).catch((e) => console.warn(`[bg:${label}]`, e?.message));
+  }
+  function isPricingQuestion(msg) {
+    const t = String(msg ?? '').toLowerCase();
+    const en = /\b(price|cost|charge|charges|rate)\b/;
+    const hing = /\b(kimat|daam|rate|price kya|kitna|kitni)\b/;
+    const hiNative = /(कीमत|दाम|भाव|रेट|कितना|कितनी)/;
+    return en.test(t) || hing.test(t) || hiNative.test(msg);
+  }
+  function isBenefitQuestion(msg) {
+    const t = String(msg ?? '').toLowerCase();
+    return /\b(benefit|daily benefit|value|help|use case)\b/.test(t)
+        || /(फ़ायदा|लाभ|मदद|दैनिक)/.test(msg)
+        || /\b(fayda)\b/.test(t);
+  }
+  function isCapabilitiesQuestion(msg) {
+    const t = String(msg ?? '').toLowerCase();
+    return /\b(what.*do|what does it do|exactly.*does|how does it work|kya karta hai)\b/.test(t)
+        || /(क्या करता है|किस काम का है|कैसे चलता है)/.test(msg)
+        || /\b(kya karta hai)\b/.test(t);
+  }
+  function classifyQuestionTopic(msg) {
+    if (isPricingQuestion(msg)) return 'pricing';
+    if (isBenefitQuestion(msg)) return 'benefits';
+    if (isCapabilitiesQuestion(msg)) return 'capabilities';
+    return null;
+  }
+  function looksLikeInventoryPricing(msg) {
+    const s = String(msg ?? '').toLowerCase();
+    const unitRx = /(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|बॉक्स|टुकड़ा|नंग)/i;
+    const moneyRx = /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i;
+    const brandRx = /(milk|doodh|parle\-g|maggi|amul|oreo|frooti|marie gold|good day|dabur|tata|nestle)/i;
+    return unitRx.test(s) || moneyRx.test(s) || brandRx.test(s);
+  }
+
   try {
     // --- LEGACY: pinned language from onboarding_trial_capture (PRESERVED) ---
     try {
@@ -1754,164 +1799,97 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         // Force router away from Sales-Q&A; downstream inventory parser will consume this turn
         return { language, isQuestion: false, normalizedCommand: null, aiTxn: null, questionTopic: null, pricingFlavor: null, forceInventory: true };
       }
-    } catch (_) { /* best-effort; fall through to AI orchestrator */ }
+    } catch (_) { /* fall through to AI orchestrator */ }
 
     // ---- NEW FAST PATH (Deepseek single call) when ENABLE_FAST_CLASSIFIER=true ----
     if (ENABLE_FAST_CLASSIFIER) {
-      // One short Deepseek call (≤1.2s), else heuristics inside classifyAndRoute            
-      console.log('[fast-classifier] on req=%s timeout=%sms model=deepseek-chat',
-      requestId, String(FAST_CLASSIFIER_TIMEOUT_MS ?? '1200'));
-      const out = await classifyAndRoute(text, detectedLanguageHint);    
-        
-    // ===PATCH START: UNIQ:ORCH-FAST-BOUND-20251219===
-        // 1) Normalize summary intent into 'command' (preserved behavior)
-        let route = {
-          language: ensureLangExact(out?.language ?? detectedLanguageHint ?? 'en'),
-          kind: out?.kind ?? 'other',
-          command: out?.command ?? null,
-          transaction: out?.transaction ?? null
-        };
+      console.log('[fast-classifier] on req=%s timeout=%sms model=deepseek-chat', requestId, String(FAST_CLASSIFIER_TIMEOUT_MS ?? '1200'));
+      const out = await classifyAndRoute(text, detectedLanguageHint);
+
+      // --- Normalize summary intent into command (PRESERVED) ---
+      let route = {
+        language: ensureLangExact(out?.language ?? detectedLanguageHint ?? 'en'),
+        kind: out?.kind ?? 'other',
+        command: out?.command ?? null,
+        transaction: out?.transaction ?? null
+      };
+      try {
+        const summaryCmd = resolveSummaryIntent(text); // 'short summary' | 'full summary' | null
+        if (summaryCmd) { route.kind = 'command'; route.command = { normalized: summaryCmd }; }
+      } catch {}
+
+      // --- Topic detection (PRESERVED) ---
+      const topicForced = classifyQuestionTopic(text);
+      if (topicForced) { route.kind = 'question'; }
+
+      // --- Language exact variant lock (PRESERVED) ---
+      const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
+      const orchestratedLang = ensureLangExact(route.language ?? hintedLang);
+      const language = hintedLang.endsWith('-latn') ? hintedLang : orchestratedLang;
+
+      // Save preference in background (no await)
+      inBackground('savePref', async () => {
+        try { if (typeof saveUserPreference === 'function') await saveUserPreference(shopIdFrom(From), language); } catch {}
+      });
+
+      // --- Sticky safety: prefer cached sticky; else bounded fetch ---
+      let isQuestion = (route.kind === 'question');
+      let normalizedCommand = route.kind === 'command' && route?.command?.normalized ? route.command.normalized : null;
+      const aiTxn = route.kind === 'transaction' ? route.transaction : null;
+
+      let stickyAction = stickyActionCached ?? await withTimeout(
+        (typeof getStickyActionQuick === 'function'
+          ? (getStickyActionQuick.length > 0 ? getStickyActionQuick(From) : getStickyActionQuick())
+          : Promise.resolve(null)),
+        150, () => null
+      );
+      if (stickyAction) { isQuestion = false; normalizedCommand = null; }
+
+      // --- Pricing flavor: only when pricing; bounded parallel fetches ---
+      let pricingFlavor = null;
+      if (topicForced === 'pricing') {
+        let activated = false;
         try {
-          const summaryCmd = resolveSummaryIntent(text);
-          if (summaryCmd) { route.kind = 'command'; route.command = { normalized: summaryCmd }; }
-        } catch {}
-    
-        // 2) Topic detection (CPU only; preserved functions below)
-        function isPricingQuestion(msg) {
-          const t = String(msg ?? '').toLowerCase();
-          const en = /\b(price|cost|charge|charges|rate)\b/;
-          const hing = /\b(kimat|daam|rate|price kya|kitna|kitni)\b/;
-          const hiNative = /(कीमत|दाम|भाव|रेट|कितना|कितनी)/;
-          return en.test(t) || hing.test(t) || hiNative.test(msg);
-        }
-        function isBenefitQuestion(msg) {
-          const t = String(msg ?? '').toLowerCase();
-          return /\b(benefit|daily benefit|value|help|use case)\b/.test(t)
-              || /(फ़ायदा|लाभ|मदद|दैनिक)/.test(msg)
-              || /\b(fayda)\b/.test(t);
-        }
-        function isCapabilitiesQuestion(msg) {
-          const t = String(msg ?? '').toLowerCase();
-          return /\b(what.*do|what does it do|exactly.*does|how does it work|kya karta hai)\b/.test(t)
-              || /(क्या करता है|किस काम का है|कैसे चलता है)/.test(msg)
-              || /\b(kya karta hai)\b/.test(t);
-        }
-        function classifyQuestionTopic(msg) {
-          if (isPricingQuestion(msg)) return 'pricing';
-          if (isBenefitQuestion(msg)) return 'benefits';
-          if (isCapabilitiesQuestion(msg)) return 'capabilities';
-          return null;
-        }
-        function looksLikeInventoryPricing(msg) {
-          const s = String(msg ?? '').toLowerCase();
-          const unitRx = /(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|बॉक्स|टुकड़ा|नंग)/i;
-          const moneyRx = /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i;
-          const brandRx = /(milk|doodh|parle\-g|maggi|amul|oreo|frooti|marie gold|good day|dabur|tata|nestle)/i;
-          return unitRx.test(s) || moneyRx.test(s) || brandRx.test(s);
-        }
-        const topicForced = classifyQuestionTopic(text);
-        if (topicForced) { route.kind = 'question'; }
-    
-        // 3) Language exact variant lock (preserved), then save in background
-        const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
-        const orchestratedLang = ensureLangExact(route.language ?? hintedLang);
-        const language = hintedLang.endsWith('-latn') ? hintedLang : orchestratedLang;
-        inBackground('savePref', async () => {
-          try { if (typeof saveUserPreference === 'function') await saveUserPreference(shopIdFrom(From), language); } catch {}
-        });
-    
-        // 4) Sticky safety: prefer cached sticky; else bounded fetch (150ms)
-        let isQuestion = (route.kind === 'question');
-        let normalizedCommand = route.kind === 'command' && route?.command?.normalized ? route.command.normalized : null;
-        const aiTxn = route.kind === 'transaction' ? route.transaction : null;
-        let stickyAction = stickyActionCached ?? await withTimeout(
-          (typeof getStickyActionQuick === 'function'
-            ? (getStickyActionQuick.length > 0 ? getStickyActionQuick(From) : getStickyActionQuick())
-            : Promise.resolve(null)),
-          150, () => null
-        );
-        if (stickyAction) { isQuestion = false; normalizedCommand = null; }
-    
-        // 5) Pricing flavor: only when pricing; bound plan/pref (500ms) in parallel
-        let pricingFlavor = null;
-        if (topicForced === 'pricing') {
-          let activated = false;
-          try {
-            const [planInfoRes, prefRes] = await Promise.allSettled([
-              withTimeout(getUserPlanQuick(shopIdFrom(From)), 500, () => null),
-              withTimeout(getUserPreference(shopIdFrom(From)), 500, () => null),
-            ]);
-            const planInfo = planInfoRes.status === 'fulfilled' ? planInfoRes.value : null;
-            const plan     = String((planInfo?.plan ?? prefRes?.value?.plan ?? '')).toLowerCase();
-            const end      = getUnifiedEndDate(planInfo);
-            const activeTrial = (plan === 'trial' && end && new Date(end).getTime() > Date.now());
-            activated = (plan === 'paid') || activeTrial;
-          } catch { /* best effort */ }
-          pricingFlavor = (activated && looksLikeInventoryPricing(text)) ? 'inventory_pricing' : 'tool_pricing';
-        }
-    
-        // 6) Final orchestrator log (same shape) and return
-        console.log('[orchestrator]', {
-          requestId, language, kind: route.kind,
-          normalizedCommand: normalizedCommand ?? '—',
-          topicForced, pricingFlavor
-        });
-        const identityAsked = isNameQuestion(text);
-        return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
-        // ===PATCH END: UNIQ:ORCH-FAST-BOUND-20251219===
+          const [planInfoRes, prefRes] = await Promise.allSettled([
+            withTimeout(getUserPlanQuick(shopIdFrom(From)), 500, () => null),
+            withTimeout(getUserPreference(shopIdFrom(From)), 500, () => null),
+          ]);
+          const planInfo = planInfoRes.status === 'fulfilled' ? planInfoRes.value : null;
+          const plan     = String((planInfo?.plan ?? prefRes?.value?.plan ?? '')).toLowerCase();
+          const end      = getUnifiedEndDate(planInfo);
+          const activeTrial = (plan === 'trial' && end && new Date(end).getTime() > Date.now());
+          activated = (plan === 'paid') || activeTrial;
+        } catch { /* best effort */ }
+        pricingFlavor = (activated && looksLikeInventoryPricing(text)) ? 'inventory_pricing' : 'tool_pricing';
+      }
 
+      console.log('[orchestrator]', {
+        requestId, language, kind: route.kind,
+        normalizedCommand: normalizedCommand ?? '—',
+        topicForced, pricingFlavor
+      });
+      const identityAsked = isNameQuestion(text);
+      return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
+    }
+
+    // ---- LEGACY PATH (Gate OFF): original Deepseek orchestrator call (PRESERVED) ----
     console.log('[fast-classifier] off req=%s (calling aiOrchestrate with 8s timeout)', requestId);
-    // ---- LEGACY PATH (Gate OFF): original Deepseek orchestrator call (FULLY PRESERVED) ----
-    const o = await aiOrchestrate(text);
+    const legacy = await aiOrchestrate(text);
 
-    // --- LEGACY: Normalize summary intent into command (PRESERVED) ---
+    // --- Normalize summary intent into command (PRESERVED) ---
     try {
       const summaryCmd = resolveSummaryIntent(text); // 'short summary' | 'full summary' | null
       if (summaryCmd) {
-        o.kind = 'command';
-        o.command = { normalized: summaryCmd };
+        legacy.kind = 'command';
+        legacy.command = { normalized: summaryCmd };
       }
-    } catch (_) { /* best-effort */ }
+    } catch { /* best-effort */ }
 
-    // --- LEGACY: topic detection helpers (PRESERVED) ---
-    function isPricingQuestion(msg) {
-      const t = String(msg ?? '').toLowerCase();
-      const en = /\b(price|cost|charge|charges|rate)\b/;
-      const hing = /\b(kimat|daam|rate|price kya|kitna|kitni)\b/;
-      const hiNative = /(कीमत|दाम|भाव|रेट|कितना|कितनी)/;
-      return en.test(t) || hing.test(t) || hiNative.test(msg);
-    }
-    function isBenefitQuestion(msg) {
-      const t = String(msg ?? '').toLowerCase();
-      return /\b(benefit|daily benefit|value|help|use case)\b/.test(t)
-          || /(फ़ायदा|लाभ|मदद|दैनिक)/.test(msg)
-          || /\b(fayda)\b/.test(t);
-    }
-    function isCapabilitiesQuestion(msg) {
-      const t = String(msg ?? '').toLowerCase();
-      return /\b(what.*do|what does it do|exactly.*does|how does it work|kya karta hai)\b/.test(t)
-          || /(क्या करता है|किस काम का है|कैसे चलता है)/.test(msg)
-          || /\b(kya karta hai)\b/.test(t);
-    }
-    function classifyQuestionTopic(msg) {
-      if (isPricingQuestion(msg)) return 'pricing';
-      if (isBenefitQuestion(msg)) return 'benefits';
-      if (isCapabilitiesQuestion(msg)) return 'capabilities';
-      return null;
-    }
-    function looksLikeInventoryPricing(msg) {
-      const s = String(msg ?? '').toLowerCase();
-      const unitRx = /(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|बॉक्स|टुकड़ा|नंग)/i;
-      const moneyRx = /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i;
-      const brandRx = /(milk|doodh|parle\-g|maggi|amul|oreo|frooti|marie gold|good day|dabur|tata|nestle)/i;
-      return unitRx.test(s) || moneyRx.test(s) || brandRx.test(s);
-    }
-
+    // --- Topic detection (PRESERVED) ---
     const topicForced = classifyQuestionTopic(text);
-    if (topicForced) {
-      o.kind = 'question';
-    }
+    if (topicForced) { legacy.kind = 'question'; }
 
+    // --- Pricing flavor (PRESERVED) ---
     let pricingFlavor = null; // 'tool_pricing' | 'inventory_pricing' | null
     if (topicForced === 'pricing') {
       let activated = false;
@@ -1920,42 +1898,44 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
           getUserPlanQuick(shopId), getUserPreference(shopId)
         ]);
         const planInfo = planInfoRes.status === 'fulfilled' ? planInfoRes.value : null;
-        const plan     = String((planInfo?.plan ?? prefRes?.value?.plan ?? '')).toLowerCase();
-        const end      = getUnifiedEndDate(planInfo);
+        const plan = String((planInfo?.plan ?? prefRes?.value?.plan ?? '')).toLowerCase();
+        const end = getUnifiedEndDate(planInfo);
         const activeTrial = (plan === 'trial' && end && new Date(end).getTime() > Date.now());
         activated = (plan === 'paid') || activeTrial;
       } catch { /* best effort */ }
       pricingFlavor = (activated && looksLikeInventoryPricing(text)) ? 'inventory_pricing' : 'tool_pricing';
     }
 
-    // [UNIQ:ORCH-LANG-LOCK-004] Prefer the exact variant from the detector (PRESERVED)
+    // --- Language exact variant lock + save preference (PRESERVED) ---
     const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
-    const orchestratedLang = ensureLangExact(o.language ?? hintedLang);
+    const orchestratedLang = ensureLangExact(legacy.language ?? hintedLang);
     const language = hintedLang.endsWith('-latn') ? hintedLang : orchestratedLang;
-
     try {
       if (typeof saveUserPreference === 'function') {
         await saveUserPreference(shopId, language);
       }
-    } catch (_) {}
+    } catch {}
 
-    let isQuestion = o.kind === 'question';
-    let normalizedCommand = o.kind === 'command' && o?.command?.normalized ? o.command.normalized : null;
-    const aiTxn = o.kind === 'transaction' ? o.transaction : null;
+    // --- Derive router fields (PRESERVED) ---
+    let isQuestion = legacy.kind === 'question';
+    let normalizedCommand = legacy.kind === 'command' && legacy?.command?.normalized ? legacy.command.normalized : null;
+    const aiTxn = legacy.kind === 'transaction' ? legacy.transaction : null;
 
+    // --- Final sticky-mode safety (PRESERVED) ---
     try {
       const stickyAction = await getStickyActionQuick(From);
       if (stickyAction) { isQuestion = false; normalizedCommand = null; }
-    } catch (_) { /* noop */ }
+    } catch { /* noop */ }
 
     console.log('[orchestrator]', {
-      requestId, language, kind: o.kind,
+      requestId, language, kind: legacy.kind,
       normalizedCommand: normalizedCommand ?? '—',
       topicForced, pricingFlavor
     });
 
     const identityAsked = isNameQuestion(text);
     return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
+
   } catch (e) {
     console.warn('[applyAIOrchestration] fallback due to error:', e?.message);
     const language = ensureLangExact(detectedLanguageHint ?? 'en');
@@ -1963,8 +1943,8 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
     const identityAsked = isNameQuestion?.(text) ?? false;
     return { language, isQuestion: await looksLikeQuestion(text, language), normalizedCommand, aiTxn: null, questionTopic: null, pricingFlavor: null, identityAsked };
   }
-// ===PATCH END: UNIQ:DS-ORCH-REWIRE-ENV-20251219===
 }
+
 
 // Decide if AI should be used (cost guard)
 function _shouldUseAI(text, heuristicLang) {
