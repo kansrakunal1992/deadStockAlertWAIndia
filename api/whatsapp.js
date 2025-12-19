@@ -1765,7 +1765,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         
     // ===PATCH START: UNIQ:ORCH-FAST-BOUND-20251219===
         // 1) Normalize summary intent into 'command' (preserved behavior)
-        let o = {
+        let route = {
           language: ensureLangExact(out?.language ?? detectedLanguageHint ?? 'en'),
           kind: out?.kind ?? 'other',
           command: out?.command ?? null,
@@ -1773,7 +1773,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         };
         try {
           const summaryCmd = resolveSummaryIntent(text);
-          if (summaryCmd) { o.kind = 'command'; o.command = { normalized: summaryCmd }; }
+          if (summaryCmd) { route.kind = 'command'; route.command = { normalized: summaryCmd }; }
         } catch {}
     
         // 2) Topic detection (CPU only; preserved functions below)
@@ -1810,20 +1810,20 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
           return unitRx.test(s) || moneyRx.test(s) || brandRx.test(s);
         }
         const topicForced = classifyQuestionTopic(text);
-        if (topicForced) { o.kind = 'question'; }
+        if (topicForced) { route.kind = 'question'; }
     
         // 3) Language exact variant lock (preserved), then save in background
         const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
-        const orchestratedLang = ensureLangExact(o.language ?? hintedLang);
+        const orchestratedLang = ensureLangExact(route.language ?? hintedLang);
         const language = hintedLang.endsWith('-latn') ? hintedLang : orchestratedLang;
         inBackground('savePref', async () => {
           try { if (typeof saveUserPreference === 'function') await saveUserPreference(shopIdFrom(From), language); } catch {}
         });
     
         // 4) Sticky safety: prefer cached sticky; else bounded fetch (150ms)
-        let isQuestion = (o.kind === 'question');
-        let normalizedCommand = o.kind === 'command' && o?.command?.normalized ? o.command.normalized : null;
-        const aiTxn = o.kind === 'transaction' ? o.transaction : null;
+        let isQuestion = (route.kind === 'question');
+        let normalizedCommand = route.kind === 'command' && route?.command?.normalized ? route.command.normalized : null;
+        const aiTxn = route.kind === 'transaction' ? route.transaction : null;
         let stickyAction = stickyActionCached ?? await withTimeout(
           (typeof getStickyActionQuick === 'function'
             ? (getStickyActionQuick.length > 0 ? getStickyActionQuick(From) : getStickyActionQuick())
@@ -1852,7 +1852,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
     
         // 6) Final orchestrator log (same shape) and return
         console.log('[orchestrator]', {
-          requestId, language, kind: o.kind,
+          requestId, language, kind: route.kind,
           normalizedCommand: normalizedCommand ?? '—',
           topicForced, pricingFlavor
         });
