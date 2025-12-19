@@ -1163,7 +1163,10 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`✅ Server running on ${HOST}:${PORT}`);
   console.log(`📊 Health check available at: http://${HOST}:${PORT}/health`);
   console.log(`📈 Metrics available at: http://${HOST}:${PORT}/metrics`);
-  console.log(`⏰ Daily summary scheduled for 11 PM Asia/Kolkata time`);
+  console.log(`⏰ Daily summary scheduled for 11 PM Asia/Kolkata time`);    
+  console.log('[fast-classifier-gate]', String(process.env.ENABLE_FAST_CLASSIFIER ?? ''));
+  console.log('[fast-classifier-timeout-ms]', Number(process.env.FAST_CLASSIFIER_TIMEOUT_MS ?? 1200));
+  console.log('[use-ai-orchestrator]', String(process.env.USE_AI_ORCHESTRATOR ?? ''));
 });
 
 // Track active connections
