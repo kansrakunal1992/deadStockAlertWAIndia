@@ -1758,7 +1758,9 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
 
     // ---- NEW FAST PATH (Deepseek single call) when ENABLE_FAST_CLASSIFIER=true ----
     if (ENABLE_FAST_CLASSIFIER) {
-      // One short Deepseek call (≤1.2s), else heuristics inside classifyAndRoute
+      // One short Deepseek call (≤1.2s), else heuristics inside classifyAndRoute            
+      console.log('[fast-classifier] on req=%s timeout=%sms model=deepseek-chat',
+      requestId, String(FAST_CLASSIFIER_TIMEOUT_MS ?? '1200'));
       const out = await classifyAndRoute(text, detectedLanguageHint);
 
       // --- LEGACY: Normalize summary intent into command (PRESERVED) ---
@@ -1864,6 +1866,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId)
       return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
     }
 
+    console.log('[fast-classifier] off req=%s (calling aiOrchestrate with 8s timeout)', requestId);
     // ---- LEGACY PATH (Gate OFF): original Deepseek orchestrator call (FULLY PRESERVED) ----
     const o = await aiOrchestrate(text);
 
