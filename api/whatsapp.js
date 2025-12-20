@@ -6537,36 +6537,7 @@ async function composeAIOnboarding(language = 'en') {
 }
 
 // NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
-async function composeAISalesAnswer(shopId, question, language = 'en') { 
-  // ====== L1 in-memory Sales-QA cache (bounded TTL) ======
-  const SALES_QA_CACHE_TTL_MS = Number(process.env.SALES_QA_CACHE_TTL_MS ?? (10 * 60 * 1000)); // 10 minutes
-  const __salesQaCache = (globalThis.__salesQaCache = globalThis.__salesQaCache ?? new Map());
-  function __cacheGet(key) {
-    try {
-      const hit = __salesQaCache.get(String(key));
-      if (!hit) return null;
-      if ((Date.now() - (hit.ts ?? 0)) > SALES_QA_CACHE_TTL_MS) return null;
-      return hit.value ?? null;
-    } catch { return null; }
-  }
-  function __cachePut(key, value) {
-    try { __salesQaCache.set(String(key), { value, ts: Date.now() }); } catch {}
-  }
-  function __safeQaKey(params) {
-    try {
-      // Prefer global builder if present (keeps variant lock & topic/flavor)
-      if (typeof buildSalesQaCacheKey === 'function') return buildSalesQaCacheKey(params);
-      const payload = [
-        'sales-qa',
-        String(params?.langExact ?? 'en'),
-        String(params?.topicForced ?? 'none'),
-        String(params?.pricingFlavor ?? 'none'),
-        String(params?.text ?? '')
-      ].join('::');
-      return (require('crypto').createHash('sha1').update(payload).digest('base64'));
-    } catch { return String(params?.text ?? ''); }
-  }
-
+async function composeAISalesAnswer(shopId, question, language = 'en') {
 // Fast-pricing detector (English + Hindi)
   const q = String(question ?? '').trim();
   const isPricing = /\b(price|cost|charges?)\b/i.test(q) || /क़ीमत|कीमत|मूल्य|भाव|लागत/i.test(q);
@@ -6585,22 +6556,6 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
     const aiNative = enforceSingleScriptSafe(pricingText, language);
     // brand preserved by nativeglishWrap (Patch 1)
     return normalizeNumeralsToLatin(nativeglishWrap(aiNative, language));
-  }
-
-// ====== FAST PATH 2: Invoice (deterministic, no LLM) ======
-  const isInvoiceAsk = /\b(invoice|बिल|चालान)\b/i.test(q);
-  if (isInvoiceAsk) {
-    const langDet = canonicalizeLang(language ?? 'en');
-    // Deterministic native copy; keep Saamagrii.AI in Latin
-    const hiLine = 'हाँ, बिक्री दर्ज करने पर चालान (PDF) अपने-आप बन जाता है — यह सुविधा ट्रायल और पेड दोनों में उपलब्ध है.';
-    const hilatnLine = 'Haan, sales entry karte hi invoice (PDF) apne-aap ban jaata hai — yeh feature trial aur paid dono me milta hai.';
-    const enLine = 'Yes—when you record a sale, the invoice (PDF) is generated automatically; available in both trial and paid plans.';
-    const ansDet = (langDet === 'hi' ? hiLine : (langDet === 'hi-latn' ? hilatnLine : enLine));
-    const outDet = enforceSingleScriptSafe(nativeglishWrap(ansDet, langDet), langDet);
-    // Cache & return
-    const keyDet = __safeQaKey({ langExact: langDet, topicForced: 'invoice', pricingFlavor: 'n/a', text: q });
-    __cachePut(keyDet, outDet);
-    return outDet;
   }
 
 const lang = canonicalizeLang(language ?? 'en');
@@ -6698,28 +6653,13 @@ const lang = canonicalizeLang(language ?? 'en');
     pricingFlavor = (activated && looksLikeInventoryPricing(question)) ? 'inventory_pricing' : 'tool_pricing';
   }
 
-  // ====== CACHE CHECK (before any LLM) ======
-  try {
-    const key0 = __safeQaKey({ langExact: ensureLangExact(lang), topicForced: topic, pricingFlavor, text: q });
-    const cached = __cacheGet(key0);
-    if (cached) {
-      console.log('[sales-qa cache] hit', { shopId, topic, lang, pricingFlavor });
-      return cached;
-    }
-  } catch { /* best-effort */ }
-
   // --------------------------------------------------------------------------
   // NEW: Short-circuit pricing questions with deterministic native answer
   // --------------------------------------------------------------------------
   if (topic === 'pricing') {
     // Compose deterministic native copy (no MT, single-script)
-    const pricingText = await composePricingAnswer(lang, pricingFlavor);        
-    // Cache & return
-        try {
-          const keyP = __safeQaKey({ langExact: ensureLangExact(lang), topicForced: 'pricing', pricingFlavor, text: q });
-          __cachePut(keyP, pricingText);
-        } catch { /* noop */ }
-        return pricingText;
+    const pricingText = await composePricingAnswer(lang, pricingFlavor);
+    return pricingText;
   }
    
  // ---- NEW: Hinglish enforcement note ----
@@ -6786,13 +6726,13 @@ const lang = canonicalizeLang(language ?? 'en');
       const langExactAgent = ensureLangExact(lang);            // keep 'hi-latn' if present
       const topicForced = topic;
       const flavor = pricingFlavor;
-      const userText = question;            
-      const promptHash = __safeQaKey({
-            langExact: langExactAgent,
-            topicForced,
-            pricingFlavor: flavor,
-            text: userText
-          });
+      const userText = question;
+      const promptHash = buildSalesQaCacheKey({
+        langExact: langExactAgent,
+        topicForced,
+        pricingFlavor: flavor,
+        text: userText
+      });
       console.log('AI_AGENT_PRE_CALL', {
         kind: 'sales-qa', language: langExactAgent, topic: topicForced, pricingFlavor: flavor, promptHash
       });
@@ -6815,27 +6755,20 @@ const lang = canonicalizeLang(language ?? 'en');
     - Maintain respectful Hindi/Hinglish tone: “aap…” forms and polite plurals (“sakte hain”, “karenge”, “kar payenge”); never “tum…”.
     `;
       }
-            
-    // ====== TOPIC-AWARE LLM SETTINGS (robust like before) ======
-        // - Benefits/Capabilities: slightly higher tokens & temperature for natural, complete answers.
-        // - Pricing: kept deterministic & concise.
-        const isBenefits = (topicForced === 'benefits');
-        const isCapabilities = (topicForced === 'capabilities');
-        const llmCall = axios.post(
-          'https://api.deepseek.com/v1/chat/completions',
-          {
-            model: 'deepseek-chat',
-            messages: [{ role: 'system', content: sysForTopic }, { role: 'user', content: user }],            
-            temperature: (isBenefits || isCapabilities) ? 0.5 : 0.25,
-            max_tokens: (isBenefits || isCapabilities) ? 350 : 300
-          },
-          {
-            headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
-            timeout: Number(process.env.SALES_QA_LLM_TIMEOUT_MS ?? 9000) // allow fuller answers
-          }
-        );                
-        const resp = await llmCall;
-        let out = String(resp?.data?.choices?.[0]?.message?.content ?? '').trim();
+    const resp = await axios.post(
+      'https://api.deepseek.com/v1/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: [{ role: 'system', content: sysForTopic }, { role: 'user', content: user }],
+        temperature: 0.5,
+        max_tokens: 220
+      },
+      {
+        headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
+        timeout: 10000
+      }
+    );               
+    let out = String(resp.data?.choices?.[0]?.message?.content ?? '').trim();          
     try {
         console.log(`[${requestId}] [dbg] agentRaw="${out?.slice(0,200)}" lang=${langExactAgent} topic=${topicForced} flavor=${flavor}`);
       } catch (_) { /* no-op */ }   
@@ -6844,12 +6777,10 @@ const lang = canonicalizeLang(language ?? 'en');
       let shopCat = await getShopCategory(shopId);
       const domain = classifyDomain(question, shopCat);
       if (topic === 'benefits' && domain && DOMAIN_MAP[domain]) {
-        const cfg = DOMAIN_MAP[domain];                
-        const benefitLine = cfg.benefits[lang] ?? cfg.benefits['hi-latn'] ?? null;
-              if (benefitLine) {
-                // No bullets/symbols; keep pure sentences for WA readability.
-                out = `${benefitLine}`;
-              }
+        const cfg = DOMAIN_MAP[domain];
+        const benefitLine = cfg.benefits[lang] || cfg.benefits['hi-latn'] || null;
+        const ex = cfg.examples?.slice(0,3).join(' • ');
+        if (benefitLine) out = `${benefitLine}\nUdaharan: ${ex}`;
       }
 
     // [UNIQ:PRICING-GUARD-003] Strict retry if pricing answer lacks price
@@ -6892,12 +6823,7 @@ const lang = canonicalizeLang(language ?? 'en');
     if (!(topicForced === 'pricing' && langExactAgent.endsWith('-latn'))) {
           out = ensureLanguageOrFallback(out, lang); // keep fallback for non-pricing topics
         }
-                
-        // Avoid filler openings and bullets; make it direct & readable.
-            out = out.replace(/^(ठीक है!?|ओके!?|Okay!?|Sure!?)[\s\-–—]*/i, '').trim();
-            out = out.replace(/[•●▪︎◦]/g, '').replace(/[–—\-]{2,}/g, '-').trim();
-            out = nativeglishWrap(out, lang);
-
+        out = nativeglishWrap(out, lang);
         // Final single-script guard for any residual mixed content; de-echo first
         const out0 = normalizeTwoBlockFormat(out, lang);                
         out = enforceSingleScriptSafe(out0, lang);      
@@ -6929,12 +6855,7 @@ const lang = canonicalizeLang(language ?? 'en');
           }
         } catch (_) { /* no-op */ }    
     // Final single-script guard for any residual mixed content
-      const finalOut = enforceSingleScript(out, lang);        
-    // ====== CACHE WRITE (post-LLM) ======
-        try {
-          const key1 = __safeQaKey({ langExact: ensureLangExact(lang), topicForced, pricingFlavor: flavor, text: q });
-          __cachePut(key1, finalOut);
-        } catch { /* noop */ }
+      const finalOut = enforceSingleScript(out, lang);
       console.log('AI_AGENT_POST_CALL', { kind: 'sales-qa', ok: !!out, length: out?.length ?? 0, topic, pricingFlavor });
       return finalOut;
   } catch {
