@@ -2928,20 +2928,6 @@ async function setStickyMode(from, actionOrWord) {
       } catch (_) { /* noop */ }
 }
 
-const MODE_WORD = { en:'mode', hi:'मोड', bn:'মোড', ta:'மோடு', te:'మోడ్', kn:'ಮೋಡ್', mr:'मोड', gu:'મોડ' };
-const ACTION_WORD = {
-  purchase: { en:'Purchase', hi:'खरीद',  bn:'কেনা',   ta:'வாங்குதல்', te:'కొనుగోలు', kn:'ಖರೀದಿ', mr:'खरेदी', gu:'ખરીદ' },
-  sale:     { en:'Sale',     hi:'बिक्री', bn:'বিক্রি',  ta:'விற்பனை',   te:'అమ్మకం',   kn:'ಮಾರಾಟ',  mr:'विक्री',  gu:'વેચાણ' },
-  return:   { en:'Return',   hi:'रिटर्न', bn:'রিটার্ন', ta:'திருப்பி',  te:'రిటర్న్',  kn:'ರಿಟರ್ನ್', mr:'रिटर्न',  gu:'રિટર્ન' }
-};
-function _baseLang(lang) { return String(lang||'en').toLowerCase().replace(/-latn$/, ''); }
-function _modeLabel(lang) { const b = _baseLang(lang); return MODE_WORD[b] || MODE_WORD.en; }
-function _actionLabel(lang, actionKey) {
-  const b = _baseLang(lang);
-  const map = ACTION_WORD[String(actionKey||'purchase')] || ACTION_WORD.purchase;
-  return map[b] || map.en;
-}
-
 // ===== LOCALIZED FOOTER TAG: append «<MODE_BADGE> • <SWITCH_WORD>» to every message =====
 async function tagWithLocalizedMode(from, text, detectedLanguageHint = null, opts = {}) {
   try {
@@ -3026,22 +3012,17 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null, opt
     // --- NEW: Append Help CTA conditionally (only where explicitly requested) ---
         // Avoid duplication if CTA already present.
         const switchWord = getSwitchWordFor(lang);
-        const switchWordNew = String(switchWord || _modeLabel(lang));
         const HELP_CTA = `\n\nNeed help? WhatsApp Saamagrii.AI support: "https://wa.link/6q3ol7". ` +
-                         `Type "${switchWordNew}" to switch Purchase/Sale/Return or ask an inventory query.`;                
+                         `Type "${switchWord}" to switch Purchase/Sale/Return or ask an inventory query.`;                
         const wantHelpCta = opts?.helpCta === true;
             if (wantHelpCta && !/Need help\?/i.test(text)) {
               text = String(text) + HELP_CTA;
             }        
-            
-    // Build localized badge and mode (always localized)
-        // badge: localized action word; mode: localized 'mode' token
-        const actionKey =
-          action === 'purchased' ? 'purchase' :
-          action === 'sold'      ? 'sale'     :
-          action === 'returned'  ? 'return'   : 'purchase';
-        const badge = _actionLabel(lang, actionKey);  // e.g., 'खरीद', 'বিক্রি', 'விற்பனை'
-        const tag   = `«${badge} ${_modeLabel(lang)}»`; // e.g., «खरीद मोड», «বিক্রি মোড»
+                
+    // Build badge in user language
+        const badge = getModeBadge(action, lang); // e.g., 'बिक्री', 'விற்பனை', 'SALE'
+        // switchWord defined above for CTA
+        const tag = `«${badge} • ${switchWord}»`;
 
     // 4) Append on a new line; keep WA length constraints safe
     return text.endsWith('\n') ? (text + tag) : (text + '\n' + tag);
