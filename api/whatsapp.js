@@ -6745,7 +6745,7 @@ const lang = canonicalizeLang(language ?? 'en');
       {
         model: 'deepseek-chat',
         messages: [{ role: 'system', content: sysForTopic }, { role: 'user', content: user }],
-        temperature: 0.5,
+        temperature: 0.2,
         max_tokens: 220
       },
       {
@@ -6786,7 +6786,7 @@ const lang = canonicalizeLang(language ?? 'en');
               { role: 'system', content: sysPricingStrict },
               { role: 'user', content: user }
             ],
-            max_tokens: 400,
+            max_tokens: 220,
             temperature: 0.2
           }, {
             headers: {
