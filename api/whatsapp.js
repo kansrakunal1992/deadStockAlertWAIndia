@@ -787,7 +787,7 @@ const QUOTE_TERMS = ['low stock','reorder suggestions','expiring 0','expiring 7'
 function normalizeTwoBlockFormat(raw, languageCode) {          
         if (!raw) return '';
           let s = String(raw ?? '')
-            .replace(/[`<>\[\]\\]/g, '')   
+            .replace(/[\`"<>\[\]\\]/g, '')
             .replace(/\n\s*\n\s*\n/g, '\n\n')
             .trim();
           const punct = /[.!?]$/;
@@ -1799,20 +1799,10 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         // Force router away from Sales-Q&A; downstream inventory parser will consume this turn
         return { language, isQuestion: false, normalizedCommand: null, aiTxn: null, questionTopic: null, pricingFlavor: null, forceInventory: true };
       }
-    } catch (_) { /* fall through to AI orchestrator */ }    
-       
-    // ---- NEW FAST PATH guard: skip classifier for script-clear or single-token language words ----
-      const rawIn = String(text ?? '').trim();
-      const isSingleToken = !/\s/.test(rawIn);
-      const hasIndicScript = /[\u0900-\u097F\u0980-\u09FF\u0B80-\u0BFF\u0C00-\u0C7F\u0C80-\u0CFF\u0A80-\u0AFF]/.test(rawIn);
-      const explicitLangToken = (typeof _matchLanguageToken === 'function') ? _matchLanguageToken(rawIn) : null;
-      if (hasIndicScript || (isSingleToken && explicitLangToken)) {
-        const language = ensureLangExact(explicitLangToken ?? detectedLanguageHint ?? guessLangFromInput(rawIn) ?? 'en');
-        console.log('[orchestrator]', { requestId, language, kind: 'other', normalizedCommand: '—', topicForced: null, pricingFlavor: null, fastSkip: true });
-        return { language, isQuestion: false, normalizedCommand: null, aiTxn: null, questionTopic: null, pricingFlavor: null, identityAsked: isNameQuestion?.(text) ?? false };
-      }
-      // ---- FAST CLASSIFIER path (Deepseek) when enabled ----
-      if (ENABLE_FAST_CLASSIFIER) {
+    } catch (_) { /* fall through to AI orchestrator */ }
+
+    // ---- NEW FAST PATH (Deepseek single call) when ENABLE_FAST_CLASSIFIER=true ----
+    if (ENABLE_FAST_CLASSIFIER) {
       console.log('[fast-classifier] on req=%s timeout=%sms model=deepseek-chat', requestId, String(FAST_CLASSIFIER_TIMEOUT_MS ?? '1200'));
       const out = await classifyAndRoute(text, detectedLanguageHint);
 
@@ -2235,7 +2225,7 @@ const authCache = new Map();
 const { processShopSummary } = require('../dailySummary');
 const { generateInvoicePDF, generateInventoryShortSummaryPDF, generateSalesRawTablePDF } = require('../pdfGenerator'); // +new generators
 const { getShopDetails } = require('../database');
-const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS || 4000);
+const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS || 12000);
 
 // ===PATCH START: UNIQ:PARALLEL-HELPERS-20251219===
 // Bound a non-critical promise with a tight timeout and a safe fallback.
@@ -3377,15 +3367,13 @@ async function resendInventoryListPicker(From, langHint = 'en') {
         // Canonicalize & normalize to base for ContentSid bundle creation
         langResolved = canonicalizeLang(langResolved);
         await ensureLangTemplates(langResolved);
-        const sids = getLangSids(langResolved);    
-        
+        const sids = getLangSids(langResolved);
+
     if (sids?.listPickerSid) {
-          // Re-send the list picker in background so first-response SLA is not blocked
-          inBackground('list-picker-resurface', async () => {
-            await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid });
-            console.log('[list-picker] resurfaced', { to: toNumber, sid: sids.listPickerSid, lang: langResolved });
-          });
-        } else {
+      // Re-send the list picker so user can immediately run another query
+      await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid });
+      console.log('[list-picker] resurfaced', { to: toNumber, sid: sids.listPickerSid, lang: langResolved });
+    } else {
       console.warn('[list-picker] missing listPickerSid for lang', { lang: langResolved });
     }
   } catch (e) {
@@ -3557,12 +3545,9 @@ function normalizeNumeralsToLatin(text) {
 // ANCHOR: UNIQ:FINALIZE-SEND-001
 // Finalize text for sending: strip any markers, enforce single-script, fix newlines,
 // and normalize digits. Use this on all onboarding text sends.
-function finalizeForSend(text, lang) {        
-  const stripped = stripMarkers(text);
-  // Localize quoted commands BEFORE single-script clamp so native labels render correctly.
-  const withQuoted = stripped;
-  try { withQuoted = localizeQuotedCommands(stripped, lang); } catch { /* noop */ }
-  const oneScript = enforceSingleScriptSafe(withQuoted, lang);
+function finalizeForSend(text, lang) {    
+  const stripped = stripMarkers(text);      
+  const oneScript = enforceSingleScriptSafe(stripped, lang);
   const withNL    = fixNewlines1(oneScript);
   return normalizeNumeralsToLatin(withNL).trim();
 }
@@ -15359,30 +15344,24 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
          const shopId = String(From).replace('whatsapp:', '');
          const ans = await composeAISalesAnswer(shopId, Body, langPinned);
          const msg0 = await tx(ans, langPinned, From, Body, `${requestId}::sales-qa`);
-         const msg  = nativeglishWrap(msg0, langPinned);                   
+         const msg  = nativeglishWrap(msg0, langPinned);
          await sendMessageDedup(From, msg);
-             // Immediately acknowledge webhook and record SLA based on FIRST TEXT
-             const twiml = new twilio.twiml.MessagingResponse();
-              twiml.message('');
-              res.type('text/xml');
-              resp.safeSend(200, twiml.toString());
-              safeTrackResponseTime(requestStart, requestId);
-          
-              __handled = true;
-              // Background: send buttons and CTA without blocking first-response SLA
-              inBackground('qa-buttons', async () => {
-                try {
+        __handled = true;
+         try {
                   const isActivated = await isUserActivated(shopId);
                   const buttonLang = langPinned.includes('-latn') ? langPinned.split('-')[0] : langPinned;
                   await sendSalesQAButtons(From, buttonLang, isActivated);
                 } catch (e) {
                   console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
                 }
-                try {
-                  await maybeShowPaidCTAAfterInteraction(From, langPinned, { trialIntentNow: isStartTrialIntent(Body) });
-                } catch (_) { /* noop */ }
-              });
-              return;
+           try { await maybeShowPaidCTAAfterInteraction(From, langPinned, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
+         // minimal TwiML ack
+         const twiml = new twilio.twiml.MessagingResponse();
+         twiml.message('');
+         res.type('text/xml');
+         resp.safeSend(200, twiml.toString());
+         safeTrackResponseTime(requestStart, requestId);
+         return;
        }
        // Read‑only normalized command → route & exit
        if (!FORCE_INVENTORY && orch.normalizedCommand) {                   
