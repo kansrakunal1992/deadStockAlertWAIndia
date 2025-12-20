@@ -662,8 +662,7 @@ function isSafeAnchor(text) {
         /start trial/i,
         /activate trial/i,
         /activate paid/i,
-        /paid confirm/i,
-        /mode/i,              
+        /paid confirm/i,              
         // NEW: Treat localized 'mode' tokens as safe anchors too (avoid mixed-script clamps)
         // Hindi, Bengali, Tamil, Telugu, Kannada, Marathi, Gujarati
         /\b(मोड)\b/u,
