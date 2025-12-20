@@ -6815,26 +6815,27 @@ const lang = canonicalizeLang(language ?? 'en');
     - Maintain respectful Hindi/Hinglish tone: “aap…” forms and polite plurals (“sakte hain”, “karenge”, “kar payenge”); never “tum…”.
     `;
       }
-    
-    // ====== BOUNDED LLM: race with tight timeout + deterministic settings ======
+            
+    // ====== TOPIC-AWARE LLM SETTINGS (robust like before) ======
+        // - Benefits/Capabilities: slightly higher tokens & temperature for natural, complete answers.
+        // - Pricing: kept deterministic & concise.
+        const isBenefits = (topicForced === 'benefits');
+        const isCapabilities = (topicForced === 'capabilities');
         const llmCall = axios.post(
           'https://api.deepseek.com/v1/chat/completions',
           {
             model: 'deepseek-chat',
-            messages: [{ role: 'system', content: sysForTopic }, { role: 'user', content: user }],
-            temperature: 0.2,        // more deterministic
-            max_tokens: 180          // smaller payload keeps latency down
+            messages: [{ role: 'system', content: sysForTopic }, { role: 'user', content: user }],            
+            temperature: (isBenefits || isCapabilities) ? 0.5 : 0.25,
+            max_tokens: (isBenefits || isCapabilities) ? 350 : 300
           },
           {
             headers: { Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`, 'Content-Type': 'application/json' },
-            timeout: Number(process.env.SALES_QA_LLM_TIMEOUT_MS ?? 7000) // tighter bound
+            timeout: Number(process.env.SALES_QA_LLM_TIMEOUT_MS ?? 9000) // allow fuller answers
           }
-        );
-        const llmFallback = Promise.resolve(getLocalizedQAFallback(lang)); // crisp fallback by language/topic
-        const resp = await Promise.race([ llmCall, llmFallback ]);
-        let out = (typeof resp === 'string')
-          ? String(resp).trim()
-          : String(resp?.data?.choices?.[0]?.message?.content ?? '').trim();  
+        );                
+        const resp = await llmCall;
+        let out = String(resp?.data?.choices?.[0]?.message?.content ?? '').trim();
     try {
         console.log(`[${requestId}] [dbg] agentRaw="${out?.slice(0,200)}" lang=${langExactAgent} topic=${topicForced} flavor=${flavor}`);
       } catch (_) { /* no-op */ }   
@@ -6843,10 +6844,12 @@ const lang = canonicalizeLang(language ?? 'en');
       let shopCat = await getShopCategory(shopId);
       const domain = classifyDomain(question, shopCat);
       if (topic === 'benefits' && domain && DOMAIN_MAP[domain]) {
-        const cfg = DOMAIN_MAP[domain];
-        const benefitLine = cfg.benefits[lang] || cfg.benefits['hi-latn'] || null;
-        const ex = cfg.examples?.slice(0,3).join(' • ');
-        if (benefitLine) out = `${benefitLine}\nUdaharan: ${ex}`;
+        const cfg = DOMAIN_MAP[domain];                
+        const benefitLine = cfg.benefits[lang] ?? cfg.benefits['hi-latn'] ?? null;
+              if (benefitLine) {
+                // No bullets/symbols; keep pure sentences for WA readability.
+                out = `${benefitLine}`;
+              }
       }
 
     // [UNIQ:PRICING-GUARD-003] Strict retry if pricing answer lacks price
@@ -6889,7 +6892,12 @@ const lang = canonicalizeLang(language ?? 'en');
     if (!(topicForced === 'pricing' && langExactAgent.endsWith('-latn'))) {
           out = ensureLanguageOrFallback(out, lang); // keep fallback for non-pricing topics
         }
-        out = nativeglishWrap(out, lang);
+                
+        // Avoid filler openings and bullets; make it direct & readable.
+            out = out.replace(/^(ठीक है!?|ओके!?|Okay!?|Sure!?)[\s\-–—]*/i, '').trim();
+            out = out.replace(/[•●▪︎◦]/g, '').replace(/[–—\-]{2,}/g, '-').trim();
+            out = nativeglishWrap(out, lang);
+
         // Final single-script guard for any residual mixed content; de-echo first
         const out0 = normalizeTwoBlockFormat(out, lang);                
         out = enforceSingleScriptSafe(out0, lang);      
