@@ -329,7 +329,7 @@ const EPHEMERAL_OVERRIDE_MODES = new Set(['awaitingBatchOverride','awaitingPurch
 const TTL_AWAITING_BATCH_OVERRIDE_SEC =
   Number(process.env.TTL_BATCH_OVERRIDE ?? 120); // default 120s
 const TTL_AWAITING_PURCHASE_EXP_OVERRIDE_SEC =
-  Number(process.env.TTL_PURCHASE_EXP_OVERRIDE ?? 30); // default 30s
+  Number(process.env.TTL_PURCHASE_EXP_OVERRIDE ?? 120); // default 120s
 
 function _ttlForMode(mode) {
   const m = String(mode ?? '').toLowerCase();
@@ -930,7 +930,22 @@ async function parseMultipleUpdates(reqOrText) {
   
   // ===== NEW: Auto-park previous item when awaiting price and a new transaction arrives =====
   try {
-    const stPrice = await getUserStateFromDB(shopId);
+    const stPrice = await getUserStateFromDB(shopId);        
+    // --- PRICE-FIRST CONSUMPTION (NEW) -----------------------------------------
+        // If we are waiting for a price and the message looks price-like,
+        // consume it as a price update BEFORE any transaction parsing.
+        if (isPriceAwaitState(stPrice) && isPriceLikeMessage(t)) {
+          try {
+            const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'price-capture');
+            const ok = await applyPriceToPendingBatch(shopId, stPrice, t);
+            if (ok) {
+              await sendPriceSavedAck(from, stPrice, t, langHint);
+              return []; // do NOT treat this as a transaction
+            }
+          } catch (e) {
+            console.warn('[price-capture] failed:', e?.message);
+          }
+        }
     if (isPriceAwaitState(stPrice)) {
       // Detect language once for reminder
       const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'price-await');
@@ -959,8 +974,15 @@ async function parseMultipleUpdates(reqOrText) {
         
   // Try AI-based parsing first  
   try {
-    console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);  
-    const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
+    console.log(`[AI Parsing] Attempting to parse: "${transcript}"`);     
+    // Guard: if waiting for price and the message is price-like, skip AI transaction parsing.
+        try {
+          const stX = await getUserStateFromDB(shopId);
+          if (isPriceAwaitState(stX) && isPriceLikeMessage(t)) {
+            return []; // already consumed in price-first block above
+          }
+        } catch {}
+        const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
     // Only accept AI results if they are valid inventory updates (qty > 0 + valid action)
     if (aiUpdate && aiUpdate.length > 0) {          
     const cleaned = aiUpdate.map(update => {
@@ -1107,6 +1129,61 @@ async function parseMultipleUpdates(reqOrText) {
   //  }
   // STICKY MODE: keep awaitingTransactionDetails until user switches/resets
   return updates;
+}
+
+// ===== NEW: Consume and persist price for the pending batch =====================
+async function applyPriceToPendingBatch(shopId, st, text) {
+  try {
+    const raw = String(text ?? '').trim();
+    // Try explicit currency marker; fallback to bare numeric (per-unit implied)
+    const m =
+      raw.match(/(?:₹|rs\.?|inr)\s*(\d+(?:\.\d+)?)/i) ||
+      raw.match(/(\d+(?:\.\d+)?)(?:\s*(?:\/|\bper\b)\s*\S+)?/i);
+    if (!m) return false;
+    const pricePerUnit = parseFloat(m[1]);
+    if (!Number.isFinite(pricePerUnit)) return false;
+
+    const batchId = st?.data?.batchId ?? null;
+    const unit = st?.data?.unit ?? st?.data?.Units ?? 'unit';
+    const product = st?.data?.product ?? 'item';
+
+    // Resolve target batch: prefer explicit batchId; else try last open batch for product
+    let targetBatchId = batchId;
+    if (!targetBatchId && typeof getLatestOpenBatch === 'function') {
+      try { targetBatchId = await getLatestOpenBatch(shopId, product); } catch {}
+    }
+    if (!targetBatchId) return false;
+
+    // Persist price on batch
+    if (typeof updateBatchPrice === 'function') {
+      await updateBatchPrice(targetBatchId, { pricePerUnit, unit });
+    } else if (typeof updateBatchRecord === 'function') {
+      await updateBatchRecord(targetBatchId, { PricePerUnit: pricePerUnit, Unit: unit });
+    } else {
+      console.warn('[price-capture] no batch price updater available');
+    }
+
+    // Clear price-await state to avoid re-consumption
+    try { await clearUserState(shopId); } catch {}
+    return true;
+  } catch (e) {
+    console.warn('[applyPriceToPendingBatch] error:', e?.message);
+    return false;
+  }
+}
+
+async function sendPriceSavedAck(From, st, text, langHint = 'en') {
+  try {
+    const prod = String(st?.data?.product ?? 'item');
+    const unit = String(st?.data?.unit ?? 'unit');
+    const numMatch = String(text ?? '').match(/(\d+(?:\.\d+)?)/);
+    const num = numMatch ? numMatch[1] : '';
+    const body0 = `✅ Price saved: ₹${num} per ${unit} for “${prod}”.`;
+    const tagged = await tagWithLocalizedMode(From, finalizeForSend(body0, langHint), langHint);
+    await sendMessageViaAPI(From, tagged);
+  } catch (e) {
+    console.warn('[price-ack] failed:', e?.message);
+  }
 }
 
 // "Nativeglish": keep helpful English anchors (units, brand words) in otherwise localized text.
@@ -1649,14 +1726,17 @@ const DEFAULT_CURRENCY_SYMBOL = '₹';
 
 function isPriceAwaitState(st) {
   try {          
-      if (!st) return false;
-          const m = String(st.mode).toLowerCase();
-          // Treat all current prod modes that mean "price is pending" as price-await
-          // (observed in logs: 'awaitingPriceExpiry')
-          return (
-            (m === 'awaitingpriceforitem' || m === 'awaitingpriceexpiry' || m === 'awaitingpriceonly') &&
-            st.data && st.data.product
-          );
+      if (!st) return false;               
+      const m = String(st.mode).toLowerCase();
+          // Treat all current prod modes that mean "price is pending" as price‑await.
+          // NEW: also treat 'awaitingpurchaseexpiryoverride' as price‑await when a product is present.
+          const awaitingPriceModes = new Set([
+            'awaitingpriceforitem',
+            'awaitingpriceexpiry',
+            'awaitingpriceonly',
+            'awaitingpurchaseexpiryoverride'
+          ]);
+          return awaitingPriceModes.has(m) && st.data && st.data.product;
   } catch { return false; }
 }
 
