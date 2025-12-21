@@ -936,12 +936,13 @@ async function parseMultipleUpdates(reqOrText) {
         // consume it as a price update BEFORE any transaction parsing.
         if (isPriceAwaitState(stPrice) && isPriceLikeMessage(t)) {
           try {
-            const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'price-capture');
-            const ok = await applyPriceToPendingBatch(shopId, stPrice, t);
-            if (ok) {
-              await sendPriceSavedAck(from, stPrice, t, langHint);
-              return []; // do NOT treat this as a transaction
-            }
+            const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'price-capture');                        
+            const result = await applyPriceToPendingBatch(shopId, stPrice, t);
+                    if (result?.saved === true) {
+                      await sendPriceSavedAck(from, result.product, result.unit, result.price, langHint);
+                      return []; // do NOT treat this as a transaction
+                    }
+                    // If we couldn't save (missing batchId/updater), do NOT ACK; fall through.
           } catch (e) {
             console.warn('[price-capture] failed:', e?.message);
           }
@@ -1142,43 +1143,46 @@ async function applyPriceToPendingBatch(shopId, st, text) {
     if (!m) return false;
     const pricePerUnit = parseFloat(m[1]);
     if (!Number.isFinite(pricePerUnit)) return false;
+        
+    // REQUIRE explicit batchId to avoid mis-assignment.
+        const batchId = st?.data?.batchId ?? null;
+        if (!batchId) {
+          console.warn('[price-capture] missing batchId in state; skip price persist');
+          return { saved: false, reason: 'missing-batchId' };
+        }
+        const unit = st?.data?.unit ?? st?.data?.Units ?? 'unit';
+        const product = st?.data?.product ?? 'item';
 
-    const batchId = st?.data?.batchId ?? null;
-    const unit = st?.data?.unit ?? st?.data?.Units ?? 'unit';
-    const product = st?.data?.product ?? 'item';
+    const targetBatchId = batchId;
 
-    // Resolve target batch: prefer explicit batchId; else try last open batch for product
-    let targetBatchId = batchId;
-    if (!targetBatchId && typeof getLatestOpenBatch === 'function') {
-      try { targetBatchId = await getLatestOpenBatch(shopId, product); } catch {}
-    }
-    if (!targetBatchId) return false;
-
-    // Persist price on batch
-    if (typeof updateBatchPrice === 'function') {
-      await updateBatchPrice(targetBatchId, { pricePerUnit, unit });
-    } else if (typeof updateBatchRecord === 'function') {
-      await updateBatchRecord(targetBatchId, { PricePerUnit: pricePerUnit, Unit: unit });
-    } else {
-      console.warn('[price-capture] no batch price updater available');
-    }
-
-    // Clear price-await state to avoid re-consumption
-    try { await clearUserState(shopId); } catch {}
-    return true;
+    // Persist price on batch        
+    let saved = false;
+        if (typeof updateBatchPrice === 'function') {
+          await updateBatchPrice(targetBatchId, { pricePerUnit, unit });
+          saved = true;
+        } else if (typeof updateBatchRecord === 'function') {
+          await updateBatchRecord(targetBatchId, { PricePerUnit: pricePerUnit, Unit: unit });
+          saved = true;
+        } else {
+          console.warn('[price-capture] no batch price updater available');
+          return { saved: false, reason: 'no-updater' };
+        }
+    
+    // Clear ONLY IF we actually saved.
+        try { await clearUserState(shopId); } catch {}
+        return { saved: true, product, unit, price: pricePerUnit };
   } catch (e) {
     console.warn('[applyPriceToPendingBatch] error:', e?.message);
-    return false;
+    return { saved: false, reason: 'exception' };
   }
 }
 
-async function sendPriceSavedAck(From, st, text, langHint = 'en') {
-  try {
-    const prod = String(st?.data?.product ?? 'item');
-    const unit = String(st?.data?.unit ?? 'unit');
-    const numMatch = String(text ?? '').match(/(\d+(?:\.\d+)?)/);
-    const num = numMatch ? numMatch[1] : '';
-    const body0 = `✅ Price saved: ₹${num} per ${unit} for “${prod}”.`;
+async function sendPriceSavedAck(From, product, unit, price, langHint = 'en') {
+  try {        
+    const prod = String(product ?? 'item');
+    const u = String(unit ?? 'unit');
+    const num = Number.isFinite(price) ? price : '';
+    const body0 = `✅ Price saved: ₹${num} per ${u} for “${prod}”.`;
     const tagged = await tagWithLocalizedMode(From, finalizeForSend(body0, langHint), langHint);
     await sendMessageViaAPI(From, tagged);
   } catch (e) {
@@ -1727,16 +1731,15 @@ const DEFAULT_CURRENCY_SYMBOL = '₹';
 function isPriceAwaitState(st) {
   try {          
       if (!st) return false;               
-      const m = String(st.mode).toLowerCase();
-          // Treat all current prod modes that mean "price is pending" as price‑await.
-          // NEW: also treat 'awaitingpurchaseexpiryoverride' as price‑await when a product is present.
+      const m = String(st.mode).toLowerCase();                
+      // STRICT: only true price-await modes are considered price-await.
+          // Do NOT treat purchase-expiry override as price-await (prevents mis-assignment).
           const awaitingPriceModes = new Set([
             'awaitingpriceforitem',
             'awaitingpriceexpiry',
-            'awaitingpriceonly',
-            'awaitingpurchaseexpiryoverride'
+            'awaitingpriceonly'
           ]);
-          return awaitingPriceModes.has(m) && st.data && st.data.product;
+          return awaitingPriceModes.has(m) && st.data && st.data.product && st.data.batchId;
   } catch { return false; }
 }
 
