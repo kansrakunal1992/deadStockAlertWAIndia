@@ -749,10 +749,11 @@ function normalizeUserTextForKey(s) {
  const DISABLE_SALES_QA_CACHE_HIT =
    String(process.env.DISABLE_SALES_QA_CACHE_HIT ?? '1').toLowerCase() === '1';
 
-function buildSalesQaCacheKey({ langExact, topicForced, pricingFlavor, text }) {
-  // crypto is already imported in your file; reuse it here
-  // Use the SAFE normalizer to avoid "text is not defined" or shape errors.
-  const normalized = safeNormalizeForQuickQuery(text);
+function buildSalesQaCacheKey({ langExact, topicForced, pricingFlavor, text }) {  
+// crypto is already imported in your file; reuse it here.
+// SAFETY: tolerate missing/undefined text at call sites.
+  const normalized = safeNormalizeForQuickQuery(typeof text === 'string' ? text : '');
+
   const payload = [
     'sales-qa',
     String(langExact ?? 'en'),
@@ -1114,7 +1115,15 @@ async function parseMultipleUpdates(reqOrText) {
                           continue;
                         }
                       }
-        }
+        }        
+        // EXTRA GUARD: if user is in awaitingPriceExpiry and this sentence is price-like, do not push a transaction
+        try {
+          const stX = await getUserStateFromDB(shopId);
+          if (isPriceAwaitState(stX) && isPriceLikeMessage(trimmed)) {
+            // Let price-first saver consume it; skip transaction
+            continue;
+          }
+        } catch (_) {}
         if (isValidInventoryUpdate(update)) {
           updates.push(update);
         }
@@ -1136,32 +1145,40 @@ async function parseMultipleUpdates(reqOrText) {
 async function applyPriceToPendingBatch(shopId, st, text) {
   try {
     const raw = String(text ?? '').trim();
-    // Try explicit currency marker; fallback to bare numeric (per-unit implied)
+    // Try explicit currency marker; fallback to bare numeric (per-unit implied)   
     const m =
       raw.match(/(?:₹|rs\.?|inr)\s*(\d+(?:\.\d+)?)/i) ||
-      raw.match(/(\d+(?:\.\d+)?)(?:\s*(?:\/|\bper\b)\s*\S+)?/i);
+      raw.match(/(\d+(?:\.\d+)?)(?:\s*(?:\/|\bper\b|प्रति)\s*\S+)?/i);
     if (!m) return false;
     const pricePerUnit = parseFloat(m[1]);
     if (!Number.isFinite(pricePerUnit)) return false;
         
     // REQUIRE explicit batchId to avoid mis-assignment.
         const batchId = st?.data?.batchId ?? null;
+        
+    // Fallback: auto-resolve the latest batch for this product if batchId is missing
         if (!batchId) {
-          console.warn('[price-capture] missing batchId in state; skip price persist');
+          try {
+            const productName = st?.data?.product ?? null;
+            if (productName) {
+              const batches = await getBatchRecords(shopId, productName).catch(() => []);
+              batchId = batches?.[0]?.id ?? null; // most recent by PurchaseDate (DB function sorts desc)
+            }
+          } catch (_) {}
+        }
+        if (!batchId) {
+          console.warn('[price-capture] missing batchId (no state/lookup); skip price persist');
           return { saved: false, reason: 'missing-batchId' };
         }
-        const unit = st?.data?.unit ?? st?.data?.Units ?? 'unit';
-        const product = st?.data?.product ?? 'item';
-
-    const targetBatchId = batchId;
-
-    // Persist price on batch        
-    let saved = false;
-        if (typeof updateBatchPrice === 'function') {
-          await updateBatchPrice(targetBatchId, { pricePerUnit, unit });
-          saved = true;
-        } else if (typeof updateBatchRecord === 'function') {
-          await updateBatchRecord(targetBatchId, { PricePerUnit: pricePerUnit, Unit: unit });
+        const unit     = st?.data?.unit     ?? st?.data?.Units   ?? 'unit';
+        const product  = st?.data?.product  ?? 'item';
+        const qty      = st?.data?.quantity ?? null; // optional: derive PurchaseValue
+        const targetBatchId = batchId;
+        // Persist price on batch using your DB helper (exists in database.js)
+        // Writes PurchasePrice and (if qty provided) PurchaseValue
+        let saved = false;
+        if (typeof updateBatchPurchasePrice === 'function') {
+          await updateBatchPurchasePrice(targetBatchId, pricePerUnit, qty);
           saved = true;
         } else {
           console.warn('[price-capture] no batch price updater available');
@@ -8237,10 +8254,7 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
                   }
                   // Re-set sticky "purchased" mode so user can continue verb-less lines
                   try {
-                    await setUserStateInDB(shopId, {
-                      mode: 'awaitingTransactionDetails',
-                      data: { action: 'purchased' }
-                    });
+                    await setUserState(`whatsapp:${shopId}`, 'awaitingTransactionDetails', { action: 'purchased' });
                     console.log(`[State] Sticky mode restored for ${shopId}: awaitingTransactionDetails`);
                   } catch (e) {
                     console.warn('[awaitingPriceExpiry] failed to set sticky purchase mode:', e?.message);
