@@ -14281,7 +14281,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       }
 
       // Aggregated confirmation (only for successful writes, and not right after a price‑nudge)
-      if (!justNudged && processed.length > 0) {
+      if (processed.length > 0) {
         const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
         let message = header;
         let successCount = 0;
@@ -14292,8 +14292,9 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
           message += `\n${String(rawLine).trim()}${stockPart}`;
           if (r.success) successCount++;
-        }
-        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+        }                
+        const totalCount = Array.isArray(results) ? results.length : processed.length;
+        message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;
         const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
         await sendMessageDedup(From, formattedResponse);
       }
@@ -15003,7 +15004,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
      }
     
      // Aggregated confirmation (only for successful writes, and not right after a price-nudge)
-     if (!justNudged && processed.length > 0) {
+     if (processed.length > 0) {
        const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
        let message = header;
        let successCount = 0;
@@ -16709,14 +16710,13 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           return res.send('<Response></Response>');
         }
       }
-
- // Suppress aggregate confirmation immediately after a price-nudge
- const shopIdLocal = String(From).replace('whatsapp:', '');
- const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopIdLocal) ?? 0;
- const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
-        
-// Multi-line confirmation (post-commit only)
-      if (!justNudged && processed.length > 0) {
+ 
+// Multi-line confirmation (send whenever there are successes)
+      const shopIdLocal = String(From).replace('whatsapp:', '');
+      const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopIdLocal) ?? 0;
+      const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window (informational only)
+      const totalCount = Array.isArray(parsedUpdates) ? parsedUpdates.length : (Array.isArray(results) ? results.length : processed.length);
+      if (processed.length > 0) {
         const header = chooseHeader(processed.length, COMPACT_MODE, false);
         let message = header;
         let successCount = 0;
@@ -16728,7 +16728,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           message += `${String(rawLine).trim()}${stockPart}\n`;
           if (r.success) successCount++;
         }
-        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+        message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;
         const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
         await sendMessageDedup(From, formattedResponse);
       }
@@ -16981,13 +16981,14 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         );
         return;
       }
-
-  // Optional: suppress aggregate confirmation immediately after a price-nudge
+  
+  // Always send when we have successes; suppress only when nothing succeeded
   const shopIdLocal = String(From).replace('whatsapp:', '');
   const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopIdLocal) ?? 0;
   const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000;
+  const totalCount = Array.isArray(parsedUpdates) ? parsedUpdates.length : (Array.isArray(results) ? results.length : processed.length);
        
-  if (!justNudged && processed.length > 0) {
+  if (processed.length > 0) {
       const header = chooseHeader(processed.length, COMPACT_MODE, false);
       let message = header;
       let successCount = 0;
@@ -16999,7 +17000,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         message += `${rawLine}${stockPart}\n`;
         if (r.success) successCount++;
       }
-      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+      message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;
       const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
       await sendMessageDedup(From, formattedResponse);
     }
