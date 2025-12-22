@@ -15215,32 +15215,29 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   const hasBeenHandled = () => globalThis.handledRequests.has(requestId);
   const markHandled    = () => globalThis.handledRequests.add(requestId);
 
-  // --- NEW: single-source inventory ack builder ---
-  async function sendInventoryAck(toWhatsApp, results, languageCode) {
-    try {            
-      // Only confirm successful writes; skip pending/nudges          
-      // NEW: suppress immediately after any recent price-nudge for this shop
-          const shopId = String(toWhatsApp).replace('whatsapp:', '');
-          const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopId) ?? 0;
-          const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
-      
-          // Only confirm successful writes; skip pending/nudges
-          const lines = Array.isArray(results)
-            ? results
-                .filter(r => r?.success)                 // strict filter
-                .map(r => r?.inlineConfirmText)
-                .filter(Boolean)
-            : [];
-          // If we have no successful lines OR we just nudged for price → NO ACK
-          if (justNudged || lines.length === 0) return;
-      
-          const body = lines.join('\n');
-          await sendMessageViaAPI(toWhatsApp, finalizeForSend(body, languageCode));
-    } catch (e) {
-      console.warn('[router] inventory ack send failed:', e?.message);
-    }
-  }
+  // --- NEW: single-source inventory ack builder --- 
+ async function sendInventoryAck(toWhatsApp, results, languageCode) {
+   try {
+     // NEW: suppress immediately after any recent price-nudge for this shop
+     const shopId = String(toWhatsApp).replace('whatsapp:', '');
+     const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopId) ?? 0;
+     const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
 
+     // Only confirm successful writes; skip pending/nudges
+     const lines = Array.isArray(results)
+       ? results
+           .filter(r => r?.success)
+           .map(r => r?.inlineConfirmText)
+           .filter(Boolean)
+       : [];
+     if (justNudged || lines.length === 0) return;
+
+     const body = lines.join('\n');
+     await sendMessageViaAPI(toWhatsApp, finalizeForSend(body, languageCode));
+   } catch (e) {
+     console.warn('[router] inventory ack send failed:', e?.message);
+   }
+ }
   try {
       const NumMedia = Number(req.body?.NumMedia ?? 0);
       const ct0 = String(req.body?.MediaContentType0 ?? '').toLowerCase();
@@ -17537,18 +17534,30 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
               if (accepted.length > 0) {
                 const results = await updateMultipleInventory(shopId, accepted, detectedLanguage);
                 const hasInline = Array.isArray(results) && results.some(r => r?.inlineConfirmText);
-                if (!hasInline) {
-                  const header = chooseHeader(accepted.length, COMPACT_MODE, /*isPrice*/ false);
-                  let message = header;
-                  for (const r of results ?? []) {
-                    const rawLine = r?.inlineConfirmText
-                      ? r.inlineConfirmText
-                      : formatResultLine(r, COMPACT_MODE, false);
-                    if (!rawLine) continue;
-                    message += `\n${rawLine}`;
-                  }
-                  const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-                  await sendMessageDedup(From, formattedResponse);
+                if (!hasInline) {                  
+              // --- STRICT: build lines only for successful writes and suppress right after a price nudge ---
+               const shopIdLocal = String(From).replace('whatsapp:', '');
+               const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopIdLocal) ?? 0;
+               const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
+              
+               const successLines = Array.isArray(results)
+                 ? results
+                     .filter(r => r?.success)               // only successful writes
+                     .map(r => r?.inlineConfirmText)
+                     .filter(Boolean)
+                 : [];
+              
+               // If nothing actually succeeded or we just nudged, do NOT send any confirmation
+               if (justNudged || successLines.length === 0) {
+                 // optional: log for diagnostics
+                 console.log(`[${requestId}] agg-ack suppressed (justNudged=${justNudged}, successLines=${successLines.length})`);
+              } else {
+                 // Header only when there are successful items
+                 const header = chooseHeader(successLines.length, COMPACT_MODE, /*isPrice*/ false);
+                 const message = [header, ...successLines].join('\n').trim();
+                 const formattedResponse = await t(message, detectedLanguage, requestId);
+                 await sendMessageDedup(From, formattedResponse);
+               }
                 } else {
                   console.log(`[${requestId}] [text-agg-guard] Suppressed aggregated ack (inline confirmations present)`);
                 }
