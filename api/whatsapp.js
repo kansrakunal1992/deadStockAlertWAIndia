@@ -14226,71 +14226,77 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         const parsedUpdates = await parseMultipleUpdates({ From, Body: cleanTranscript });
             if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
         console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from voice message`);        
-        
-         // PATCH: Start translation while DB update runs; send translated confirmation after DB success
-         const header = chooseHeader(parsedUpdates.length, COMPACT_MODE, false);
-         let message = header;
-         for (const r of parsedUpdates) {
-           const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
-           if (!rawLine) continue;
-           message += `${String(rawLine).trim()}\n`;
-         }
-         const translationPromise = t(message.trim(), detectedLanguage, requestId);
-         const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
-         const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-          if (processed.length === 1) {
-            const x = processed[0];
-            const act = String(x.action).toLowerCase();
-            const common = {
-              product: x.product,
-              qty: x.quantity,
-              unit: x.unitAfter ?? x.unit ?? '',
-              pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
-              newQuantity: x.newQuantity
-            };
-            if (act === 'sold') {
-              await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);                            
-              // CTA gated: only last trial day
-                   try {
-                     const planInfo = await getUserPlan(shopId);
-                     const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
-                     const daysLeft = trialEnd ? Math.ceil((trialEnd.getTime() - Date.now()) / (1000*60*60*24)) : null;
-                     if (planInfo.plan === 'trial' && daysLeft === 1) {
-                       await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: false });
-                     }
-                   } catch (_) {}               
-              return;
-            }
-            if (act === 'purchased') {
-              await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);                           
-              // CTA gated: only last trial day
-                   try {
-                     const planInfo = await getUserPlan(shopId);
-                     const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
-                     const daysLeft = trialEnd ? Math.ceil((trialEnd.getTime() - Date.now()) / (1000*60*60*24)) : null;
-                     if (planInfo.plan === 'trial' && daysLeft === 1) {
-                       await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: false });
-                     }
-                   } catch (_) {}              
-                return;
-            }
-          }
-                   
-          // Multi-line translated confirmation built from parsedUpdates (not processed filtered)
-           let successCount = 0;
+         
+      // STRICT: render confirmation only AFTER commit results, and only for successful writes.
+      const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
 
-          for (const r of processed) {
-            const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
-            if (!rawLine) continue;
-            const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-            const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
-            message += `${String(rawLine).trim()}${stockPart}\n`;
-            if (r.success) successCount++;
-          }
+      // suppress confirmation immediately after a price‑nudge for this shop
+      const shopIdLocal = String(From).replace('whatsapp:', '');
+      const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopIdLocal) ?? 0;
+      const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
 
-          message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-          const formattedResponse = await translationPromise;
-          await sendMessageDedup(From, formattedResponse);                   
+      // Only include items that actually succeeded (no pending/nudge placeholders)
+      const processed = Array.isArray(results)
+        ? results.filter(r => r?.success && !r.needsUserInput && !r.awaiting)
+        : [];
+
+      // Single‑item shortcut (sold/purchased) → only if not just-nudged
+      if (!justNudged && processed.length === 1) {
+        const x = processed[0];
+        const act = String(x.action).toLowerCase();
+        const common = {
+          product: x.product,
+          qty: x.quantity,
+          unit: x.unitAfter ?? x.unit ?? '',
+          pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+          newQuantity: x.newQuantity
+        };
+        if (act === 'sold') {
+          await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);
+          // CTA gated: only last trial day
+          try {
+            const planInfo = await getUserPlan(shopId);
+            const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
+            const daysLeft = trialEnd ? Math.ceil((trialEnd.getTime() - Date.now()) / (1000*60*60*24)) : null;
+            if (planInfo.plan === 'trial' && daysLeft === 1) {
+              await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: false });
+            }
+          } catch (_) {}
+          return;
+        }
+        if (act === 'purchased') {
+          await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
+          // CTA gated: only last trial day
+          try {
+            const planInfo = await getUserPlan(shopId);
+            const trialEnd = planInfo?.trialEndDate ? new Date(planInfo.trialEndDate) : null;
+            const daysLeft = trialEnd ? Math.ceil((trialEnd.getTime() - Date.now()) / (1000*60*60*24)) : null;
+            if (planInfo.plan === 'trial' && daysLeft === 1) {
+              await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: false });
+            }
+          } catch (_) {}
+          return;
+        }
+      }
+
+      // Aggregated confirmation (only for successful writes, and not right after a price‑nudge)
+      if (!justNudged && processed.length > 0) {
+        const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
+        let message = header;
+        let successCount = 0;
+        for (const r of processed) {
+          const rawLine = r?.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+          if (!rawLine) continue;
+          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+          message += `\n${String(rawLine).trim()}${stockPart}`;
+          if (r.success) successCount++;
+        }
+        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+        await sendMessageDedup(From, formattedResponse);
+      }
+      // else → nothing to confirm (nudged or zero success)         
           // CTA gated: only last trial day
            try {
              const planInfo = await getUserPlan(shopId);
@@ -14960,54 +14966,53 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     // COPILOT-PATCH-TEXT-PARSE-FROM-1
       const parsedUpdates = await parseMultipleUpdates({ From, Body }); // pass req-like object with From
       if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
-      console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);
-      
-      // Process inventory updates here
-      const shopId = fromToShopId(From);            
-      const header = chooseHeader(parsedUpdates.length, COMPACT_MODE, false);
+      console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);          
+         
+    // Process inventory updates here - STRICT rendering AFTER results
+     const shopId = fromToShopId(From);
+     const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+     // suppress confirmation immediately after a price-nudge for this shop
+     const shopIdLocal = String(From).replace('whatsapp:', '');
+     const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopIdLocal) ?? 0;
+     const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
+    
+     // Only include items that actually succeeded
+     const processed = Array.isArray(results)
+       ? results.filter(r => r?.success && !r.needsUserInput && !r.awaiting)
+       : [];
+    
+     // Single-item shortcut (sold/purchased) → only if not just-nudged
+     if (!justNudged && processed.length === 1) {
+       const x = processed[0];
+       const act = String(x.action).toLowerCase();
+       const common = {
+         product: x.product,
+         qty: x.quantity,
+         unit: x.unitAfter ?? x.unit ?? '',
+         pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+         newQuantity: x.newQuantity
+       };
+       if (act === 'sold')  { await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common); return; }
+       if (act === 'purchased') { await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common); return; }
+     }
+    
+     // Aggregated confirmation (only for successful writes, and not right after a price-nudge)
+     if (!justNudged && processed.length > 0) {
+       const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
        let message = header;
-       for (const r of parsedUpdates) {
-         const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+       let successCount = 0;
+       for (const r of processed) {
+         const rawLine = r?.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
          if (!rawLine) continue;
-         message += `${String(rawLine).trim()}\n`;
+         const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+         const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+         message += `\n${String(rawLine).trim()}${stockPart}`;
+         if (r.success) successCount++;
        }
-       const translationPromise = t(message.trim(), detectedLanguage, requestId);
-       const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
-       const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-          if (processed.length === 1) {
-            const x = processed[0];
-            const act = String(x.action).toLowerCase();
-            const common = {
-              product: x.product,
-              qty: x.quantity,
-              unit: x.unitAfter ?? x.unit ?? '',
-              pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
-              newQuantity: x.newQuantity
-            };
-            if (act === 'sold') {
-              await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);                                
-              return;
-            }
-            if (act === 'purchased') {
-              await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
-              return;
-            }
-          }
-
-        let successCount = 0;
-
-        for (const r of processed) {
-          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
-          if (!rawLine) continue;
-          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
-          message += `${String(rawLine).trim()}${stockPart}\n`;
-          if (r.success) successCount++;
-        }
-
-        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-        const formattedResponse = await translationPromise;
-        await sendMessageDedup(From, formattedResponse);
+       message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+       const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+       await sendMessageDedup(From, formattedResponse);
+     } // else → nothing to confirm (nudged or zero success)
         __handled = true;                
         // CTA gated: only last trial day
          try {
