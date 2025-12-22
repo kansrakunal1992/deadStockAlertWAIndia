@@ -16682,9 +16682,12 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       // COPILOT-PATCH-STICKY-PARSE-FROM
       const parsedUpdates = await parseMultipleUpdates({ From, Body });
       if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
-        console.log(`[${requestId}] [sticky] Parsed ${parsedUpdates.length} updates`);
-              
-     const processed = results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting);
+        console.log(`[${requestId}] [sticky] Parsed ${parsedUpdates.length} updates`);                    
+           
+      // Commit first to get results
+            const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+            const processed = results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting);
+
       if (processed.length === 1) {
         const x = processed[0];
         const act = String(x.action).toLowerCase();
@@ -16700,7 +16703,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           __handled = true;              
           return res.send('<Response></Response>');
         }
-        if (act === 'purchased' && !x.needsPrice) {
+        if (act === 'purchased' && !x.needsPrice && !x.awaiting && !x.needsUserInput) {
           await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
           __handled = true;                    
           return res.send('<Response></Response>');
@@ -16711,24 +16714,24 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
  const shopIdLocal = String(From).replace('whatsapp:', '');
  const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopIdLocal) ?? 0;
  const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
-
-        // Multi-line confirmation               
-        if (!justNudged && processed.length > 0) {
-           const header = chooseHeader(processed.length, COMPACT_MODE, false);
-           let message = header;
-           let successCount = 0;
-           for (const r of processed) {
-             const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
-             if (!rawLine) continue;
-             const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-             const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
-             message += `${String(rawLine).trim()}${stockPart}\n`;
-             if (r.success) successCount++;
-           }
-           message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-           const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-           await sendMessageDedup(From, formattedResponse);
-         }
+        
+// Multi-line confirmation (post-commit only)
+      if (!justNudged && processed.length > 0) {
+        const header = chooseHeader(processed.length, COMPACT_MODE, false);
+        let message = header;
+        let successCount = 0;
+        for (const r of processed) {
+          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+          if (!rawLine) continue;
+          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
+          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+          message += `${String(rawLine).trim()}${stockPart}\n`;
+          if (r.success) successCount++;
+        }
+        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+        await sendMessageDedup(From, formattedResponse);
+      }
         __handled = true;
         return res.send('<Response></Response>');
       }
@@ -16958,8 +16961,10 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     // COPILOT-PATCH-HNI-PARSE-FROM
     const parsedUpdates = await parseMultipleUpdates({ From, Body }); // pass req-like object
     if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
-      console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);          
-     const processed = results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting);
+      console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);                   
+    // Commit first to get results
+      const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+      const processed = results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting);
       if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
         const x = processed[0];
         await sendSaleConfirmationOnce(
@@ -16977,6 +16982,14 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         return;
       }
 
+  // Optional: suppress aggregate confirmation immediately after a price-nudge
+  const shopIdLocal = String(From).replace('whatsapp:', '');
+  const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopIdLocal) ?? 0;
+  const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000;
+       
+  if (!justNudged && processed.length > 0) {
+      const header = chooseHeader(processed.length, COMPACT_MODE, false);
+      let message = header;
       let successCount = 0;
       for (const r of processed) {
         const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
@@ -16986,9 +16999,10 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         message += `${rawLine}${stockPart}\n`;
         if (r.success) successCount++;
       }
-      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;             
-      const formattedResponse = await translationPromise;
-         await sendMessageDedup(From, formattedResponse);
+      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+      const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+      await sendMessageDedup(From, formattedResponse);
+    }
          __handled = true;
         try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: false }); } catch (_) {}
          return res.send('<Response></Response>');
