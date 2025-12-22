@@ -13055,7 +13055,7 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         // Base message (will be populated only if we have non-pending results)
          let baseMessage = '';
          // Only send the summary message if there are non-pending results
-         const totalProcessed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
+         const totalProcessed = results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting).length;
          if (totalProcessed > 0) {
            // Create base message in English first
            const header = chooseHeader(results.length, COMPACT_MODE, /*isPrice*/ false);
@@ -14235,15 +14235,16 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopIdLocal) ?? 0;
       const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
 
-      // Only include items that actually succeeded (no pending/nudge placeholders)
+      // Only include items that actually succeeded (no pending/nudge placeholders)            
       const processed = Array.isArray(results)
-        ? results.filter(r => r?.success && !r.needsUserInput && !r.awaiting)
-        : [];
+         ? results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting)
+         : [];
 
       // Single‑item shortcut (sold/purchased) → only if not just-nudged
       if (!justNudged && processed.length === 1) {
         const x = processed[0];
         const act = String(x.action).toLowerCase();
+        if (x.needsPrice || x.awaiting || x.needsUserInput) { /* safety */ return; }
         const common = {
           product: x.product,
           qty: x.quantity,
@@ -14264,7 +14265,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           } catch (_) {}
           return;
         }
-        if (act === 'purchased') {
+        if (act === 'purchased' && !x.needsPrice && !x.awaiting && !x.needsUserInput) {
           await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
           // CTA gated: only last trial day
           try {
@@ -14886,7 +14887,11 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               const shopIdLocal = fromToShopId(From);
               const dbP = updateMultipleInventory(shopIdLocal, [u], langExact);
               const dbRes = await dbP;                 // wait for DB only
-              const r     = (dbRes || [])[0] || {};    // first result
+              const r     = (dbRes || [])[0] || {};    // first result              
+               if (!r?.success || r?.needsPrice || r?.awaiting || r?.needsUserInput) {
+                 // Do not send a confirmation body if price is missing or further input is needed
+                 return;
+               }
               const unit  = u.unit ?? r.unitAfter ?? r.unit ?? '';
               const stockSuffix = (r?.newQuantity != null) ? ` (Stock: ${r.newQuantity} ${unit})` : '';
               const finalBody   = `${await translateP}${stockSuffix}`;
@@ -14976,15 +14981,16 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
      const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopIdLocal) ?? 0;
      const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
     
-     // Only include items that actually succeeded
-     const processed = Array.isArray(results)
-       ? results.filter(r => r?.success && !r.needsUserInput && !r.awaiting)
+     // Only include items that actually succeeded         
+    const processed = Array.isArray(results)
+       ? results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting)
        : [];
     
      // Single-item shortcut (sold/purchased) → only if not just-nudged
      if (!justNudged && processed.length === 1) {
        const x = processed[0];
        const act = String(x.action).toLowerCase();
+       if (x.needsPrice || x.awaiting || x.needsUserInput) return;
        const common = {
          product: x.product,
          qty: x.quantity,
@@ -14993,7 +14999,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
          newQuantity: x.newQuantity
        };
        if (act === 'sold')  { await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common); return; }
-       if (act === 'purchased') { await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common); return; }
+       if (act === 'purchased' && !x.needsPrice && !x.awaiting && !x.needsUserInput) { await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common); return; }
      }
     
      // Aggregated confirmation (only for successful writes, and not right after a price-nudge)
@@ -15228,13 +15234,14 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
      const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopId) ?? 0;
      const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
 
-     // Only confirm successful writes; skip pending/nudges
-     const lines = Array.isArray(results)
+     // Only confirm successful writes; skip pending/nudges         
+    const lines = Array.isArray(results)
        ? results
-           .filter(r => r?.success)
-           .map(r => r?.inlineConfirmText)
-           .filter(Boolean)
+         .filter(r => r?.success && !r.needsPrice && !r.awaiting && !r.needsUserInput)
+         .map(r => r?.inlineConfirmText)
+         .filter(Boolean)
        : [];
+
      if (justNudged || lines.length === 0) return;
 
      const body = lines.join('\n');
@@ -16450,7 +16457,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
       } 
      
         // INLINE-CONFIRM aware single message
-        const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+        const processed = results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting);
         const header = chooseHeader(processed.length, COMPACT_MODE, false);
         let message = header;
         let successCount = 0;
@@ -16686,7 +16693,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
        }
        const translationPromise = t(message.trim(), detectedLanguage, requestId);
        const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
-       const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+       const processed = results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting);
       if (processed.length === 1) {
         const x = processed[0];
         const act = String(x.action).toLowerCase();
@@ -16702,7 +16709,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           __handled = true;              
           return res.send('<Response></Response>');
         }
-        if (act === 'purchased') {
+        if (act === 'purchased' && !x.needsPrice) {
           await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common);
           __handled = true;                    
           return res.send('<Response></Response>');
@@ -16962,7 +16969,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
      const translationPromise = t(message.trim(), detectedLanguage, requestId);
      const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
 
-      const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+      const processed = results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting);
       if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
         const x = processed[0];
         await sendSaleConfirmationOnce(
@@ -17080,7 +17087,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         return;
       }
 
-      const processed2 = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
+      const processed2 = results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting);
       const header2 = chooseHeader(processed2.length, COMPACT_MODE, false);
       let message2 = header2;
       let successCount2 = 0;
