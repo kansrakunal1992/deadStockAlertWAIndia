@@ -609,7 +609,6 @@ async function sendPriceRequiredNudge(From, productName, unit, langHint = 'en', 
       onlyOnceLine,
       '',
       `Please resend in one line WITH price. Examples:`,
-      `• purchased ${productName} 10 ${unitDisp} @ ₹70/${unitDisp}`,
       `• ${productName} 10 ${unitDisp} at ₹70 per ${unitDisp}`,
       `• ${productName} 10 ${unitDisp} ₹70/${unitDisp} exp +6m`,
     ].join('\n');
