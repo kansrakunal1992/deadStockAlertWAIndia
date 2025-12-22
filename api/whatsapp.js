@@ -2197,6 +2197,18 @@ const GREETING_TOKENS = new Set([
   'hola', 'hallo'
 ]);
 
+async function parkPendingPriceDraft(shopId, payload) {
+  try {
+    // No-op persistence or minimal in-memory cache, depending on your architecture.
+    // Intentionally do not write inventory here to maintain STRICT no-capture policy.
+    console.log('[awaitingPriceExpiry] parkPendingPriceDraft noop', { shopId, payload });
+    return { success: true };
+  } catch (e) {
+    console.warn('[awaitingPriceExpiry] park shim failed:', e?.message);
+    return { success: false, error: e?.message };
+  }
+}
+
 // Normalize away zero-widths/punctuations; keep letters/numbers/spaces
 function _normalizeForGreeting(text) {
   return String(text ?? '')
@@ -7961,7 +7973,23 @@ async function clearUserState(from) {
 async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId) {
   const shopId = From.replace('whatsapp:', '');
   const state = await getUserStateFromDB(shopId);
-  if (!state || state.mode !== 'awaitingPriceExpiry') return false;
+  if (!state || state.mode !== 'awaitingPriceExpiry') return false;    
+  // STRICT policy (new build):
+    // We no longer create pending batches without price. If a state exists without a batchId,
+    // treat it as non-legacy, clear it, and nudge the user to resend the line WITH price.
+    if (!state?.data?.batchId) {
+      try { await deleteUserStateFromDB(state.id); } catch (_) {}
+      const msg = await t(
+        'To record a purchase, please send one line WITH price, e.g., "purchased Milk 5 ltr @ ₹60/ltr".',
+        detectedLanguage,
+        'price-required-nudge'
+      );
+      const tagged = await tagWithLocalizedMode(From, finalizeForSend(msg, detectedLanguage), detectedLanguage);
+      await sendMessageViaAPI(From, tagged);
+      // Suppress late tail on the same requestId
+      try { handledRequests.add(requestId); } catch (_) {}
+      return true; // consume this turn; no capture
+    }
   
   // NEW: allow "reset" while asking for price/expiry
     if (isResetMessage(Body)) {
@@ -10597,8 +10625,11 @@ async function validateTranscript(transcript, requestId) {
 }
 
 // Handle multiple inventory updates with batch tracking
-async function updateMultipleInventory(shopId, updates, languageCode) {
+async function updateMultipleInventory(shopId, updates, languageCode) {    
   const results = [];
+  const pendingNoPrice = [];   // <– used only to drive nudges; we DO NOT write for these
+  const accepted = [];
+
   for (const update of updates) {  
   // NEW: lock the chosen sale price for this specific update (prevents ₹0 fallbacks)
     let chosenSalePrice = null;
@@ -10724,72 +10755,31 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           // Inline expiry from message (if any); else default/blank.
           const providedExpiryISO = bumpExpiryYearIfPast(update.expiryISO ?? null, purchaseDateISO);
           const expiryToUse = providedExpiryISO ?? autoExpiry ?? null;
-    
-          // Check if we need to ask for price
-          if (finalPrice <= 0) {
-            console.log(`[Update ${shopId} - ${product}] No price available, asking for input`);
-            
-            // Create batch first without price
-            const batchResult = await createBatchRecord({
-              shopId,
-              product,
-              quantity: update.quantity,
-              unit: update.unit,
-              purchaseDate: purchaseDateISO,
-              expiryDate: expiryToUse,
-              purchasePrice: 0 // Will be updated later
-            });
-            
-            if (batchResult?.success) createdBatchEarly = true;
-            
-            // Set state to await price input
-            await setUserState(`whatsapp:${shopId}`, 'awaitingPriceExpiry', {
-              batchId: batchResult?.id ?? null,
-              product,
-              unit: update.unit,
-              quantity: update.quantity,
-              purchaseDate: purchaseDateISO,
-              autoExpiry: expiryToUse ?? null,
-              needsPrice: true,
-              isPerishable: !!(productMeta?.success && productMeta.requiresExpiry)
-            });
-            
-            // Send price request message
-            const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
-            const edDisplay = expiryToUse ? formatDateForDisplay(expiryToUse) : '—';
-                
-            const prompt = await t(
-              [
-                `Captured ✅ ${product} ${update.quantity} ${update.unit} — awaiting price.`,
-                isPerishable ? `Expiry set: ${edDisplay}` : `No expiry needed.`,
-                ``,
-                `Please send price per ${update.unit}, e.g. "₹60" or "₹60 per ${update.unit}".`,
-                `You can adjust expiry later (within 2 min) after price is saved:`,
-                `• exp +7d / exp +3m / exp +1y`,
-                `• skip (to clear)`
-              ].join('\n'),
-              languageCode, 'ask-price-only'
-            );
-            await sendMessageViaAPI(`whatsapp:${shopId}`, prompt);
-            
-            // Return result indicating we need user input
-            results.push({
-              product, 
-              quantity: update.quantity, 
-              unit: update.unit, 
-              action: update.action,                                         
-              success: true, 
-              needsUserInput: true, 
-              awaiting: 'price', 
-              status: 'pending',
-              deferredPrice: true,
-              // include latest stock even in pending case (nice to have; harmless if undefined)
-              newQuantity: update.quantity, // Since we just added this quantity
-              unitAfter: update.unit
-            });
-            continue; // Move to next update
-          }
-
+                        
+          // STRICT: if price is missing and backend doesn't know it => DO NOT CAPTURE; ask for price
+                if (finalPrice <= 0) {
+                  pendingNoPrice.push({ product, unit: update.unit });
+                  // Send localized nudges; no DB writes; mark as non-success to suppress purchase acks
+                  try {
+                    if (pendingNoPrice.length === 1) {
+                      await sendPriceRequiredNudge(`whatsapp:${shopId}`, product, update.unit, languageCode);
+                    } else {
+                      await sendMultiPriceRequiredNudge(`whatsapp:${shopId}`, pendingNoPrice, languageCode);
+                    }
+                  } catch (_) {}
+                  results.push({
+                    product,
+                    quantity: update.quantity,
+                    unit: update.unit,
+                    action: update.action,
+                    success: false,           // <— important: prevents “📦 Purchased …” ack lines
+                    needsUserInput: true,
+                    awaiting: 'price',
+                    status: 'pending',
+                    deferredPrice: true
+                  });
+                  continue; // Move to next update; NO batch, NO inventory, NO state
+                }
                           
           // If we have a price, continue with normal flow
           // Create batch immediately with defaulted expiry (or blank)
@@ -10963,14 +10953,17 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
           
         // Create batch record for purchases only (skip if we already created above)
-            if (!createdBatchEarly && update.action === 'purchased' && result.success) {
+            if (!createdBatchEarly && update.action === 'purchased' && result.success && Number(finalPrice) > 0) {
             console.log(`[Update ${shopId} - ${product}] Creating batch record for purchase`);
             // Format current date with time for Airtable
             const formattedPurchaseDate = formatDateForAirtable(new Date());
             console.log(`[Update ${shopId} - ${product}] Using timestamp: ${formattedPurchaseDate}`);
             
             // Use database price (productPrice) or provided price
-            const purchasePrice = productPrice > 0 ? productPrice : (finalPrice || 0);
+            const purchasePrice = productPrice > 0 ? productPrice : (finalPrice || 0);                          
+            if (!(purchasePrice > 0)) {
+                    console.warn(`[Update ${shopId} - ${product}] STRICT gate: skipping batch creation due to missing price`);
+                  } else {
             console.log(`[Update ${shopId} - ${product}] Using purchasePrice: ${purchasePrice} (productPrice: ${productPrice}, finalPrice: ${finalPrice})`);
             
             const batchResult = await createBatchRecord({
@@ -11007,6 +11000,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       } else {
         console.log(`[Update ${shopId} - ${product}] Skipped DB price update (no price provided).`);
       }
+            }
       }
             // Create sales record for sales only
             if (isSale && result.success) {
@@ -15208,11 +15202,16 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
 
   // --- NEW: single-source inventory ack builder ---
   async function sendInventoryAck(toWhatsApp, results, languageCode) {
-    try {
-      const lines = Array.isArray(results)
-        ? results.map(r => r?.inlineConfirmText).filter(Boolean)
-        : [];
-      const body  = lines.length ? lines.join('\n') : '✅ Updated.';
+    try {            
+      // Only confirm successful writes; skip pending/nudges
+          const lines = Array.isArray(results)
+            ? results
+                .filter(r => r?.success)                 // << strict filter
+                .map(r => r?.inlineConfirmText)
+                .filter(Boolean)
+            : [];
+          if (lines.length === 0) return;               // << no success → no ack
+          const body = lines.join('\n');
       // Rely on finalizeForSend + sendMessageViaAPI to tag footer and CTA appropriately
       await sendMessageViaAPI(toWhatsApp, finalizeForSend(body, languageCode));
     } catch (e) {
