@@ -584,6 +584,69 @@ function displayUnit(unit, lang = 'en') {
   return map ? (map[u] ?? unit) : unit;
 }
 
+// =======================================================================
+// [STRICT-PURCHASE-PRICE-REQUIRED] Helpers
+// Enforce: do NOT accept "purchased" lines without price when backend
+// has no known price for that product. Nudge the user to resend line
+// with price; no DB writes, no confirmations for those lines.
+// =======================================================================
+async function isPriceKnown(shopId, productName) {
+  try {
+    const res = await getProductPrice(productName, shopId);
+    return !!(res?.success && Number.isFinite(res.price));
+  } catch { return false; }
+}
+
+async function sendPriceRequiredNudge(From, productName, unit, langHint = 'en', opts = {}) {
+  try {
+    const lang = String(langHint ?? 'en').toLowerCase();
+    const unitDisp = displayUnit(unit ?? 'unit', lang);
+    const onlyOnceLine = lang.startsWith('hi')
+      ? `नया प्रोडक्ट होने के कारण कीमत सिस्टम में सेव नहीं है—कीमत सिर्फ एक बार देना ज़रूरी है।`
+      : `Since it's a new product, price isn't stored in the system—it's required only one time.`;
+    const bodySrc = [
+      `🟡 Price required for “${productName}”.`,
+      onlyOnceLine,
+      '',
+      `Please resend in one line WITH price. Examples:`,
+      `• purchased ${productName} 10 ${unitDisp} @ ₹70/${unitDisp}`,
+      `• ${productName} 10 ${unitDisp} at ₹70 per ${unitDisp}`,
+      `• ${productName} 10 ${unitDisp} ₹70/${unitDisp} exp +6m`,
+    ].join('\n');
+    let msg0 = await t(bodySrc, lang, `price-required::${productName}`);
+    msg0 = nativeglishWrap(msg0, lang);
+    const tagged = await tagWithLocalizedMode(From, finalizeForSend(msg0, lang), lang);
+    await sendMessageViaAPI(From, tagged);
+  } catch (e) {
+    console.warn('[price-nudge] failed:', e?.message);
+  }
+}
+
+async function sendMultiPriceRequiredNudge(From, items, langHint = 'en') {
+  try {
+    const lang = String(langHint ?? 'en').toLowerCase();
+    const onlyOnceLine = lang.startsWith('hi')
+      ? `नए प्रोडक्ट्स के लिए कीमत सिस्टम में नहीं है—कीमत सिर्फ एक बार देना ज़रूरी है।`
+      : `For new products, price isn't stored—it's required only one time.`;
+    const bullets = (items ?? []).map(it => {
+      const uDisp = displayUnit(it.unit ?? 'unit', lang);
+      return `• ${it.product}: e.g. “purchased ${it.product} 10 ${uDisp} @ ₹70/${uDisp}”`;
+    }).join('\n');
+    const bodySrc = [
+      `🟡 Price required for the following products:`,
+      bullets,
+      '',
+      onlyOnceLine
+    ].join('\n');
+    let msg0 = await t(bodySrc, lang, `price-required::multi`);
+    msg0 = nativeglishWrap(msg0, lang);
+    const tagged = await tagWithLocalizedMode(From, finalizeForSend(msg0, lang), lang);
+    await sendMessageViaAPI(From, tagged);
+  } catch (e) {
+    console.warn('[price-nudge-multi] failed:', e?.message);
+  }
+}
+
  // ========================================================================
  // [UNIQ:WORDS-TO-DIGITS-002] English number words → digits (voice-friendly)
  // Handles compounds ("twenty five"), hyphens, "point five", and Indian scales.
@@ -930,42 +993,7 @@ async function parseMultipleUpdates(reqOrText) {
   }
   
   // ===== NEW: Auto-park previous item when awaiting price and a new transaction arrives =====
-  try {
-    const stPrice = await getUserStateFromDB(shopId);        
-    // --- PRICE-FIRST CONSUMPTION (NEW) -----------------------------------------
-        // If we are waiting for a price and the message looks price-like,
-        // consume it as a price update BEFORE any transaction parsing.
-        if (isPriceAwaitState(stPrice) && isPriceLikeMessage(t)) {
-          try {
-            const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'price-capture');                        
-            const result = await applyPriceToPendingBatch(shopId, stPrice, t);
-                    if (result?.saved === true) {
-                      await sendPriceSavedAck(from, result.product, result.unit, result.price, langHint);
-                      return []; // do NOT treat this as a transaction
-                    }
-                    // If we couldn't save (missing batchId/updater), do NOT ACK; fall through.
-          } catch (e) {
-            console.warn('[price-capture] failed:', e?.message);
-          }
-        }
-    if (isPriceAwaitState(stPrice)) {
-      // Detect language once for reminder
-      const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'price-await');
-      if (looksLikeTxnLite(t)) {
-        // 1) Park previous draft so it appears in correction/pending lists
-        await parkPendingPriceDraft(shopId, stPrice);
-        // 2) Send a localized reminder (uses ₹ by default in examples)
-        await sendPendingPriceReminder(from, stPrice, langHint);
-        // 3) Do NOT treat this message as price; let it flow into normal transaction parsing
-        //    (fall-through: the rest of parseMultipleUpdates will process this as a fresh line)
-      } else {
-        // Not a transaction-looking message: keep price-await flow (handled in subsequent parts)
-        // We deliberately do not consume it here in Part 1.
-      }
-    }
-  } catch (e) {
-    console.warn('[price-await] state check failed:', e?.message);
-  }
+  // --- STRICT PRICE ENFORCEMENT: removed old price-await flow -----------
 
  // NEW: only attempt update parsing if message looks like a transaction   
  // Relax when we already have a sticky mode OR an inferred action (consume verb-less lines)
@@ -1138,74 +1166,39 @@ async function parseMultipleUpdates(reqOrText) {
   //    await deleteUserStateFromDB(userState.id);
   //  }
   // STICKY MODE: keep awaitingTransactionDetails until user switches/resets
-  return updates;
+  // --- STRICT PRICE ENFORCEMENT: drop purchased lines without price when backend unknown
+    const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'price-enforce');
+    const lacking = [];
+    const accepted = [];
+    for (const u of updates) {
+      try {
+        if (String(u?.action ?? '').toLowerCase() === 'purchased') {
+          const hasPrice = Number.isFinite(u?.pricePerUnit);
+          let priceKnown = false, backend = null;
+          try { backend = await getProductPrice(u.product, shopId); } catch {}
+          priceKnown = !!(backend?.success && Number.isFinite(backend?.price));
+          if (!hasPrice && !priceKnown) {
+            lacking.push({ product: u.productDisplay ?? u.product, unit: u.unit });
+            continue; // do NOT accept this line
+          }
+          if (!hasPrice && priceKnown) {
+            u.pricePerUnit = backend.price; // allow success if backend has price
+          }
+        }
+        accepted.push(u);
+      } catch {}
+    }
+    if (lacking.length === 1) {
+      await sendPriceRequiredNudge(from, lacking[0].product, lacking[0].unit, langHint);
+    } else if (lacking.length > 1) {
+      await sendMultiPriceRequiredNudge(from, lacking, langHint);
+    }
+    return accepted;
 }
 
 // ===== NEW: Consume and persist price for the pending batch =====================
-async function applyPriceToPendingBatch(shopId, st, text) {
-  try {
-    const raw = String(text ?? '').trim();
-    // Try explicit currency marker; fallback to bare numeric (per-unit implied)   
-    const m =
-      raw.match(/(?:₹|rs\.?|inr)\s*(\d+(?:\.\d+)?)/i) ||
-      raw.match(/(\d+(?:\.\d+)?)(?:\s*(?:\/|\bper\b|प्रति)\s*\S+)?/i);
-    if (!m) return false;
-    const pricePerUnit = parseFloat(m[1]);
-    if (!Number.isFinite(pricePerUnit)) return false;
-        
-    // REQUIRE explicit batchId to avoid mis-assignment.
-        const batchId = st?.data?.batchId ?? null;
-        
-    // Fallback: auto-resolve the latest batch for this product if batchId is missing
-        if (!batchId) {
-          try {
-            const productName = st?.data?.product ?? null;
-            if (productName) {
-              const batches = await getBatchRecords(shopId, productName).catch(() => []);
-              batchId = batches?.[0]?.id ?? null; // most recent by PurchaseDate (DB function sorts desc)
-            }
-          } catch (_) {}
-        }
-        if (!batchId) {
-          console.warn('[price-capture] missing batchId (no state/lookup); skip price persist');
-          return { saved: false, reason: 'missing-batchId' };
-        }
-        const unit     = st?.data?.unit     ?? st?.data?.Units   ?? 'unit';
-        const product  = st?.data?.product  ?? 'item';
-        const qty      = st?.data?.quantity ?? null; // optional: derive PurchaseValue
-        const targetBatchId = batchId;
-        // Persist price on batch using your DB helper (exists in database.js)
-        // Writes PurchasePrice and (if qty provided) PurchaseValue
-        let saved = false;
-        if (typeof updateBatchPurchasePrice === 'function') {
-          await updateBatchPurchasePrice(targetBatchId, pricePerUnit, qty);
-          saved = true;
-        } else {
-          console.warn('[price-capture] no batch price updater available');
-          return { saved: false, reason: 'no-updater' };
-        }
-    
-    // Clear ONLY IF we actually saved.
-        try { await clearUserState(shopId); } catch {}
-        return { saved: true, product, unit, price: pricePerUnit };
-  } catch (e) {
-    console.warn('[applyPriceToPendingBatch] error:', e?.message);
-    return { saved: false, reason: 'exception' };
-  }
-}
-
-async function sendPriceSavedAck(From, product, unit, price, langHint = 'en') {
-  try {        
-    const prod = String(product ?? 'item');
-    const u = String(unit ?? 'unit');
-    const num = Number.isFinite(price) ? price : '';
-    const body0 = `✅ Price saved: ₹${num} per ${u} for “${prod}”.`;
-    const tagged = await tagWithLocalizedMode(From, finalizeForSend(body0, langHint), langHint);
-    await sendMessageViaAPI(From, tagged);
-  } catch (e) {
-    console.warn('[price-ack] failed:', e?.message);
-  }
-}
+// [REMOVED]: price-await persist/ack flow. We now require the user to resend
+// the purchase line WITH price; no DB saves or acks for missing price lines.
 
 // "Nativeglish": keep helpful English anchors (units, brand words) in otherwise localized text.
 function nativeglishWrap(text, lang) {
@@ -1417,30 +1410,7 @@ function enforceSingleScriptSafe(out, lang) {
 }
 
 // ===== NEW: Idempotency (dedupe) for price turns =====
-const PRICE_DEDUPE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const _priceTurnSeen = new Map(); // key -> { ts }
-function _priceKey(shopId, batchId, text) {
-  const base = `${shopId}|${batchId}|${String(text ?? '').trim()}`;
-  // Simple stable hash (FNV-1a-ish)
-  let h = 2166136261;
-  for (let i = 0; i < base.length; i++) {
-    h ^= base.charCodeAt(i);
-    h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
-  }
-  return String(h >>> 0);
-}
-function seenDuplicatePriceTurn(shopId, batchId, text) {
-  const k = _priceKey(shopId, batchId, text);
-  const now = Date.now();
-  const hit = _priceTurnSeen.get(k);
-  if (hit && (now - hit.ts) < PRICE_DEDUPE_TTL_MS) return true;
-  _priceTurnSeen.set(k, { ts: now });
-  // Sweep occasionally (cheap)
-  if (_priceTurnSeen.size > 1000) {
-    for (const [kk, vv] of _priceTurnSeen) if ((now - vv.ts) > PRICE_DEDUPE_TTL_MS) _priceTurnSeen.delete(kk);
-  }
-  return false;
-}
+// [REMOVED]: price-turn dedupe; no longer used with strict price requirement.
 
 async function t(text, languageCode, requestId) {             
     const L = canonicalizeLang(languageCode);
@@ -1743,93 +1713,7 @@ function seenDuplicateCorrection(shopId, payload) {
 }
 
 // ===== NEW: price-await helpers (auto-park previous item, rupee default) =====
-const DEFAULT_CURRENCY_SYMBOL = '₹';
-
-function isPriceAwaitState(st) {
-  try {          
-      if (!st) return false;               
-      const m = String(st.mode).toLowerCase();                
-      // STRICT: only true price-await modes are considered price-await.
-          // Do NOT treat purchase-expiry override as price-await (prevents mis-assignment).
-          const awaitingPriceModes = new Set([
-            'awaitingpriceforitem',
-            'awaitingpriceexpiry',
-            'awaitingpriceonly'
-          ]);
-          return awaitingPriceModes.has(m) && st.data && st.data.product && st.data.batchId;
-  } catch { return false; }
-}
-
-async function parkPendingPriceDraft(shopId, st, langHint = 'en') {
-  // Persist a correction task so the previous item can be resumed later
-  try {
-    const payload = {
-      type: 'pricePending',
-      product: st.data.product,
-      quantity: st.data.quantity ?? null,
-      unit: st.data.unit ?? null,
-      createdAtISO: st.data.createdAtISO ?? new Date().toISOString()
-    };   
-    // NEW: TTL dedupe — skip writing duplicate “pricePending” rows
-    if (seenDuplicateCorrection(shopId, payload)) {
-      return;
-    }
-    await saveCorrectionState(shopId, 'pricePending', payload, langHint);
-    // We keep the ephemeral state intact so user can still reply with price;
-    // parking here only records the pending task.
-  } catch (e) {
-    console.warn('[price-await] parkPendingPriceDraft failed:', e?.message);
-  }
-}
-
-// UNIQ:PRICE-REMINDER-BODY-GENERIC-001
-// Generic composer: keep examples universal; let t(...) render in detected language.
-function composePriceReminderTextGeneric(lang, { prod, unit }) {
-  const uDisp = displayUnit(unit || 'unit', lang);
-  // Anchors kept as-is: ₹, "…", per, and "/"
-  return `Price pending for “${prod}” — please send: “₹70”, “₹70 per ${uDisp}”, or “70/${uDisp}”.\nType “skip” to bypass.`;
-}
-
-// === NEW: TTL guard for price reminders (per shop+product) ===
- const REMINDER_DEDUPE_TTL_MS = 2 * 60 * 1000; // 2 min
- const _reminderSeen = new Map(); // key -> { ts }
- function _reminderKey(shopId, prod) {
-   const base = `${shopId}::${String(prod ?? '').trim()}`;
-   let h = 2166136261;
-   for (let i = 0; i < base.length; i++) {
-     h ^= base.charCodeAt(i);
-     h += (h<<1) + (h<<4) + (h<<7) + (h<<8) + (h<<24);
-   }
-   return String(h >>> 0);
- }
- function seenDuplicateReminder(shopId, prod) {
-   const k = _reminderKey(shopId, prod);
-   const now = Date.now();
-   const hit = _reminderSeen.get(k);
-   if (hit && (now - hit.ts) < REMINDER_DEDUPE_TTL_MS) return true;
-   _reminderSeen.set(k, { ts: now });
-   // Cheap sweep if needed (optional; small map here, so we skip)
-   return false;
- }
-async function sendPendingPriceReminder(From, st, langHint = 'en') {
-  const prodText = String(st?.data?.product ?? '').trim() || 'item';
-  const unitText = String(st?.data?.unit ?? '').trim() || 'unit';    
-  // NEW: skip if the same reminder was sent very recently
-    try {
-      const shopId = String(From ?? '').replace('whatsapp:', '');
-      if (seenDuplicateReminder(shopId, prodText)) return;
-    } catch (_) {}
-  const bodySrc = composePriceReminderTextGeneric(langHint, { prod: prodText, unit: unitText });
-
-  try {        
-    const msg0 = await t(bodySrc, langHint, 'price-reminder::' + (st?.data?.product ?? 'item'));
-    const msg = finalizeForSend(nativeglishWrap(msg0, langHint), langHint);
-    const tagged = await tagWithLocalizedMode(From, msg, langHint);
-    await sendMessageViaAPI(From, tagged);
-  } catch (e) {
-    console.warn('[price-await] reminder send failed:', e?.message);
-  }
-}
+// [REMOVED]: price-await helpers & reminders. Strict purchase price required.
 
 /**
  * applyAIOrchestration(text, From, detectedLanguageHint, requestId)
@@ -7278,8 +7162,7 @@ async function composeNudge(shopId, language, hours = NUDGE_HOURS) {
   const base =
     NO_CLAMP_MARKER_ESC +
     `🟢 It’s been ${hours}+ hours since you used Saamagrii.AI.\n` +
-    `Try a quick entry:\n• sold milk 2 ltr\n• purchased Parle-G 12 packets ₹10 exp +6m\n` +
-    `Or type “mode” to switch Purchase/Sale/Return mode or make an inventory query.`;
+    `Type "mode" to switch Purchase/Sale/Return or ask an inventory query.`;
 
   // Resilient translation: always fall back to base
   let msg;
@@ -7322,8 +7205,7 @@ async function sendInactivityNudges() {
             // Absolute fallback (shouldn't trigger if composeNudge is healthy)
             msg =
               `🟢 It’s been ${NUDGE_HOURS}+ hours since you used Saamagrii.AI.\n` +
-              `Try a quick entry:\n• sold milk 2 ltr\n• purchased Parle-G 12 packets ₹10 exp +6m\n` +
-              `Or type “mode” to switch Purchase/Sale/Return mode or make an inventory query.`;
+              `Type "mode" to switch Purchase/Sale/Return or ask an inventory query.`;
           }
        await sendMessageViaAPI(`whatsapp:${shopId}`, msg);
       markNudged(shopId);
@@ -17253,7 +17135,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           console.log(`[${requestId}] Suppressing generic default in sticky/txn turn`);
         } else {
           const defaultMessage = await t(
-            'Please send an inventory update like "10 Parle-G sold" or start with "Hello" for options.',
+            'Type "mode" to switch Purchase/Sale/Return or ask an inventory query.',
             'en',
             requestId
           );
@@ -17340,7 +17222,7 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
   } else {
     // If not a valid update, send help message
     const helpMessage = await t(
-      `I didn't understand that. Please send an inventory update like "10 Parle-G sold".`,
+      `I didn't understand that. Type "mode" to switch Purchase/Sale/Return or ask an inventory query.`,
       greetingLang,
       requestId
     );
@@ -17593,60 +17475,73 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
     console.log(`[${requestId}] User confirmed text update`);
     
     // Parse the transcript to get update details
-    try {
-      const updates = await parseMultipleUpdates(pendingTranscript);     
-      if (updates.length > 0) {
-                    
-    // Process the confirmed updates
-    const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-    
-    // --- GUARD: suppress aggregated ack when inline confirmations already exist ---
-    const hasInline = Array.isArray(results) && results.some(r => r?.inlineConfirmText);
-    if (hasInline) {
-      console.log(`[${requestId}] [text-agg-guard] Suppressed aggregated ack (inline confirmations present)`);
-    } else {
-      // Consider only non-pending items for rendering & counts
-      const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-      const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
-      let message = header;
-      let successCount = 0;
-    
-      for (const r of processed) {
-        // Prefer inlineConfirmText (buffered in updateMultipleInventory)
-        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
-        if (!rawLine) continue;
-    
-        // In Compact, ensure stock is shown once, if not already present
-        const needsStock = COMPACT_MODE
-          && r.newQuantity !== undefined
-          && !/\(Stock:/.test(rawLine);
-        const stockPart = needsStock
-          ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})`
-          : '';
-    
-        message += `${rawLine}${stockPart}\n`;
-        if (r.success) successCount++;
-      }
-    
-      // Tail line once, based on processed items only
-      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-    
-      const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-      await sendMessageDedup(From, formattedResponse);
-    }
-    
-    // Clear state after processing (both branches)
-    await clearUserState(From);
-              } else {
-        // If parsing failed, ask to retry
-        const errorMessage = await t(
-          'Sorry, I couldn\'t parse your inventory update. Please try again with a clear message.',
-          detectedLanguage,
-          requestId
-        );
-        await sendMessageViaAPI(From, errorMessage);
-        await clearUserState(From);
-      }
+    try {      
+        const updates = await parseMultipleUpdates(pendingTranscript);
+              if (updates.length === 0) {
+                // If parsing failed, ask to retry
+                const errorMessage = await t(
+                  'Sorry, I couldn\'t parse your inventory update. Please try again with a clear message.',
+                  detectedLanguage,
+                  requestId
+                );
+                await sendMessageViaAPI(From, errorMessage);
+                await clearUserState(From);
+                return;
+              }
+        
+              // STRICT: split into accepted vs lacking-price (backend unknown)
+              const langHint = await detectLanguageWithFallback(pendingTranscript, From, requestId);
+              const lacking = [];
+              const accepted = [];
+              for (const u of updates) {
+                try {
+                  if (String(u?.action ?? '').toLowerCase() === 'purchased') {
+                    const hasPrice = Number.isFinite(u?.pricePerUnit);
+                    let backend = null;
+                    try { backend = await getProductPrice(u.product, shopId); } catch {}
+                    const priceKnown = !!(backend?.success && Number.isFinite(backend?.price));
+                    if (!hasPrice && !priceKnown) {
+                      lacking.push({ product: u.productDisplay ?? u.product, unit: u.unit });
+                      continue; // do NOT accept this line
+                    }
+                    if (!hasPrice && priceKnown) {
+                      u.pricePerUnit = backend.price; // allow success if backend knows price
+                    }
+                  }
+                  accepted.push(u);
+                } catch {}
+              }
+        
+              // 1) Commit accepted items
+              if (accepted.length > 0) {
+                const results = await updateMultipleInventory(shopId, accepted, detectedLanguage);
+                const hasInline = Array.isArray(results) && results.some(r => r?.inlineConfirmText);
+                if (!hasInline) {
+                  const header = chooseHeader(accepted.length, COMPACT_MODE, /*isPrice*/ false);
+                  let message = header;
+                  for (const r of results ?? []) {
+                    const rawLine = r?.inlineConfirmText
+                      ? r.inlineConfirmText
+                      : formatResultLine(r, COMPACT_MODE, false);
+                    if (!rawLine) continue;
+                    message += `\n${rawLine}`;
+                  }
+                  const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+                  await sendMessageDedup(From, formattedResponse);
+                } else {
+                  console.log(`[${requestId}] [text-agg-guard] Suppressed aggregated ack (inline confirmations present)`);
+                }
+              }
+        
+              // 2) Send nudges for items missing price (backend unknown) — no DB writes, no success
+              if (lacking.length === 1) {
+                await sendPriceRequiredNudge(From, lacking[0].product, lacking[0].unit, langHint);
+              } else if (lacking.length > 1) {
+                await sendMultiPriceRequiredNudge(From, lacking, langHint);
+              }
+        
+              // Clear state after processing
+              await clearUserState(From);
     } catch (parseError) {
       console.error(`[${requestId}] Error parsing transcript for confirmation:`, parseError.message);
       // If parsing failed, ask to retry           
