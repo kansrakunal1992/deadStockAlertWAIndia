@@ -8136,8 +8136,11 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
             // NEW: shop-scoped product price upsert
             await upsertProduct({ shopId, name: product, price: updatedPrice, unit });
           } 
-    try {
-                await updateInventory(shopId, product, quantity, unit);
+    try {                            
+            // STRICT: only update inventory here if we have a positive price
+                if (Number(updatedPrice) > 0) {
+                  try { await updateInventory(shopId, product, quantity, unit); } catch (_) {}
+                }
                 console.log(`[handleAwaitingPriceExpiry] Inventory updated for ${product}: +${quantity} ${unit}`);                                         
                  
             // ✅ Confirmation: include current stock total if available; fallback to "(updated)"
@@ -8149,8 +8152,12 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
                   stockLine = ` (Stock: now ${invNow.quantity} ${unitDisp})`;
                 }
               } catch { /* keep fallback */ }
-              let confirmation = `✅ Done:\n📦 Purchased ${quantity} ${unit} ${product}${stockLine}`;
-              if (updatedPrice) confirmation += `\n💰 Price: ₹${updatedPrice}`;
+              let confirmation = `✅ Done:\n📦 Purchased ${quantity} ${unit} ${product}${stockLine}`;                            
+              if (Number(updatedPrice) > 0) {
+                    confirmation += `\n💰 Price: ₹${updatedPrice}`;
+                  } else {
+                    confirmation = ''; // suppress purchase confirmation entirely
+                  }
               confirmation += `\n\n✅ Successfully updated 1 of 1 items`;
               // ANCHOR: UNIQ:PRICE-EXPIRY-CONFIRM-001
               const confTagged = await tagWithLocalizedMode(From, finalizeForSend(confirmation, detectedLanguage), detectedLanguage);
@@ -10624,7 +10631,13 @@ async function validateTranscript(transcript, requestId) {
 }
 
 // Handle multiple inventory updates with batch tracking
-async function updateMultipleInventory(shopId, updates, languageCode) {    
+async function updateMultipleInventory(shopId, updates, languageCode) {      
+  // --- NEW: per-shop recent price-nudge marker (global, lightweight) ---
+  globalThis.__recentPriceNudge = globalThis.__recentPriceNudge ?? new Map(); // shopId -> ts(ms)
+  const markNudged = () => {
+    try { globalThis.__recentPriceNudge.set(shopId, Date.now()); } catch (_) {}
+  };
+
   const results = [];
   const pendingNoPrice = [];   // <– used only to drive nudges; we DO NOT write for these
   const accepted = [];
@@ -10764,7 +10777,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                       await sendPriceRequiredNudge(`whatsapp:${shopId}`, product, update.unit, languageCode);
                     } else {
                       await sendMultiPriceRequiredNudge(`whatsapp:${shopId}`, pendingNoPrice, languageCode);
-                    }
+                    }                                      
+                  // --- NEW: remember we nudged price for this shop right now ---
+                  markNudged();
                   } catch (_) {}
                   results.push({
                     product,
@@ -10775,7 +10790,8 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                     needsUserInput: true,
                     awaiting: 'price',
                     status: 'pending',
-                    deferredPrice: true
+                    deferredPrice: true,
+                    inlineConfirmText: ''
                   });
                   continue; // Move to next update; NO batch, NO inventory, NO state
                 }
@@ -15202,17 +15218,24 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   // --- NEW: single-source inventory ack builder ---
   async function sendInventoryAck(toWhatsApp, results, languageCode) {
     try {            
-      // Only confirm successful writes; skip pending/nudges
+      // Only confirm successful writes; skip pending/nudges          
+      // NEW: suppress immediately after any recent price-nudge for this shop
+          const shopId = String(toWhatsApp).replace('whatsapp:', '');
+          const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopId) ?? 0;
+          const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
+      
+          // Only confirm successful writes; skip pending/nudges
           const lines = Array.isArray(results)
             ? results
-                .filter(r => r?.success)                 // << strict filter
+                .filter(r => r?.success)                 // strict filter
                 .map(r => r?.inlineConfirmText)
                 .filter(Boolean)
             : [];
-          if (lines.length === 0) return;               // << no success → no ack
+          // If we have no successful lines OR we just nudged for price → NO ACK
+          if (justNudged || lines.length === 0) return;
+      
           const body = lines.join('\n');
-      // Rely on finalizeForSend + sendMessageViaAPI to tag footer and CTA appropriately
-      await sendMessageViaAPI(toWhatsApp, finalizeForSend(body, languageCode));
+          await sendMessageViaAPI(toWhatsApp, finalizeForSend(body, languageCode));
     } catch (e) {
       console.warn('[router] inventory ack send failed:', e?.message);
     }
