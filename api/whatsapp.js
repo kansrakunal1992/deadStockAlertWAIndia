@@ -14928,27 +14928,28 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       return;
     }      
     
-    // --- EARLY: handle 'mode' / localized mode switch --------------------------
-    let found;        // ensure availability outside try
-    let lang = 'en';  // default
+    // --- EARLY: handle 'mode' / localized mode switch --------------------------    
+    let found; // ensure availability outside try
+      let detectedLanguageMode = 'en';
     
     try {
-      found = parseModeSwitchLocalized(Body); // supports: 'mode', 'mode <purchased|sale|return>', localized words
+     found = parseModeSwitchLocalized(Body); // supports: 'mode', 'mode <purchased|sale|return>', localized words
     
       if (found) {
         const shopId = fromToShopId(From);
-    
-        // best-effort: read user pref for language
-        try {
-          const pref = await getUserPreference(shopId);
-          if (pref?.success && pref.language) {
-            lang = String(pref.language).toLowerCase();
-          }
-        } catch (_) { /* noop */ }
+                 
+      // Detect language from this text turn and persist it as the new preference
+            detectedLanguageMode = await detectLanguageWithFallback(Body, From, requestId);
+            try {
+              await saveUserPreference(shopId, detectedLanguageMode);
+              console.log(`[${requestId}] Mode-set (text): saved DB language pref to ${detectedLanguageMode}`);
+            } catch (e) {
+              console.warn(`[${requestId}] Mode-set: saveUserPreference failed:`, e?.message);
+            }
     
         // If user only asked to open "mode" UX (no direct set), show welcome flow and exit
         if (!found.set) {
-          await sendWelcomeFlowLocalized(From, lang, requestId);
+          await sendWelcomeFlowLocalized(From, detectedLanguageMode, requestId);
           return true;
         }
       }
@@ -14960,23 +14961,23 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     
       await setStickyMode(From, found.set); // 'purchased' | 'sold' | 'returned'
     
-      const badge = getModeBadge(found.set, lang);
+      const badge = getModeBadge(found.set, detectedLanguageMode);
       const ack = await t(
         `✓ ${badge} mode set.\nType product line or press buttons.`,
-        lang,
+        detectedLanguageMode,
         `${requestId}::mode-set`
       );
     
       // Resurface Purchase/Sale/Return quick-reply buttons (best effort)
       try {
-        await ensureLangTemplates(lang);
-        const sids = getLangSids(lang);
+        await ensureLangTemplates(detectedLanguageMode);
+        const sids = getLangSids(detectedLanguageMode);
         if (sids?.quickReplySid) {
           await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
         }
       } catch (_) { /* best effort only */ }
     
-      await sendMessageViaAPI(From, await tagWithLocalizedMode(From, ack, lang));
+      await sendMessageViaAPI(From, await tagWithLocalizedMode(From, ack, detectedLanguageMode));
       handledRequests.add(requestId);
       return; // STOP: do not fall into inventory parsing
     }
@@ -15069,8 +15070,18 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       }
     }
     
-    // Detect language and save preference
-    let detectedLanguage = conversationState ? conversationState.language : 'en';
+    // Detect language and save preference    
+    // Always detect from text and override DB preference with this turn's language
+    let detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
+    
+    // Persist the override (update user pref to this language)
+    try {
+      await saveUserPreference(fromToShopId(From), detectedLanguage);
+      console.log(`[${requestId}] Text turn: saved DB language pref to ${detectedLanguage}`);
+    } catch (e) {
+      console.warn(`[${requestId}] Text turn: saveUserPreference failed:`, e?.message);
+    }
+
     detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
     console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
             
@@ -15653,17 +15664,15 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       console.warn(`[${requestId}] interactiveSelection handler error:`, e.message);
       // Continue with normal text flow if something goes wrong.
     }
-     
-    // Language detection (heuristic). On fast path, skip logging & pre-save to reduce latency.
-    const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
-    if (!ENABLE_FAST_CLASSIFIER) {
-      console.log(`[${requestId}] Detected language: ${detectedLanguage}`);
+         
+    // Language detection for TEXT turns: always persist the detected language
+      const detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
+      console.log(`[${requestId}] Detected language (text): ${detectedLanguage}`);
       try {
-        if (typeof saveUserPreference === 'function') {
-          await saveUserPreference(fromToShopId(From), detectedLanguage);
-        }
-      } catch { /* best-effort */ }
-    }
+        await saveUserPreference(fromToShopId(From), detectedLanguage);
+      } catch (e) {
+        console.warn(`[${requestId}] Webhook text: saveUserPreference failed:`, e?.message);
+      }
     
     // Single bounded sticky fetch up-front; pass it to orchestrator to avoid re-fetch.
     const stickyActionCached = await withTimeout(
@@ -16888,7 +16897,16 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     } catch (e) {
     console.warn(`[${requestId}] Language detection failed, defaulting to ${detectedLanguage}:`, e.message);
   }
-  console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`);        
+  console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`);    
+    // Persist override for TEXT input (Body present). Voice path below remains unchanged.
+    try {
+      if (Body && Body.trim().length > 0) {
+        await saveUserPreference(shopId, detectedLanguage);
+        console.log(`[${requestId}] New interaction (text): saved DB language pref to ${detectedLanguage}`);
+      }
+    } catch (e) {
+      console.warn(`[${requestId}] New interaction: saveUserPreference failed:`, e?.message);
+    }
   // === NEW: typed "demo" intent (defensive, outside orchestrator) ===
       try {
         const langPinned = String(detectedLanguage ?? 'en').toLowerCase();
