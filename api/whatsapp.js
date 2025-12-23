@@ -32,14 +32,18 @@ function guessLangFromInput(s = '') {
     if (/[\u0C00-\u0C7F]/.test(text)) return 'te';   // Telugu
     if (/[\u0C80-\u0CFF]/.test(text)) return 'kn';   // Kannada
     if (/[\u0A80-\u0AFF]/.test(text)) return 'gu';   // Gujarati
-    // ASCII Hinglish detector → Roman Hindi (hi‑latn)
+    // ASCII Hinglish detector → Roman Hindi (hi‑latn)    
     const t = text.toLowerCase();
     const isAscii = /^[\x00-\x7F]+$/.test(t);
-    const hinglishTokens = /\b(kya|kaise|kyon|kyu|kab|kitna|kitni|daam|kimat|fayda|nuksan|bana|sakte|skte|hai|h|kharid|khareed|bech|bikri|dukaan|naam)\b/;        
+    // Verbish tokens (existing)
+    const hinglishTokens = /\b(kya|kaise|kyon|kyu|kab|kitna|kitni|daam|kimat|fayda|nuksan|bana|sakte|skte|hai|h|kharid|khareed|bech|bikri|dukaan|naam)\b/;
+    // NEW: common Roman‑Hindi nouns seen in inventory
+    const hinglishNouns = /\b(doodh|dudh|chini|atta|aata|tel|namak|chai|sabzi|sabji|dal|daal|chawal|maggi|amul|parle|parle\-g|frooti|oreo)\b/;      
      // Treat one-word commands as language-neutral (prefer DB or 'en')
      const COMMAND_ONLY = new Set(['mode','help','demo','trial','paid','activate','start']);
-     if (COMMAND_ONLY.has(text.toLowerCase())) return 'en';
-    if (isAscii && hinglishTokens.test(t)) return 'hi-latn';
+     if (COMMAND_ONLY.has(text.toLowerCase())) return 'en';         
+     // Widen detection: verbs OR nouns keep us in Roman-Hindi
+     if (isAscii && (hinglishTokens.test(t) || hinglishNouns.test(t))) return 'hi-latn';
     return 'en';
   } catch {
     return 'en';
@@ -1918,10 +1922,11 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
       const topicForced = classifyQuestionTopic(text);
       if (topicForced) { route.kind = 'question'; }
 
-      // --- Language exact variant lock (PRESERVED) ---
+      // --- Language exact variant lock (PRESERVED) ---           
       const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
-      const orchestratedLang = ensureLangExact(route.language ?? hintedLang);
-      const language = hintedLang.endsWith('-latn') ? hintedLang : orchestratedLang;
+          const orchestratedLang = ensureLangExact(route.language ?? hintedLang);
+          // NEW: prefer user's hint when it's non‑English; else fall back to orchestrated
+          const language = (hintedLang !== 'en') ? hintedLang : orchestratedLang;
 
       // Save preference in background (no await)
       inBackground('savePref', async () => {
@@ -2002,10 +2007,11 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
       pricingFlavor = (activated && looksLikeInventoryPricing(text)) ? 'inventory_pricing' : 'tool_pricing';
     }
 
-    // --- Language exact variant lock + save preference (PRESERVED) ---
+    // --- Language exact variant lock + save preference (PRESERVED) ---        
     const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
-    const orchestratedLang = ensureLangExact(legacy.language ?? hintedLang);
-    const language = hintedLang.endsWith('-latn') ? hintedLang : orchestratedLang;
+      const orchestratedLang = ensureLangExact(legacy.language ?? hintedLang);
+      // NEW: prefer user's hint when it's non‑English; else fall back to orchestrated
+      const language = (hintedLang !== 'en') ? hintedLang : orchestratedLang;
     try {
       if (typeof saveUserPreference === 'function') {
         await saveUserPreference(shopId, language);
@@ -2621,7 +2627,23 @@ async function detectLanguageWithFallback(text, from, requestId) {
               const stX = await getUserStateFromDB(shopIdX).catch(() => null);
               const isOnboarding = stX?.mode === 'onboarding_trial_capture';
               const pinnedLangPref = (await getUserPreference(shopIdX).catch(() => ({})))?.language;
-              const pinnedLang = String(stX?.data?.lang ?? pinnedLangPref ?? '').toLowerCase();
+              const pinnedLang = String(stX?.data?.lang ?? pinnedLangPref ?? '').toLowerCase();                    
+              // ------------------------------------------------------------------
+                    // NEW: Respect pinned/non‑English user preference across turns.
+                    // If the user previously chose a non‑English language, keep it
+                    // for this turn unless the message is an explicit language switch.
+                    // This is language‑agnostic (hi/bn/ta/te/kn/mr/gu and *-latn).
+                    // ------------------------------------------------------------------
+                    if (pinnedLang && pinnedLang !== 'en') {
+                      try {
+                        // Only bypass if the user typed an explicit language token
+                        if (!_matchLanguageToken?.(text)) {
+                          return ensureLangExact(pinnedLang);
+                        }
+                      } catch {
+                        return ensureLangExact(pinnedLang);
+                      }
+                    }
               const GSTIN_RX = /^[0-9A-Z]{15}$/i;
               const raw = String(text ?? '');
               const asciiLen = raw.replace(/[^\x00-\x7F]/g, '').length;
