@@ -14254,7 +14254,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     const flacBuffer = await convertToFLAC(audioBuffer);        
     console.log(`[${requestId}] [3] Transcribing with Google STT...`);
      // Pick STT config by user's saved language (DB). Works without env.
-     const shopId = String(From).replace('whatsapp:', '');
+     const shopId = fromToShopId(From);
      const stt = await determineSttConfigForShop(shopId, conversationState?.language ?? 'en');
      console.log(`[${requestId}] Processing with ${stt.model} model (${stt.languageCode}), audio size: ${flacBuffer.length}`);
      // Pass STT config to googleTranscribe (adapt signature if needed)
@@ -14306,7 +14306,6 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     }
 
     // Save user preference
-    const shopId = fromToShopId(From);
     await saveUserPreference(shopId, detectedLanguage);
     
     // Heartbeat: keep sticky mode fresh while user is active
