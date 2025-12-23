@@ -1,8 +1,29 @@
-const express = require('express');
-const whatsappHandler = require('./api/whatsapp');
-const bodyParser = require('body-parser'); // for raw body
+// --- STT defaults MUST be set BEFORE requiring ./api/whatsapp ---
+// Force v1 until a Speech v2 recognizer is provisioned; whatsapp.js reads this at module load.
+process.env.GC_SPEECH_VERSION = process.env.GC_SPEECH_VERSION ?? 'v1';
+// Optional: confidence threshold for voice turns.
+process.env.STT_CONFIDENCE_MIN_VOICE = process.env.STT_CONFIDENCE_MIN_VOICE ?? '0.60';
+
 const fs = require('fs');
 const path = require('path');
+
+// --- Railway convenience: write SA JSON from env to a temp file if provided ---
+// If you store your Google service-account JSON in GCLOUD_CREDENTIALS_JSON,
+// this will persist it to /tmp and point GOOGLE_APPLICATION_CREDENTIALS to it.
+try {
+  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS && process.env.GCLOUD_CREDENTIALS_JSON) {
+    const credPath = path.join('/tmp', 'gcp-sa.json');
+    fs.writeFileSync(credPath, process.env.GCLOUD_CREDENTIALS_JSON);
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = credPath;
+    console.log('[STT] Wrote SA credentials to', credPath);
+  }
+} catch (e) {
+  console.warn('[STT] Failed to materialize SA JSON:', e.message);
+}
+
+const express = require('express');
+const whatsappHandler = require('./api/whatsapp'); // loads after env defaults
+const bodyParser = require('body-parser'); // for raw body
 const os = require('os');
 const cron = require('node-cron');
 const { runDailySummary } = require('./dailySummary');
@@ -32,6 +53,46 @@ const {
 const crypto = require('crypto');          // NEW: HMAC for webhook signature
 
 const app = express();
+
+// --- Preflight: check @google-cloud/speech availability & basic envs ---
+function getSttModuleStatus() {
+  const status = {
+    module: 'missing',
+    version: (process.env.GC_SPEECH_VERSION ?? 'unknown').toLowerCase(),
+    v1: false,
+    v2: false,
+    credentials: 'unknown',
+    project: process.env.GCLOUD_PROJECT ?? ''
+  };
+  try {
+    const speech = require('@google-cloud/speech');
+    status.module = 'present';
+    status.v1 = !!(speech && speech.v1 && speech.v1.SpeechClient);
+    status.v2 = !!(speech && speech.v2 && speech.v2.SpeechClient);
+  } catch (e) {
+    status.module = 'missing';
+  }
+  try {
+    const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    status.credentials = credPath && fs.existsSync(credPath) ? 'present' : 'missing';
+  } catch {
+    status.credentials = 'missing';
+  }
+  return status;
+}
+const __sttStatus = getSttModuleStatus();
+if (__sttStatus.module === 'missing') {
+  console.warn('[STT] @google-cloud/speech not found. Install it and redeploy: `npm i @google-cloud/speech`.');
+}
+if (__sttStatus.version === 'v2' && !__sttStatus.v2) {
+  console.warn('[STT] GC_SPEECH_VERSION=v2 but v2 client not available; stay on v1 until a recognizer is provisioned.');
+}
+// Lightweight diagnostics endpoint
+app.get('/diag/stt', (req, res) => {
+  const stt = getSttModuleStatus();
+  const ok = stt.module === 'present' && (stt.v1 || stt.v2) && stt.credentials === 'present';
+  res.status(ok ? 200 : 500).json({ ok, ...stt });
+});
 
 // Request logging middleware
 // ==== Paid-confirm dedupe (lightweight persisted) ============================
@@ -384,7 +445,8 @@ app.get('/health', (req, res) => {
       database: 'unknown',
       products: 'unknown',
       twilio: 'unknown',
-      deepseek: 'unknown'
+      deepseek: 'unknown',
+      stt: 'unknown'
     }
   };
   
@@ -425,7 +487,18 @@ app.get('/health', (req, res) => {
             res.status(200).json(healthCheck);
           }
         });
-    });
+    }); 
+// STT module + credentials quick check
+  try {
+    const stt = getSttModuleStatus();
+    const ok = stt.module === 'present' && (stt.v1 || stt.v2) && stt.credentials === 'present';
+    healthCheck.checks.stt = ok ? 'ok' : 'error';
+    healthCheck.stt = stt; // include details for ops
+  } catch {
+    healthCheck.checks.stt = 'error';
+  } finally {
+    res.status(200).json(healthCheck);
+  }
 });
 
 // Metrics endpoint for monitoring
