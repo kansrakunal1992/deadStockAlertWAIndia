@@ -3755,6 +3755,17 @@ function finalizeForSend(text, lang) {
 // If your STT code lives in another module, move these helpers there.
 // ------------------------------------------------------------------------
 
+// --- STT safe require (Railway): degrade if module missing ---
+function __getSpeechClients() {
+  try {
+    const speech = require('@google-cloud/speech');
+    return { v2: speech?.v2?.SpeechClient ?? null, v1: speech?.v1?.SpeechClient ?? null };
+  } catch (e) {
+    console.warn('[STT] @google-cloud/speech missing:', e.message);
+    return { v2: null, v1: null };
+  }
+}
+
 // --- NEW: one-call transcription with dynamic language and channel (v2 + v1 fallback)
 async function transcribeUserAudioTurn(from, audioBuffer, sampleRateHertz, perTurnLangHint) {
   const shopId = String(from).replace('whatsapp:', '');
@@ -3763,10 +3774,26 @@ async function transcribeUserAudioTurn(from, audioBuffer, sampleRateHertz, perTu
     diarization: true  // set false if you don't need speaker tags
   });
 
+  const clients = __getSpeechClients();
+    if (!clients.v2 && !clients.v1) {
+      // Graceful fallback: inform user and avoid hard crash
+      let lang = String(perTurnLangHint ?? 'en').toLowerCase();
+      try {
+        const pref = await getUserPreference(shopId);
+        if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+      } catch {}
+      const msg0 = await t('🎧 Voice transcription is temporarily unavailable. Please send text or try again shortly.', lang, `stt-missing::${shopId}`);
+      const msg = finalizeForSend(await tagWithLocalizedMode(from, msg0, lang), lang);
+      await sendMessageViaAPI(from, msg);
+      return { text: '', confidence: 0, langTag: 'en-IN' };
+    }
+
   if (v2) {
-    // v2 client recommended (one pass, multi-language)
-    const { SpeechClient } = require('@google-cloud/speech').v2;
-    const client = new SpeechClient();
+    // v2 client recommended (one pass, multi-language)        
+    if (!clients.v2) {
+          console.warn('[STT] v2 client not available; falling back to v1');
+        } else {
+          const client = new clients.v2();
     const request = {
       recognizer: `projects/${process.env.GCLOUD_PROJECT}/locations/global/recognizers/_`,
       config,
@@ -3781,10 +3808,10 @@ async function transcribeUserAudioTurn(from, audioBuffer, sampleRateHertz, perTu
       confidence: alt?.confidence ?? 0,
       langTag: last?.language_code || (config.language_codes?.[0] || 'en-IN')
     };
+      }
   } else {
     // v1 fallback (be mindful: alternates may be ignored on phone_call)
-    const speech = require('@google-cloud/speech').v1;
-    const client = new speech.SpeechClient();
+    const client = new clients.v1();
     const request = { config, audio: { content: audioBuffer.toString('base64') } };
     const [resp] = await client.recognize(request);
     const alt = resp?.results?.[0]?.alternatives?.[0];
