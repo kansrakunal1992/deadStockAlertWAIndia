@@ -3755,152 +3755,43 @@ function finalizeForSend(text, lang) {
 // If your STT code lives in another module, move these helpers there.
 // ------------------------------------------------------------------------
 
-// --- STT safe require (Railway): degrade if module missing ---
-function __getSpeechClients() {
-  try {
-    const speech = require('@google-cloud/speech');
-    return { v2: speech?.v2?.SpeechClient ?? null, v1: speech?.v1?.SpeechClient ?? null };
-  } catch (e) {
-    console.warn('[STT] @google-cloud/speech missing:', e.message);
-    return { v2: null, v1: null };
-  }
-}
-
-// --- NEW: one-call transcription with dynamic language and channel (v2 + v1 fallback)
-async function transcribeUserAudioTurn(from, audioBuffer, sampleRateHertz, perTurnLangHint) {
-  const shopId = String(from).replace('whatsapp:', '');
-  const { v2, config } = await determineSttConfigForShop(shopId, perTurnLangHint, {
-    sampleRateHertz,
-    diarization: true  // set false if you don't need speaker tags
-  });
-
-  const clients = __getSpeechClients();
-    if (!clients.v2 && !clients.v1) {
-      // Graceful fallback: inform user and avoid hard crash
-      let lang = String(perTurnLangHint ?? 'en').toLowerCase();
-      try {
-        const pref = await getUserPreference(shopId);
-        if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-      } catch {}
-      const msg0 = await t('🎧 Voice transcription is temporarily unavailable. Please send text or try again shortly.', lang, `stt-missing::${shopId}`);
-      const msg = finalizeForSend(await tagWithLocalizedMode(from, msg0, lang), lang);
-      await sendMessageViaAPI(from, msg);
-      return { text: '', confidence: 0, langTag: 'en-IN' };
-    }
-
-  if (v2) {
-    // v2 client recommended (one pass, multi-language)        
-    if (!clients.v2) {
-          console.warn('[STT] v2 client not available; falling back to v1');
-        } else {
-          const client = new clients.v2();
-    const request = {
-      recognizer: `projects/${process.env.GCLOUD_PROJECT}/locations/global/recognizers/_`,
-      config,
-      content: audioBuffer
-    };
-    const resp = await client.recognize(request);
-    const results = resp?.results || [];
-    const last = results.at(-1);
-    const alt = last?.alternatives?.[0];
-    return {
-      text: alt?.transcript || '',
-      confidence: alt?.confidence ?? 0,
-      langTag: last?.language_code || (config.language_codes?.[0] || 'en-IN')
-    };
-      }
-  } else {
-    // v1 fallback (be mindful: alternates may be ignored on phone_call)
-    const client = new clients.v1();
-    const request = { config, audio: { content: audioBuffer.toString('base64') } };
-    const [resp] = await client.recognize(request);
-    const alt = resp?.results?.[0]?.alternatives?.[0];
-    return {
-      text: alt?.transcript || '',
-      confidence: alt?.confidence ?? 0,
-      langTag: config.languageCode || 'en-IN'
-    };
-  }
-}
-
-// --- NO-REWIRE ALIASES: keep old names working by delegating to the new turn function
-async function transcribeUserAudio(from, audioBuffer, sampleRateHertz, perTurnLangHint) {
-  return transcribeUserAudioTurn(from, audioBuffer, sampleRateHertz, perTurnLangHint);
-}
-async function transcribeAudioTurn(from, audioBuffer, sampleRateHertz, perTurnLangHint) {
-  return transcribeUserAudioTurn(from, audioBuffer, sampleRateHertz, perTurnLangHint);
-}
-async function transcribeAudio(from, audioBuffer, sampleRateHertz, perTurnLangHint) {
-  return transcribeUserAudioTurn(from, audioBuffer, sampleRateHertz, perTurnLangHint);
-}
-
-// --- NEW: speech-language selection for users (UI lang → spoken locales)
-function languageCodesForUser(prefLang = 'en') {
-  const base = String(prefLang || 'en').toLowerCase().replace(/-latn$/, '');
-  switch (base) {
-    case 'hi': return ['hi-IN', 'en-IN']; // Hinglish-ready
-    case 'bn': return ['bn-IN', 'en-IN'];
-    case 'ta': return ['ta-IN', 'en-IN'];
-    case 'te': return ['te-IN', 'en-IN'];
-    case 'kn': return ['kn-IN', 'en-IN'];
-    case 'mr': return ['mr-IN', 'en-IN'];
-    case 'gu': return ['gu-IN', 'en-IN'];
-    default:   return ['en-IN'];
-  }
-}
-
-// --- NEW: decide telephony vs wideband (don’t resample telephony)
-function resolveSttChannel(sampleRateHertz) {
-  const sr = Number(sampleRateHertz || 0);
-  return (sr && sr <= 8000) ? 'telephony' : 'wideband';
-}
-
 /**
- * determineSttConfigForShop(shopId, hintLang, opts):
- * Unified builder for Google STT v2 (preferred) with safe fallback to v1.
- * opts: { sampleRateHertz?: number, diarization?: boolean }
+ * determineSttConfigForShop(shopId, hintLang):
+ * Returns { languageCode, model, enableAutomaticPunctuation, useEnhanced } for Google STT.
+ * Mapping covers all supported bases and -latn variants (latn → en-IN to keep roman script).
  */
-async function determineSttConfigForShop(shopId, hintLang = 'en', opts = {}) {
+async function determineSttConfigForShop(shopId, hintLang = 'en') {
   try {
     const pref = await getUserPreference(shopId).catch(() => null);
-    // Keep per-turn hint if present; else use saved preference
-    const prefLang = String(pref?.language ?? hintLang ?? 'en').toLowerCase();
-    const language_codes = languageCodesForUser(prefLang);  // v2 multi-language
-    const channel = resolveSttChannel(opts.sampleRateHertz);
-    const useV2 = String(process.env.GC_SPEECH_VERSION || 'v2').toLowerCase() === 'v2';
-
-    if (useV2) {
-      const configV2 = {
-        // Let Google infer codec/sample-rate from native bytes (MULAW/ALAW/LINEAR16/OPUS)
-        auto_decoding_config: { '@type': 'type.googleapis.com/google.cloud.speech.v2.AutoDetectDecodingConfig' },
-        language_codes,
-        model: channel === 'telephony' ? 'telephony' : 'chirp_3',
-        features: {
-          enable_automatic_punctuation: true,
-          enable_spoken_punctuation: true,
-          enable_word_time_offsets: true
-        },
-        diarization_config: (opts.diarization ? { min_speaker_count: 2, max_speaker_count: 2 } : undefined)
-      };
-      return { v2: true, config: configV2 };
-    }
-
-    // ---- Fallback: v1 config (single primary + alternates; may be limited for phone_call)
-    const primary = language_codes[0];
-    const alternates = language_codes.slice(1);
-    const configV1 = {
-      // Encoding/sampleRate should match your input when not using auto-detect
-      languageCode: primary,
-      alternativeLanguageCodes: alternates,
-      model: channel === 'telephony' ? 'phone_call' : 'default',
-      useEnhanced: true,
-      enableAutomaticPunctuation: true,
-      sampleRateHertz: Number(opts.sampleRateHertz || 0) || undefined
+    const L = String(pref?.language ?? hintLang ?? 'en').toLowerCase();
+    const map = {
+      'en': 'en-IN',
+      'hi': 'hi-IN',
+      'bn': 'bn-IN',
+      'ta': 'ta-IN',
+      'te': 'te-IN',
+      'kn': 'kn-IN',
+      'mr': 'mr-IN',
+      'gu': 'gu-IN',
+      // romanized variants → choose English-India to keep Latin script
+      'hi-latn': 'en-IN',
+      'bn-latn': 'en-IN',
+      'ta-latn': 'en-IN',
+      'te-latn': 'en-IN',
+      'kn-latn': 'en-IN',
+      'mr-latn': 'en-IN',
+      'gu-latn': 'en-IN',
     };
-    return { v2: false, config: configV1 };
-  } catch (e) {
-    console.warn('[stt-config] failed, defaulting:', e?.message);
-    return { v2: false, config: { languageCode: 'en-IN', model: 'phone_call', useEnhanced: true, enableAutomaticPunctuation: true } };
+    const languageCode = map[L] ?? 'en-IN';
+    const model = String(process.env.STT_MODEL_FAMILY ?? 'phone_call'); // or 'telephony' as per your client
+    return {
+      languageCode,
+      model,
+      enableAutomaticPunctuation: true,
+      useEnhanced: true
+    };
+  } catch (_) {
+    return { languageCode: 'en-IN', model: 'phone_call', enableAutomaticPunctuation: true, useEnhanced: true };
   }
 }
 
@@ -14410,15 +14301,16 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     const audioBuffer = await downloadAudio(MediaUrl0);
     console.log(`[${requestId}] [2] Converting audio...`);
     const flacBuffer = await convertToFLAC(audioBuffer);        
-    console.log(`[${requestId}] [3] Transcribing with Google STT...`);        
-    // NEW: unified transcription (v2 + v1 fallback) — no rewiring needed
-         // transcribeUserAudio(...) is an alias to transcribeUserAudioTurn(...)
-         // Provide the per-turn hint from conversationState and the sample rate of the FLAC you produced.
-         const perTurnLangHint = String(conversationState?.language ?? 'en').toLowerCase();
-         const SAMPLE_RATE_HZ = 16000; // set to your convertToFLAC output rate if different
-         const { text: rawTranscript, confidence, langTag } =
-           await transcribeUserAudio(From, flacBuffer, SAMPLE_RATE_HZ, perTurnLangHint);
-         console.log(`[${requestId}] STT: lang=${langTag}, conf=${confidence.toFixed(3)}, bytes=${flacBuffer.length}`);
+    console.log(`[${requestId}] [3] Transcribing with Google STT...`);
+     // Pick STT config by user's saved language (DB). Works without env.
+     const shopId = fromToShopId(From);
+     const stt = await determineSttConfigForShop(shopId, conversationState?.language ?? 'en');
+     console.log(`[${requestId}] Processing with ${stt.model} model (${stt.languageCode}), audio size: ${flacBuffer.length}`);
+     // Pass STT config to googleTranscribe (adapt signature if needed)
+     const transcriptionResult = await googleTranscribe(flacBuffer, requestId, stt);
+
+    const rawTranscript = transcriptionResult.transcript;
+    const confidence = transcriptionResult.confidence;
     console.log(`[${requestId}] [4] Validating transcript...`);
         
      // Best-effort language preference for script clamp inside validateTranscript
