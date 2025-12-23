@@ -280,6 +280,26 @@ const languageCache = new Map();
 const productMatchCache = new Map();
 const inventoryCache = new Map();
 const productTranslationCache = new Map();
+// === Inventory write policy: DO NOT translate product names for DB writes ===
+// Gate is ON by default (DISABLE_PRODUCT_TRANSLATION_FOR_DB=1)
+const DISABLE_PRODUCT_TRANSLATION_FOR_DB =
+  String(process.env.DISABLE_PRODUCT_TRANSLATION_FOR_DB ?? '1') === '1';
+
+/**
+ * resolveProductNameForWrite(updateOrName):
+ * Returns the product name to be persisted to DB/batches.
+ * Current policy: always use the raw AI product (no translation/normalization).
+ */
+function resolveProductNameForWrite(updateOrName) {
+  const raw = typeof updateOrName === 'string'
+    ? updateOrName
+    : (updateOrName?.product ?? '');
+  // If gate is ON, always trust AI/raw; never translate
+  if (DISABLE_PRODUCT_TRANSLATION_FOR_DB) return raw;
+  // (If you ever flip the policy, keep raw as default anyway)
+  return raw;
+}
+
 // TTLs
 const LANGUAGE_CACHE_TTL = 24 * 60 * 60 * 1000;          // 24 hours
 const INVENTORY_CACHE_TTL = 5 * 60 * 1000;               // 5 minutes
@@ -1184,8 +1204,17 @@ async function parseMultipleUpdates(reqOrText) {
           } else {
             console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
           }      
-          // Only translate for display; keep original product for DB writes
-          update.productDisplay = await translateProductName(update.product, 'rule-parsing');                                         
+          // Only translate for display; keep original product for DB writes                    
+          const UI_PRODUCT_DO_NOT_TRANSLATE = new Set([
+            'chini','dudh','atta','tel','namak','chai','sabzi','dal','chawal'
+          ]);
+          async function translateProductNameSafeForUI(name, tag = 'ui') {
+            const n = String(name).toLowerCase().trim();
+            if (UI_PRODUCT_DO_NOT_TRANSLATE.has(n)) return name; // preserve as spoken
+            try { return await translateProductName(name, tag); } catch { return name; }
+          }
+
+          update.productDisplay = await translateProductNameSafeForUI(update.product, 'rule-parsing');                                       
             } else if (pendingAction) {
                       // Verb-less fallback: only when sticky mode exists AND AI has already failed
                       const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
@@ -1234,7 +1263,7 @@ async function parseMultipleUpdates(reqOrText) {
           try { backend = await getProductPrice(u.product, shopId); } catch {}
           priceKnown = !!(backend?.success && Number.isFinite(backend?.price));
           if (!hasPrice && !priceKnown) {
-            lacking.push({ product: u.productDisplay ?? u.product, unit: u.unit });
+            lacking.push({ product: u.product, unit: u.unit }); // raw only
             continue; // do NOT accept this line
           }
           if (!hasPrice && priceKnown) {
@@ -3702,13 +3731,44 @@ function finalizeForSend(text, lang) {
 // Hook where you initialize Google STT requests for voice calls.
 // If your STT code lives in another module, move these helpers there.
 // ------------------------------------------------------------------------
-async function determineSttLangForShop(shopId, hintLang = 'en') {
+
+/**
+ * determineSttConfigForShop(shopId, hintLang):
+ * Returns { languageCode, model, enableAutomaticPunctuation, useEnhanced } for Google STT.
+ * Mapping covers all supported bases and -latn variants (latn → en-IN to keep roman script).
+ */
+async function determineSttConfigForShop(shopId, hintLang = 'en') {
   try {
     const pref = await getUserPreference(shopId).catch(() => null);
-    const lang = String(pref?.language ?? hintLang ?? 'en').toLowerCase();
-    return lang.startsWith('hi') ? 'hi-IN' : 'en-IN';
+    const L = String(pref?.language ?? hintLang ?? 'en').toLowerCase();
+    const map = {
+      'en': 'en-IN',
+      'hi': 'hi-IN',
+      'bn': 'bn-IN',
+      'ta': 'ta-IN',
+      'te': 'te-IN',
+      'kn': 'kn-IN',
+      'mr': 'mr-IN',
+      'gu': 'gu-IN',
+      // romanized variants → choose English-India to keep Latin script
+      'hi-latn': 'en-IN',
+      'bn-latn': 'en-IN',
+      'ta-latn': 'en-IN',
+      'te-latn': 'en-IN',
+      'kn-latn': 'en-IN',
+      'mr-latn': 'en-IN',
+      'gu-latn': 'en-IN',
+    };
+    const languageCode = map[L] ?? 'en-IN';
+    const model = String(process.env.STT_MODEL_FAMILY ?? 'phone_call'); // or 'telephony' as per your client
+    return {
+      languageCode,
+      model,
+      enableAutomaticPunctuation: true,
+      useEnhanced: true
+    };
   } catch (_) {
-    return 'en-IN';
+    return { languageCode: 'en-IN', model: 'phone_call', enableAutomaticPunctuation: true, useEnhanced: true };
   }
 }
 
@@ -10216,24 +10276,30 @@ function createButtonMessage(message, buttons) {
 }
 
 // Improved product name translation with direct mappings
-async function translateProductName(productName, requestId) {
-  try {
-    // Check cache first
-    const cacheKey = productName.toLowerCase();
-    const cached = productTranslationCache.get(cacheKey);
-    if (cached && (Date.now() - cached.timestamp < PRODUCT_TRANSLATION_CACHE_TTL)) {
-      console.log(`[${requestId}] Using cached product translation: "${productName}" → "${cached.translation}"`);
-      return cached.translation;
-    }
-    
+// Accept an options flag so write-path can bypass translation entirely.
+async function translateProductName(productName, requestId, options = {}) {
+  try {   
     // First, extract just the product name
-    const cleanProduct = extractProductName(productName);
+        const cleanProduct = extractProductName(productName);
+        const forWrite = !!options.forWrite;
+        if (forWrite) {
+          // WRITE PATH → never translate/normalize; trust AI/voice exactly.
+          console.log(`[${requestId}] Write-path product: "${cleanProduct}" (no translation)`);
+          return cleanProduct;
+        }
+    
+        // UI PATH cache: use cleaned product as the cache key
+        const cacheKey = cleanProduct.toLowerCase();
+        const cached = productTranslationCache.get(cacheKey);
+        if (cached && (Date.now() - cached.timestamp < PRODUCT_TRANSLATION_CACHE_TTL)) {
+          console.log(`[${requestId}] Using cached product translation: "${cleanProduct}" → "${cached.translation}"`);
+          return cached.translation;
+        }
     
     // Check if it's already a known product in English
     if (products.some(p => p.toLowerCase() === cleanProduct.toLowerCase())) {
       return cleanProduct;
     }
-    
     
 // Direct mappings (Hinglish/Indian scripts → English groceries/brands)
     // Extend first so we short-circuit AI for staples.
@@ -10334,6 +10400,18 @@ async function translateProductName(productName, requestId) {
     console.warn(`[${requestId}] Product translation failed:`, error.message);
     return productName;
   }
+}
+
+// Unified resolver for write-path vs UI-path names
+async function getProductNamesForPaths(product, requestId) {
+  // Always use raw AI product for DB writes
+  const writeName = String(product ?? '').trim();
+  // UI may show a translated display name (safe; bypass on failure)
+  let displayName = writeName;
+  try {
+    displayName = await translateProductName(writeName, requestId, { forWrite: false });
+  } catch (_) { /* keep writeName for UI if translation fails */ }
+  return { writeName, displayName };
 }
 
 // Function to parse inventory updates using AI
@@ -10672,7 +10750,7 @@ function isValidInventoryUpdate(parsed) {
 }
 
 // Improved handling of "bacha" vs "becha" confusion
-async function validateTranscript(transcript, requestId) {
+async function validateTranscript(transcript, requestId, langHint = 'en') {
   try {
     // First, fix common mispronunciations before sending to DeepSeek
     let fixedTranscript = transcript;
@@ -10739,12 +10817,20 @@ async function validateTranscript(transcript, requestId) {
         timeout: 10000 // Increased timeout
       }
     );
+    
     const cleaned = response.data.choices[0].message.content.trim();
-    console.log(`[${requestId}] Cleaned transcript: "${cleaned}"`);
-    return cleaned;
+        // Single-script + ASCII numerals — guarantees parser stability across languages
+        const langTarget = String(langHint ?? 'en').toLowerCase();
+        const oneScript = enforceSingleScriptSafe(cleaned, langTarget);
+        const normalized = normalizeNumeralsToLatin(oneScript);
+        console.log(`[${requestId}] Cleaned transcript (single-script: ${langTarget}): "${normalized}"`);
+        return normalized;
   } catch (error) {
-    console.warn(`[${requestId}] Deepseek validation failed, using original:`, error.message);
-    return transcript;
+    console.warn(`[${requestId}] Deepseek validation failed, using original:`, error.message);      
+    const langTarget = String(langHint ?? 'en').toLowerCase();
+       const oneScript = enforceSingleScriptSafe(String(transcript ?? ''), langTarget);
+       const normalized = normalizeNumeralsToLatin(oneScript);
+       return normalized;
   }
 }
 
@@ -14165,13 +14251,24 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     console.log(`[${requestId}] [1] Downloading audio...`);
     const audioBuffer = await downloadAudio(MediaUrl0);
     console.log(`[${requestId}] [2] Converting audio...`);
-    const flacBuffer = await convertToFLAC(audioBuffer);
+    const flacBuffer = await convertToFLAC(audioBuffer);        
     console.log(`[${requestId}] [3] Transcribing with Google STT...`);
-    const transcriptionResult = await googleTranscribe(flacBuffer, requestId);
+     // Pick STT config by user's saved language (DB). Works without env.
+     const shopId = String(From).replace('whatsapp:', '');
+     const stt = await determineSttConfigForShop(shopId, conversationState?.language ?? 'en');
+     console.log(`[${requestId}] Processing with ${stt.model} model (${stt.languageCode}), audio size: ${flacBuffer.length}`);
+     // Pass STT config to googleTranscribe (adapt signature if needed)
+     const transcriptionResult = await googleTranscribe(flacBuffer, requestId, stt);
+
     const rawTranscript = transcriptionResult.transcript;
     const confidence = transcriptionResult.confidence;
     console.log(`[${requestId}] [4] Validating transcript...`);
-    const cleanTranscript = await validateTranscript(rawTranscript, requestId);
+        
+     // Best-effort language preference for script clamp inside validateTranscript
+     const prefRow = await getUserPreference(shopId).catch(() => ({ language: 'en' }));
+     const langPref = String(prefRow?.language ?? 'en').toLowerCase();
+     const cleanTranscript = await validateTranscript(rawTranscript, requestId, langPref);
+
     console.log(`[${requestId}] [5] Detecting language...`);
     const detectedLanguage = await checkAndUpdateLanguage(cleanTranscript, From, conversationState?.language, requestId);
             
@@ -17654,7 +17751,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
                     try { backend = await getProductPrice(u.product, shopId); } catch {}
                     const priceKnown = !!(backend?.success && Number.isFinite(backend?.price));
                     if (!hasPrice && !priceKnown) {
-                      lacking.push({ product: u.productDisplay ?? u.product, unit: u.unit });
+                      lacking.push({ product: u.product, unit: u.unit }); // raw only
                       continue; // do NOT accept this line
                     }
                     if (!hasPrice && priceKnown) {
