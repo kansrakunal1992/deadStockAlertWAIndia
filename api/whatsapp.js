@@ -14321,9 +14321,29 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
      const prefRow = await getUserPreference(shopId).catch(() => ({ language: 'en' }));
      const langPref = String(prefRow?.language ?? 'en').toLowerCase();
      const cleanTranscript = await validateTranscript(rawTranscript, requestId, langPref);
-
-    console.log(`[${requestId}] [5] Detecting language...`);
-    const detectedLanguage = await checkAndUpdateLanguage(cleanTranscript, From, conversationState?.language, requestId);
+          
+     console.log(`[${requestId}] [5] Detecting language...`);
+          // Read pinned user preference (hi should be retained unless explicitly switched)
+          const shopId = fromToShopId(From);
+          let pinnedPref = 'en';
+          try {
+            const pref = await getUserPreference(shopId);
+            if (pref?.success && pref.language) pinnedPref = String(pref.language).toLowerCase();
+          } catch (_) { /* best effort */ }
+      
+          // Use robust detector (same behaviour as text path)
+          let detectedLanguage = await detectLanguageWithFallback(cleanTranscript, From, requestId);
+      
+          // If we previously pinned a non-English preference (e.g., hi),
+          // do NOT let a single voice turn flip it to en unless there is an explicit language switch.
+          try {
+            const explicitSwitch =
+              (typeof _matchLanguageToken === 'function') && _matchLanguageToken(cleanTranscript);
+            if (pinnedPref === 'hi' && detectedLanguage === 'en' && !explicitSwitch) {
+              detectedLanguage = 'hi';
+            }
+          } catch (_) { /* noop */ }
+          console.log(`[${requestId}] voice: pinned=${pinnedPref} → detected=${detectedLanguage}`);
             
     // ===== [PATCH:HYBRID-VOICE-ROUTE-004] BEGIN =====
       // Hybrid: allow non‑mutating diagnostic peeks inside sticky mode (no state change)
@@ -14357,9 +14377,14 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       await sendPaidPlanCTA(From, detectedLanguage || 'en');
       return;
     }
-
-    // Save user preference
-    await saveUserPreference(shopId, detectedLanguage);
+       
+    // Save user preference (do not downgrade hi → en mid-turn)
+        const willDowngrade = pinnedPref && pinnedPref !== 'en' && detectedLanguage === 'en';
+        if (!willDowngrade) {
+          await saveUserPreference(shopId, detectedLanguage);
+        } else {
+          console.log(`[${requestId}] voice: retained pinned pref=${pinnedPref}, skipped downgrading to en`);
+        }
     
     // Heartbeat: keep sticky mode fresh while user is active
         try {
