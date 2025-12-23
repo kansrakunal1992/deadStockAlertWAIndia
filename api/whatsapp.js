@@ -1219,15 +1219,16 @@ async function parseMultipleUpdates(reqOrText) {
                       // Verb-less fallback: only when sticky mode exists AND AI has already failed
                       const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
                       const ACTION_MAP = { purchase:'purchased', buy:'purchased', bought:'purchased', sold:'sold', sale:'sold', return:'returned', returned:'returned' };
-                      const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
+                      const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;                                           
                       const alt = parseSimpleWithoutVerb(trimmed, finalAction);
-                      if (alt) {
-                        alt.product = await translateProductName(alt.product, 'rule-parsing');
-                        if (isValidInventoryUpdate(alt)) {
-                          updates.push(alt);
-                          continue;
-                        }
-                      }
+                              if (alt) {
+                                // Keep RAW for DB writes; translate ONLY for UI
+                                alt.productDisplay = await translateProductName(alt.product, 'rule-parsing');
+                                if (isValidInventoryUpdate(alt)) {
+                                  updates.push(alt);
+                                  continue;
+                                }
+                              }
         }        
         // EXTRA GUARD: if user is in awaitingPriceExpiry and this sentence is price-like, do not push a transaction
         try {
@@ -3777,6 +3778,29 @@ async function determineSttConfigForShop(shopId, hintLang = 'en') {
 // const sttLang = await determineSttLangForShop(shopId, detectedLanguageHint);
 // const sttConfig = { languageCode: sttLang, /* ...other config... */ };
 // googleStt.transcribe(audioBuffer, sttConfig);
+
+// Minimal env toggle to prefer native STT over English fallback
+const PREFER_NATIVE_STT = String(process.env.PREFER_NATIVE_STT ?? '1') === '1';
+
+/**
+ * pickBestSttResult(nativeHi, englishEn):
+ * Return Hindi result when enabled & confident; else fallback to English.
+ * Shape expectation: { text, langCode, confidence } for each argument.
+ */
+function pickBestSttResult(nativeHi, englishEn, minConf = STT_CONFIDENCE_MIN_VOICE) {
+  try {
+    if (PREFER_NATIVE_STT && nativeHi?.langCode?.toLowerCase() === 'hi-in') {
+      const c = Number(nativeHi?.confidence ?? 0);
+      if (Number.isFinite(c) && c >= minConf && (nativeHi.text ?? '').trim()) {
+        return nativeHi;
+      }
+    }
+    // otherwise use english if present
+    if ((englishEn?.text ?? '').trim()) return englishEn;
+  } catch {}
+  // last resort: whichever has text
+  return (nativeHi?.text ?? '').trim() ? nativeHi : englishEn;
+}
 
 // ===== [PATCH:HYBRID-DIAGNOSTIC-TOGGLES-001] BEGIN =====
 // Hybrid option toggles (Railway envs with safe defaults)
@@ -10836,6 +10860,10 @@ async function validateTranscript(transcript, requestId, langHint = 'en') {
 
 // Handle multiple inventory updates with batch tracking
 async function updateMultipleInventory(shopId, updates, languageCode) {      
+  
+// Keep script/language stable for this turn (e.g., Hindi from STT)
+  const lang = String(languageCode ?? 'en').toLowerCase();
+
   // --- NEW: per-shop recent price-nudge marker (global, lightweight) ---
   globalThis.__recentPriceNudge = globalThis.__recentPriceNudge ?? new Map(); // shopId -> ts(ms)
   const markNudged = () => {
@@ -10853,11 +10881,13 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
     let confirmTextLine;
     let createdBatchEarly = false;
     try {
-      // Translate product name before processing
-      const translatedProduct = await translateProductName(update.product, 'update');
-      console.log(`[Update ${shopId}] Using translated product: "${translatedProduct}"`);
-      // Use translated product for all operations
-      const product = translatedProduct;
+      
+    // === RAW-vs-UI split ===
+          // RAW for ALL DB writes; UI name only for human-facing messages
+          const productRawForDb = resolveProductNameForWrite(update); // uses gate DISABLE_PRODUCT_TRANSLATION_FOR_DB=1
+          const productUiName   = update.productDisplay
+            ?? update.product; // keep as spoken; translate later ONLY if you prefer UI English/Hindi
+          console.log(`[Update ${shopId}] Using RAW product for DB: "${productRawForDb}"`);
                   
       // === Handle customer returns (simple add-back; no batch, no price/expiry) ===
       if (update.action === 'returned') {
@@ -10866,10 +10896,11 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         let u = update.unit; // hoisted default
         try {
           // Persist the return (add back to stock)
-          result = await updateInventory(shopId, product, Math.abs(update.quantity), update.unit);
-      
-          // Peek authoritative post-update inventory
-          const invAfter = await getProductInventory(shopId, product);
+                    
+          // DB ops MUST use RAW name
+                   result = await updateInventory(shopId, productRawForDb, Math.abs(update.quantity), update.unit);
+                   const invAfter = await getProductInventory(shopId, productRawForDb);
+
           newQty = invAfter?.quantity ?? result?.newQuantity ?? null;
           u      = invAfter?.unit     ?? result?.unit       ?? u;
       
@@ -10920,7 +10951,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
         // Collect per-update result for aggregator
         results.push({
-          product,
+          product: productRawForDb,
           quantity: Math.abs(update.quantity),
           unit: update.unit,
           action: 'returned',
@@ -10937,7 +10968,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       let productPrice = 0;
             let productPriceUnit = null;
             try {
-              const priceResult = await getProductPrice(product, shopId);
+              const priceResult = await getProductPrice(productRawForDb, shopId);
               if (priceResult?.success) {
                 productPrice     = toNumberSafe(priceResult.price);
                 productPriceUnit = priceResult.unit || null;
@@ -10974,19 +11005,19 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                         
           // STRICT: if price is missing and backend doesn't know it => DO NOT CAPTURE; ask for price
                 if (finalPrice <= 0) {
-                  pendingNoPrice.push({ product, unit: update.unit });
+                  pendingNoPrice.push({ product: productRawForDb, unit: update.unit });
                   // Send localized nudges; no DB writes; mark as non-success to suppress purchase acks
-                  try {
-                    if (pendingNoPrice.length === 1) {
-                      await sendPriceRequiredNudge(`whatsapp:${shopId}`, product, update.unit, languageCode);
-                    } else {
-                      await sendMultiPriceRequiredNudge(`whatsapp:${shopId}`, pendingNoPrice, languageCode);
-                    }                                      
+                  try {                                          
+                      if (pendingNoPrice.length === 1) {
+                                  await sendPriceRequiredNudge(`whatsapp:${shopId}`, productRawForDb, update.unit, lang /* keep same script */);
+                                } else {
+                                  await sendMultiPriceRequiredNudge(`whatsapp:${shopId}`, pendingNoPrice.map(p => ({...p, product: productRawForDb})), lang);
+                                }   
                   // --- NEW: remember we nudged price for this shop right now ---
                   markNudged();
                   } catch (_) {}
                   results.push({
-                    product,
+                    product: productRawForDb,
                     quantity: update.quantity,
                     unit: update.unit,
                     action: update.action,
@@ -11004,7 +11035,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           // Create batch immediately with defaulted expiry (or blank)
           const batchResult = await createBatchRecord({
             shopId,
-            product,
+            product: productRawForDb,
             quantity: update.quantity,
             unit: update.unit,
             purchaseDate: purchaseDateISO,
@@ -11017,14 +11048,14 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           // Ensure inventory reflects the purchase *and* capture stock for summary lines
           let invResult;
           try {
-            invResult = await updateInventory(shopId, product, update.quantity, update.unit);
+            invResult = await updateInventory(shopId, productRawForDb, update.quantity, update.unit);
           } catch (_) {}
           const stockQty  = invResult?.newQuantity;
           const stockUnit = invResult?.unit ?? update.unit;
       
           // Save price if known now
           if (finalPrice > 0) {
-            try { await upsertProduct({ shopId, name: product, price: finalPrice, unit: update.unit }); } catch (_) {}
+            try { await upsertProduct({ shopId, name: productRawForDb, price: finalPrice, unit: update.unit }); } catch (_) {}
           }
       
           const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
@@ -11033,16 +11064,16 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           // Assign to hoisted holder so we can use it later safely
                   confirmTextLine = COMPACT_MODE
                     ? (isPerishable
-                      ? `📦 Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}. Exp: ${edDisplay}`
-                      : `📦 Purchased ${update.quantity} ${update.unit} ${product} @ ₹${finalPrice}`)
-                    : `• ${product}: ${update.quantity} ${update.unit} purchased @ ₹${finalPrice}`
+                      ? `📦 Purchased ${update.quantity} ${update.unit} ${productRawForDb} @ ₹${finalPrice}. Exp: ${edDisplay}`
+                      : `📦 Purchased ${update.quantity} ${update.unit} ${productRawForDb} @ ₹${finalPrice}`)
+                    : `• ${productRawForDb}: ${update.quantity} ${update.unit} purchased @ ₹${finalPrice}`
                       + (isPerishable ? `\n Expiry: ${edDisplay}` : `\n Expiry: —`);
 
           // Open the 2-min expiry override window
           try {
             await saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
               batchId: batchResult?.id ?? null,
-              product,
+              product: productRawForDb,
               action: 'purchased',
               purchaseDateISO,
               currentExpiryISO: expiryToUse ?? null,
@@ -11052,7 +11083,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           } catch (_) {}
       
           results.push({
-            product,
+            product: productRawForDb,
             quantity: update.quantity,
             unit: update.unit,
             action: update.action,
@@ -11112,7 +11143,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       if (isSale) {
         selectedBatchCompositeKey = await selectBatchForSale(
           shopId,
-          product,
+          productRawForDb,
           // For now, we default to FIFO oldest; inline hints can be added to `update` later if desired
           { byPurchaseISO: null, byExpiryISO: null, pick: 'fifo-oldest' }
         );
@@ -11129,7 +11160,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         if (isSale) {
           const saleGuard = await applySaleWithReconciliation(
             shopId,
-            { product, quantity: Math.abs(update.quantity), unit: update.unit, saleDate: new Date().toISOString(), language: languageCode },
+            { productRawForDb, quantity: Math.abs(update.quantity), unit: update.unit, saleDate: new Date().toISOString(), language: languageCode },
             {
               // Optional overrides; otherwise read from UserPreferences:
               // allowNegative: false,
@@ -11152,7 +11183,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           result = { success: true };          
           // NEW: fetch post-sale inventory so confirmation shows correct stock
               try {
-                const invAfter = await getProductInventory(shopId, product);
+                const invAfter = await getProductInventory(shopId, productRawForDb);
                 if (invAfter && invAfter.quantity !== undefined) {
                   result.newQuantity = invAfter.quantity;
                   result.unit = invAfter.unit || update.unit;
@@ -11167,7 +11198,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           }
         } else {
           // not a sale: keep original purchase/increase path
-          result = await updateInventory(shopId, product, update.quantity, update.unit);
+          result = await updateInventory(shopId, productRawForDb, update.quantity, update.unit);
         }
 
           
@@ -11234,7 +11265,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 
                 const salesResult = await createSalesRecord({
                   shopId,
-                  product: product,
+                  product: productRawForDb,
                   quantity: -Math.abs(update.quantity),
                   unit: update.unit,
                   saleDate: new Date().toISOString(),
@@ -11337,10 +11368,10 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             // Send a single confirmation (dedup) and append stock if we have it
               await sendSaleConfirmationOnce(
                 `whatsapp:${shopId}`,
-                languageCode,
+                lang,
                 'sale-confirmation', // requestId scope for dedupe
                 {
-                  product,
+                  productRawForDb,
                   qty: Math.abs(update.quantity),
                   unit: update.unit,
                   pricePerUnit: salePrice,
@@ -11367,7 +11398,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             // Compose confirmation message with used batch and up to N alternatives
             let altLines = '';
             try {
-              const list = await getBatchesForProductWithRemaining(shopId, product); // asc by PurchaseDate
+              const list = await getBatchesForProductWithRemaining(shopId, productRawForDb); // asc by PurchaseDate
               const used = selectedBatchCompositeKey;
               const alts = (list || []).filter(b => b.compositeKey !== used).slice(0, SHOW_BATCH_SUGGESTIONS_COUNT);
               if (alts.length) {
@@ -11396,12 +11427,12 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               const stockPart = (result?.newQuantity !== undefined)
                 ? `. Stock: ${result.newQuantity} ${result?.unit ?? update.unit}`
                 : '';
-              return `✅ Sold ${qty} ${update.unit} ${product}${pricePart}${stockPart}`;
+              return `✅ Sold ${qty} ${update.unit} ${productRawForDb}${pricePart}${stockPart}`;
             })();
 
             const verboseLines = (() => {
               const qty = Math.abs(update.quantity);
-              const hdr = `✅ ${product} — sold ${qty} ${update.unit}${salePrice > 0 ? ` @ ₹${salePrice}` : ''}`; // Fixed: Use salePrice
+              const hdr = `✅ ${productRawForDb} — sold ${qty} ${update.unit}${salePrice > 0 ? ` @ ₹${salePrice}` : ''}`; // Fixed: Use salePrice
               const batchInfo = usedBatch ? `Used batch: Purchased ${pd} (Expiry ${ed})` : '';
               const overrideHelp = offerOverride
                 ? `To change batch (within 2 min):\n• batch DD-MM   e.g., batch 12-09\n• exp DD-MM     e.g., exp 20-09\n• batch oldest  |  batch latest`
@@ -11437,7 +11468,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               ? (chosenSalePrice ?? fallbackEffective)
               : fallbackEffective;
           const enriched = {
-          product,
+          productRawForDb,
           quantity: update.quantity,
           unit: update.unit,
           action: update.action,
