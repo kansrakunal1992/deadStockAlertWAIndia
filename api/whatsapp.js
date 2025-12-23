@@ -7413,11 +7413,7 @@ async function composeNudge(shopId, language, hours = NUDGE_HOURS) {
   }
 
   // Strip internal markers before returning (handles both escaped and raw forms)
-  msg = String(msg)
-    .replace(/&lt;!NO_CLAMP!&gt;/g, '')
-    .replace(/<\!NO_CLAMP\!>/g, '');
-
-  return msg;
+  return stripMarkers(msg);
 }
 
 async function sendInactivityNudges() {
