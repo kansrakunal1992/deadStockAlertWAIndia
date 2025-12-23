@@ -2698,7 +2698,7 @@ async function detectLanguageWithFallback(text, from, requestId) {
                         const strongHindiRoman2 = ENABLE_ROMAN_HINDI_NATIVE && /^[\x00-\x7F]+$/.test(rawLocal2)
                           && HI_ROMAN_NUMBER_WORDS.test(tLocal2) && UNIT_TOKENS_EN.test(tLocal2) && HI_ROMAN_NOUNS.test(tLocal2);
                         detectedLanguage = strongHindiRoman2 ? canonicalizeLang(detectedLanguage) : autoLatnIfRoman(detectedLanguage, text);
-            }
+            } catch (_) {}
             // 3) Optional AI if non-ASCII but heuristics left it at 'en'
             if (!useAI && detectedLanguage === 'en' && !/^[a-z0-9\s.,!?'\"@:/\-]+$/i.test(lowerText)) {
               try {
