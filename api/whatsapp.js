@@ -2625,25 +2625,16 @@ async function detectLanguageWithFallback(text, from, requestId) {
     try {       
         const shopIdX = String(from ?? '').replace('whatsapp:', '');
               const stX = await getUserStateFromDB(shopIdX).catch(() => null);
-              const isOnboarding = stX?.mode === 'onboarding_trial_capture';
-              const pinnedLangPref = (await getUserPreference(shopIdX).catch(() => ({})))?.language;
-              const pinnedLang = String(stX?.data?.lang ?? pinnedLangPref ?? '').toLowerCase();                    
+              const isOnboarding = stX?.mode === 'onboarding_trial_capture';                            
+              // NOTE: For TEXT turns we should NOT retain pinned non-English preference.
+                    // Voice path already respects pinned language via STT config helpers.
+                    const pinnedLang = ''; // <-- disable pinned pref retention for text    
               // ------------------------------------------------------------------
                     // NEW: Respect pinned/non‑English user preference across turns.
                     // If the user previously chose a non‑English language, keep it
                     // for this turn unless the message is an explicit language switch.
                     // This is language‑agnostic (hi/bn/ta/te/kn/mr/gu and *-latn).
                     // ------------------------------------------------------------------
-                    if (pinnedLang && pinnedLang !== 'en') {
-                      try {
-                        // Only bypass if the user typed an explicit language token
-                        if (!_matchLanguageToken?.(text)) {
-                          return ensureLangExact(pinnedLang);
-                        }
-                      } catch {
-                        return ensureLangExact(pinnedLang);
-                      }
-                    }
               const GSTIN_RX = /^[0-9A-Z]{15}$/i;
               const raw = String(text ?? '');
               const asciiLen = raw.replace(/[^\x00-\x7F]/g, '').length;
@@ -3163,24 +3154,22 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null, opt
       
     // Normalize to canonical forms (handles legacy 'purchase' → 'purchased')
     if (action === 'purchase') action = 'purchased';    
-
-    // 2) Resolve language to use: prefer saved user preference; else detected hint; else 'en'
-    let lang = String(detectedLanguageHint || 'en').toLowerCase();        
-    // UNIQ:FOOTER-LANG-RESPECT-001
-        // In transactional states, do not override the current turn language with preference.
-        const transactionalModes = new Set([
-          'awaitingtransactiondetails',
-          'awaitingbatchoverride',
-          'awaitingpurchaseexpiryoverride',
-          'awaitingpriceexpiry'
-        ]);
-        const stateModeLc = String(state?.mode ?? '').toLowerCase();
-        const allowPrefOverride = !transactionalModes.has(stateModeLc);
-        try {
-          if (allowPrefOverride && pref?.success && pref.language) {
+   
+    // 2) Resolve language to use:
+          //    For TEXT turns, ALWAYS use the detected language from this turn.
+          //    For VOICE or when no hint is provided, fall back to preference.
+          let lang = String(detectedLanguageHint ?? '').toLowerCase();
+          const isVoice = opts?.kind === 'voice';
+          if (!lang) {
+            lang = String(pref?.language ?? 'en').toLowerCase();
+          } else if (isVoice && pref?.success && pref.language) {
+            // Voice may retain pinned preference unless explicit switch
             lang = String(pref.language).toLowerCase();
           }
-        } catch (_) { /* ignore */ }
+          // Optional hard override to skip preference entirely
+          if (opts?.noPrefOverride === true) {
+            lang = String(detectedLanguageHint ?? 'en').toLowerCase();
+          }
         
     // 4) If not activated, or effective action is none, do NOT append badge
         const isNone = !action || String(action).trim().length === 0;
@@ -3900,15 +3889,19 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
 
         // Prefer a script/hinglish guess when available; fall back to incoming hint
         // NOTE: callers that don't pass source text should use the wrapper below.              
-        const preHint = canonicalizeLang(langHint ?? 'en');
-         // Try DB first (no race), then fall back
-         let lang = preHint;
-         try {
-           const pref = await getUserPreference(shopId);
-           if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-         } catch {}
-         const raw = getStaticLabel(kind === 'voice' ? 'ackVoice' : 'ack', lang) ?? getStaticLabel('ack', 'en');
-         let withFooter = await tagWithLocalizedMode(From, raw, lang);
+        const preHint = canonicalizeLang(langHint ?? 'en');             
+        // TEXT: do NOT override with DB preference; VOICE can retain pinned pref.
+        let lang = preHint;
+        if (kind === 'voice') {
+          try {
+            const pref = await getUserPreference(shopId);
+            if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+          } catch {}
+        }
+         const raw = getStaticLabel(kind === 'voice' ? 'ackVoice' : 'ack', lang) ?? getStaticLabel('ack', 'en');               
+      // Ensure footer uses THIS TURN language for text acks
+          const tagOpts = { kind, noPrefOverride: (kind === 'text') };
+          let withFooter = await tagWithLocalizedMode(From, raw, lang, tagOpts);
         withFooter = finalizeForSend(withFooter, lang);                    // single‑script + numerals
         // Instrument ack latency (POST→ack‑sent). The webhook sets reqStart in scope.
         const __t0 = Date.now();        
