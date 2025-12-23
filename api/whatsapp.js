@@ -141,6 +141,24 @@ function canonicalizeLang(code) {
    return DISPLAY[key] ?? tok;
  }
 
+// ------------------------------------------------------------------------
+// [UNIFIED PATCH] Roman-Hindi vs Hinglish detection sets + env gate
+// ------------------------------------------------------------------------
+// Gate to enable/disable stronger roman-Hindi -> native Hindi routing
+const ENABLE_ROMAN_HINDI_NATIVE = String(process.env.ENABLE_ROMAN_HINDI_NATIVE ?? '1') === '1';
+
+// Hindi roman number words (extend as needed)
+const HI_ROMAN_NUMBER_WORDS = /\b(ek|do|teen|char|paanch|panch|chhe|cheh|saat|aath|aathh|nau|das|gyarah|gyaarah|barah|baarah|terah|chaudah|pandrah|solah|satrah|atharah|unnis|bis|bees|ikkis|bais|teis|chaubees|pachis|chhabis|sattais|athais|untis|tees|chaalis|chalees|pachaas|saath|sattar|assi|nabbe|sau|hazaar|lakh|crore)\b/i;
+
+// English number words (kept for Hinglish intent)
+const EN_NUMBER_WORDS = /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|lakh|million|crore)\b/i;
+
+// Common Hindi roman nouns/brands (inventory context)
+const HI_ROMAN_NOUNS = /\b(doodh|dudh|atta|aata|tel|chini|chai|paani|namak|biskut|biscuit|sabji|sabzi|dal|daal|chawal|chawal|maggi|amul|parle|parle\-g|frooti|mariegold|goodday|oreo)\b/i;
+
+// English unit tokens (already used elsewhere; redeclare for local checks)
+const UNIT_TOKENS_EN = /\b(ltr|liter|litre|liters|litres|kg|g|gm|gms|ml|packet|packets|piece|pieces|box|boxes|bottle|bottles|dozen)\b/i;
+
 const __sentListPickerFor = new Set();
 
 async function maybeResendListPicker(From, lang, requestId) {      
@@ -509,10 +527,21 @@ function autoLatnIfRoman(languageCode, sourceText) {
         const hitKn = knTokens.test(t);
         const hitGu = guTokens.test(t);
         const anyHit = hitHi || hitBn || hitTa || hitTe || hitKn || hitGu;
-        if (!anyHit) return languageCode;
-    const base = String(languageCode ?? 'en').toLowerCase().replace(/-latn$/, '');    
-    const isIndicBase = /^(hi|bn|ta|te|kn|mr|gu)$/.test(base);
-        if (!isIndicBase) return languageCode; // Already en or non-Indic
+        if (!anyHit) return languageCode;          
+      const base = String(languageCode ?? 'en').toLowerCase().replace(/-latn$/, '');
+          const isIndicBase = /^(hi|bn|ta|te|kn|mr|gu)$/.test(base);
+          if (!isIndicBase) return languageCode; // Already en or non-Indic
+      
+          // [PATCH] Respect strong roman-Hindi intent: KEEP native Hindi (hi) instead of flipping to hi-latn
+          if (ENABLE_ROMAN_HINDI_NATIVE) {
+            const strongHindiRoman =
+              HI_ROMAN_NUMBER_WORDS.test(t) &&
+              UNIT_TOKENS_EN.test(t) &&
+              HI_ROMAN_NOUNS.test(t);
+            if (base === 'hi' && strongHindiRoman) {
+              return 'hi';
+            }
+          }
     
         // Prefer switching to the *-latn variant matching the detected base language.
         // If AI/heuristics said 'hi' but tokens looked Tamil-ish, we still respect 'hi'
@@ -697,6 +726,31 @@ async function sendMultiPriceRequiredNudge(From, items, langHint = 'en') {
    }
    flush(); return out.join('');
  }
+
+// ------------------------------------------------------------------------
+// [PATCH] Hindi roman number words -> digits (lightweight normalizer)
+// ------------------------------------------------------------------------
+function hindiRomanWordsToDigits(input) {
+  if (!input) return '';
+  const t = String(input).toLowerCase();
+  const map = new Map([
+    ['ek',1],['do',2],['teen',3],['char',4],
+    ['paanch',5],['panch',5],['chhe',6],['cheh',6],
+    ['saat',7],['aath',8],['aathh',8],['nau',9],
+    ['das',10],['gyarah',11],['gyaarah',11],['barah',12],['baarah',12],
+    ['terah',13],['chaudah',14],['pandrah',15],['solah',16],
+   ['satrah',17],['atharah',18],['unnis',19],
+    ['bis',20],['bees',20],['ikkis',21],['bais',22],['teis',23],
+    ['chaubees',24],['pachis',25],['chhabis',26],['sattais',27],
+    ['athais',28],['untis',29],['tees',30],['chaalis',40],['chalees',40],
+    ['pachaas',50],['saath',60],['sattar',70],['assi',80],['nabbe',90],
+    ['sau',100],['hazaar',1000],['lakh',100000],['crore',10000000],
+  ]);
+  return t.replace(/\b([a-z\-]+)\b/g, (m) => {
+    const v = map.get(m);
+    return (typeof v === 'number') ? String(v) : m;
+  });
+}
 
 async function composeLowStockLocalized(shopId, lang, requestId) {
   // Try DB low-stock (threshold 5); fallback to inventory if needed
@@ -930,8 +984,11 @@ async function parseMultipleUpdates(reqOrText) {
   // ----------------------------------------------------------------------
      // [UNIQ:WORDS-TO-DIGITS-002] Normalize spelled numbers → digits for STT
      // ----------------------------------------------------------------------
-     let t = String(transcript ?? '').trim();
-     t = wordsToNumber(t);     
+     let t = String(transcript ?? '').trim();        
+    // [PATCH] Normalize Hindi roman number words first (e.g., "bees litre dudh" -> "20 litre dudh")
+      t = hindiRomanWordsToDigits(t);
+      // Existing English words-to-number normalizer (keeps support for "twenty litre dudh")
+      t = wordsToNumber(t); 
   // Prefer DB state; use in-memory fallback if DB read is transiently null
   const userState = (await getUserStateFromDB(shopId)) || globalState.conversationState[shopId] || null;      
   
@@ -2587,7 +2644,38 @@ async function detectLanguageWithFallback(text, from, requestId) {
                       else if (hasMrGreet) detectedLanguage = 'mr';
         }
       }
-            
+      
+    // ---- [PATCH BLOCK] Roman-Hindi vs Hinglish classification (before autoLatnIfRoman) ----
+    // We are still in detectLanguageWithFallback(...), after initial heuristics "detectedLanguage"
+    // but BEFORE calling autoLatnIfRoman(...). This ensures intent is respected.
+    try {
+      const rawLocal = String(text ?? '');
+      const tLocal = rawLocal.toLowerCase();
+      const isAsciiLocal = /^[\x00-\x7F]+$/.test(rawLocal);
+
+      // Strong Hindi intent: roman Hindi number words + unit anchors + Hindi nouns
+      const strongHindiRoman =
+        ENABLE_ROMAN_HINDI_NATIVE &&
+        isAsciiLocal &&
+        HI_ROMAN_NUMBER_WORDS.test(tLocal) &&
+        UNIT_TOKENS_EN.test(tLocal) &&
+        HI_ROMAN_NOUNS.test(tLocal);
+
+      // English-driven Hinglish: English number words + units + Hindi nouns (ASCII)
+      const englishDrivenHinglish =
+        isAsciiLocal &&
+        EN_NUMBER_WORDS.test(tLocal) &&
+        UNIT_TOKENS_EN.test(tLocal) &&
+        HI_ROMAN_NOUNS.test(tLocal);
+
+      if (strongHindiRoman) {
+        // Force native Hindi for roman-Hindi transactional intent
+        detectedLanguage = 'hi';
+      } else if (englishDrivenHinglish && detectedLanguage === 'en') {
+        detectedLanguage = 'hi-latn';
+      }
+    } catch (_) { /* noop */ }
+      
       // 2) AI pass for Romanized Indic / ambiguous ASCII
             const useAI = _shouldUseAI(text, detectedLanguage);
             if (useAI) {
@@ -2598,8 +2686,18 @@ async function detectLanguageWithFallback(text, from, requestId) {
               try {
                 const shopId = String(from ?? '').replace('whatsapp:', '');
                 if (typeof saveUserPreference === 'function') await saveUserPreference(shopId, detectedLanguage);
-              } catch (_e) {}
-              console.log(`[${requestId}] AI lang=${ai.language} intent=${ai.intent}`);
+              } catch (_e) {}                                
+                  console.log(`[${requestId}] AI lang=${ai.language} intent=${ai.intent}`);
+                      }
+                  
+                      // Final pass: even if heuristics stayed native, switch to *-latn when text looks Roman Indic.
+                      // [PATCH] Do NOT flip hi->hi-latn if strong Hindi roman intent is detected.
+                      try {
+                        const rawLocal2 = String(text ?? '');
+                        const tLocal2 = rawLocal2.toLowerCase();
+                        const strongHindiRoman2 = ENABLE_ROMAN_HINDI_NATIVE && /^[\x00-\x7F]+$/.test(rawLocal2)
+                          && HI_ROMAN_NUMBER_WORDS.test(tLocal2) && UNIT_TOKENS_EN.test(tLocal2) && HI_ROMAN_NOUNS.test(tLocal2);
+                        detectedLanguage = strongHindiRoman2 ? canonicalizeLang(detectedLanguage) : autoLatnIfRoman(detectedLanguage, text);
             }
             // 3) Optional AI if non-ASCII but heuristics left it at 'en'
             if (!useAI && detectedLanguage === 'en' && !/^[a-z0-9\s.,!?'\"@:/\-]+$/i.test(lowerText)) {
@@ -2643,7 +2741,6 @@ async function detectLanguageWithFallback(text, from, requestId) {
     }
   })();
 }
-
 
 // Safe wrapper so missing function can’t crash the request
 async function safeSendParseError(From, detectedLanguage, requestId, header) {
@@ -3599,6 +3696,27 @@ function finalizeForSend(text, lang) {
   const withNL    = fixNewlines1(oneScript);
   return normalizeNumeralsToLatin(withNL).trim();
 }
+
+// ------------------------------------------------------------------------
+// [OPTIONAL PATCH] Voice STT language routing (hi-IN vs en-IN)
+// Hook where you initialize Google STT requests for voice calls.
+// If your STT code lives in another module, move these helpers there.
+// ------------------------------------------------------------------------
+async function determineSttLangForShop(shopId, hintLang = 'en') {
+  try {
+    const pref = await getUserPreference(shopId).catch(() => null);
+    const lang = String(pref?.language ?? hintLang ?? 'en').toLowerCase();
+    return lang.startsWith('hi') ? 'hi-IN' : 'en-IN';
+  } catch (_) {
+    return 'en-IN';
+  }
+}
+
+// Example usage (pseudo; replace at your STT call site):
+// const shopId = toE164(req.body.From).replace('whatsapp:', '');
+// const sttLang = await determineSttLangForShop(shopId, detectedLanguageHint);
+// const sttConfig = { languageCode: sttLang, /* ...other config... */ };
+// googleStt.transcribe(audioBuffer, sttConfig);
 
 // ===== [PATCH:HYBRID-DIAGNOSTIC-TOGGLES-001] BEGIN =====
 // Hybrid option toggles (Railway envs with safe defaults)
