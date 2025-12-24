@@ -47,7 +47,6 @@ async function transcribeFileWithSoniox(filePath, opts = {}) {
     }
           
     // Build payload: async v3 → DO NOT include language_hints_strict (it triggers 400). 
-      const payload = { file_id: fileId, model };
       if (language_hints && language_hints.length > 0) payload.language_hints = language_hints;
       // Reduce drift: disable LID when single known hint is provided (async bias). [1](https://soniox.com/compare/soniox-vs-google)
       if (shouldDisableLID(language_hints)) payload.enable_language_identification = false;
