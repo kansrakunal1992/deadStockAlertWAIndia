@@ -14319,12 +14319,14 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           langHints = await resolveSonioxLanguageHints(From, conversationState?.language ?? 'en');
         } catch (_) { /* fallback keeps ['en'] */ }
         // Transcribe via Soniox Async API (Files + Transcriptions)
-        // NOTE: Soniox Async returns final text; overall "confidence" is not a single scalar in REST results.
+        // NOTE: Soniox Async returns final text; overall "confidence" is not a single scalar in REST results.                
         const { text: rawTranscript } = await transcribeFileWithSoniox(tmpPath, {
-          languageHints: langHints,
-          languageHintsStrict: true,                     // strongly prefer the hinted language
-          model: process.env.SONIOX_ASYNC_MODEL || 'stt-async-preview'
-        });
+              languageHints: langHints,
+              languageHintsStrict: true,                     // strongly prefer the hinted language
+              // 'stt-async-v3' is the active async model; alias 'stt-async-preview-v1' also works.
+              // Using v3 avoids 400s that occur with deprecated/invalid names.
+              model: process.env.SONIOX_ASYNC_MODEL || 'stt-async-v3'
+            });
         // Heuristic confidence since async is final text; let env override (default 0.95).
         const confidence = Number(process.env.SONIOX_DEFAULT_CONFIDENCE ?? 0.95);
 
@@ -14801,8 +14803,12 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}
       }
     }
-  } catch (error) {
-    console.error(`[${requestId}] Error processing voice message:`, error);
+  } catch (error) {          
+      // Log Soniox validation errors when available (helps pinpoint 400 causes).
+          if (error?.response?.data) {
+            console.error(`[${requestId}] Soniox error body:`, JSON.stringify(error.response.data));
+          }
+          console.error(`[${requestId}] Error processing voice message:`, error?.message || error);
     
     // Send error message via Twilio API
     await client.messages.create({
