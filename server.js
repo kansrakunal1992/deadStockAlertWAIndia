@@ -34,29 +34,6 @@ const crypto = require('crypto');          // NEW: HMAC for webhook signature
 
 const app = express();
 
-// ===========================
-// STT v2 credential bootstrap
-// ===========================
-// Writes service-account JSON (decoded from GCP_BASE64_KEY) to GOOGLE_APPLICATION_CREDENTIALS.
-// This is Railway-friendly (ephemeral FS) and keeps secrets out of the repo.
-try {
-  const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  const b64 = process.env.GCP_BASE64_KEY;
-  if (credPath && b64) {
-    const dir = path.dirname(credPath);
-    fs.mkdirSync(dir, { recursive: true });
-    if (!fs.existsSync(credPath)) {
-      const json = Buffer.from(b64, 'base64').toString('utf8');
-      fs.writeFileSync(credPath, json);
-      console.log('[stt] Wrote service account key to', credPath);
-    }
-  } else {
-    console.warn('[stt] Missing GOOGLE_APPLICATION_CREDENTIALS or GCP_BASE64_KEY env');
-  }
-} catch (e) {
-  console.warn('[stt] Credential bootstrap failed:', e?.message);
-}
-
 // Request logging middleware
 // ==== Paid-confirm dedupe (lightweight persisted) ============================
 // TTL can be tuned via env; default 6h
