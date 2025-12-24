@@ -4,6 +4,11 @@ const twilio = require('twilio'); // REQUIRED for TwiML usage [twilio-node docs]
 const client = require('../twilioClient'); // from /root/api → ../twilioClient.js
 // Soniox async transcription helper (server-side file transcription; no streaming)
 const { transcribeFileWithSoniox } = require('../stt/sonioxAsync');
+const {
+  normalizeLangExact,
+  toSonioxHints,
+  chooseUiLanguage,
+} = require('../stt/sonioxLangHints');
 
 const axios = require('axios');
 // ---------------------------------------------------------------------------
@@ -14311,18 +14316,21 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         const shopId = fromToShopId(From);
         // Write FLAC to a temp file for Soniox Files API upload
         const tmpDir = '/tmp';
-        const tmpPath = `${tmpDir}/voice_${requestId}.flac`;
+        const tmpPath = `${tmpDir}/voice_${requestId}.flac`;                
         await fs.promises.writeFile(tmpPath, flacBuffer);
-        // Auto-select language_hints from your pinned/detected preference (adapter), fallback to ['en'].
-        let langHints = ['en'];
-        try {
-          langHints = await resolveSonioxLanguageHints(From, conversationState?.language ?? 'en');
-        } catch (_) { /* fallback keeps ['en'] */ }
-        // Transcribe via Soniox Async API (Files + Transcriptions)
-        // NOTE: Soniox Async returns final text; overall "confidence" is not a single scalar in REST results.                              
-        // NOTE: For async v3, do NOT send 'language_hints_strict' — it triggers 400.
-            // Just pass 'language_hints'. (See Create Transcription + Models docs.) [1](https://soniox.com/docs/stt/api-reference/transcriptions/create_transcription)[2](https://soniox.com/docs/stt/models)
+            // Decide exact language for this turn → prefer pinned over detector, avoid mid-turn downgrades.
+            let pinnedPref = 'en';
+            try {
+              const pref = await getUserPreference(shopId);
+              if (pref?.success && pref.language) pinnedPref = String(pref.language).toLowerCase();
+            } catch {}
+            const detectedSeed = normalizeLangExact(conversationState?.language || 'en');
+            const langExactSeed = normalizeLangExact(pinnedPref || detectedSeed);
+            const langHints = toSonioxHints(langExactSeed);      // single-language hint when possible
+        
+            // Transcribe via Soniox Async API (Files + Transcriptions)
             const { text: rawTranscript } = await transcribeFileWithSoniox(tmpPath, {
+              langExact: langExactSeed,                          // let helper disable LID on single hint
               languageHints: langHints,
               model: process.env.SONIOX_ASYNC_MODEL || 'stt-async-v3'
             });
@@ -14331,10 +14339,10 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
 
     console.log(`[${requestId}] [4] Validating transcript...`);
         
-     // Best-effort language preference for script clamp inside validateTranscript
-     const prefRow = await getUserPreference(shopId).catch(() => ({ language: 'en' }));
-     const langPref = String(prefRow?.language ?? 'en').toLowerCase();
-     const cleanTranscript = await validateTranscript(rawTranscript, requestId, langPref);
+     // Best-effort language preference for script clamp inside validateTranscript           
+     const prefRow = await getUserPreference(shopId).catch(() => ({ language: pinnedPref || 'en' }));
+         const langPref = normalizeLangExact(prefRow?.language || 'en');
+         const cleanTranscript = await validateTranscript(rawTranscript, requestId, langPref);
           
      console.log(`[${requestId}] [5] Detecting language...`);
           // Read pinned user preference (hi should be retained unless explicitly switched)
@@ -14345,7 +14353,13 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           } catch (_) { /* best effort */ }
       
           // Use robust detector (same behaviour as text path)
-          let detectedLanguage = await detectLanguageWithFallback(cleanTranscript, From, requestId);
+          let detectedLanguage = await detectLanguageWithFallback(cleanTranscript, From, requestId);                                       
+          // Stabilize UI language for this turn: pinned wins unless explicit switch token present.
+              let explicitSwitch = false;
+              try {
+                explicitSwitch = (typeof _matchLanguageToken === 'function') && _matchLanguageToken(cleanTranscript);
+              } catch {}
+              const uiLangExact = chooseUiLanguage(pinnedPref, detectedLanguage, explicitSwitch);
       
           // If we previously pinned a non-English preference (e.g., hi),
           // do NOT let a single voice turn flip it to en unless there is an explicit language switch.
@@ -14387,14 +14401,14 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       /activate\s+paid/i.test(lowerCmd) ||
       /start\s+paid/i.test(lowerCmd)
     ) {
-      await sendPaidPlanCTA(From, detectedLanguage || 'en');
+      await sendPaidPlanCTA(From, uiLangExact || 'en');
       return;
     }
        
     // Save user preference (do not downgrade hi → en mid-turn)
-        const willDowngrade = pinnedPref && pinnedPref !== 'en' && detectedLanguage === 'en';
+        const willDowngrade = pinnedPref && pinnedPref !== 'en' && normalizeLangExact(detectedLanguage) === 'en';
         if (!willDowngrade) {
-          await saveUserPreference(shopId, detectedLanguage);
+          await saveUserPreference(shopId, uiLangExact);     // persist exact combo (e.g., hi-latn)
         } else {
           console.log(`[${requestId}] voice: retained pinned pref=${pinnedPref}, skipped downgrading to en`);
         }
@@ -14416,7 +14430,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           'demo please','डेमो देखें','डेमो देखो'
         ];
         if (demoTokens.some(t => raw.includes(t))) {
-          await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo-voice`);
+          await sendDemoVideoAndButtons(From, uiLangExact, `${requestId}::demo-voice`);
           handledRequests.add(requestId);
           return;
         }
@@ -14491,8 +14505,8 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         // Question → answer & exit
         if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
           handledRequests.add(requestId);
-          const ans = await composeAISalesAnswer(shopId, cleanTranscript, langExact);
-          const msg = await t(ans, langExact, `${requestId}::sales-qa-voice`);
+          const ans = await composeAISalesAnswer(shopId, cleanTranscript, uiLangExact);
+          const msg = await t(ans, uiLangExact, `${requestId}::sales-qa-voice`);
           await sendMessageDedup(From, msg);                  
           try {
                   const isActivated = await isUserActivated(shopId);
@@ -14516,7 +14530,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                 return;
               }
           handledRequests.add(requestId);
-          await routeQuickQueryRaw(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-voice`);
+          await routeQuickQueryRaw(orch.normalizedCommand, From, uiLangExact, `${requestId}::ai-norm-voice`);
           try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}                        
           return;
         }
@@ -14600,7 +14614,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         }                
         const totalCount = Array.isArray(results) ? results.length : processed.length;
         message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;
-        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+        const formattedResponse = await t(message.trim(), uiLangExact, requestId);
         await sendMessageDedup(From, formattedResponse);
       }
       // else → nothing to confirm (nudged or zero success)         
@@ -15252,7 +15266,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
             // NEW: “demo” as a terminal command → play video + buttons
               if (orch.normalizedCommand.trim().toLowerCase() === 'demo') {
                 handledRequests.add(requestId);
-                await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
+                await sendDemoVideoAndButtons(From, detectedLanguage, `${requestId}::demo`);
                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
                 res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
                 return;
