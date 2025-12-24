@@ -2,6 +2,7 @@
 const axios = require('axios');
 const fs = require('fs');
 const FormData = require('form-data');
+const { toSonioxHints, shouldDisableLID } = require('./sonioxLangHints');
 
 /**
  * Transcribe a local audio file using Soniox REST API.
@@ -27,17 +28,15 @@ async function transcribeFileWithSoniox(filePath, opts = {}) {
   if (!fileId) throw new Error('Soniox upload failed');
 
   // 2) Create transcription job
-  const jobUrl = 'https://api.soniox.com/v1/transcriptions';  
-  const model = opts.model || process.env.SONIOX_ASYNC_MODEL || 'stt-async-v3'; // async v3 is current. cite
-    const language_hints = Array.isArray(opts.languageHints)
+  const jobUrl = 'https://api.soniox.com/v1/transcriptions';    
+  const model = opts.model || process.env.SONIOX_ASYNC_MODEL || 'stt-async-v3'; // current async model 
+    // Prefer exact language combo (e.g., 'hi' or 'hi-latn'); else use explicit hints or env.
+    let language_hints = Array.isArray(opts.languageHints)
       ? opts.languageHints
-      : (process.env.SONIOX_LANGUAGE_HINTS
-          ? process.env.SONIOX_LANGUAGE_HINTS.split(',').map(s => s.trim()).filter(Boolean)
-          : []);
-    const language_hints_strict =
-      typeof opts.languageHintsStrict === 'boolean'
-        ? opts.languageHintsStrict
-        : (process.env.SONIOX_LANGUAGE_HINTS_STRICT === '1');
+      : (opts.langExact ? toSonioxHints(opts.langExact)
+        : (process.env.SONIOX_LANGUAGE_HINTS
+            ? process.env.SONIOX_LANGUAGE_HINTS.split(',').map(s => s.trim()).filter(Boolean)
+            : []));
   
     // Build payload (async v3: DO NOT include language_hints_strict — it triggers 400). cite
     const payload = { file_id: fileId, model };
@@ -46,17 +45,22 @@ async function transcribeFileWithSoniox(filePath, opts = {}) {
     if (/^stt-rt/.test(model) && language_hints_strict === true) {
       payload.language_hints_strict = true;
     }
+          
+    // Build payload: async v3 → DO NOT include language_hints_strict (it triggers 400). 
+      const payload = { file_id: fileId, model };
+      if (language_hints && language_hints.length > 0) payload.language_hints = language_hints;
+      // Reduce drift: disable LID when single known hint is provided (async bias). [1](https://soniox.com/compare/soniox-vs-google)
+      if (shouldDisableLID(language_hints)) payload.enable_language_identification = false;
+    
+      const job = await axios.post(jobUrl, payload, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json; charset=utf-8'
+        },
+        timeout: 30000
+      });
   
-    const job = await axios.post(jobUrl, payload, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json; charset=utf-8'
-      },
-      timeout: 30000,
-      validateStatus: (s) => s >= 200 && s < 300
-    });
-
   const transcriptionId = job.data?.id;
   const statusUrl = `${jobUrl}/${transcriptionId}`;
   const transcriptUrl = `${jobUrl}/${transcriptionId}/transcript`; // text is returned here for async
