@@ -17351,7 +17351,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     }
     
     // Price management commands
-    const lowerBody = Body.toLowerCase();
+    const lowerBody = String(Body ?? '').toLowerCase();
 
 // ---- STT SELF-TEST: send "stt test" to trigger a minimal end-to-end check ----
   if (lowerBody === 'stt test') {
@@ -17359,10 +17359,27 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       const prefLang = await (async () => {
         try { const p = await getUserPreference(String(From).replace('whatsapp:', '')); return p?.language; } catch { return null; }
       })();
-      // If you track last text language in state, pass it here; else null
-      const lastTextLang = prefLang;
+            
+      // Map generic app locales to proper BCP-47 for Google STT v2.
+          // Specifically: "en" (or "english") → "en-IN"; normalize existing BCP-47 casing.
+          const prefLangMapped = (() => {
+            const raw = String(prefLang ?? 'en').trim();
+            const lc  = raw.toLowerCase();
+            if (lc === 'en' || lc === 'english') return 'en-IN';
+            // Normalize casing if already BCP-47 (xx[-Script][-YY])
+            const m = raw.match(/^([a-z]{2,3})(?:-([a-z]{4}))?(?:-([A-Za-z]{2}))?$/);
+            if (m) {
+              const lang   = m[1].toLowerCase();
+              const script = m[2] ? (m[2][0].toUpperCase() + m[2].slice(1).toLowerCase()) : null;
+              const region = m[3] ? m[3].toUpperCase() : null;
+              return [lang, script, region].filter(Boolean).join('-');
+            }
+            return 'en-IN';
+          })();
+          // If you track last text language in state, pass it here; else use mapped value
+          const lastTextLang = prefLangMapped;
       const catalog = parseLangCatalog();
-      const candidates = pickLanguageCandidates(prefLang, lastTextLang, catalog);
+      const candidates = pickLanguageCandidates(prefLangMapped, lastTextLang, catalog);
       const model  = String(process.env.STT_MODEL ?? 'short');
       const region = String(process.env.STT_REGION ?? 'global');
       const testPath = process.env.STT_TEST_AUDIO_PATH;
@@ -17373,9 +17390,12 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       } else {
         input = makeSilentWav(1, 16000); // synthetic silence: validates credentials & pipeline
       }
-
+      
       // Call the same transcribe function your voice path uses (v2 auto-decoding)
-      const { text, language } = await transcribeWhatsAppVoice(input, { prefLang, lastTextLang });
+          const { text, language } = await transcribeWhatsAppVoice(input, {
+            prefLang: prefLangMapped,
+            lastTextLang
+          });
 
       const report =
         `🔎 STT v2 self-test\n` +
