@@ -9,7 +9,22 @@ const axios = require('axios');
 // ---------------------------------------------------------------------------
 // Placed near the top to be available to onboarding flow
 const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 3);
+const { transcribeWhatsAppVoice, pickLanguageCandidates, parseLangCatalog } = require('./stt/google');
 const fs = require('fs');
+// === Minimal STT self-test (connectivity & config) ============================
+function makeSilentWav(seconds = 1, sampleRate = 16000) {
+  // Generate 16-bit PCM WAV header + silence (mono)
+  const numSamples = seconds * sampleRate;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0); header.writeUInt32LE(36 + numSamples * 2, 4);
+  header.write('WAVEfmt ', 8); header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt16LE(1, 22); header.writeUInt32LE(sampleRate, 24); header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34);
+  header.write('data', 36); header.writeUInt32LE(numSamples * 2, 40);
+  const pcm = Buffer.alloc(numSamples * 2); // silence
+  return Buffer.concat([header, pcm]);
+}
+
 const crypto = require('crypto');
 const path = require('path');
 const { execSync } = require('child_process');
@@ -16844,6 +16859,50 @@ Reply with:
 }
 
 async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {
+ 
+  // ---- STT SELF-TEST: send "stt test" to trigger a minimal end-to-end check ----
+  if (lowerBody === 'stt test') {
+    try {
+      const prefLang = await (async () => {
+        try { const p = await getUserPreference(String(From).replace('whatsapp:', '')); return p?.language; } catch { return null; }
+      })();
+      // If you track last text language in state, pass it here; else null
+      const lastTextLang = prefLang;
+      const catalog = parseLangCatalog();
+      const candidates = pickLanguageCandidates(prefLang, lastTextLang, catalog);
+      const model  = String(process.env.STT_MODEL ?? 'short');
+      const region = String(process.env.STT_REGION ?? 'global');
+      const testPath = process.env.STT_TEST_AUDIO_PATH;
+
+      let input;
+      if (testPath && fs.existsSync(testPath)) {
+        input = testPath; // real file test
+      } else {
+        input = makeSilentWav(1, 16000); // synthetic silence: validates credentials & pipeline
+      }
+
+      // Call the same transcribe function your voice path uses (v2 auto-decoding)
+      const { text, language } = await transcribeWhatsAppVoice(input, { prefLang, lastTextLang });
+
+      const report =
+        `🔎 STT v2 self-test\n` +
+        `• Project: ${process.env.GCP_PROJECT ?? '(unset)'}\n` +
+        `• Region: ${region}\n` +
+        `• Model: ${model}\n` +
+        `• Lang candidates (≤3): ${candidates.join(', ')}\n` +
+        `• Recognized language: ${language}\n` +
+        `• Transcript: ${text ? `"${text}"` : '(empty)'}\n` +
+        `${testPath && fs.existsSync(testPath) ? '• Source: test file ✅' : '• Source: synthetic WAV (connectivity check) ✅'}`;
+
+      await sendMessageViaAPI(From, report);
+      return true; // handled
+    } catch (e) {
+      await sendMessageViaAPI(From, `❌ STT self-test failed: ${e?.message ?? 'unknown error'}`);
+      return true;
+    }
+  }
+
+  
   console.log(`[${requestId}] Handling new interaction`);
   const shopId = fromToShopId(From);
    
