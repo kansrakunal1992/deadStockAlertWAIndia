@@ -14319,12 +14319,11 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           langHints = await resolveSonioxLanguageHints(From, conversationState?.language ?? 'en');
         } catch (_) { /* fallback keeps ['en'] */ }
         // Transcribe via Soniox Async API (Files + Transcriptions)
-        // NOTE: Soniox Async returns final text; overall "confidence" is not a single scalar in REST results.                
-        const { text: rawTranscript } = await transcribeFileWithSoniox(tmpPath, {
+        // NOTE: Soniox Async returns final text; overall "confidence" is not a single scalar in REST results.                              
+        // NOTE: For async v3, do NOT send 'language_hints_strict' — it triggers 400.
+            // Just pass 'language_hints'. (See Create Transcription + Models docs.) [1](https://soniox.com/docs/stt/api-reference/transcriptions/create_transcription)[2](https://soniox.com/docs/stt/models)
+            const { text: rawTranscript } = await transcribeFileWithSoniox(tmpPath, {
               languageHints: langHints,
-              languageHintsStrict: true,                     // strongly prefer the hinted language
-              // 'stt-async-v3' is the active async model; alias 'stt-async-preview-v1' also works.
-              // Using v3 avoids 400s that occur with deprecated/invalid names.
               model: process.env.SONIOX_ASYNC_MODEL || 'stt-async-v3'
             });
         // Heuristic confidence since async is final text; let env override (default 0.95).
