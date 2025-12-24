@@ -1,8 +1,10 @@
 // Twilio SDK (needed for TwiML builders like new twilio.twiml.MessagingResponse())
-const twilio = require('twilio');   // REQUIRED for TwiML usage  [twilio-node docs]
+const twilio = require('twilio'); // REQUIRED for TwiML usage [twilio-node docs]
 // Shared Twilio REST client (Keep-Alive + Edge/Region already configured in root/twilioClient.js)
-const client = require('../twilioClient');   // from /root/api → ../twilioClient.js
-const { GoogleAuth } = require('google-auth-library');
+const client = require('../twilioClient'); // from /root/api → ../twilioClient.js
+// Soniox async transcription helper (server-side file transcription; no streaming)
+const { transcribeFileWithSoniox } = require('../stt/sonioxAsync');
+
 const axios = require('axios');
 // ---------------------------------------------------------------------------
 // NEW: Trial length constant (fallback to 7 days if env not set)
@@ -56,6 +58,57 @@ function guessLangFromInput(s = '') {
 // Default to 0.60 for audio turns; upstream handlers can read this constant.
 // ========================================================================
 const STT_CONFIDENCE_MIN_VOICE = Number(process.env.STT_CONFIDENCE_MIN_VOICE ?? 0.60);
+
+// ============================================================================
+// Soniox language hints adapter
+// Maps your detected/pinned language into the single-language hint Soniox expects
+// (recommended to maximize accuracy when you know the language). [2](https://soniox.com/docs/stt/concepts/language-restrictions)
+// Supported languages list: hi, bn, ta, te, kn, mr, gu, en. [3](https://soniox.com/docs/stt/concepts/supported-languages)
+// ============================================================================
+function mapLangToSonioxHints(langCode) {
+  const L = String(langCode ?? 'en').toLowerCase();
+  switch (L) {
+    case 'hi':
+    case 'bn':
+    case 'ta':
+    case 'te':
+    case 'kn':
+    case 'mr':
+    case 'gu':
+    case 'en':
+      return [L];
+    // Romanized variants → prefer English transcription in Latin script
+    case 'hi-latn':
+    case 'bn-latn':
+    case 'ta-latn':
+    case 'te-latn':
+    case 'kn-latn':
+    case 'mr-latn':
+    case 'gu-latn':
+      return ['en'];
+    default:
+      return ['en'];
+  }
+}
+
+/**
+ * Resolve Soniox language hints for a given WhatsApp 'From'.
+ * Priority:
+ *  1) User preference (pinned), if available
+ *  2) Detected language from this turn (hint)
+ *  3) Fallback 'en'
+ */
+async function resolveSonioxLanguageHints(From, detectedLanguageHint = 'en') {
+  let lang = String(detectedLanguageHint ?? 'en').toLowerCase();
+  try {
+    const shopId = String(From ?? '').replace('whatsapp:', '');
+    if (typeof getUserPreference === 'function') {
+      const pref = await getUserPreference(shopId).catch(() => null);
+      if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+    }
+  } catch { /* noop */ }
+  return mapLangToSonioxHints(lang);
+}
 
 // --------------------------------------------------------------------------------
 // NEW: Canonical language mapper (single source of truth)
@@ -3739,52 +3792,6 @@ function finalizeForSend(text, lang) {
   const oneScript = enforceSingleScriptSafe(stripped, lang);
   const withNL    = fixNewlines1(oneScript);
   return normalizeNumeralsToLatin(withNL).trim();
-}
-
-// ------------------------------------------------------------------------
-// [OPTIONAL PATCH] Voice STT language routing (hi-IN vs en-IN)
-// Hook where you initialize Google STT requests for voice calls.
-// If your STT code lives in another module, move these helpers there.
-// ------------------------------------------------------------------------
-
-/**
- * determineSttConfigForShop(shopId, hintLang):
- * Returns { languageCode, model, enableAutomaticPunctuation, useEnhanced } for Google STT.
- * Mapping covers all supported bases and -latn variants (latn → en-IN to keep roman script).
- */
-async function determineSttConfigForShop(shopId, hintLang = 'en') {
-  try {
-    const pref = await getUserPreference(shopId).catch(() => null);
-    const L = String(pref?.language ?? hintLang ?? 'en').toLowerCase();
-    const map = {
-      'en': 'en-IN',
-      'hi': 'hi-IN',
-      'bn': 'bn-IN',
-      'ta': 'ta-IN',
-      'te': 'te-IN',
-      'kn': 'kn-IN',
-      'mr': 'mr-IN',
-      'gu': 'gu-IN',
-      // romanized variants → choose English-India to keep Latin script
-      'hi-latn': 'en-IN',
-      'bn-latn': 'en-IN',
-      'ta-latn': 'en-IN',
-      'te-latn': 'en-IN',
-      'kn-latn': 'en-IN',
-      'mr-latn': 'en-IN',
-      'gu-latn': 'en-IN',
-    };
-    const languageCode = map[L] ?? 'en-IN';
-    const model = String(process.env.STT_MODEL_FAMILY ?? 'phone_call'); // or 'telephony' as per your client
-    return {
-      languageCode,
-      model,
-      enableAutomaticPunctuation: true,
-      useEnhanced: true
-    };
-  } catch (_) {
-    return { languageCode: 'en-IN', model: 'phone_call', enableAutomaticPunctuation: true, useEnhanced: true };
-  }
 }
 
 // Example usage (pseudo; replace at your STT call site):
@@ -14299,17 +14306,28 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     console.log(`[${requestId}] [1] Downloading audio...`);
     const audioBuffer = await downloadAudio(MediaUrl0);
     console.log(`[${requestId}] [2] Converting audio...`);
-    const flacBuffer = await convertToFLAC(audioBuffer);        
-    console.log(`[${requestId}] [3] Transcribing with Google STT...`);
-     // Pick STT config by user's saved language (DB). Works without env.
-     const shopId = fromToShopId(From);
-     const stt = await determineSttConfigForShop(shopId, conversationState?.language ?? 'en');
-     console.log(`[${requestId}] Processing with ${stt.model} model (${stt.languageCode}), audio size: ${flacBuffer.length}`);
-     // Pass STT config to googleTranscribe (adapt signature if needed)
-     const transcriptionResult = await googleTranscribe(flacBuffer, requestId, stt);
+    const flacBuffer = await convertToFLAC(audioBuffer);                
+    console.log(`[${requestId}] [3] Transcribing with Soniox (async REST)...`);
+        const shopId = fromToShopId(From);
+        // Write FLAC to a temp file for Soniox Files API upload
+        const tmpDir = '/tmp';
+        const tmpPath = `${tmpDir}/voice_${requestId}.flac`;
+        await fs.promises.writeFile(tmpPath, flacBuffer);
+        // Auto-select language_hints from your pinned/detected preference (adapter), fallback to ['en'].
+        let langHints = ['en'];
+        try {
+          langHints = await resolveSonioxLanguageHints(From, conversationState?.language ?? 'en');
+        } catch (_) { /* fallback keeps ['en'] */ }
+        // Transcribe via Soniox Async API (Files + Transcriptions)
+        // NOTE: Soniox Async returns final text; overall "confidence" is not a single scalar in REST results.
+        const { text: rawTranscript } = await transcribeFileWithSoniox(tmpPath, {
+          languageHints: langHints,
+          languageHintsStrict: true,                     // strongly prefer the hinted language
+          model: process.env.SONIOX_ASYNC_MODEL || 'stt-async-preview'
+        });
+        // Heuristic confidence since async is final text; let env override (default 0.95).
+        const confidence = Number(process.env.SONIOX_DEFAULT_CONFIDENCE ?? 0.95);
 
-    const rawTranscript = transcriptionResult.transcript;
-    const confidence = transcriptionResult.confidence;
     console.log(`[${requestId}] [4] Validating transcript...`);
         
      // Best-effort language preference for script clamp inside validateTranscript
@@ -14635,7 +14653,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     }
     
     // Confidence-based confirmation
-    const CONFIDENCE_THRESHOLD = 0.8;
+    const CONFIDENCE_THRESHOLD = Number(process.env.STT_CONFIDENCE_MIN_VOICE ?? 0.8);
     if (confidence < CONFIDENCE_THRESHOLD) {
       console.log(`[${requestId}] [5.5] Low confidence (${confidence}), requesting confirmation...`);
       
