@@ -10979,10 +10979,10 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       let productPrice = 0;
             let productPriceUnit = null;
             try {
-              const priceResult = await getProductPrice(productRawForDb, shopId);
-              if (priceResult?.success) {
-                productPrice     = toNumberSafe(priceResult.price);
-                productPriceUnit = priceResult.unit || null;
+              const priceResult = await getProductPrice(productRawForDb, shopId);                            
+              if (priceResult?.success && Number(priceResult.price) > 0) {
+                 productPrice = toNumberSafe(priceResult.price);
+                 productPriceUnit = priceResult.unit ?? null;
               }
             } catch (error) {
               console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
@@ -10994,7 +10994,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           let productMeta = null;
           try {                        
             // Prefer shop-scoped product meta for expiry hints
-            productMeta = await getProductPrice(product, shopId);
+            productMeta = await getProductPrice(productRawForDb, shopId);
             if (productMeta?.success && productMeta.requiresExpiry) {
               const sd = Number(productMeta.shelfLifeDays ?? 0);
               if (sd > 0) {
@@ -11112,9 +11112,12 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
       // Use provided price or fall back to database price            
       // NEW: reliable price/value without leaking block-scoped vars            
-      const msgUnitPrice = toNumberSafe(update.price);
-            const dbAdjustedUnitPrice = productPrice * unitConvFactor(productPriceUnit, update.unit);
-            const unitPriceForCalc = msgUnitPrice > 0 ? msgUnitPrice : (dbAdjustedUnitPrice || 0);
+      const msgUnitPrice = toNumberSafe(update.price);                  
+      const fromU = normalizeUnit(productPriceUnit || update.unit || 'pieces');   // normalize + default
+       const toU   = normalizeUnit(update.unit || fromU);
+       const factor = Number(unitConvFactor?.(fromU, toU));
+       const dbAdjustedUnitPrice = Number.isFinite(factor) ? (productPrice * factor) : productPrice;
+       const unitPriceForCalc = msgUnitPrice > 0 ? msgUnitPrice : dbAdjustedUnitPrice;
 
       const finalTotalPrice = Number.isFinite(update.totalPrice)
         ? Number(update.totalPrice)
@@ -11229,7 +11232,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             
             const batchResult = await createBatchRecord({
               shopId,
-              product: product, // Use translated product
+              product: productRawForDb, 
               quantity: update.quantity,
               unit: update.unit, // Pass the unit
               purchaseDate: formattedPurchaseDate,
@@ -11392,7 +11395,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                         
             // --- NEW: start a short override window (2 min) only if multiple batches exist ---
              try {
-               if (await shouldOfferBatchOverride(shopId, product)) {
+               if (await shouldOfferBatchOverride(shopId, productRawForDb)) {
                  await saveUserStateToDB(shopId, 'awaitingBatchOverride', {
                    saleRecordId: salesResult.id,
                    product,
@@ -11430,7 +11433,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
              : null;
             const pd = usedBatch?.fields?.PurchaseDate ? formatDateForDisplay(usedBatch.fields.PurchaseDate) : '—';
             const ed = usedBatch?.fields?.ExpiryDate ? formatDateForDisplay(usedBatch.fields.ExpiryDate) : '—';
-            const offerOverride = await shouldOfferBatchOverride(shopId, product).catch(() => false);
+            const offerOverride = await shouldOfferBatchOverride(shopId, productRawForDb).catch(() => false);
 
             const compactLine = (() => {
               const qty = Math.abs(update.quantity);
