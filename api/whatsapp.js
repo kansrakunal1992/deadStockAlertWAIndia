@@ -14346,7 +14346,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           
      console.log(`[${requestId}] [5] Detecting language...`);
           // Read pinned user preference (hi should be retained unless explicitly switched)
-          let pinnedPref = 'en';
+          
           try {
             const pref = await getUserPreference(shopId);
             if (pref?.success && pref.language) pinnedPref = String(pref.language).toLowerCase();
