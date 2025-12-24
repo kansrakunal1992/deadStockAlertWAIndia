@@ -16858,51 +16858,7 @@ Reply with:
   res.send('<Response></Response>');
 }
 
-async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {
- 
-  // ---- STT SELF-TEST: send "stt test" to trigger a minimal end-to-end check ----
-  if (lowerBody === 'stt test') {
-    try {
-      const prefLang = await (async () => {
-        try { const p = await getUserPreference(String(From).replace('whatsapp:', '')); return p?.language; } catch { return null; }
-      })();
-      // If you track last text language in state, pass it here; else null
-      const lastTextLang = prefLang;
-      const catalog = parseLangCatalog();
-      const candidates = pickLanguageCandidates(prefLang, lastTextLang, catalog);
-      const model  = String(process.env.STT_MODEL ?? 'short');
-      const region = String(process.env.STT_REGION ?? 'global');
-      const testPath = process.env.STT_TEST_AUDIO_PATH;
-
-      let input;
-      if (testPath && fs.existsSync(testPath)) {
-        input = testPath; // real file test
-      } else {
-        input = makeSilentWav(1, 16000); // synthetic silence: validates credentials & pipeline
-      }
-
-      // Call the same transcribe function your voice path uses (v2 auto-decoding)
-      const { text, language } = await transcribeWhatsAppVoice(input, { prefLang, lastTextLang });
-
-      const report =
-        `🔎 STT v2 self-test\n` +
-        `• Project: ${process.env.GCP_PROJECT ?? '(unset)'}\n` +
-        `• Region: ${region}\n` +
-        `• Model: ${model}\n` +
-        `• Lang candidates (≤3): ${candidates.join(', ')}\n` +
-        `• Recognized language: ${language}\n` +
-        `• Transcript: ${text ? `"${text}"` : '(empty)'}\n` +
-        `${testPath && fs.existsSync(testPath) ? '• Source: test file ✅' : '• Source: synthetic WAV (connectivity check) ✅'}`;
-
-      await sendMessageViaAPI(From, report);
-      return true; // handled
-    } catch (e) {
-      await sendMessageViaAPI(From, `❌ STT self-test failed: ${e?.message ?? 'unknown error'}`);
-      return true;
-    }
-  }
-
-  
+async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {  
   console.log(`[${requestId}] Handling new interaction`);
   const shopId = fromToShopId(From);
    
@@ -17393,9 +17349,53 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
       }
     }
-
+    
     // Price management commands
     const lowerBody = Body.toLowerCase();
+
+// ---- STT SELF-TEST: send "stt test" to trigger a minimal end-to-end check ----
+  if (lowerBody === 'stt test') {
+    try {
+      const prefLang = await (async () => {
+        try { const p = await getUserPreference(String(From).replace('whatsapp:', '')); return p?.language; } catch { return null; }
+      })();
+      // If you track last text language in state, pass it here; else null
+      const lastTextLang = prefLang;
+      const catalog = parseLangCatalog();
+      const candidates = pickLanguageCandidates(prefLang, lastTextLang, catalog);
+      const model  = String(process.env.STT_MODEL ?? 'short');
+      const region = String(process.env.STT_REGION ?? 'global');
+      const testPath = process.env.STT_TEST_AUDIO_PATH;
+
+      let input;
+      if (testPath && fs.existsSync(testPath)) {
+        input = testPath; // real file test
+      } else {
+        input = makeSilentWav(1, 16000); // synthetic silence: validates credentials & pipeline
+      }
+
+      // Call the same transcribe function your voice path uses (v2 auto-decoding)
+      const { text, language } = await transcribeWhatsAppVoice(input, { prefLang, lastTextLang });
+
+      const report =
+        `🔎 STT v2 self-test\n` +
+        `• Project: ${process.env.GCP_PROJECT ?? '(unset)'}\n` +
+        `• Region: ${region}\n` +
+        `• Model: ${model}\n` +
+        `• Lang candidates (≤3): ${candidates.join(', ')}\n` +
+        `• Recognized language: ${language}\n` +
+        `• Transcript: ${text ? `"${text}"` : '(empty)'}\n` +
+        `${testPath && fs.existsSync(testPath) ? '• Source: test file ✅' : '• Source: synthetic WAV (connectivity check) ✅'}`;
+
+      await sendMessageViaAPI(From, report);
+      return true; // handled
+    } catch (e) {
+      await sendMessageViaAPI(From, `❌ STT self-test failed: ${e?.message ?? 'unknown error'}`);
+      return true;
+    }
+  }
+
+    
     if (lowerBody.includes('update price')) {
       await handlePriceUpdate(Body, From, detectedLanguage, requestId);
       return;
