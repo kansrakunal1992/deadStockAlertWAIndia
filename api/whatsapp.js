@@ -1156,22 +1156,24 @@ async function parseMultipleUpdates(reqOrText) {
         } catch (_) { /* noop */ }
         return [];
       }
-      
-      // Simple parser for verb-less lines like: "milk 10 litres at 40/litre"
+                 
       function parseSimpleWithoutVerb(s, actionHint) {
-        try {                    
-          const mQty = s.match(/(^|\s)(\d+(?:\.\d+)?)(?=\s*(?:.+)?)/i); // qty first; unit checked separately
-          const mUnit = s.match(UNIT_REGEX);
-          const mPrice = s.match(/\b(?:at|@)\s*(\d+(?:\.\d+)?)(?:\s*\/\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces))?/i);
-          const idxQty = mQty ? s.indexOf(mQty[2]) : -1;
-          if (idxQty < 1 || !mUnit) return null;
-          const product = s.slice(0, idxQty).replace(/\bat\b$/i, '').trim();
-          const qty = parseFloat(mQty[2]);
+        try {
+          const mUnit  = s.match(UNIT_REGEX);
+          const mPrice = s.match(/\b(?:at|@)\s*(\d+(?:\.\d+)?)\s*(?:\/\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces))?/i);
+          const mQty   = s.match(/(\d+(?:\.\d+)?)/);            // allow qty anywhere
+      
+          if (!mQty || !mUnit) return null;
+          const idxQty = s.indexOf(mQty[1]);                    // grab index wherever it is
+          const product = s.slice(0, idxQty).replace(/\bat$/i, '').trim();
+          const qty     = parseFloat(mQty[1]);
           const unitToken = canonicalizeUnitToken(mUnit[0]);
-          const price = mPrice ? parseFloat(mPrice[1]) : null;
+          const price   = mPrice ? parseFloat(mPrice[1]) : null;
+      
           return { action: actionHint || 'purchased', product, quantity: qty, unit: unitToken, pricePerUnit: price, expiry: null };
         } catch { return null; }
       }
+
 
   // Fallback to rule-based parsing ONLY if AI fails
   // Better sentence splitting to handle conjunctions    
