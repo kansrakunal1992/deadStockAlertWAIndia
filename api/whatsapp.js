@@ -1094,6 +1094,18 @@ async function parseMultipleUpdates(reqOrText, requestId) {
      } catch (e) { console.warn('[onboard-capture] step failed:', e?.message); }
      return []; // consume onboarding messages
    }
+  
+     // NEW: global skip message guard to avoid alias/transaction normalization
+     try {
+       const tLower = String(transcript ?? '').trim().toLowerCase();
+       if (isSkipMessage(tLower)) {
+         // Acknowledge politely; do not parse as inventory
+         const langHint = await detectLanguageWithFallback(transcript, from, 'skip-ack');
+         const okText = await t('Okay—skipped.', langHint, 'skip-ack');
+         await sendMessageViaAPI(from, finalizeForSend(okText, langHint));
+         return [];
+       }
+     } catch (_) { /* best-effort */ }
     
   // Standardize valid actions (canonical: purchased, sold, returned)
   const VALID_ACTIONS = ['purchased', 'sold', 'returned'];
