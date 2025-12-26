@@ -1886,6 +1886,24 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
       ),
     ]).catch(() => (typeof fallback === 'function' ? fallback() : fallback));
   }
+  
+  // --- GREETING GUARD: prevent greetings from becoming commands/summary ---
+  // If the message is a greeting, do not let orchestrator map it to "short summary".
+  // We return a neutral route with no command and no question.
+  if (_isGreeting(text)) {
+    const language = ensureLangExact(detectedLanguageHint ?? 'en');
+    console.log('[orchestrator] Greeting detected; suppressing command normalization.');
+    return {
+      language,
+      isQuestion: false,
+      normalizedCommand: null,
+      aiTxn: null,
+      questionTopic: null,
+      pricingFlavor: null,
+      identityAsked: typeof isNameQuestion === 'function' ? isNameQuestion(text) : false
+    };
+  }
+
   function inBackground(label, fn) {
     Promise.resolve().then(fn).catch((e) => console.warn(`[bg:${label}]`, e?.message));
   }
@@ -1965,9 +1983,22 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
     // ---- NEW FAST PATH (Deepseek single call) when ENABLE_FAST_CLASSIFIER=true ----
     if (ENABLE_FAST_CLASSIFIER) {
       console.log('[fast-classifier] on req=%s timeout=%sms model=deepseek-chat', requestId, String(FAST_CLASSIFIER_TIMEOUT_MS ?? '1200'));
-      const out = await classifyAndRoute(text, detectedLanguageHint);
-
-      // --- Normalize summary intent into command (PRESERVED) ---
+      const out = await classifyAndRoute(text, detectedLanguageHint);    
+          
+        // --- DEFENSIVE: do not normalize commands for greetings ---
+        if (_isGreeting(text)) {
+          return {
+            language: ensureLangExact(out?.language ?? detectedLanguageHint ?? 'en'),
+            isQuestion: false,
+            normalizedCommand: null,
+            aiTxn: null,
+            questionTopic: null,
+            pricingFlavor: null,
+            identityAsked: typeof isNameQuestion === 'function' ? isNameQuestion(text) : false
+          };
+        }
+    
+        // --- Normalize summary intent into command (existing) ---
       let route = {
         language: ensureLangExact(out?.language ?? detectedLanguageHint ?? 'en'),
         kind: out?.kind ?? 'other',
@@ -1975,7 +2006,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         transaction: out?.transaction ?? null
       };
       try {
-        const summaryCmd = resolveSummaryIntent(text); // 'short summary' | 'full summary' | null
+        const summaryCmd = /\bsummary\b/i.test(text) ? resolveSummaryIntent(text) : null;
         if (summaryCmd) { route.kind = 'command'; route.command = { normalized: summaryCmd }; }
       } catch {}
 
@@ -2040,7 +2071,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
 
     // --- Normalize summary intent into command (PRESERVED) ---
     try {
-      const summaryCmd = resolveSummaryIntent(text); // 'short summary' | 'full summary' | null
+      const summaryCmd = /\bsummary\b/i.test(text) ? resolveSummaryIntent(text) : null;
       if (summaryCmd) {
         legacy.kind = 'command';
         legacy.command = { normalized: summaryCmd };
@@ -2333,7 +2364,7 @@ async function looksLikeQuestion(text, lang = 'en') {
 // ------------------------------------------------------------
 const GREETING_TOKENS = new Set([
   // English / Latin
-  'hello', 'hi', 'hey', 'namaste',
+  'hello', 'hi', 'hey', 'namaste', 'namaskar',
   // Hindi / Marathi (Devanagari)
   'नमस्ते', 'नमस्कार',
   // Bengali
@@ -2683,7 +2714,18 @@ function _safeLang(...candidates) {
 // Must be declared BEFORE any calls (e.g., in handleRequest or module.exports).
 async function detectLanguageWithFallback(text, from, requestId) {
   return (async () => {
-    try {       
+    try {              
+        // --- GREETING SHORT-CIRCUIT ---
+              // If the inbound text is a greeting (e.g., "hi", "hello", "namaste", "namaskar"),
+              // do NOT treat it as a language token and do NOT flip language.
+              // We keep the turn in English for one-word greetings to avoid "Hi" => Hindi collisions.
+              // Anchor: uses your existing _isGreeting(text) helper and GREETING_TOKENS.
+              if (_isGreeting(text)) {
+                // English is the safest default for single-word greetings.
+                // (Voice/STT paths still read pinned prefs elsewhere.)
+                console.log(`[${requestId}] Greeting detected; short-circuiting to en`);
+                return 'en';
+              }
         const shopIdX = String(from ?? '').replace('whatsapp:', '');
               const stX = await getUserStateFromDB(shopIdX).catch(() => null);
               const isOnboarding = stX?.mode === 'onboarding_trial_capture';                            
@@ -2890,7 +2932,7 @@ async function safeSendParseError(From, detectedLanguage, requestId, header) {
 // Fallback tokens we accept from users (they might type English/Hinglish or local verbs)
 const SWITCH_FALLBACKS = [
   // English / Hinglish
-  'mode', 'switch', 'change', 'badlo',
+  'mod', 'mode', 'switch', 'change', 'badlo',
   // Hindi
   'मोड', 'बदलें', 'बदल', 'बदले',
   // Bengali
@@ -2940,7 +2982,7 @@ const _langDetectInFlight = new Set(); // from (whatsapp:+91...) -> boolean
 const LANGUAGE_TOKENS = {
   // two-way synonyms for quick, explicit language switches
   en: new Set(['en','eng','english']),
-  hi: new Set(['hi','hin','hindi','हिंदी','हिन्दी']),
+  hi: new Set(['hin','hindi','हिंदी','हिन्दी']),
   bn: new Set(['bn','ben','bengali','বাংলা']),
   ta: new Set(['ta','tam','tamil','தமிழ்']),
   te: new Set(['te','tel','telugu','తెలుగు']),
@@ -2948,15 +2990,22 @@ const LANGUAGE_TOKENS = {
   mr: new Set(['mr','mar','marathi','मराठी']),
   gu: new Set(['gu','guj','gujarati','ગુજરાતી'])
 };
+
 function _matchLanguageToken(text) {
-  const t = String(text || '').trim().toLowerCase();
+  const t = String(text ?? '').trim().toLowerCase();
   if (!t) return null;
+
+  // Require an explicit switch phrase for short/ambiguous tokens
+  const explicitSwitch = /\b(lang(uage)?|switch|set)\b/.test(t);
+
   for (const [code, set] of Object.entries(LANGUAGE_TOKENS)) {
-    if (set.has(t)) return code;
+    if (set.has(t) && (explicitSwitch || t.length > 2)) {
+      return code;
+    }
   }
   return null;
 }
-
+  
 // Helper: which one-word switch label to show for a given language
 function getSwitchWordFor(lang) {
   const lc = String(lang || 'en').toLowerCase();
