@@ -1122,9 +1122,19 @@ async function parseMultipleUpdates(reqOrText) {
      }
      const inferredAction = pendingAction ? null : resolveActionFromText(t);
      const hasAnyAction = !!(pendingAction || inferredAction);
-
+    
   // Never treat summary commands as inventory messages
-  if (resolveSummaryIntent(t)) return [];
+    if (resolveSummaryIntent(t)) return [];
+    // --- BEGIN: early skip for command aliases (e.g., "reorder sujhav") ---
+    try {
+      // Language hint optional; safe to pass undefined here
+      const aliasCmd = normalizeCommandAlias(t);
+      if (aliasCmd) {
+        return []; // read-only command; do not parse as inventory update
+      }
+    } catch { /* noop */ }
+    // --- END: early skip for command aliases ---
+
   // NEW: ignore read-only inventory queries outright
   if (isReadOnlyQuery(t)) {
     console.log('[Parser] Read-only query detected; skipping update parsing.');
@@ -2009,6 +2019,26 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         const summaryCmd = /\bsummary\b/i.test(text) ? resolveSummaryIntent(text) : null;
         if (summaryCmd) { route.kind = 'command'; route.command = { normalized: summaryCmd }; }
       } catch {}
+  
+    // --- BEGIN: alias-based command normalization (e.g., "reorder sujhav" -> "reorder suggestions") ---
+    // Position: immediately after summary normalization, before logging/return.
+    // Anchor variables available here:
+    //   - route.kind / route.command
+    //   - detectedLanguageHint (via hintedLang below)
+    let normalizedCommand = (route.kind === 'command' && route?.command?.normalized)
+      ? route.command.normalized
+      : null;
+  
+    if (!normalizedCommand) {
+      // hintedLang is defined above in this function: const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
+      const aliasCmd = normalizeCommandAlias(text, hintedLang);
+      if (aliasCmd) {
+        normalizedCommand = aliasCmd;
+        route.kind = 'command';
+        route.command = { normalized: normalizedCommand };
+      }
+    }
+    // --- END: alias-based command normalization ---
 
       // --- Topic detection (PRESERVED) ---
       const topicForced = classifyQuestionTopic(text);
@@ -2027,7 +2057,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
 
       // --- Sticky safety: prefer cached sticky; else bounded fetch ---
       let isQuestion = (route.kind === 'question');
-      let normalizedCommand = route.kind === 'command' && route?.command?.normalized ? route.command.normalized : null;
+      // normalizedCommand already set/updated by alias normalizer above
       const aiTxn = route.kind === 'transaction' ? route.transaction : null;
 
       let stickyAction = stickyActionCached ?? await withTimeout(
@@ -2077,6 +2107,23 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         legacy.command = { normalized: summaryCmd };
       }
     } catch { /* best-effort */ }
+        
+      // --- BEGIN: alias-based command normalization for legacy path ---
+      // Anchor: right after legacy summary normalization.
+      let legacyNormalizedCommand =
+        (legacy.kind === 'command' && legacy?.command?.normalized)
+          ? legacy.command.normalized
+          : null;
+    
+      if (!legacyNormalizedCommand) {
+        const aliasCmd = normalizeCommandAlias(text, ensureLangExact(detectedLanguageHint ?? 'en'));
+        if (aliasCmd) {
+          legacyNormalizedCommand = aliasCmd;
+          legacy.kind = 'command';
+          legacy.command = { normalized: legacyNormalizedCommand };
+        }
+      }
+     // --- END: alias-based command normalization for legacy path ---
 
     // --- Topic detection (PRESERVED) ---
     const topicForced = classifyQuestionTopic(text);
@@ -2112,7 +2159,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
 
     // --- Derive router fields (PRESERVED) ---
     let isQuestion = legacy.kind === 'question';
-    let normalizedCommand = legacy.kind === 'command' && legacy?.command?.normalized ? legacy.command.normalized : null;
+    let normalizedCommand = legacyNormalizedCommand;
     const aiTxn = legacy.kind === 'transaction' ? legacy.transaction : null;
 
     // --- Final sticky-mode safety (PRESERVED) ---
@@ -2532,7 +2579,13 @@ async function classifyAndRoute(text, detectedLanguageHint) {
   // Final fallback under gate ON: heuristics (deterministic & fast)
   const user = String(text ?? '').trim();    
   const isGreeting = _isGreeting(user);
-   const normalized = isGreeting ? null : resolveSummaryIntent(user);
+  const normalized = isGreeting ? null : resolveSummaryIntent(user);    
+  // --- BEGIN: alias-based command normalization (heuristics path) ---
+    if (!normalized) {
+      const aliasCmd = normalizeCommandAlias(user, detectedLanguageHint);
+      if (aliasCmd) normalized = aliasCmd; // e.g., "reorder sujhav" -> "reorder suggestions"
+    }
+    // --- END: alias-based command normalization ---
    const isCommand = normalized && /^(short summary|full summary|low stock|reorder suggestions|expiring \d+|sales (today|week|month)|inventory value|stock value|value summary)$/i.test(normalized);
    return {
      language: ensureLangExact(detectedLanguageHint ?? guessLangFromInput(user) ?? 'en'),
@@ -2682,7 +2735,9 @@ const TERMINAL_COMMANDS = new Set([
   'value summary',
   'inventory value',
   'stock value',
-  'reset'
+  'reset',
+  'reorder',
+  'reorder suggestion'
 ]);
 
 // Robust alias-depth counter (handles ':alias' and '::ai-norm' forms).
@@ -3587,6 +3642,73 @@ const CMD_LABELS = {
     'stock value': 'સ્ટોક મૂલ્ય',
   },
 };
+
+// ====== COMMAND ALIASES (multilingual) -> canonical command ======
+const COMMAND_ALIAS_MAP = {
+  en: {
+    'reorder suggestions': [
+      'reorder', 're-order', 'reorder suggestion', 'restock suggestions',
+      'repeat order', 'replenishment', 'suggest reorder'
+    ],
+    'prices': ['price list', 'prices', 'show prices'],
+    'stock value': ['stock value', 'inventory value', 'value summary']
+  },
+  hi: { // Devanagari
+    'reorder suggestions': [
+      'रीऑर्डर', 'री ऑर्डर', 'रीऑर्डर सुझाव', 'री ऑर्डर सुझाव',
+      'पुनः ऑर्डर', 'पुन: ऑर्डर', 'पुनः ऑर्डर सुझाव', 'पुन: ऑर्डर सुझाव',
+      'फिर से ऑर्डर', 'फिरसे ऑर्डर'
+    ],
+    'prices': ['कीमत', 'भाव', 'रेट', 'मूल्य', 'कीमत सूची'],
+    'stock value': ['स्टॉक मूल्य', 'इन्वेंटरी मूल्य', 'कुल मूल्य']
+  },
+  'hi-latn': { // Hinglish / Roman Hindi
+    'reorder suggestions': [
+      'reorder', 're order', 'reorder sujhav', 'riorder sujhav',
+      'punah order', 'punah order sujhav', 'phir se order', 'order repeat',
+      'reorder salah', 'reorder suggestion'
+    ],
+    'prices': ['moolya', 'kimat', 'daam', 'rate', 'prices'],
+    'stock value': ['stock moolya', 'inventory value', 'value summary']
+  },
+  // (Optionally add bn/ta/te/kn/mr/gu variants later)
+};
+
+/**
+ * normalizeCommandAlias(text, langHint) -> canonical command or null
+ * Returns "reorder suggestions" / "prices" / "stock value" when aliases match,
+ * but ONLY if the message does NOT look like a transaction.
+ */
+function normalizeCommandAlias(text, langHint = 'en') {
+  const t = String(text || '').toLowerCase().trim();
+  if (!t) return null;
+
+  // DO NOT convert to command if it looks like a transaction (qty+unit or price)
+  if (looksLikeTxnLite?.(t)) return null; // uses your existing heuristic
+  // Also skip if it clearly has quantity/unit inline
+  if (/\b\d+(\.\d+)?\b/.test(t) && /\b(ltr|l|liter|litre|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes)\b/i.test(t)) {
+    return null;
+  }
+
+  const lang = String(langHint || 'en').toLowerCase();
+  const base = lang.replace(/-latn$/, '');
+  const mapsToTry = [
+    COMMAND_ALIAS_MAP[lang],
+    COMMAND_ALIAS_MAP[base],
+    COMMAND_ALIAS_MAP['en'],
+  ].filter(Boolean);
+
+  for (const map of mapsToTry) {
+    for (const [canonical, variants] of Object.entries(map)) {
+      if (variants.some(v => t.includes(String(v).toLowerCase()))) {
+        return canonical; // e.g., "reorder suggestions"
+      }
+    }
+  }
+  // Minimal heuristic: plain "reorder" => "reorder suggestions"
+  if (/^re[- ]?order\b/.test(t)) return 'reorder suggestions';
+  return null;
+}
 
 // [SALES-QA-IDENTITY-003] Localized identity line for all languages/variants
 // Saamagrii.AI stays Latin; "friend" varies by language/script; "Name" label localized.
