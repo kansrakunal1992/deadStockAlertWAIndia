@@ -696,6 +696,22 @@ function displayUnit(unit, lang = 'en') {
   return map ? (map[u] ?? unit) : unit;
 }
 
+// [PATCH:UNIT-NORMALIZER-20251226] Provide a safe unit normalizer used across
+// updateMultipleInventory and serializers (global shim to avoid import churn).
+if (typeof globalThis.normalizeUnit !== 'function') {
+  globalThis.normalizeUnit = function normalizeUnit(unitRaw) {
+    try {
+      const tok = String(unitRaw ?? '').trim().toLowerCase();
+      if (!tok) return '';
+      // Reuse the canonical unit map and display decisions you've already defined.
+      const normalized = canonicalizeUnitToken(tok); // e.g., "kg"/"kgs"/"kilogram" → "kg"
+      return normalized ?? tok;
+    } catch (_) {
+      return String(unitRaw ?? '').trim();
+    }
+  };
+}
+
 // =======================================================================
 // [STRICT-PURCHASE-PRICE-REQUIRED] Helpers
 // Enforce: do NOT accept "purchased" lines without price when backend
