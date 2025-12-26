@@ -4338,33 +4338,11 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
       ];
     }
   })();
-  // Compose examples block lines
+  // Compose examples block lines    
   const examplesLines = [
-    modeHeader,
-    baseLang === 'en' ? 'Type or speak (voice note) — "mode";'
-      : (baseLang === 'hi' ? 'टाइप करें या वॉइस नोट बोलें — "mode";'
-      : (baseLang === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন — "mode";'
-      : (baseLang === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும் — "mode";'
-      : (baseLang === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి — "mode";'
-      : (baseLang === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ — "mode";'
-      : (baseLang === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला — "mode";'
-      : (baseLang === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો — "mode";'
-      : 'Type or speak (voice note) — "mode";'))))))),
-    `${baseLang === 'en' ? 'Click on' : (baseLang === 'hi' ? 'क्लिक करें' :
-       (baseLang === 'bn' ? 'ক্লিক করুন' : (baseLang === 'ta' ? 'கிளிக் செய்யவும்' :
-       (baseLang === 'te' ? 'క్లిక్ చేయండి' : (baseLang === 'kn' ? 'ಕ್ಲಿಕ್ ಮಾಡಿ' :
-       (baseLang === 'mr' ? 'क्लिक करा' : (baseLang === 'gu' ? 'ક્લિક કરો' : 'Click on')))))))} ${BTN} & ${
-       baseLang === 'en' ? 'type or speak (voice note):' :
-       baseLang === 'hi' ? 'टाइप करें या वॉइस नोट बोलें:' :
-       baseLang === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন:' :
-       baseLang === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:' :
-       baseLang === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:' :
-       baseLang === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:' :
-       baseLang === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला:' :
-       baseLang === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' : 'type or speak (voice note):'
-    }`,
-    ...bullets
-  ].join('\n');
+      modeHeader,
+      ...bullets
+    ].join('\n');
   examples = examplesLines;
 
   const composed = [header, body, '', guidance].filter(Boolean).join('\n');
@@ -4784,21 +4762,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                   default:   return isPurchase ? 'Example (Purchase):'    : isSale ? 'Example (Sale):'       : 'Example (Return):';
                 }
               })();
-    
-              // Localized button names (quoted)
-              const BTN = (function () {
-                switch (langUi) {
-                  case 'hi': return '“खरीद दर्ज करें/बिक्री दर्ज करें/वापसी दर्ज करें”';
-                  case 'bn': return '“ক্রয় রেকর্ড করুন/বিক্রি রেকর্ড করুন/রিটার্ন রেকর্ড করুন”';
-                  case 'ta': return '“கொள்முதல் பதிவு/விற்பனை பதிவு/ரிட்டர்ன் பதிவு”';
-                  case 'te': return '“కొనుగోలు రికార్డ్ చేయండి/అమ్మకం రికార్డ్ చేయండి/రిటర్న్ రికార్డ్ చేయండి”';
-                  case 'kn': return '“ಖರೀದಿ ದಾಖಲಿಸಿ/ಮಾರಾಟ ದಾಖಲಿಸಿ/ರಿಟರ್ನ್ ದಾಖಲಿಸಿ”';
-                  case 'mr': return '“खरेदी नोंदवा/विक्री नोंदवा/परत नोंदवा”';
-                  case 'gu': return '“ખરીદી રેકોર્ડ કરો/વેચાણ રેકોર્ડ કરો/રીટર્ન રેકોર્ડ કરો”';
-                  default:   return '"Record Purchase/Record Sale/Record Return"';
-                }
-              })();
-    
+      
               // Localized item examples (bullets)
               const bullets = (function () {
                 switch (langUi) {
@@ -4844,32 +4808,8 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                   ];
                 }
               })();
-    
-              const lineTS = (langUi === 'en' ? 'Type or speak (voice note) — "mode";'
-                : langUi === 'hi' ? 'टाइप करें या वॉइस नोट बोलें — "mode";'
-                : langUi === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন — "mode";'
-                : langUi === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும் — "mode";'
-                : langUi === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి — "mode";'
-                : langUi === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ — "mode";'
-                : langUi === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला — "mode";'
-                : langUi === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો — "mode";'
-                : 'Type or speak (voice note) — "mode";');
-    
-              const lineClick = `${langUi === 'en' ? 'Click on' : (langUi === 'hi' ? 'क्लिक करें' :
-                 (langUi === 'bn' ? 'ক্লিক করুন' : (langUi === 'ta' ? 'கிளிக் செய்யவும்' :
-                 (langUi === 'te' ? 'క్లిక్ చేయండి' : (langUi === 'kn' ? 'ಕ್ಲಿಕ್ ಮಾಡಿ' :
-                 (langUi === 'mr' ? 'क्लिक करा' : (langUi === 'gu' ? 'ક્લિક કરો' : 'Click on')))))))} ${BTN} & ${
-                 langUi === 'en' ? 'type or speak (voice note):' :
-                 langUi === 'hi' ? 'टाइप करें या वॉइस नोट बोलें:' :
-                 langUi === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন:' :
-                 langUi === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:' :
-                 langUi === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:' :
-                 langUi === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:' :
-                 langUi === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला:' :
-                 langUi === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' : 'type or speak (voice note):'
-              }`;
-    
-              const bodyExamples = [header, lineTS, lineClick, ...bullets].join('\n');
+       
+              const bodyExamples = [header, ...bullets].join('\n');
               const reqId = String(req?.headers?.['x-request-id'] ?? Date.now());
               const msg0 = await t(bodyExamples, langUi, `${reqId}::qr-examples`);
               let msgFinal = await tagWithLocalizedMode(from, msg0, langUi);
@@ -5042,49 +4982,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
       };
       const headerMap = H[baseLang] || H.en;
       const header = act === 'purchased' ? headerMap.p : act === 'sold' ? headerMap.s : act === 'returned' ? headerMap.r : headerMap.n;
-    
-      // “Type or speak (voice note) — "mode";”
-      const lineTS =
-        baseLang === 'hi' ? 'टाइप करें या वॉइस नोट बोलें — "mode";' :
-        baseLang === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন — "mode";' :
-        baseLang === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும் — "mode";' :
-        baseLang === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి — "mode";' :
-        baseLang === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ — "mode";' :
-        baseLang === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला — "mode";' :
-        baseLang === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો — "mode";' :
-        'Type or speak (voice note) — "mode";';
-    
-      // Localized button names (quoted)
-      const BTN =
-        baseLang === 'hi' ? '“खरीद दर्ज करें/बिक्री दर्ज करें/वापसी दर्ज करें”' :
-        baseLang === 'bn' ? '“ক্রয় রেকর্ড করুন/বিক্রি রেকর্ড করুন/রিটার্ন রেকর্ড করুন”' :
-        baseLang === 'ta' ? '“கொள்முதல் பதிவு/விற்பனை பதிவு/ரிட்டர்ன் பதிவு”' :
-        baseLang === 'te' ? '“కొనుగోలు రికార్డ్ చేయండి/అమ్మకం రికార్డ్ చేయండి/రిటర్న్ రికార్డ్ చేయండి”' :
-        baseLang === 'kn' ? '“ಖರೀದಿ ದಾಖಲಿಸಿ/ಮಾರಾಟ ದಾಖಲಿಸಿ/ರಿಟರ್ನ್ ದಾಖಲಿಸಿ”' :
-        baseLang === 'mr' ? '“खरेदी नोंदवा/विक्री नोंदवा/परत नोंदवा”' :
-        baseLang === 'gu' ? '“ખરીદી રેકોર્ડ કરો/વેચાણ રેકોર્ડ કરો/રીટર્ન રેકોર્ડ કરો”' :
-        '"Record Purchase/Record Sale/Record Return"';
-    
-      // “Click on … & type or speak …”
-      const clickVerb =
-        baseLang === 'hi' ? 'क्लिक करें' :
-        baseLang === 'bn' ? 'ক্লিক করুন' :
-        baseLang === 'ta' ? 'கிளிக் செய்யவும்' :
-        baseLang === 'te' ? 'క్లిక్ చేయండి' :
-        baseLang === 'kn' ? 'ಕ್ಲಿಕ್ ಮಾಡಿ' :
-        baseLang === 'mr' ? 'क्लिक करा' :
-        baseLang === 'gu' ? 'ક્લિક કરો' :
-        'Click on';
-      const speakVerb =
-        baseLang === 'hi' ? 'टाइप करें या वॉइस नोट बोलें:' :
-        baseLang === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন:' :
-        baseLang === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:' :
-        baseLang === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:' :
-        baseLang === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:' :
-        baseLang === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला:' :
-        baseLang === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' :
-        'type or speak (voice note):';
-    
+       
       // Localized item examples (keep brands/units consistent; use ₹ and native expiry words)
       const bullets =
         baseLang === 'hi' ? [
@@ -5126,15 +5024,10 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
           '• milk 10 litres at ₹10/litre',
           '• paracetamol 3 packets at ₹20/packet expiry +7d',
           '• mobile handset Xiaomi 1 packet at ₹60000/packet'
-        ];
-    
-      // Compose final block
-      return [
-        header,
-        lineTS,
-        `${clickVerb} ${BTN} & ${speakVerb}`,
-        ...bullets
-      ].join('\n');
+        ];   
+      
+    // Compose final block (header + bullets only)
+    return [header, ...bullets].join('\n');
     }
           
     // Activation check for example gating + prompts
