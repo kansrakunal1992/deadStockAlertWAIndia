@@ -4244,18 +4244,19 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
       case 'gu': return { p:'ખરીદી', s:'વેચાણ', r:'રિટર્ન' };
       default:   return { p:'Purchase', s:'Sale', r:'Return' };
     }
-  })();
+  })();  
+// PLURAL header: “Examples (…)”
   const modeHeader = (function () {
     switch (currentMode) {
-      case 'purchased': return baseLang === 'en' ? 'Example (Purchase):' : (baseLang === 'hi' ? 'उदाहरण (खरीद):' :
+      case 'purchased': return baseLang === 'en' ? 'Examples (Purchase):' : (baseLang === 'hi' ? 'उदाहरण (खरीद):' :
         baseLang === 'bn' ? 'উদাহরণ (ক্রয়):' :
         baseLang === 'ta' ? 'உதாரணம் (கொள்முதல்):' :
         baseLang === 'te' ? 'ఉదాహరణ (కొనుగోలు):' :
         baseLang === 'kn' ? 'ಉದಾಹರಣೆ (ಖರೀದಿ):' :
         baseLang === 'mr' ? 'उदाहरण (खरेदी):' :
-        baseLang === 'gu' ? 'ઉદાહરણ (ખરીદી):' :
-        'Example (Purchase):');
-      case 'sold': return baseLang === 'en' ? 'Example (Sale):' : (baseLang === 'hi' ? 'उदाहरण (बिक्री):' :
+        baseLang === 'gu' ? 'ઉદાહરણ (ખરીદી):' :           
+    'Examples (Purchase):');
+      case 'sold': return baseLang === 'en' ? 'Examples (Sale):' : (baseLang === 'hi' ? 'उदाहरण (बिक्री):' :
         baseLang === 'bn' ? 'উদাহরণ (বিক্রি):' :
         baseLang === 'ta' ? 'உதாரணம் (விற்பனை):' :
         baseLang === 'te' ? 'ఉదాహరణ (అమ్మకం):' :
@@ -4280,20 +4281,21 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
         baseLang === 'gu' ? 'ઉદાહરણ:' : 'Example:');
     }
   })();
-  // Localized button names
-  const BTN = (function () {
+// “Type or speak (voice note):”
+  const speakLine = (function () {
     switch (baseLang) {
-      case 'hi': return '“खरीद दर्ज करें/बिक्री दर्ज करें/वापसी दर्ज करें”';
-      case 'bn': return '“ক্রয় রেকর্ড করুন/বিক্রি রেকর্ড করুন/রিটার্ন রেকর্ড করুন”';
-      case 'ta': return '“கொள்முதல் பதிவு/விற்பனை பதிவு/ரிட்டர்ன் பதிவு”';
-      case 'te': return '“కొనుగోలు రికార్డ్ చేయండి/అమ్మకం రికార్డ్ చేయండి/రిటర్న్ రికార్డ్ చేయండి”';
-      case 'kn': return '“ಖರೀದಿ ದಾಖಲಿಸಿ/ಮಾರಾಟ ದಾಖಲಿಸಿ/ರಿಟರ್ನ್ ದಾಖಲಿಸಿ”';
-      case 'mr': return '“खरेदी नोंदवा/विक्री नोंदवा/परत नोंदवा”';
-      case 'gu': return '“ખરીદી રેકોર્ડ કરો/વેચાણ રેકોર્ડ કરો/રીટર્ન રેકોર્ડ કરો”';
-      default:   return '"Record Purchase/Record Sale/Record Return"';
+      case 'hi': return 'टाइप करें या वॉइस नोट बोलें:';
+      case 'bn': return 'টাইপ করুন বা ভয়েস নোট বলুন:';
+      case 'ta': return 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:';
+      case 'te': return 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:';
+      case 'kn': return 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:';
+      case 'mr': return 'टाइप करा किंवा व्हॉईस नोट बोला:';
+      case 'gu': return 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:';
+      default:   return 'Type or speak (voice note):';
     }
   })();
-  // Item example bullets (localized)
+  
+  // Dash bullets (localized items)
   const bullets = (function () {
     switch (baseLang) {
       case 'hi': return [
@@ -4339,10 +4341,7 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
     }
   })();
   // Compose examples block lines    
-  const examplesLines = [
-      modeHeader,
-      ...bullets
-    ].join('\n');
+  const examplesLines = [modeHeader, speakLine, ...bullets].join('\n');
   examples = examplesLines;
 
   const composed = [header, body, '', guidance].filter(Boolean).join('\n');
@@ -4762,7 +4761,18 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                   default:   return isPurchase ? 'Example (Purchase):'    : isSale ? 'Example (Sale):'       : 'Example (Return):';
                 }
               })();
-      
+                          
+            // “Type or speak (voice note):” line (localized) — shown before the bullets
+                  const speakLine =
+                    langUi === 'hi' ? 'टाइप करें या वॉइस नोट बोलें:' :
+                    langUi === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন:' :
+                    langUi === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:' :
+                    langUi === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:' :
+                    langUi === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:' :
+                    langUi === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला:' :
+                    langUi === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' :
+                    'Type or speak (voice note):';
+
               // Localized item examples (bullets)
               const bullets = (function () {
                 switch (langUi) {
@@ -4809,7 +4819,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                 }
               })();
        
-              const bodyExamples = [header, ...bullets].join('\n');
+              const bodyExamples = [header, speakLine, ...bullets].join('\n');
               const reqId = String(req?.headers?.['x-request-id'] ?? Date.now());
               const msg0 = await t(bodyExamples, langUi, `${reqId}::qr-examples`);
               let msgFinal = await tagWithLocalizedMode(from, msg0, langUi);
@@ -4980,8 +4990,19 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
         mr: { p:'उदाहरण (खरेदी):',      s:'उदाहरण (विक्री):',    r:'उदाहरण (परत):',      n:'उदाहरणे:' },
         gu: { p:'ઉદાહરણ (ખરીદી):',      s:'ઉદાહરણ (વેચાણ):',     r:'ઉદાહરણ (રિટર્ન):',    n:'ઉદાહરણ:' }
       };
+      
       const headerMap = H[baseLang] || H.en;
-      const header = act === 'purchased' ? headerMap.p : act === 'sold' ? headerMap.s : act === 'returned' ? headerMap.r : headerMap.n;
+        const header = act === 'purchased' ? headerMap.p : act === 'sold' ? headerMap.s : act === 'returned' ? headerMap.r : headerMap.n;
+        // “Type or speak (voice note):”
+        const speakLine =
+          baseLang === 'hi' ? 'टाइप करें या वॉइस नोट बोलें:' :
+          baseLang === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন:' :
+          baseLang === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:' :
+          baseLang === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:' :
+          baseLang === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:' :
+          baseLang === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला:' :
+          baseLang === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' :
+          'Type or speak (voice note):';
        
       // Localized item examples (keep brands/units consistent; use ₹ and native expiry words)
       const bullets =
@@ -5026,8 +5047,8 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
           '• mobile handset Xiaomi 1 packet at ₹60000/packet'
         ];   
       
-    // Compose final block (header + bullets only)
-    return [header, ...bullets].join('\n');
+    // Compose final block (header + speakLine + bullets)
+    return [header, speakLine, ...bullets].join('\n');
     }
           
     // Activation check for example gating + prompts
