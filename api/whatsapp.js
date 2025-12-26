@@ -5025,166 +5025,117 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
         })();
         return plan === 'paid' || (plan === 'trial' && !isExpired);
       }
-      function getStickyExamplesLocalized(action, langCode) {
-        const L = String(langCode || 'en').toLowerCase();
-        const isHinglish = L === 'hi-latn' || /hi-?latn/.test(L);
-        const isHindi    = !isHinglish && (L === 'hi');
-        const isMarathi  = L === 'mr';
-        const isEnglish  = L === 'en' || (!isHindi && !isHinglish && !isMarathi);
-        const key = isEnglish ? 'en' : (isHindi ? 'hi' : (isHinglish ? 'hilatn' : (isMarathi ? 'mr' : 'en')));       
-        const map = {
-          purchased: {
-            // English
-            en:     'Examples (purchase):\n' +
-                    '• milk 10 ltr @60/ltr exp +7d\n' +
-                    '• sugar 5 kg @80/kg exp +6m\n' +
-                    '• milk 6 ltr @58/ltr exp +10d, sugar 3 kg @78/kg',
-        
-            // Hindi (Devanagari)
-            hi:     'उदाहरण (खरीद):\n' +
-                    '• दूध 10 लीटर @60/लीटर एक्सपायरी +7 दिन\n' +
-                    '• चीनी 5 किलो @80/किलो एक्सपायरी +6 माह\n' +
-                    '• दूध 6 लीटर @58/लीटर एक्सपायरी +10 दिन, चीनी 3 किलो @78/किलो',
-        
-            // Hinglish / Roman Hindi
-            hilatn: 'Udaharan (Kharid):\n' +
-                    '• doodh 10 liter @60/liter expiry +7 din\n' +
-                    '• cheeni 5 kilo @80/kilo expiry +6 mahine\n' +
-                    '• doodh 6 liter @58/liter expiry +10 din, cheeni 3 kilo @78/kilo',
-        
-            // Marathi
-            mr:     'उदाहरण (खरेदी):\n' +
-                    '• दूध 10 लि. @60/लि. कालावधी +7 दिवस\n' +
-                    '• साखर 5 कि. @80/कि. कालावधी +6 महिने\n' +
-                    '• दूध 6 लि. @58/लि. कालावधी +10 दिवस, साखर 3 कि. @78/कि.',
-        
-            // Bengali
-            bn:     'উদাহরণ (ক্রয়):\n' +
-                    '• দুধ 10 লিটার @60/লিটার exp +7 দিন\n' +
-                    '• চিনি 5 কিলো @80/কিলো exp +6 মাস\n' +
-                    '• দুধ 6 লিটার @58/লিটার exp +10 দিন, চিনি 3 কিলো @78/কিলো',
-        
-            // Tamil
-            ta:     'உதாரணம் (கொள்முதல்):\n' +
-                    '• பால் 10 லிட்டர் @60/லிட்டர் exp +7 நாள்\n' +
-                    '• சர்க்கரை 5 கிலோ @80/கிலோ exp +6 மாதம்\n' +
-                    '• பால் 6 லிட்டர் @58/லிட்டர் exp +10 நாள், சர்க்கரை 3 கிலோ @78/கிலோ',
-        
-            // Telugu
-            te:     'ఉదాహరణ (కొనుగోలు):\n' +
-                    '• పాలు 10 లీటర్ @60/లీటర్ exp +7 రోజులు\n' +
-                    '• చక్కెర 5 కిలో @80/కిలో exp +6 నెలలు\n' +
-                    '• పాలు 6 లీటర్ @58/లీటర్ exp +10 రోజులు, చక్కెర 3 కిలో @78/కిలో',
-        
-            // Kannada
-            kn:     'ಉದಾಹರಣೆ (ಖರೀದಿ):\n' +
-                    '• ಹಾಲು 10 ಲೀಟರ್ @60/ಲೀಟರ್ exp +7 ದಿನ\n' +
-                    '• ಸಕ್ಕರೆ 5 ಕಿಲೋ @80/ಕಿಲೋ exp +6 ತಿಂಗಳು\n' +
-                    '• ಹಾಲು 6 ಲೀಟರ್ @58/ಲೀಟರ್ exp +10 ದಿನ, ಸಕ್ಕರೆ 3 ಕಿಲೋ @78/ಕಿಲೋ',
-        
-            // Gujarati
-            gu:     'ઉદાહરણ (ખરીદી):\n' +
-                    '• દૂધ 10 લિટર @60/લિટર exp +7 દિવસ\n' +
-                    '• ખાંડ 5 કિલો @80/કિલો exp +6 મહિના\n' +
-                    '• દૂધ 6 લિટર @58/લિટર exp +10 દિવસ, ખાંડ 3 કિલો @78/કિલો'
-          },
-        
-          sold: {
-            en:     'Examples (sale):\n' +
-                    '• sugar 2 kg\n' +
-                    '• milk 3 ltr\n' +
-                    '• milk 2 ltr, bread 4 packets',
-        
-            hi:     'उदाहरण (बिक्री):\n' +
-                    '• चीनी 2 किलो\n' +
-                    '• दूध 3 लीटर\n' +
-                    '• दूध 2 लीटर, ब्रेड 4 पैकेट',
-        
-            hilatn: 'Udaharan (Bikri):\n' +
-                    '• cheeni 2 kilo\n' +
-                    '• doodh 3 liter\n' +
-                    '• doodh 2 liter, bread 4 packet',
-        
-            mr:     'उदाहरण (विक्री):\n' +
-                    '• साखर 2 कि.\n' +
-                    '• दूध 3 लि.\n' +
-                    '• दूध 2 लि., ब्रेड 4 पाकिटे',
-        
-            bn:     'উদাহরণ (বিক্রি):\n' +
-                    '• চিনি 2 কিলো\n' +
-                    '• দুধ 3 লিটার\n' +
-                    '• দুধ 2 লিটার, ব্রেড 4 প্যাকেট',
-        
-            ta:     'உதாரணம் (விற்பனை):\n' +
-                    '• சர்க்கரை 2 கிலோ\n' +
-                    '• பால் 3 லிட்டர்\n' +
-                    '• பால் 2 லிட்டர், பிரெட் 4 பேக்கெட்',
-        
-            te:     'ఉదాహరణ (అమ్మకం):\n' +
-                    '• చక్కెర 2 కిలో\n' +
-                    '• పాలు 3 లీటర్\n' +
-                    '• పాలు 2 లీటర్, బ్రెడ్ 4 ప్యాకెట్',
-        
-            kn:     'ಉದಾಹರಣೆ (ಮಾರಾಟ):\n' +
-                    '• ಸಕ್ಕರೆ 2 ಕಿಲೋ\n' +
-                    '• ಹಾಲು 3 ಲೀಟರ್\n' +
-                    '• ಹಾಲು 2 ಲೀಟರ್, ಬ್ರೆಡ್ 4 ಪ್ಯಾಕೆಟ್',
-        
-            gu:     'ઉદાહરણ (વેચાણ):\n' +
-                    '• ખાંડ 2 કિલો\n' +
-                    '• દૂધ 3 લિટર\n' +
-                    '• દૂધ 2 લિટર, બ્રેડ 4 પેકેટ'
-          },
-        
-          returned: {
-            en:     'Examples (return):\n' +
-                    '• Parle-G 3 packets\n' +
-                    '• milk 1 ltr\n' +
-                    '• milk 1 ltr, biscuits 2 packets',
-        
-            hi:     'उदाहरण (रिटर्न):\n' +
-                    '• पार्ले-जी 3 पैकेट\n' +
-                    '• दूध 1 लीटर\n' +
-                    '• दूध 1 लीटर, बिस्किट 2 पैकेट',
-        
-            hilatn: 'Udaharan (Return):\n' +
-                    '• Parle-G 3 packet\n' +
-                    '• doodh 1 liter\n' +
-                    '• doodh 1 liter, biscuits 2 packet',
-        
-            mr:     'उदाहरण (रिटर्न):\n' +
-                    '• पार्ले-जी 3 पाकिटे\n' +
-                    '• दूध 1 लि.\n' +
-                    '• दूध 1 लि., बिस्किटे 2 पाकिटे',
-        
-            bn:     'উদাহরণ (রিটার্ন):\n' +
-                    '• পার्ले-জি 3 প্যাকেট\n' +
-                    '• দুধ 1 লিটার\n' +
-                    '• দুধ 1 লিটার, বিস্কুট 2 প্যাকেট',
-        
-            ta:     'உதாரணம் (ரிட்டர்ன்):\n' +
-                    '• பார्ले-ஜி 3 பேக்கெட்\n' +
-                    '• பால் 1 லிட்டர்\n' +
-                    '• பால் 1 லிட்டர், பிஸ்கட் 2 பேக்கெட்',
-        
-            te:     'ఉదాహరణ (రిటర్న్):\n' +
-                    '• పార్లే-జి 3 ప్యాకెట్\n' +
-                    '• పాలు 1 లీటర్\n' +
-                    '• పాలు 1 లీటర్, బిస్కట్లు 2 ప్యాకెట్',
-        
-            kn:     'ಉದಾಹರಣೆ (ರಿಟರ್ನ್):\n' +
-                    '• ಪಾರ್ಲೆ-ಜಿ 3 ಪ್ಯಾಕೆಟ್\n' +
-                    '• ಹಾಲು 1 ಲೀಟರ್\n' +
-                    '• ಹಾಲು 1 ಲೀಟರ್, ಬಿಸ್ಕಟ್ 2 ಪ್ಯಾಕೆಟ್',
-        
-            gu:     'ઉદાહરણ (રિટર્ન):\n' +
-                    '• પાર્લે-જી 3 પેકેટ\n' +
-                    '• દૂધ 1 લિટર\n' +
-                    '• દૂધ 1 લિટર, બિસ્કિટ 2 પેકેટ'
-          }
-        };
-        return map[action]?.[key] ?? map['purchased'].en;
-      }
+      
+    function getStickyExamplesLocalized(action, langCode) {
+      const baseLang = String(langCode || 'en').toLowerCase().replace(/-latn$/, ''); // map hi-latn -> hi
+      const act = String(action || '').toLowerCase(); // 'purchased' | 'sold' | 'returned'
+      // Header per action (retain Purchase/Sale/Return)
+      const H = {
+        en: { p:'Example (Purchase):', s:'Example (Sale):',    r:'Example (Return):',  n:'Example:' },
+        hi: { p:'उदाहरण (खरीद):',      s:'उदाहरण (बिक्री):',   r:'उदाहरण (वापसी):',   n:'उदाहरण:' },
+        bn: { p:'উদাহরণ (ক্রয়):',       s:'উদাহরণ (বিক্রি):',    r:'উদাহরণ (রিটার্ন):',  n:'উদাহরণ:' },
+        ta: { p:'உதாரணம் (கொள்முதல்):', s:'உதாரணம் (விற்பனை):', r:'உதாரணம் (ரிட்டர்ன்):', n:'உதாரணம்:' },
+        te: { p:'ఉదాహరణ (కొనుగోలు):',  s:'ఉదాహరణ (అమ్మకం):',   r:'ఉదాహరణ (రిటర్న్):',   n:'ఉదాహరణ:' },
+        kn: { p:'ಉದಾಹರಣೆ (ಖರೀದಿ):',     s:'ಉದಾಹರಣೆ (ಮಾರಾಟ):',   r:'ಉದಾಹರಣೆ (ರಿಟರ್ನ್):',  n:'ಉದಾಹರಣೆ:' },
+        mr: { p:'उदाहरण (खरेदी):',      s:'उदाहरण (विक्री):',    r:'उदाहरण (परत):',      n:'उदाहरणे:' },
+        gu: { p:'ઉદાહરણ (ખરીદી):',      s:'ઉદાહરણ (વેચાણ):',     r:'ઉદાહરણ (રિટર્ન):',    n:'ઉદાહરણ:' }
+      };
+      const headerMap = H[baseLang] || H.en;
+      const header = act === 'purchased' ? headerMap.p : act === 'sold' ? headerMap.s : act === 'returned' ? headerMap.r : headerMap.n;
+    
+      // “Type or speak (voice note) — "mode";”
+      const lineTS =
+        baseLang === 'hi' ? 'टाइप करें या वॉइस नोट बोलें — "mode";' :
+        baseLang === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন — "mode";' :
+        baseLang === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும் — "mode";' :
+        baseLang === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి — "mode";' :
+        baseLang === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ — "mode";' :
+        baseLang === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला — "mode";' :
+        baseLang === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો — "mode";' :
+        'Type or speak (voice note) — "mode";';
+    
+      // Localized button names (quoted)
+      const BTN =
+        baseLang === 'hi' ? '“खरीद दर्ज करें/बिक्री दर्ज करें/वापसी दर्ज करें”' :
+        baseLang === 'bn' ? '“ক্রয় রেকর্ড করুন/বিক্রি রেকর্ড করুন/রিটার্ন রেকর্ড করুন”' :
+        baseLang === 'ta' ? '“கொள்முதல் பதிவு/விற்பனை பதிவு/ரிட்டர்ன் பதிவு”' :
+        baseLang === 'te' ? '“కొనుగోలు రికార్డ్ చేయండి/అమ్మకం రికార్డ్ చేయండి/రిటర్న్ రికార్డ్ చేయండి”' :
+        baseLang === 'kn' ? '“ಖರೀದಿ ದಾಖಲಿಸಿ/ಮಾರಾಟ ದಾಖಲಿಸಿ/ರಿಟರ್ನ್ ದಾಖಲಿಸಿ”' :
+        baseLang === 'mr' ? '“खरेदी नोंदवा/विक्री नोंदवा/परत नोंदवा”' :
+        baseLang === 'gu' ? '“ખરીદી રેકોર્ડ કરો/વેચાણ રેકોર્ડ કરો/રીટર્ન રેકોર્ડ કરો”' :
+        '"Record Purchase/Record Sale/Record Return"';
+    
+      // “Click on … & type or speak …”
+      const clickVerb =
+        baseLang === 'hi' ? 'क्लिक करें' :
+        baseLang === 'bn' ? 'ক্লিক করুন' :
+        baseLang === 'ta' ? 'கிளிக் செய்யவும்' :
+        baseLang === 'te' ? 'క్లిక్ చేయండి' :
+        baseLang === 'kn' ? 'ಕ್ಲಿಕ್ ಮಾಡಿ' :
+        baseLang === 'mr' ? 'क्लिक करा' :
+        baseLang === 'gu' ? 'ક્લિક કરો' :
+        'Click on';
+      const speakVerb =
+        baseLang === 'hi' ? 'टाइप करें या वॉइस नोट बोलें:' :
+        baseLang === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন:' :
+        baseLang === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:' :
+        baseLang === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:' :
+        baseLang === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:' :
+        baseLang === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला:' :
+        baseLang === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' :
+        'type or speak (voice note):';
+    
+      // Localized item examples (keep brands/units consistent; use ₹ and native expiry words)
+      const bullets =
+        baseLang === 'hi' ? [
+          '• दूध 10 लीटर @ ₹10/लीटर',
+          '• पैरासिटामोल 3 पैकेट @ ₹20/पैकेट एक्सपायरी +7 दिन',
+          '• मोबाइल हैंडसेट Xiaomi 1 पैकेट @ ₹60000/पैकेट'
+        ] :
+        baseLang === 'bn' ? [
+          '• দুধ 10 লিটার @ ₹10/লিটার',
+          '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
+          '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
+        ] :
+        baseLang === 'ta' ? [
+          '• பால் 10 லிட்டர் @ ₹10/லிட்டர்',
+          '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
+          '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
+        ] :
+        baseLang === 'te' ? [
+          '• పాలు 10 లీటర్ @ ₹10/లీటర్',
+          '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
+          '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
+        ] :
+        baseLang === 'kn' ? [
+          '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
+          '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
+          '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
+        ] :
+        baseLang === 'mr' ? [
+          '• दूध 10 लिटर @ ₹10/लिटर',
+          '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
+          '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
+        ] :
+        baseLang === 'gu' ? [
+          '• દૂધ 10 લિટર @ ₹10/લિટર',
+          '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
+          '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
+        ] :
+        [
+          '• milk 10 litres at ₹10/litre',
+          '• paracetamol 3 packets at ₹20/packet expiry +7d',
+          '• mobile handset Xiaomi 1 packet at ₹60000/packet'
+        ];
+    
+      // Compose final block
+      return [
+        header,
+        lineTS,
+        `${clickVerb} ${BTN} & ${speakVerb}`,
+        ...bullets
+      ].join('\n');
+    }
           
     // Activation check for example gating + prompts
       let activated = false;
