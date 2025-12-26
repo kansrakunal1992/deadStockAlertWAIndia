@@ -2520,22 +2520,26 @@ async function classifyAndRoute(text, detectedLanguageHint) {
     const out = await _classifyViaDeepseek(text);
     if (out && out.language && out.kind) {
       return {
-        language: ensureLangExact(out.language ?? detectedLanguageHint ?? 'en'),
+        language: ensureLangExact(out.language ?? detectedLanguageHint ?? 'en'),                
         kind: out.kind ?? 'other',
-        command: out.command ?? null,
+        // HARD GUARD: never pass through a command for greetings
+        command: _isGreeting(text) ? null : (out.command ?? null),
         transaction: out.transaction ?? null
       };
     }
   } catch { /* fall through to heuristics */ }
 
   // Final fallback under gate ON: heuristics (deterministic & fast)
-  const user = String(text ?? '').trim();
-  return {
-    language: ensureLangExact(detectedLanguageHint ?? guessLangFromInput(user) ?? 'en'),
-    kind: (await looksLikeQuestion(user) ? 'question' : 'other'),
-    command: { normalized: resolveSummaryIntent(user) || null },
-    transaction: null
-  };
+  const user = String(text ?? '').trim();    
+  const isGreeting = _isGreeting(user);
+   const normalized = isGreeting ? null : resolveSummaryIntent(user);
+   const isCommand = normalized && /^(short summary|full summary|low stock|reorder suggestions|expiring \d+|sales (today|week|month)|inventory value|stock value|value summary)$/i.test(normalized);
+   return {
+     language: ensureLangExact(detectedLanguageHint ?? guessLangFromInput(user) ?? 'en'),
+     kind: (await looksLikeQuestion(user) ? 'question' : 'other'),
+     command: isGreeting || !isCommand ? null : { normalized },
+     transaction: null
+   };
 }
 // ===PATCH END: UNIQ:DS-CLASSIFIER-ENV-20251219===
 
@@ -4217,10 +4221,36 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
     }
   }
 
-  // Guidance line keeps user anchored in sticky action
+  // Guidance line keeps user anchored in sticky action  
+  // [PATCH C] Mode examples glitch in sticky flow footer — override with latest sticky action immediately
+  // Use __lastStickyAction (shopId -> {action, ts}) when present; fallback to current stickyAction or modeBadge.
+  const shopKey = shopIdFrom(From); // e.g., "+9190..."
+  const override = __lastStickyAction?.get?.(shopKey) || (stickyAction ? { action: stickyAction.action } : null);
+  const currentMode = (override?.action || String(modeBadge || '')).toLowerCase();
+  // Localized, mode-specific examples shown inline so footer matches user's active flow.
+  const examples = (function () {
+    switch (currentMode) {
+      case 'purchased':
+        return lang.startsWith('hi')
+          ? 'उदाहरण: "Milk purchase 5 ltr", "Oreo 12 packets खरीदे"'
+          : 'Examples: "purchase milk 5 ltr", "bought Oreo 12 packets"';
+      case 'sold':
+        return lang.startsWith('hi')
+          ? 'उदाहरण: "Milk sold 2 ltr", "Oreo 3 packets बेचे"'
+          : 'Examples: "sold milk 2 ltr", "sold Oreo 3 packets"';
+      case 'returned':
+        return lang.startsWith('hi')
+          ? 'उदाहरण: "Milk returned 1 ltr", "Oreo 2 packets रिटर्न"'
+          : 'Examples: "returned milk 1 ltr", "return Oreo 2 packets"';
+      default:
+        return lang.startsWith('hi')
+          ? 'उदाहरण: "sold milk 2 ltr", "purchase Oreo 10 packets"'
+          : 'Examples: "sold milk 2 ltr", "purchase Oreo 10 packets"';
+    }
+  })();
   const guidance = lang.startsWith('hi')
-    ? `(${modeBadge} mode me ho. Transaction line bhejo continue karne ke liye, ya “mode” likho.)`
-    : `(You’re still in ${modeBadge}. Send the transaction line to continue, or type “mode”.)`;
+    ? `（आप ${currentMode} मोड में हैं）。 ${examples} — या "mode" टाइप करें।`
+    : `(You’re in ${currentMode} mode. ${examples} — or type "mode".)`;
 
   const composed = [header, body, '', guidance].filter(Boolean).join('\n');
   const msg = await t(composed, lang, requestId + '::peek');    
@@ -5178,6 +5208,10 @@ function _near(a, b, max=2) { return _editDistance(a, b) <= max; }
 
 // --- Fuzzy resolver: exact alias -> fuzzy regex/synonyms -> edit-distance over key tokens
 function resolveSummaryIntent(raw) {
+  
+const s = String(raw || '').trim();
+if (_isGreeting(s)) return null;
+
   // 1) Exact alias
   const exact = resolveSummaryAlias(raw);
   if (exact) return exact;
@@ -14691,7 +14725,19 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         const isDiag = !!classifyDiagnosticPeek(cleanTranscript);
             if ((stickyAction && !isDiag) || looksTxn) {
               console.log(`[${requestId}] [voice] skipping quick-query in sticky/txn turn (non-diagnostic)`);
-            } else {
+            } else {          
+      // [PATCH A] Greeting hard-stop in normalization block (exact anchor: "Quick‑query (voice) normalization failed, falling back.")
+      // Do NOT normalize pure greetings like "Namaste"/"नमस्ते" — respond and exit early.
+      if (_isGreeting(cleanTranscript)) {
+        handledRequests.add(requestId);
+        const greet = await t(
+          '👋 Namaste! Please send your inventory update (e.g., "sold milk 2 ltr" or "purchase Oreo 10 packets").',
+          detectedLanguage,
+          requestId + '::greet'
+        );
+        await sendMessageDedup(From, greet);
+        return;
+      }
           const normalized = await normalizeCommandText(cleanTranscript, detectedLanguage, requestId + ':normalize');
           const handled = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
           if (handled) return; // reply already sent
