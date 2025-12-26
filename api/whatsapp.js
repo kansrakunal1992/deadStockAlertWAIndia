@@ -2167,7 +2167,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
     }
 
     // --- Language exact variant lock + save preference (PRESERVED) ---        
-    const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
+    
       const orchestratedLang = ensureLangExact(legacy.language ?? hintedLang);
       // NEW: prefer user's hint when it's non‑English; else fall back to orchestrated
       const language = (hintedLang !== 'en') ? hintedLang : orchestratedLang;
