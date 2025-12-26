@@ -16222,12 +16222,16 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         const s = (typeof getUserStateFromDB === 'function')
           ? await getUserStateFromDB(shopIdCheck)
           : await getUserState(shopIdCheck);
-        if (s && s.mode === 'onboarding_trial_capture') {                  
+        if (s && (s.mode === 'onboarding_trial_capture' || s.mode === 'onboarding_paid_capture')) {   
         // NEW: keep the session language on code-like inputs (GSTIN, etc.)
           const pref = await getUserPreference(shopId).catch(() => ({ language: 'en' }));
           const currentLang = String(pref?.language ?? 'en').toLowerCase();
-          const langForStep = await checkAndUpdateLanguageSafe(String(Body ?? ''), From, currentLang, requestId);
-          await handleTrialOnboardingStep(From, Body, langForStep, requestId);
+          const langForStep = await checkAndUpdateLanguageSafe(String(Body ?? ''), From, currentLang, requestId);                  
+        if (s.mode === 'onboarding_trial_capture') {
+              await handleTrialOnboardingStep(From, Body, langForStep, requestId);
+            } else {
+              await handlePaidOnboardingStep(From, Body, langForStep, requestId);
+            }
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message('');
           res.type('text/xml');
@@ -17916,8 +17920,16 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       if (!__handled) {
         const stickyAction3 = await getStickyActionQuick();
         const looksTxn3 = looksLikeTxnLite(Body);                
-        const isDiag = !!classifyDiagnosticPeek(Body);
-            if ((stickyAction3 && !isDiag) || looksTxn3) {
+        const isDiag = !!classifyDiagnosticPeek(Body);                  
+      // NEW: also suppress during onboarding captures (trial or paid)
+        let isOnboardingCapture = false;
+        try {
+          const st = (typeof getUserStateFromDB === 'function')
+            ? await getUserStateFromDB(shopId)
+            : await getUserState(shopId);
+          isOnboardingCapture = !!(st && (st.mode === 'onboarding_trial_capture' || st.mode === 'onboarding_paid_capture'));
+        } catch (_) {}
+        if (isOnboardingCapture || (stickyAction3 && !isDiag) || looksTxn3) {
           console.log(`[${requestId}] Suppressing generic default in sticky/txn turn`);
         } else {
           const defaultMessage = await t(
