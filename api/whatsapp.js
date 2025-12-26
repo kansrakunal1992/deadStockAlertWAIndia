@@ -1041,7 +1041,7 @@ const AI_DETECT_TTL_MS = Number(process.env.AI_DETECT_TTL_MS ?? 5 * 60 * 1000); 
 
 // Parse multiple inventory updates from transcript
 // Accepts either a req-like object (req.body.{From, Body}) OR plain text.
-async function parseMultipleUpdates(reqOrText) {
+async function parseMultipleUpdates(reqOrText, requestId) {
   // Shape detection: request-like vs plain text
   const isReq = reqOrText && typeof reqOrText === 'object';
   const from =
@@ -1049,6 +1049,12 @@ async function parseMultipleUpdates(reqOrText) {
   const transcript =
     (isReq && (reqOrText.body?.Body || reqOrText.Body)) ||
     (!isReq ? String(reqOrText ?? '') : '');
+  
+  // SAFE requestId derivation
+  const shopIdMaybe = String(from || '').replace('whatsapp:', '');
+  const requestId =
+    (isReq && (reqOrText.requestId || reqOrText?.headers?.['x-request-id'])) ||
+    `pmu-${Date.now()}-${shopIdMaybe || 'unknown'}`;
 
   // Guard: never throw on missing From; just log once & return []
   if (!from) {
@@ -1886,7 +1892,10 @@ function seenDuplicateCorrection(shopId, payload) {
  * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
  */
 
-async function applyAIOrchestration(text, From, detectedLanguageHint, requestId, stickyActionCached) {
+async function applyAIOrchestration(text, From, detectedLanguageHint, requestId, stickyActionCached) {  
+  // Declare hintedLang before any use
+  const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
+
   // === Helpers (defined once) ===
   function withTimeout(promise, ms, fallback) {
     return Promise.race([
@@ -2045,10 +2054,9 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
       if (topicForced) { route.kind = 'question'; }
 
       // --- Language exact variant lock (PRESERVED) ---           
-      const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
-          const orchestratedLang = ensureLangExact(route.language ?? hintedLang);
-          // NEW: prefer user's hint when it's non‑English; else fall back to orchestrated
-          const language = (hintedLang !== 'en') ? hintedLang : orchestratedLang;
+      const orchestratedLang = ensureLangExact(route.language ?? hintedLang);
+      // NEW: prefer user's hint when it's non‑English; else fall back to orchestrated
+      const language = (hintedLang !== 'en') ? hintedLang : orchestratedLang;
 
       // Save preference in background (no await)
       inBackground('savePref', async () => {
@@ -6085,6 +6093,12 @@ const SUPPORT_WHATSAPP_LINK = String(process.env.WHATSAPP_LINK || 'https://wa.li
 // Append one-line support footer to all user-visible messages (language/script aware)
 async function appendSupportFooter(msg, from) {
   const base = String(msg ?? '').trim();
+     
+  // Prevent duplicate footer lines
+    if (/Need help\?/i.test(base) || base.includes(SUPPORT_WHATSAPP_LINK)) {
+      return base;
+    }
+  
   // Resolve language preference (best-effort)
   let lang = 'en';
   try {
@@ -12508,7 +12522,7 @@ function buildFakeReq(from, body) {
 
 // --- Unified helper: parse updates or handle a lone "return ..." message ---
 async function parseOrReturn(transcript, from, detectedLanguage, requestId) {
-  const updates = await parseMultipleUpdates(buildFakeReq(from, transcript));
+  const updates = await parseMultipleUpdates(buildFakeReq(from, transcript),requestId);
   if (updates && updates.length > 0) return updates;
   const didReturn = await tryHandleReturnText(transcript, from, detectedLanguage, requestId);
   if (didReturn) return []; // already handled via API; caller should short-circuit
@@ -14850,7 +14864,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     // First, try to parse as inventory update (higher priority)
     try {
       console.log(`[${requestId}] Attempting to parse as inventory update`);            
-        const parsedUpdates = await parseMultipleUpdates({ From, Body: cleanTranscript });
+        const parsedUpdates = await parseMultipleUpdates({ From, Body: cleanTranscript },requestId);
             if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
         console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from voice message`);        
          
@@ -15033,7 +15047,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       try {
                 
         // Parse the transcript
-            const updates = await parseMultipleUpdates({ From, Body: cleanTranscript });
+            const updates = await parseMultipleUpdates({ From, Body: cleanTranscript },requestId);
             // Check if any updates are for unknown products (guard against null)
             const unknownProducts = Array.isArray(updates) ? updates.filter(u => !u.isKnown) : [];
 
@@ -15496,7 +15510,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               
         // PATCH: Run orchestration and parse in parallel; use parse result immediately for txn handling
          const orchPromise = applyAIOrchestration(Body, From, detectedLanguage, requestId);
-         const parsedPromise = parseMultipleUpdates({ From, Body });
+         const parsedPromise = parseMultipleUpdates({ From, Body }, requestId);
          let parsedUpdatesEarly = [];
          try { parsedUpdatesEarly = await parsedPromise; } catch (_) {}
          try {
@@ -15638,7 +15652,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     
     // First, try to parse as inventory update (higher priority)          
     // COPILOT-PATCH-TEXT-PARSE-FROM-1
-      const parsedUpdates = await parseMultipleUpdates({ From, Body }); // pass req-like object with From
+      const parsedUpdates = await parseMultipleUpdates({ From, Body },requestId); // pass req-like object with From
       if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
       console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);          
          
@@ -16904,7 +16918,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
       case 'quantity':
         try {      
         const fakeReq = { body: { From, Body } };
-        const quantityUpdate = await parseMultipleUpdates(fakeReq);
+        const quantityUpdate = await parseMultipleUpdates(fakeReq,requestId);
           if (quantityUpdate.length > 0) {
             correctedUpdate.quantity = quantityUpdate[0].quantity;
             correctedUpdate.unit = quantityUpdate[0].unit;
@@ -16931,7 +16945,7 @@ async function handleCorrectionState(Body, From, state, requestId, res) {
       case 'all':
         try {         
       const fakeReq = { body: { From, Body } };
-      const fullUpdate = await parseMultipleUpdates(fakeReq);
+      const fullUpdate = await parseMultipleUpdates(fakeReq,requestId);
           if (fullUpdate.length > 0) {
             correctedUpdate = fullUpdate[0];
           } else {
@@ -17150,7 +17164,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
     
     // If processing fails, try to parse the input again and enter correction flow
     try {
-      const parsedUpdates = await parseMultipleUpdates(req);
+      const parsedUpdates = await parseMultipleUpdates(req,requestId);
       let update;
       
       if (parsedUpdates.length > 0) {
@@ -17356,7 +17370,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     if (stickyAction && looksLikeTxnLite(Body)) {
       console.log(`[${requestId}] [sticky] mode active=${stickyAction} → forcing inventory parse`);
       // COPILOT-PATCH-STICKY-PARSE-FROM
-      const parsedUpdates = await parseMultipleUpdates({ From, Body });
+      const parsedUpdates = await parseMultipleUpdates({ From, Body },requestId);
       if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
         console.log(`[${requestId}] [sticky] Parsed ${parsedUpdates.length} updates`);                    
            
@@ -17634,7 +17648,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
 
     // First, try to parse as inventory update (higher priority)
     // COPILOT-PATCH-HNI-PARSE-FROM
-    const parsedUpdates = await parseMultipleUpdates({ From, Body }); // pass req-like object
+    const parsedUpdates = await parseMultipleUpdates({ From, Body },requestId); // pass req-like object
     if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
       console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);                   
     // Commit first to get results
@@ -17720,7 +17734,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
 
     // Try to parse as inventory update (second pass)
     // COPILOT-PATCH-HNI-PARSE-FROM-SECOND
-    const updates = await parseMultipleUpdates({ From, Body });
+    const updates = await parseMultipleUpdates({ From, Body },requestId);
     if (Array.isArray(updates) && updates.length > 0) {
       console.log(`[${requestId}] Parsed ${updates.length} updates from text message`);
       const handledCombined = await handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId);
@@ -17880,7 +17894,7 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
   }
   
   // If user sends something else, try to parse as inventory update
-  const inventoryUpdates = await parseMultipleUpdates(Body);
+  const inventoryUpdates = await parseMultipleUpdates(Body,requestId);
   if (inventoryUpdates.length > 0) {
     console.log(`[${requestId}] Parsed ${inventoryUpdates.length} updates from text message`);
     
@@ -17991,7 +18005,7 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
     
     // Parse the transcript to get update details
     try {
-      const updates = await parseMultipleUpdates(pendingTranscript);
+      const updates = await parseMultipleUpdates(pendingTranscript,requestId);
       if (updates.length > 0) {
         
     // Process the confirmed updates
@@ -18053,7 +18067,7 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
     
     // Parse the transcript to get update details
     try {
-      const updates = await parseMultipleUpdates(pendingTranscript);
+      const updates = await parseMultipleUpdates(pendingTranscript,requestId);
       let update;
       
       if (updates.length > 0) {
@@ -18186,7 +18200,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
     
     // Parse the transcript to get update details
     try {      
-        const updates = await parseMultipleUpdates(pendingTranscript);
+        const updates = await parseMultipleUpdates(pendingTranscript,requestId);
               if (updates.length === 0) {
                 // If parsing failed, ask to retry
                 const errorMessage = await t(
@@ -18285,7 +18299,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
     
     // Parse the transcript to get update details
     try {
-      const updates = await parseMultipleUpdates(pendingTranscript);
+      const updates = await parseMultipleUpdates(pendingTranscript,requestId);
       let update;
       
       if (updates.length > 0) {
