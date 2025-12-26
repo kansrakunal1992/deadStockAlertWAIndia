@@ -64,13 +64,6 @@ function guessLangFromInput(s = '') {
 // ========================================================================
 const STT_CONFIDENCE_MIN_VOICE = Number(process.env.STT_CONFIDENCE_MIN_VOICE ?? 0.60);
 
-// ----- [PATCH:RETURN-CONF-SUPPRESS-OPTB-001] BEGIN
-// Env toggle to suppress the first standalone compact "Returned ..." confirmation line.
-// Default: ON (set SUPPRESS_STANDALONE_RETURN_CONFIRM=0 to disable).
-const SUPPRESS_STANDALONE_RETURN_CONFIRM =
-  String(process.env.SUPPRESS_STANDALONE_RETURN_CONFIRM ?? '1').toLowerCase() === '1';
-// ----- [PATCH:RETURN-CONF-SUPPRESS-OPTB-001] END
-
 // ============================================================================
 // Soniox language hints adapter
 // Maps your detected/pinned language into the single-language hint Soniox expects
@@ -6123,27 +6116,16 @@ function formatResultLine(r, compact = true, includeStockPart = true) {
       ? ` (Stock: ${r.newQuantity} ${unit})`
       : '';
   const act = capitalize(r.action ?? '');
-  if (compact) {                      
-          // Treat success === undefined as "not a failure yet".
-            // Only render an error line when success is explicitly false.
-            if (r.success !== false) {
-              // Unified symbol map for actions
-              const SYMBOLS = { purchased: '\uD83D\uDCE6', sold: '\uD83D\uDED2', returned: '↩️' };
-              const actionLc = String(r.action ?? '').toLowerCase();
-          
-              // ----- [PATCH:RETURN-CONF-SUPPRESS-OPTB-002] BEGIN
-              // Option B: suppress ONLY the first, standalone compact confirmation for returns.
-              // We do this inside the compact formatter; verbose summaries remain unaffected.
-              if (SUPPRESS_STANDALONE_RETURN_CONFIRM && compact === true && actionLc === 'returned') {
-                // Return empty so callers that append the compact line simply skip it.
-                // The later consolidated summary (often non-compact or multi-line) still goes out.
-                return '';
-              }
-              // ----- [PATCH:RETURN-CONF-SUPPRESS-OPTB-002] END
-          
-              const symbol = SYMBOLS[actionLc] ?? '✅';
-              return `${symbol} ${act} ${qty} ${unit} ${r.product}${stockPart}`.trim();
-            }
+  if (compact) {        
+    // Treat success === undefined as "not a failure yet".
+    // Only render an error line when success is explicitly false.
+    if (r.success !== false) {
+    // Unified symbol map for actions          
+    const SYMBOLS = { purchased: '📦', sold: '🛒', returned: '↩️' };
+          const actionLc = String(r.action ?? '').toLowerCase();
+          const symbol = SYMBOLS[actionLc] ?? '✅';
+          return `${symbol} ${act} ${qty} ${unit} ${r.product}${stockPart}`.trim();
+    }
     return `❌ ${r.product} — ${r.error ?? 'Error'}`;
   }
   const tail = (r.success === false) ? `❌ ${r.error ?? 'Error'}` : '✅';
