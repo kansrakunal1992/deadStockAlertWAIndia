@@ -1052,7 +1052,7 @@ async function parseMultipleUpdates(reqOrText, requestId) {
   
   // SAFE requestId derivation
   const shopIdMaybe = String(from || '').replace('whatsapp:', '');
-  const requestId =
+  const requestId1 =
     (isReq && (reqOrText.requestId || reqOrText?.headers?.['x-request-id'])) ||
     `pmu-${Date.now()}-${shopIdMaybe || 'unknown'}`;
 
@@ -1087,9 +1087,9 @@ async function parseMultipleUpdates(reqOrText, requestId) {
      try {
        const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'onboard-capture');
        if (userState.mode === 'onboarding_trial_capture') {
-         await handleTrialOnboardingStep(from ?? `whatsapp:${shopId}`, transcript, langHint, requestId);
+         await handleTrialOnboardingStep(from ?? `whatsapp:${shopId}`, transcript, langHint, requestId1);
        } else {
-         await handlePaidOnboardingStep(from ?? `whatsapp:${shopId}`, transcript, langHint, requestId);
+         await handlePaidOnboardingStep(from ?? `whatsapp:${shopId}`, transcript, langHint, requestId1);
        }
      } catch (e) { console.warn('[onboard-capture] step failed:', e?.message); }
      return []; // consume onboarding messages
