@@ -1904,9 +1904,19 @@ function seenDuplicateCorrection(shopId, payload) {
  * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
  */
 
-async function applyAIOrchestration(text, From, detectedLanguageHint, requestId, stickyActionCached) {  
-  // Declare hintedLang before any use
-  const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
+async function applyAIOrchestration(text, From, detectedLanguageHint, requestId, stickyActionCached) {   
+// LEGACY: pinned language from onboarding_trial_capture (PRESERVED) — run BEFORE deriving hintedLang
+ try {
+   const shopIdTmp = String(From ?? '').replace('whatsapp:', '');
+   const st = await getUserStateFromDB(shopIdTmp).catch(() => null);
+   if (st?.mode === 'onboarding_trial_capture') {
+     const pinned = st?.data?.lang ?? (await getUserPreference(shopIdTmp).catch(() => ({})))?.language;
+     if (pinned) detectedLanguageHint = String(pinned).toLowerCase();
+   }
+ } catch {}
+ 
+ // Declare hintedLang after any possible override of detectedLanguageHint
+ const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
 
   // === Helpers (defined once) ===
   function withTimeout(promise, ms, fallback) {
@@ -2111,13 +2121,19 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         normalizedCommand: normalizedCommand ?? '—',
         topicForced, pricingFlavor
       });
-      const identityAsked = isNameQuestion(text);
+      const identityAsked = (typeof isNameQuestion === 'function') ? isNameQuestion(text) : false;
       return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
     }
 
     // ---- LEGACY PATH (Gate OFF): original Deepseek orchestrator call (PRESERVED) ----
     console.log('[fast-classifier] off req=%s (calling aiOrchestrate with 8s timeout)', requestId);
-    const legacy = await aiOrchestrate(text);
+    
+    const legacy = await withTimeout(aiOrchestrate(text), 8000, () => ({
+       language: detectedLanguageHint ?? 'en',
+       kind: 'other',
+       command: null,
+       transaction: null
+     }));
 
     // --- Normalize summary intent into command (PRESERVED) ---
     try {
@@ -2194,7 +2210,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
       topicForced, pricingFlavor
     });
 
-    const identityAsked = isNameQuestion(text);
+    const identityAsked = (typeof isNameQuestion === 'function') ? isNameQuestion(text) : false;
     return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
 
   } catch (e) {
