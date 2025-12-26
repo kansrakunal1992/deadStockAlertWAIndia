@@ -4758,6 +4758,18 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
   const shopId = String(From).replace('whatsapp:', '');
   const state = await getUserStateFromDB(shopId);
   if (!state || state.mode !== 'onboarding_paid_capture') return false;
+  
+  // Per-request idempotency to avoid double prompts when orchestrator re-enters
+  const __guardKey = `${shopId}::${String(requestId ?? Date.now())}`;
+  if (globalThis.__onboardStepGuard?.has?.(__guardKey)) {
+    console.log('[onboard-capture] suppressed duplicate step', { guardKey: __guardKey });
+    return true;
+  }
+  try {
+    globalThis.__onboardStepGuard = globalThis.__onboardStepGuard || new Set();
+    globalThis.__onboardStepGuard.add(__guardKey);
+    setTimeout(() => { try { globalThis.__onboardStepGuard.delete(__guardKey); } catch (_) {} }, 15000);
+  } catch (_) {}
 
   const data = state.data?.collected ?? {};
   const step = state.data?.step ?? 'name';
@@ -4769,8 +4781,19 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
     lang = await checkAndUpdateLanguageSafe(String(text ?? ''), From, currentLang, `paid-onboard-${shopId}`);
   } catch (_) {}
 
-  if (step === 'name') {
-    data.name = String(text ?? '').trim();
+  if (step === 'name') {        
+    const name = String(text ?? '').trim();
+        if (!name) {
+          const retryName = await t(
+            NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'Shop name seems empty—please re-enter your *Shop Name*.',
+            lang, `paid-onboard-name-retry-${shopId}`
+          );
+          await sendMessageViaAPI(From, finalizeForSend(retryName, lang));
+          try { if (requestId) handledRequests.add(requestId); } catch {}
+          return true;
+        }
+        data.name = name;
+
     await setUserState(shopId, 'onboarding_paid_capture', { step: 'gstin', collected: data, lang });
     const askGstin = await t(
       NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'Enter your *GSTIN* (type "*NA*" or *skip* if not available).',
@@ -4782,16 +4805,27 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
   }
 
   if (step === 'gstin') {
-    const raw = String(text ?? '').trim();
-    data.gstin = _isSkipGST(raw) ? null : raw;
-    await setUserState(shopId, 'onboarding_paid_capture', { step: 'address', collected: data, lang });
-    const askAddr = await t(
-      NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'Please share your *Shop Address* (area, city).',
-      lang, `paid-onboard-address-${shopId}`
-    );
-    await sendMessageViaAPI(From, finalizeForSend(askAddr, lang));
-    try { if (requestId) handledRequests.add(requestId); } catch {}
-    return true;
+    const raw = String(text ?? '').trim();        
+    const isSkip = _isSkipGST(raw);
+        const GSTIN_RX = /^[0-9A-Z]{15}$/i;
+        if (!isSkip && !GSTIN_RX.test(raw)) {
+          const retryGstin = await t(
+            NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'GSTIN seems invalid—please re-enter 15 characters or type *skip*.',
+            lang, `paid-onboard-gstin-retry-${shopId}`
+          );
+          await sendMessageViaAPI(From, finalizeForSend(retryGstin, lang));
+          try { if (requestId) handledRequests.add(requestId); } catch {}
+          return true;
+        }
+        data.gstin = isSkip ? null : raw.toUpperCase();
+        await setUserState(shopId, 'onboarding_paid_capture', { step: 'address', collected: data, lang });
+        const askAddr = await t(
+          NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'Please share your *Shop Address* (area, city).',
+          lang, `paid-onboard-address-${shopId}`
+        );
+        await sendMessageViaAPI(From, finalizeForSend(askAddr, lang));
+        try { if (requestId) handledRequests.add(requestId); } catch {}
+        return true;
   }
 
   if (step === 'address') {
