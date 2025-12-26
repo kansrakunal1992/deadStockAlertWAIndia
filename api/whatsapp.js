@@ -15215,7 +15215,21 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
 
     detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
     console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
-            
+    
+    // [PATCH A - TEXT PATH] Greeting hard-stop before any quick-query normalization/route
+    // Prevent "Namaste"/"नमस्ते"/"hello" etc. from being normalized into commands like "short summary".
+    if (_isGreeting(Body)) {
+      handledRequests.add(requestId);
+      const greetMsg = await t(
+        '👋 Namaste! Please send your inventory update (e.g., "sold milk 2 ltr" or "purchase Oreo 10 packets").',
+        detectedLanguage,
+        requestId + '::greet-text'
+      );
+      await sendMessageDedup(From, greetMsg);
+      try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) { /* best effort */ }
+      return; // exit text handler early, no normalization
+    }       
+    
     // Hybrid: allow non‑mutating diagnostic peeks inside sticky mode (no state change)
       try {
         const stickyAction =
