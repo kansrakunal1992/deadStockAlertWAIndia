@@ -3303,14 +3303,16 @@ async function setStickyMode(from, actionOrWord) {
 // ===== LOCALIZED FOOTER TAG: append «<MODE_BADGE> • <SWITCH_WORD>» to every message =====
 async function tagWithLocalizedMode(from, text, detectedLanguageHint = null, opts = {}) {
   try {
-    // NOTE: badge will be shown only if the user is activated (paid or trial & not expired)
-    // Marker to opt-out of footer for specific messages (onboarding/upsell)
-        // marker now defined globally; do not redeclare
-        if (String(text).startsWith(NO_FOOTER_MARKER)) {
-          return String(text).slice(NO_FOOTER_MARKER.length);
+    // NOTE: badge will be shown only if the user is activated (paid or trial & not expired)        
+        // 🔧 Strip footer-suppressor markers (raw "<>" or escaped) and finalize immediately
+        if (/^(?:\s*(?:<>|&lt;&gt;))+/.test(String(text))) {
+          const withoutMarker = String(text).replace(/^(?:\s*(?:<>|&lt;&gt;))+/, '');
+          return finalizeForSend(withoutMarker, String(detectedLanguageHint ?? 'en').toLowerCase());
         }
-    // Guard: if footer already present, do not append again
-    if (/«.+\s•\s.+»$/.test(text)) return text;
+    // Guard: if footer already present, do not append again        
+    if (/«.+\s•\s.+»$/.test(text)) {
+          return finalizeForSend(text, String(detectedLanguageHint ?? 'en').toLowerCase());
+        }
 
     const shopId = shopIdFrom(from);
     
@@ -3394,7 +3396,7 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null, opt
         
     // 4) If not activated, or effective action is none, do NOT append badge
         const isNone = !action || String(action).trim().length === 0;
-        if (!activated || isNone) return String(text);
+        if (!activated || isNone) return finalizeForSend(text, String(detectedLanguageHint ?? 'en').toLowerCase());
                
     // --- NEW: Append Help CTA conditionally (only where explicitly requested) ---
         // Avoid duplication if CTA already present.
@@ -3406,17 +3408,22 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null, opt
               text = String(text) + HELP_CTA;
             }        
                 
-    // Build badge in user language
+    // Build badge in user language                
         const badge = getModeBadge(action, lang); // e.g., 'बिक्री', 'விற்பனை', 'SALE'
+                // 🔧 If badge resolves empty, do not append a placeholder
+                if (!badge || !String(badge).trim()) {
+                  return finalizeForSend(text, lang);
+                }
         // switchWord defined above for CTA
         const tag = `«${badge} • ${switchWord}»`;
 
-    // 4) Append on a new line; keep WA length constraints safe
-    return text.endsWith('\n') ? (text + tag) : (text + '\n' + tag);
+    // 4) Append on a new line; keep WA length constraints safe        
+    const out = text.endsWith('\n') ? (text + tag) : (text + '\n' + tag);
+    return finalizeForSend(out, lang);
   } catch {
     
     // Fallback: never show a NONE badge; return the text as-is
-    return String(text ?? '');
+    return finalizeForSend(String(text ?? ''), String(detectedLanguageHint ?? 'en').toLowerCase());
   }
 }
 
@@ -4019,9 +4026,13 @@ function normalizeNumeralsToLatin(text) {
 // ANCHOR: UNIQ:FINALIZE-SEND-001
 // Finalize text for sending: strip any markers, enforce single-script, fix newlines,
 // and normalize digits. Use this on all onboarding text sends.
-function finalizeForSend(text, lang) {    
-  const stripped = stripMarkers(text);      
-  const oneScript = enforceSingleScriptSafe(stripped, lang);
+
+function finalizeForSend(text, lang) {
+  const stripped = stripMarkers(text);
+  // 🔧 Strip any leaked footer-suppressor markers at the start:
+  // supports both raw "<>" and HTML-escaped "&lt;&gt;"
+  const deMarked = String(stripped).replace(/^(?:\s*(?:<>|&lt;&gt;))+/, '');
+  const oneScript = enforceSingleScriptSafe(deMarked, lang);
   const withNL    = fixNewlines1(oneScript);
   return normalizeNumeralsToLatin(withNL).trim();
 }
