@@ -11309,9 +11309,10 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
     try {
       
     // === RAW-vs-UI split ===
-          // RAW for ALL DB writes; UI name only for human-facing messages
-          const productRawForDb = resolveProductNameForWrite(update); // uses gate DISABLE_PRODUCT_TRANSLATION_FOR_DB=1
-          const productUiName   = update.productDisplay
+          // RAW for ALL DB writes; UI name only for human-facing messages                
+      const productRawForDb = resolveProductNameForWrite(update); // uses gate DISABLE_PRODUCT_TRANSLATION_FOR_DB=1
+        const productUiName   = update.productDisplay ?? update.product; // for display only
+        const product         = productRawForDb; // MIN PATCH: alias to avoid ReferenceError across branches
             ?? update.product; // keep as spoken; translate later ONLY if you prefer UI English/Hindi
           console.log(`[Update ${shopId}] Using RAW product for DB: "${productRawForDb}"`);
                   
@@ -11800,7 +11801,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 lang,
                 'sale-confirmation', // requestId scope for dedupe
                 {
-                  productRawForDb,
+                  product: productRawForDb,
                   qty: Math.abs(update.quantity),
                   unit: update.unit,
                   pricePerUnit: salePrice,
