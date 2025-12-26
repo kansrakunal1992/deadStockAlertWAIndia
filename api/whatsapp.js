@@ -4230,91 +4230,142 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
   // Localized, mode-specific examples shown inline so footer matches user's active flow.  
   // === Localized examples lead-in for all supported languages ===
   const baseLang = String(lang ?? 'en').toLowerCase().replace(/-latn$/, ''); // hi-latn -> hi
-  // === Localized examples block    
+  // === Localized examples block      
   let examples = '';
+  // Mode display labels (Purchase/Sale/Return) per language
+  const M = (function () {
     switch (baseLang) {
-      case 'hi': // Hindi (Devanagari)
-        examples = [
-          'उदाहरण:',
-          'टाइप करें या वॉइस नोट बोलें — "mode";',
-          '“खरीद दर्ज करें/बिक्री दर्ज करें/वापसी दर्ज करें” पर क्लिक करें और टाइप करें या वॉइस नोट बोलें:',
-          '• दूध 10 लीटर @ ₹10/लीटर',
-          '• पैरासिटामोल 3 पैकेट @ ₹20/पैकेट एक्सपायरी +7 दिन',
-          '• मोबाइल हैंडसेट Xiaomi 1 पैकेट @ ₹60000/पैकेट'
-        ].join('\\n');
-        break;
-      case 'bn': // Bengali
-        examples = [
-          'উদাহরণ:',
-          'টাইপ করুন বা ভয়েস নোট বলুন — "mode";',
-          '“ক্রয় রেকর্ড করুন/বিক্রি রেকর্ড করুন/রিটার্ন রেকর্ড করুন” এ ক্লিক করুন এবং টাইপ করুন বা ভয়েস নোট বলুন:',
-          '• দুধ 10 লিটার @ ₹10/লিটার',
-          '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
-          '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
-        ].join('\\n');
-        break;
-      case 'ta': // Tamil
-        examples = [
-          'உதாரணம்:',
-          'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும் — "mode";',
-          '“கொள்முதல் பதிவு/விற்பனை பதிவு/ரிட்டர்ன் பதிவு” இல் கிளிக் செய்து தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:',
-          '• பால் 10 லிட்டர் @ ₹10/லிட்டர்',
-          '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
-          '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
-        ].join('\\n');
-        break;
-      case 'te': // Telugu
-        examples = [
-          'ఉదాహరణలు:',
-          'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి — "mode";',
-          '“కొనుగోలు రికార్డ్ చేయండి/అమ్మకం రికార్డ్ చేయండి/రిటర్న్ రికార్డ్ చేయండి” పై క్లిక్ చేసి టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:',
-          '• పాలు 10 లీటర్ @ ₹10/లీటర్',
-          '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
-          '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
-        ].join('\\n');
-        break;
-      case 'kn': // Kannada
-        examples = [
-          'ಉದಾಹರಣೆಗಳು:',
-          'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ — "mode";',
-          '“ಖರೀದಿ ದಾಖಲಿಸಿ/ಮಾರಾಟ ದಾಖಲಿಸಿ/ರಿಟರ್ನ್ ದಾಖಲಿಸಿ” ಮೇಲೆ ಕ್ಲಿಕ್ ಮಾಡಿ ಮತ್ತು ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:',
-          '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
-          '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
-          '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
-        ].join('\\n');
-        break;
-      case 'mr': // Marathi
-        examples = [
-          'उदाहरणे:',
-          'टाइप करा किंवा व्हॉईस नोट बोला — "mode";',
-          '“खरेदी नोंदवा/विक्री नोंदवा/परत नोंदवा” वर क्लिक करा आणि टाइप करा किंवा व्हॉईस नोट बोला:',
-          '• दूध 10 लिटर @ ₹10/लिटर',
-          '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
-          '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
-        ].join('\\n');
-        break;
-      case 'gu': // Gujarati
-        examples = [
-          'ઉદાહરણ:',
-          'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો — "mode";',
-          '“ખરીદી રેકોર્ડ કરો/વેચાણ રેકોર્ડ કરો/રીટર્ન રેકોર્ડ કરો” પર ક્લિક કરો અને ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:',
-          '• દૂધ 10 લિટર @ ₹10/લિટર',
-          '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
-          '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
-        ].join('\\n');
-        break;
-      case 'hi-latn': // Hinglish (Roman Hindi) — fall back to English for clarity, unless you prefer Hinglish lines
-      default: // English
-        examples = [
-          'Examples (type or speak a voice note):',
-          'Type or speak (voice note) — "mode";',
-          'Click on "Record Purchase/Record Sale/Record Return" & type or speak (voice note):',
-          '• milk 10 litres at ₹10/litre',
-          '• paracetamol 3 packets at ₹20/packet expiry +7d',
-          '• mobile handset Xiaomi 1 packet at ₹60000/packet'
-        ].join('\\n');
-        break;
+      case 'hi': return { p:'खरीद', s:'बिक्री', r:'वापसी' };
+     case 'bn': return { p:'ক্রয়', s:'বিক্রি', r:'রিটার্ন' };
+      case 'ta': return { p:'கொள்முதல்', s:'விற்பனை', r:'ரிட்டர்ன்' };
+      case 'te': return { p:'కొనుగోలు', s:'అమ్మకం', r:'రిటర్న్' };
+      case 'kn': return { p:'ಖರೀದಿ', s:'ಮಾರಾಟ', r:'ರಿಟರ್ನ್' };
+      case 'mr': return { p:'खरेदी', s:'विक्री', r:'परत' };
+      case 'gu': return { p:'ખરીદી', s:'વેચાણ', r:'રિટર્ન' };
+      default:   return { p:'Purchase', s:'Sale', r:'Return' };
     }
+  })();
+  const modeHeader = (function () {
+    switch (currentMode) {
+      case 'purchased': return baseLang === 'en' ? 'Example (Purchase):' : (baseLang === 'hi' ? 'उदाहरण (खरीद):' :
+        baseLang === 'bn' ? 'উদাহরণ (ক্রয়):' :
+        baseLang === 'ta' ? 'உதாரணம் (கொள்முதல்):' :
+        baseLang === 'te' ? 'ఉదాహరణ (కొనుగోలు):' :
+        baseLang === 'kn' ? 'ಉದಾಹರಣೆ (ಖರೀದಿ):' :
+        baseLang === 'mr' ? 'उदाहरण (खरेदी):' :
+        baseLang === 'gu' ? 'ઉદાહરણ (ખરીદી):' :
+        'Example (Purchase):');
+      case 'sold': return baseLang === 'en' ? 'Example (Sale):' : (baseLang === 'hi' ? 'उदाहरण (बिक्री):' :
+        baseLang === 'bn' ? 'উদাহরণ (বিক্রি):' :
+        baseLang === 'ta' ? 'உதாரணம் (விற்பனை):' :
+        baseLang === 'te' ? 'ఉదాహరణ (అమ్మకం):' :
+        baseLang === 'kn' ? 'ಉದಾಹರಣೆ (ಮಾರಾಟ):' :
+        baseLang === 'mr' ? 'उदाहरण (विक्री):' :
+        baseLang === 'gu' ? 'ઉદાહરણ (વેચાણ):' :
+        'Example (Sale):');
+      case 'returned': return baseLang === 'en' ? 'Example (Return):' : (baseLang === 'hi' ? 'उदाहरण (वापसी):' :
+        baseLang === 'bn' ? 'উদাহরণ (রিটার্ন):' :
+        baseLang === 'ta' ? 'உதாரணம் (ரிட்டர்ன்):' :
+        baseLang === 'te' ? 'ఉదాహరణ (రిటర్న్):' :
+        baseLang === 'kn' ? 'ಉದಾಹರಣೆ (ರಿಟರ್ನ್):' :
+        baseLang === 'mr' ? 'उदाहरण (परत):' :
+        baseLang === 'gu' ? 'ઉદાહરણ (રિટર્ન):' :
+        'Example (Return):');
+      default: return baseLang === 'en' ? 'Example:' : (baseLang === 'hi' ? 'उदाहरण:' :
+        baseLang === 'bn' ? 'উদাহরণ:' :
+        baseLang === 'ta' ? 'உதாரணம்:' :
+        baseLang === 'te' ? 'ఉదాహరణ:' :
+        baseLang === 'kn' ? 'ಉದಾಹರಣೆ:' :
+        baseLang === 'mr' ? 'उदाहरणे:' :
+        baseLang === 'gu' ? 'ઉદાહરણ:' : 'Example:');
+    }
+  })();
+  // Localized button names
+  const BTN = (function () {
+    switch (baseLang) {
+      case 'hi': return '“खरीद दर्ज करें/बिक्री दर्ज करें/वापसी दर्ज करें”';
+      case 'bn': return '“ক্রয় রেকর্ড করুন/বিক্রি রেকর্ড করুন/রিটার্ন রেকর্ড করুন”';
+      case 'ta': return '“கொள்முதல் பதிவு/விற்பனை பதிவு/ரிட்டர்ன் பதிவு”';
+      case 'te': return '“కొనుగోలు రికార్డ్ చేయండి/అమ్మకం రికార్డ్ చేయండి/రిటర్న్ రికార్డ్ చేయండి”';
+      case 'kn': return '“ಖರೀದಿ ದಾಖಲಿಸಿ/ಮಾರಾಟ ದಾಖಲಿಸಿ/ರಿಟರ್ನ್ ದಾಖಲಿಸಿ”';
+      case 'mr': return '“खरेदी नोंदवा/विक्री नोंदवा/परत नोंदवा”';
+      case 'gu': return '“ખરીદી રેકોર્ડ કરો/વેચાણ રેકોર્ડ કરો/રીટર્ન રેકોર્ડ કરો”';
+      default:   return '"Record Purchase/Record Sale/Record Return"';
+    }
+  })();
+  // Item example bullets (localized)
+  const bullets = (function () {
+    switch (baseLang) {
+      case 'hi': return [
+        '• दूध 10 लीटर @ ₹10/लीटर',
+        '• पैरासिटामोल 3 पैकेट @ ₹20/पैकेट एक्सपायरी +7 दिन',
+        '• मोबाइल हैंडसेट Xiaomi 1 पैकेट @ ₹60000/पैकेट'
+      ];
+      case 'bn': return [
+        '• দুধ 10 লিটার @ ₹10/লিটার',
+        '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
+        '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
+      ];
+      case 'ta': return [
+        '• பால் 10 லிட்டர் @ ₹10/லிட்டர்',
+        '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
+        '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
+      ];
+      case 'te': return [
+        '• పాలు 10 లీటర్ @ ₹10/లీటర్',
+        '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
+        '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
+      ];
+      case 'kn': return [
+        '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
+        '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
+        '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
+      ];
+      case 'mr': return [
+        '• दूध 10 लिटर @ ₹10/लिटर',
+        '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
+        '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
+      ];
+      case 'gu': return [
+        '• દૂધ 10 લિટર @ ₹10/લિટર',
+        '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
+        '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
+      ];
+      default: return [
+        '• milk 10 litres at ₹10/litre',
+        '• paracetamol 3 packets at ₹20/packet expiry +7d',
+        '• mobile handset Xiaomi 1 packet at ₹60000/packet'
+      ];
+    }
+  })();
+  // Compose examples block lines
+  const examplesLines = [
+    modeHeader,
+    baseLang === 'en' ? 'Type or speak (voice note) — "mode";'
+      : (baseLang === 'hi' ? 'टाइप करें या वॉइस नोट बोलें — "mode";'
+      : (baseLang === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন — "mode";'
+      : (baseLang === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும் — "mode";'
+      : (baseLang === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి — "mode";'
+      : (baseLang === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ — "mode";'
+      : (baseLang === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला — "mode";'
+      : (baseLang === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો — "mode";'
+      : 'Type or speak (voice note) — "mode";'))))))),
+    `${baseLang === 'en' ? 'Click on' : (baseLang === 'hi' ? 'क्लिक करें' :
+       (baseLang === 'bn' ? 'ক্লিক করুন' : (baseLang === 'ta' ? 'கிளிக் செய்யவும்' :
+       (baseLang === 'te' ? 'క్లిక్ చేయండి' : (baseLang === 'kn' ? 'ಕ್ಲಿಕ್ ಮಾಡಿ' :
+       (baseLang === 'mr' ? 'क्लिक करा' : (baseLang === 'gu' ? 'ક્લિક કરો' : 'Click on')))))))} ${BTN} & ${
+       baseLang === 'en' ? 'type or speak (voice note):' :
+       baseLang === 'hi' ? 'टाइप करें या वॉइस नोट बोलें:' :
+       baseLang === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন:' :
+       baseLang === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:' :
+       baseLang === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:' :
+       baseLang === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:' :
+       baseLang === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला:' :
+       baseLang === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' : 'type or speak (voice note):'
+    }`,
+    ...bullets
+  ].join('\n');
+  examples = examplesLines;
 
   const composed = [header, body, '', guidance].filter(Boolean).join('\n');
   const msg = await t(composed, lang, requestId + '::peek');    
@@ -4705,7 +4756,130 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
     // Detect inventory list selections (e.g., "list_low", "list_sales_day").
       const _payloadId = String(
         raw.Body ?? raw.ListId ?? raw.EventId ?? raw.ContentSid ?? ''
-      ).toLowerCase();
+      ).toLowerCase();  
+    // === Intercept QR taps (purchase/sale/return) and send localized examples ===
+          try {
+            // Resolve UI language from preference; fall back to 'en'
+            let langUi = 'en';
+            try {
+              const pref = await getUserPreference(shopIdTop);
+              if (pref?.success && pref.language) langUi = String(pref.language).toLowerCase();
+            } catch (_) {}
+            langUi = langUi.replace(/-latn$/, ''); // e.g., hi-latn -> hi
+    
+            const isPurchase = _payloadId === 'qr_purchase';
+            const isSale     = _payloadId === 'qr_sale';
+            const isReturn   = _payloadId === 'qr_return';
+            if (isPurchase || isSale || isReturn) {
+              // Localized header: Example (Purchase|Sale|Return)
+              const header = (function () {
+                switch (langUi) {
+                  case 'hi': return isPurchase ? 'उदाहरण (खरीद):' : isSale ? 'उदाहरण (बिक्री):' : 'उदाहरण (वापसी):';
+                  case 'bn': return isPurchase ? 'উদাহরণ (ক্রয়):'   : isSale ? 'উদাহরণ (বিক্রি):' : 'উদাহরণ (রিটার্ন):';
+                  case 'ta': return isPurchase ? 'உதாரணம் (கொள்முதல்):' : isSale ? 'உதாரணம் (விற்பனை):' : 'உதாரணம் (ரிட்டர்ன்):';
+                  case 'te': return isPurchase ? 'ఉదాహరణ (కొనుగోలు):'  : isSale ? 'ఉదాహరణ (అమ్మకం):'  : 'ఉదాహరణ (రిటర్న్):';
+                  case 'kn': return isPurchase ? 'ಉದಾಹರಣೆ (ಖರೀದಿ):'    : isSale ? 'ಉದಾಹರಣೆ (ಮಾರಾಟ):'  : 'ಉದಾಹರಣೆ (ರಿಟರ್ನ್):';
+                  case 'mr': return isPurchase ? 'उदाहरण (खरेदी):'      : isSale ? 'उदाहरण (विक्री):'    : 'उदाहरण (परत):';
+                  case 'gu': return isPurchase ? 'ઉદાહરણ (ખરીદી):'      : isSale ? 'ઉદાહરણ (વેચાણ):'     : 'ઉદાહરણ (રિટર્ન):';
+                  default:   return isPurchase ? 'Example (Purchase):'    : isSale ? 'Example (Sale):'       : 'Example (Return):';
+                }
+              })();
+    
+              // Localized button names (quoted)
+              const BTN = (function () {
+                switch (langUi) {
+                  case 'hi': return '“खरीद दर्ज करें/बिक्री दर्ज करें/वापसी दर्ज करें”';
+                  case 'bn': return '“ক্রয় রেকর্ড করুন/বিক্রি রেকর্ড করুন/রিটার্ন রেকর্ড করুন”';
+                  case 'ta': return '“கொள்முதல் பதிவு/விற்பனை பதிவு/ரிட்டர்ன் பதிவு”';
+                  case 'te': return '“కొనుగోలు రికార్డ్ చేయండి/అమ్మకం రికార్డ్ చేయండి/రిటర్న్ రికార్డ్ చేయండి”';
+                  case 'kn': return '“ಖರೀದಿ ದಾಖಲಿಸಿ/ಮಾರಾಟ ದಾಖಲಿಸಿ/ರಿಟರ್ನ್ ದಾಖಲಿಸಿ”';
+                  case 'mr': return '“खरेदी नोंदवा/विक्री नोंदवा/परत नोंदवा”';
+                  case 'gu': return '“ખરીદી રેકોર્ડ કરો/વેચાણ રેકોર્ડ કરો/રીટર્ન રેકોર્ડ કરો”';
+                  default:   return '"Record Purchase/Record Sale/Record Return"';
+                }
+              })();
+    
+              // Localized item examples (bullets)
+              const bullets = (function () {
+                switch (langUi) {
+                  case 'hi': return [
+                    '• दूध 10 लीटर @ ₹10/लीटर',
+                    '• पैरासिटामोल 3 पैकेट @ ₹20/पैकेट एक्सपायरी +7 दिन',
+                    '• मोबाइल हैंडसेट Xiaomi 1 पैकेट @ ₹60000/पैकेट'
+                  ];
+                  case 'bn': return [
+                    '• দুধ 10 লিটার @ ₹10/লিটার',
+                    '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
+                    '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
+                  ];
+                  case 'ta': return [
+                    '• பால் 10 லிட்டர் @ ₹10/லிட்டர்',
+                    '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
+                    '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
+                  ];
+                  case 'te': return [
+                    '• పాలు 10 లీటర్ @ ₹10/లీటర్',
+                    '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
+                    '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
+                  ];
+                  case 'kn': return [
+                    '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
+                    '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
+                    '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
+                  ];
+                  case 'mr': return [
+                    '• दूध 10 लिटर @ ₹10/लिटर',
+                    '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
+                    '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
+                  ];
+                  case 'gu': return [
+                    '• દૂધ 10 લિટર @ ₹10/લિટર',
+                    '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
+                    '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
+                  ];
+                  default: return [
+                    '• milk 10 litres at ₹10/litre',
+                    '• paracetamol 3 packets at ₹20/packet expiry +7d',
+                    '• mobile handset Xiaomi 1 packet at ₹60000/packet'
+                  ];
+                }
+              })();
+    
+              const lineTS = (langUi === 'en' ? 'Type or speak (voice note) — "mode";'
+                : langUi === 'hi' ? 'टाइप करें या वॉइस नोट बोलें — "mode";'
+                : langUi === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন — "mode";'
+                : langUi === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும் — "mode";'
+                : langUi === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి — "mode";'
+                : langUi === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ — "mode";'
+                : langUi === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला — "mode";'
+                : langUi === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો — "mode";'
+                : 'Type or speak (voice note) — "mode";');
+    
+              const lineClick = `${langUi === 'en' ? 'Click on' : (langUi === 'hi' ? 'क्लिक करें' :
+                 (langUi === 'bn' ? 'ক্লিক করুন' : (langUi === 'ta' ? 'கிளிக் செய்யவும்' :
+                 (langUi === 'te' ? 'క్లిక్ చేయండి' : (langUi === 'kn' ? 'ಕ್ಲಿಕ್ ಮಾಡಿ' :
+                 (langUi === 'mr' ? 'क्लिक करा' : (langUi === 'gu' ? 'ક્લિક કરો' : 'Click on')))))))} ${BTN} & ${
+                 langUi === 'en' ? 'type or speak (voice note):' :
+                 langUi === 'hi' ? 'टाइप करें या वॉइस नोट बोलें:' :
+                 langUi === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন:' :
+                 langUi === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:' :
+                 langUi === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:' :
+                 langUi === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:' :
+                 langUi === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला:' :
+                 langUi === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' : 'type or speak (voice note):'
+              }`;
+    
+              const bodyExamples = [header, lineTS, lineClick, ...bullets].join('\n');
+              const reqId = String(req?.headers?.['x-request-id'] ?? Date.now());
+              const msg0 = await t(bodyExamples, langUi, `${reqId}::qr-examples`);
+              let msgFinal = await tagWithLocalizedMode(from, msg0, langUi);
+              msgFinal = enforceSingleScriptSafe(msgFinal, langUi);
+              msgFinal = normalizeNumeralsToLatin(msgFinal).trim();
+              await sendMessageViaAPI(from, msgFinal);
+              return; // consumed: prevent legacy "Examples (purchase)" path
+            }
+          } catch (_) { /* best-effort; fall through to existing logic */ }
+  
       const _isInventoryListSelection = /^list_/.test(_payloadId);
     
       // Fire-and-forget: resurface List-Picker AFTER the main reply, regardless of early returns.
