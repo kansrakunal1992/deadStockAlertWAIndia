@@ -720,7 +720,7 @@ async function sendPriceRequiredNudge(From, productName, unit, langHint = 'en', 
       `🟡 Price required for “${productName}”.`,
       onlyOnceLine,
       '',
-      `Please resend in one line WITH price. Examples:`,
+      `Please resend in one line WITH price. Examples (type or speak a voice note):`,
       `• ${productName} 10 ${unitDisp} at ₹70 per ${unitDisp}`,
       `• ${productName} 10 ${unitDisp} ₹70/${unitDisp} exp +6m`,
     ].join('\n');
@@ -741,7 +741,7 @@ async function sendMultiPriceRequiredNudge(From, items, langHint = 'en') {
       : `For new products, price isn't stored—it's required only one time.`;
     const bullets = (items ?? []).map(it => {
       const uDisp = displayUnit(it.unit ?? 'unit', lang);
-      return `• ${it.product}: e.g. “purchased ${it.product} 10 ${uDisp} @ ₹70/${uDisp}”`;
+      return `• ${it.product}: e.g. (type or speak a voice note): “purchased ${it.product} 10 ${uDisp} @ ₹70/${uDisp}”`;
     }).join('\n');
     const bodySrc = [
       `🟡 Price required for the following products:`,
@@ -2913,9 +2913,9 @@ async function safeSendParseError(From, detectedLanguage, requestId, header) {
     if (typeof sendParseErrorWithExamples === 'function') {
       await sendParseErrorWithExamples(From, detectedLanguage, requestId, header);
     } else {                             
-        // Ultra-compact fallback in user's language (ensure msg is defined)
+        // Ultra-compact fallback in user's language (ensure msg is defined)                            
               const msg = await t(
-                header ?? 'Sorry, I could not understand that. Try: "sold milk 2 ltr" or "short summary".',
+                    header ?? 'Sorry, I could not understand that. Try (type or speak a voice note): "sold milk 2 ltr" or "short summary".',
                 detectedLanguage,
                 requestId + '::err-fallback'
               );
@@ -4227,30 +4227,94 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
   const shopKey = shopIdFrom(From); // e.g., "+9190..."
   const override = __lastStickyAction?.get?.(shopKey) || (stickyAction ? { action: stickyAction.action } : null);
   const currentMode = (override?.action || String(modeBadge || '')).toLowerCase();
-  // Localized, mode-specific examples shown inline so footer matches user's active flow.
-  const examples = (function () {
-    switch (currentMode) {
-      case 'purchased':
-        return lang.startsWith('hi')
-          ? 'उदाहरण: "Milk purchase 5 ltr", "Oreo 12 packets खरीदे"'
-          : 'Examples: "purchase milk 5 ltr", "bought Oreo 12 packets"';
-      case 'sold':
-        return lang.startsWith('hi')
-          ? 'उदाहरण: "Milk sold 2 ltr", "Oreo 3 packets बेचे"'
-          : 'Examples: "sold milk 2 ltr", "sold Oreo 3 packets"';
-      case 'returned':
-        return lang.startsWith('hi')
-          ? 'उदाहरण: "Milk returned 1 ltr", "Oreo 2 packets रिटर्न"'
-          : 'Examples: "returned milk 1 ltr", "return Oreo 2 packets"';
-      default:
-        return lang.startsWith('hi')
-          ? 'उदाहरण: "sold milk 2 ltr", "purchase Oreo 10 packets"'
-          : 'Examples: "sold milk 2 ltr", "purchase Oreo 10 packets"';
+  // Localized, mode-specific examples shown inline so footer matches user's active flow.  
+  // === Localized examples lead-in for all supported languages ===
+  const baseLang = String(lang ?? 'en').toLowerCase().replace(/-latn$/, ''); // hi-latn -> hi
+  // === Localized examples block    
+  let examples = '';
+    switch (baseLang) {
+      case 'hi': // Hindi (Devanagari)
+        examples = [
+          'उदाहरण:',
+          'टाइप करें या वॉइस नोट बोलें — "mode";',
+          '“खरीद दर्ज करें/बिक्री दर्ज करें/वापसी दर्ज करें” पर क्लिक करें और टाइप करें या वॉइस नोट बोलें:',
+          '• दूध 10 लीटर @ ₹10/लीटर',
+          '• पैरासिटामोल 3 पैकेट @ ₹20/पैकेट एक्सपायरी +7 दिन',
+          '• मोबाइल हैंडसेट Xiaomi 1 पैकेट @ ₹60000/पैकेट'
+        ].join('\\n');
+        break;
+      case 'bn': // Bengali
+        examples = [
+          'উদাহরণ:',
+          'টাইপ করুন বা ভয়েস নোট বলুন — "mode";',
+          '“ক্রয় রেকর্ড করুন/বিক্রি রেকর্ড করুন/রিটার্ন রেকর্ড করুন” এ ক্লিক করুন এবং টাইপ করুন বা ভয়েস নোট বলুন:',
+          '• দুধ 10 লিটার @ ₹10/লিটার',
+          '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
+          '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
+        ].join('\\n');
+        break;
+      case 'ta': // Tamil
+        examples = [
+          'உதாரணம்:',
+          'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும் — "mode";',
+          '“கொள்முதல் பதிவு/விற்பனை பதிவு/ரிட்டர்ன் பதிவு” இல் கிளிக் செய்து தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:',
+          '• பால் 10 லிட்டர் @ ₹10/லிட்டர்',
+          '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
+          '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
+        ].join('\\n');
+        break;
+      case 'te': // Telugu
+        examples = [
+          'ఉదాహరణలు:',
+          'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి — "mode";',
+          '“కొనుగోలు రికార్డ్ చేయండి/అమ్మకం రికార్డ్ చేయండి/రిటర్న్ రికార్డ్ చేయండి” పై క్లిక్ చేసి టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:',
+          '• పాలు 10 లీటర్ @ ₹10/లీటర్',
+          '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
+          '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
+        ].join('\\n');
+        break;
+      case 'kn': // Kannada
+        examples = [
+          'ಉದಾಹರಣೆಗಳು:',
+          'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ — "mode";',
+          '“ಖರೀದಿ ದಾಖಲಿಸಿ/ಮಾರಾಟ ದಾಖಲಿಸಿ/ರಿಟರ್ನ್ ದಾಖಲಿಸಿ” ಮೇಲೆ ಕ್ಲಿಕ್ ಮಾಡಿ ಮತ್ತು ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:',
+          '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
+          '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
+          '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
+        ].join('\\n');
+        break;
+      case 'mr': // Marathi
+        examples = [
+          'उदाहरणे:',
+          'टाइप करा किंवा व्हॉईस नोट बोला — "mode";',
+          '“खरेदी नोंदवा/विक्री नोंदवा/परत नोंदवा” वर क्लिक करा आणि टाइप करा किंवा व्हॉईस नोट बोला:',
+          '• दूध 10 लिटर @ ₹10/लिटर',
+          '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
+          '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
+        ].join('\\n');
+        break;
+      case 'gu': // Gujarati
+        examples = [
+          'ઉદાહરણ:',
+          'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો — "mode";',
+          '“ખરીદી રેકોર્ડ કરો/વેચાણ રેકોર્ડ કરો/રીટર્ન રેકોર્ડ કરો” પર ક્લિક કરો અને ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:',
+          '• દૂધ 10 લિટર @ ₹10/લિટર',
+          '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
+          '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
+        ].join('\\n');
+        break;
+      case 'hi-latn': // Hinglish (Roman Hindi) — fall back to English for clarity, unless you prefer Hinglish lines
+      default: // English
+        examples = [
+          'Examples (type or speak a voice note):',
+          'Type or speak (voice note) — "mode";',
+          'Click on "Record Purchase/Record Sale/Record Return" & type or speak (voice note):',
+          '• milk 10 litres at ₹10/litre',
+          '• paracetamol 3 packets at ₹20/packet expiry +7d',
+          '• mobile handset Xiaomi 1 packet at ₹60000/packet'
+        ].join('\\n');
+        break;
     }
-  })();
-  const guidance = lang.startsWith('hi')          
-      ? `（आप ${currentMode} मोड में हैं）。 ${examples} — या "mode" टाइप करें या वॉइस नोट बोलें।`
-          : `(You’re in ${currentMode} mode. ${examples} — or type or speak (voice note) "mode".)`;
 
   const composed = [header, body, '', guidance].filter(Boolean).join('\n');
   const msg = await t(composed, lang, requestId + '::peek');    
@@ -4465,7 +4529,7 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
         // -----------------------------------------------------------------------
         
         let msgRaw = `${NO_CLAMP_MARKER}${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
-                     `Try:\n• short summary\n• price list\n• "10 Parle-G sold at 11/packet"`;               
+                     `Try (type or speak a voice note):"Mode" -> \n• "short summary"\n• "price list"\n• "Record Purchase"\n• "Record Sale"\n• "Record Return"`;               
         let msgTranslated = await t(msgRaw, lang, `trial-onboard-done-${shopId}`);              
         await sendMessageViaAPI(From, finalizeForSend(msgTranslated, lang));            
         // NEW: Standalone inventory pre-load tip (post-activation)
