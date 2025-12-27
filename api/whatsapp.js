@@ -16610,7 +16610,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         //  - start-trial intent is present (typed), or
         //  - gate already decided onboarding/trial, or
         //  - sticky/txn context
-        const stickyAction = await getStickyActionQuick();
+        const stickyAction = await getStickyActionQuick(From);
         const looksTxn = looksLikeTxnLite(Body);
         const trialIntent = isStartTrialIntent(Body);
         let suppressByGate = false;
