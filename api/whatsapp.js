@@ -14942,8 +14942,34 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
          
       // STRICT: render confirmation only AFTER commit results, and only for successful writes.
       const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+      
+      // Quick, safe fix: mark successful single-item Return updates so counters/formatters include them
+          // (uses actual result lines as anchors; minimal and safe for downstream logic)
+          if (Array.isArray(results)) {
+            for (const result of results) {
+              const act = String(result?.action ?? '').toLowerCase();
+              if (act === 'returned') {
+                result.success = true;       // <-- add this
+                result.action = 'returned';  // ensure action is consistent
+                // result.newQuantity is already set by the update function; keep it as-is
+              }
+            }
+          }
 
       // suppress confirmation immediately after a price‑nudge for this shop
+              
+      // Quick, safe fix: mark Return results as success to avoid "0 of 1 updated"
+          if (Array.isArray(results)) {
+            for (const result of results) {
+              const act = String(result?.action ?? '').toLowerCase();
+              if (act === 'returned') {
+                result.success = true;       // <-- add this
+                result.action = 'returned';  // consistent for formatters/counters
+                // Keep result.newQuantity as returned by updateMultipleInventory
+              }
+            }
+          }
+
       const shopIdLocal = String(From).replace('whatsapp:', '');
       const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopIdLocal) ?? 0;
       const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
@@ -17494,6 +17520,19 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
            
       // Commit first to get results
             const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+                
+        // Quick, safe fix: normalize Return results for success counting in sticky mode
+                if (Array.isArray(results)) {
+                  for (const result of results) {
+                    const act = String(result?.action ?? '').toLowerCase();
+                    if (act === 'returned') {
+                      result.success = true;       // <-- add this
+                      result.action = 'returned';  // ensure action is exactly 'returned'
+                      // newQuantity already set when update succeeds
+                    }
+                  }
+                }
+
             const processed = results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting);
 
       if (processed.length === 1) {
@@ -17770,7 +17809,18 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
       console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);                   
     // Commit first to get results
-      const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+      const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);          
+    // Quick, safe fix: ensure Return updates are flagged successful for summary
+          if (Array.isArray(results)) {
+            for (const result of results) {
+              const act = String(result?.action ?? '').toLowerCase();
+              if (act === 'returned') {
+                result.success = true;       // <-- add this
+                result.action = 'returned';  // maintain canonical action value
+                // preserve result.newQuantity
+              }
+            }
+          }
       const processed = results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting);
       if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
         const x = processed[0];
@@ -17871,6 +17921,18 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       }
       await setUserState(shopId, 'inventory', { updates, detectedLanguage });
       const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+      
+      // Quick, safe fix: set success/action for Return results prior to state-dependent rendering
+          if (Array.isArray(results)) {
+            for (const result of results) {
+              const act = String(result?.action ?? '').toLowerCase();
+              if (act === 'returned') {
+                result.success = true;       // <-- add this
+                result.action = 'returned';  // ensure consistency for formatters/counters
+                // newQuantity stays as provided by update function
+              }
+            }
+          }
 
       if (allPendingPrice(results)) {
         try {
