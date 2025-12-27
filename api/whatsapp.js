@@ -5285,7 +5285,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
         return plan === 'paid' || (plan === 'trial' && !isExpired);
       }
       
-    function getStickyExamplesLocalized(action, langCode) {
+  function getStickyExamplesLocalized(action, langCode) {
       const baseLang = String(langCode || 'en').toLowerCase().replace(/-latn$/, ''); // map hi-latn -> hi
       const act = String(action || '').toLowerCase(); // 'purchased' | 'sold' | 'returned'
       // Header per action (retain Purchase/Sale/Return)
@@ -5311,51 +5311,97 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
           baseLang === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:' :
           baseLang === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला:' :
           baseLang === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' :
-          'Type or speak (voice note):';
-       
-      // Localized item examples (keep brands/units consistent; use ₹ and native expiry words)
-      const bullets =
-        baseLang === 'hi' ? [
-          '• दूध 10 लीटर @ ₹10/लीटर',
-          '• पैरासिटामोल 3 पैकेट @ ₹20/पैकेट एक्सपायरी +7 दिन',
-          '• मोबाइल हैंडसेट Xiaomi 1 पैकेट @ ₹60000/पैकेट'
-        ] :
-        baseLang === 'bn' ? [
-          '• দুধ 10 লিটার @ ₹10/লিটার',
-          '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
-          '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
-        ] :
-        baseLang === 'ta' ? [
-          '• பால் 10 லிட்டர் @ ₹10/லிட்டர்',
-          '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
-          '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
-        ] :
-        baseLang === 'te' ? [
-          '• పాలు 10 లీటర్ @ ₹10/లీటర్',
-          '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
-          '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
-        ] :
-        baseLang === 'kn' ? [
-          '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
-          '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
-          '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
-        ] :
-        baseLang === 'mr' ? [
-          '• दूध 10 लिटर @ ₹10/लिटर',
-          '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
-          '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
-        ] :
-        baseLang === 'gu' ? [
-          '• દૂધ 10 લિટર @ ₹10/લિટર',
-          '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
-          '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
-        ] :
-        [
-          '• milk 10 litres at ₹10/litre',
-          '• paracetamol 3 packets at ₹20/packet expiry +7d',
-          '• mobile handset Xiaomi 1 packet at ₹60000/packet'
-        ];   
+          'Type or speak (voice note):';       
+     
+      // PURCHASE bullets — WITH price/expiry
+        const purchaseBullets =
+          baseLang === 'hi' ? [
+            '• दूध 10 लीटर @ ₹10/लीटर',
+            '• पैरासिटामोल 3 पैकेट @ ₹20/पैकेट एक्सपायरी +7 दिन',
+            '• मोबाइल हैंडसेट Xiaomi 1 पैकेट @ ₹60000/पैकेट'
+          ] :
+          baseLang === 'bn' ? [
+            '• দুধ 10 লিটার @ ₹10/লিটার',
+            '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
+            '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
+          ] :
+          baseLang === 'ta' ? [
+            '• பால் 10 லிட்டர் @ ₹10/லிட்டர்',
+            '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
+            '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
+          ] :
+          baseLang === 'te' ? [
+            '• పాలు 10 లీటర్ @ ₹10/లీటర్',
+            '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
+            '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
+          ] :
+          baseLang === 'kn' ? [
+            '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
+            '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
+            '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
+          ] :
+          baseLang === 'mr' ? [
+            '• दूध 10 लिटर @ ₹10/लिटर',
+            '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
+            '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
+          ] :
+          baseLang === 'gu' ? [
+            '• દૂધ 10 લિટર @ ₹10/લિટર',
+            '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
+            '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
+          ] :
+          [
+            '• milk 10 litres at ₹10/litre',
+            '• paracetamol 3 packets at ₹20/packet expiry +7d',
+            '• mobile handset Xiaomi 1 packet at ₹60000/packet'
+          ];
       
+        // SALE / RETURN bullets — PRICE‑LESS
+        const saleReturnBullets =
+          baseLang === 'hi' ? [
+            '• दूध 10 लीटर',
+            '• पैरासिटामोल 3 पैकेट',
+            '• मोबाइल हैंडसेट Xiaomi 1 पैकेट'
+          ] :
+          baseLang === 'bn' ? [
+            '• দুধ 10 লিটার',
+            '• প্যারাসিটামল 3 প্যাকেট',
+            '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট'
+          ] :
+          baseLang === 'ta' ? [
+            '• பால் 10 லிட்டர்',
+            '• பாராசிடமால் 3 பாக்கெட்',
+            '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட்'
+          ] :
+          baseLang === 'te' ? [
+            '• పాలు 10 లీటర్లు',
+            '• పారాసిటమోల్ 3 ప్యాకెట్లు',
+            '• మొబైల్ హ్యాండ్‌సెట్ Xiaomi 1 ప్యాకెట్'
+          ] :
+          baseLang === 'kn' ? [
+            '• ಹಾಲು 10 ಲೀಟರ್',
+            '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್',
+            '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್'
+          ] :
+          baseLang === 'mr' ? [
+            '• दूध 10 लिटर',
+            '• पॅरासिटामॉल 3 पॅकेट',
+            '• मोबाइल हँडसेट Xiaomi 1 पॅकेट'
+          ] :
+          baseLang === 'gu' ? [
+            '• દૂધ 10 લિટર',
+            '• પેરાસિટામોલ 3 પેકેટ',
+            '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ'
+          ] :
+          [
+            '• milk 10 litres',
+            '• paracetamol 3 packets',
+            '• mobile handset Xiaomi 1 packet'
+          ];
+      
+        // Choose the right bullets by action
+        const bullets = (act === 'purchased') ? purchaseBullets : saleReturnBullets;
+
     // Compose final block (header + speakLine + bullets)
     return [header, speakLine, ...bullets].join('\n');
     }
@@ -14876,6 +14922,152 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
          }
       } catch (_) { /* best-effort */ }
       // ===== [PATCH:HYBRID-VOICE-ROUTE-004] END =====
+
+      // [UNIQ:VOICE-CMD-UNIFIED-20251227] BEGIN — Multilingual inventory command short-circuit (voice)
+      // Purpose: Handle ALL inventory commands (and their localized variants) from voice before update parsing.
+      // Canonical commands handled:
+      //   - low stock
+      //   - reorder suggestions (and singular "reorder suggestion")
+      //   - prices
+      //   - stock value / inventory value / value summary
+      //   - expiring 0 / expiring 7 / expiring 30
+      //   - short summary / full summary
+      //   - sales today / sales week / sales month / top 5 products month
+      try {
+        const rawText = String(cleanTranscript ?? '').trim();
+        const canon = safeNormalizeForQuickQuery(rawText); // e.g., "Low stock." -> "low stock"
+        // Local, multilingual normalizer for voice-only path (extends normalizeCommandAlias for bn/ta/te/kn/mr/gu)
+        function _normalizeVoiceCommandAllLang(text, langHint) {
+          const t = safeNormalizeForQuickQuery(String(text ?? ''));
+          const L = String(langHint ?? 'en').toLowerCase();
+          // ---- direct exacts / regex first (language-agnostic)
+          if (/^low stock$/.test(t)) return 'low stock';
+          if (/^reorder suggestions?$/.test(t)) return 'reorder suggestions';
+          if (/^prices$/.test(t)) return 'prices';
+          if (/^(stock value|inventory value|value summary)$/.test(t)) return 'stock value';
+          const mExp = t.match(/^expiring\s+(0|7|30)$/i); if (mExp) return `expiring ${mExp[1]}`;
+          if (/^short summary$/.test(t)) return 'short summary';
+          if (/^full summary$/.test(t)) return 'full summary';
+          if (/^sales today$/.test(t)) return 'sales today';
+          if (/^sales week$/.test(t)) return 'sales week';
+          if (/^sales month$/.test(t)) return 'sales month';
+          if (/^(top 5 products month|top products month)$/.test(t)) return 'top 5 products month';
+          // ---- Hindi (Devanagari + Hinglish / hi-latn)
+          if (/\b(स्टॉक कम|कम स्टॉक)\b/.test(t)) return 'low stock';
+          if (/"(पुनः ऑर्डर सुझाव)"/.test(t) || /\b(पुनः ऑर्डर सुझाव|रीऑर्डर सुझाव|री ऑर्डर सुझाव)\b/.test(t)) return 'reorder suggestions';
+          if (/\b(मूल्य|कीमत|भाव|रेट)\b/.test(t)) return 'prices';
+          if (/\b(स्टॉक मूल्य|इन्वेंटरी मूल्य|कुल मूल्य)\b/.test(t)) return 'stock value';
+          if (/\b(संक्षिप्त सारांश|छोटा सारांश)\b/.test(t)) return 'short summary';
+          if (/\b(पूर्ण सारांश|विस्तृत सारांश|पूरा सारांश)\b/.test(t)) return 'full summary';
+          if (/\b(आज की बिक्री)\b/.test(t)) return 'sales today';
+          if (/\b(सप्ताह|इस सप्ताह की बिक्री)\b/.test(t)) return 'sales week';
+          if (/\b(महीने की बिक्री|मासिक बिक्री)\b/.test(t)) return 'sales month';
+          if (/\b(टॉप 5 उत्पाद|टॉप उत्पाद महीने)\b/.test(t)) return 'top 5 products month';
+          // Hinglish (roman)
+          if (/\b(kam stock)\b/i.test(t)) return 'low stock';
+          if (/\b(re ?order sujhav|punah order sujhav|reorder suggestion)\b/i.test(t)) return 'reorder suggestions';
+          if (/\b(moolya|kimat|daam|rate|prices)\b/i.test(t)) return 'prices';
+          if (/\b(stock moolya|inventory value|value summary)\b/i.test(t)) return 'stock value';
+          if (/\b(short summary|chhota saransh)\b/i.test(t)) return 'short summary';
+          if (/\b(full summary|poora saransh|vistrit saransh)\b/i.test(t)) return 'full summary';
+          // ---- Bengali
+          if (/\b(স্টক কম)\b/.test(t)) return 'low stock';
+          if (/\b(পুনঃঅর্ডার পরামর্শ)\b/.test(t)) return 'reorder suggestions';
+          if (/\b(মূল্য)\b/.test(t)) return 'prices';
+          if (/\b(স্টকের মূল্য)\b/.test(t)) return 'stock value';
+          // ---- Tamil
+          if (/\b(இருப்பு குறைவு)\b/.test(t)) return 'low stock';
+          if (/\b(மீண்டும் ஆர்டர் பரிந்துரைகள்)\b/.test(t)) return 'reorder suggestions';
+          if (/\b(விலைகள்)\b/.test(t)) return 'prices';
+          if (/\b(இருப்பு மதிப்பு)\b/.test(t)) return 'stock value';
+          // ---- Telugu
+          if (/\b(తక్కువ నిల్వ)\b/.test(t)) return 'low stock';
+          if (/\b(పునః ఆర్డర్ సూచనలు)\b/.test(t)) return 'reorder suggestions';
+          if (/\b(ధరలు)\b/.test(t)) return 'prices';
+          if (/\b(నిల్వ విలువ)\b/.test(t)) return 'stock value';
+          // ---- Kannada
+          if (/\b(ಕಡಿಮೆ ಸಂಗ್ರಹ)\b/.test(t)) return 'low stock';
+          if (/\b(ಮರುಆರ್ಡರ್ ಸಲಹೆಗಳು)\b/.test(t)) return 'reorder suggestions';
+          if (/\b(ಬೆಲೆಗಳು)\b/.test(t)) return 'prices';
+          if (/\b(ಸ್ಟಾಕ್ ಮೌಲ್ಯ)\b/.test(t)) return 'stock value';
+          // ---- Marathi
+          if (/\b(कमी साठा)\b/.test(t)) return 'low stock';
+          if (/\b(पुन्हा ऑर्डर सुचवणी)\b/.test(t)) return 'reorder suggestions';
+          if (/\b(किंमती)\b/.test(t)) return 'prices';
+          if (/\b(साठा मूल्य|इन्वेंटरी मूल्य)\b/.test(t)) return 'stock value';
+          // ---- Gujarati
+          if (/\b(ઓછો જથ્થો)\b/.test(t)) return 'low stock';
+          if (/\b(પુનઃ ઓર્ડર સૂચનો)\b/.test(t)) return 'reorder suggestions';
+          if (/\b(કિંમતો)\b/.test(t)) return 'prices';
+          if (/\b(સ્ટોક મૂલ્ય)\b/.test(t)) return 'stock value';
+          return null;
+        }
+        // 1) Resolve canonical command via alias + multilingual normalizer
+        const aliasCmd = normalizeCommandAlias(rawText, uiLangExact /* use UI exact variant */);
+        const extraCmd = _normalizeVoiceCommandAllLang(rawText, uiLangExact);
+        const canonCmd = (canon === 'reorder suggestion') ? 'reorder suggestions' : canon;
+        const cmd = aliasCmd || extraCmd || (TERMINAL_COMMANDS.has(canonCmd) ? canonCmd : null);
+  
+        // 2) Route recognized commands and STOP update parsing
+        if (cmd) {
+          // Mark this request handled; prevents parse-error apology later in cycle
+          try { handledRequests.add(requestId); } catch (_) {}
+          // For expiring N: allow numeric flavour
+          const expMatch = cmd.match(/^expiring\s+(0|7|30)$/i);
+          if (expMatch) {
+            const stickyAction = await getStickyActionQuick(From);
+            await handleDiagnosticPeek(From, cmd, requestId, stickyAction);
+            try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
+            return;
+          }
+          switch (cmd) {
+            case 'low stock': {
+              const msg = await composeLowStockLocalized(shopId, uiLangExact, requestId);
+              await sendMessageViaAPI(From, finalizeForSend(msg, uiLangExact));
+              try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
+              return;
+            }
+            case 'reorder suggestions': {
+              // Minimal UX if renderer not available: nudge + List-Picker
+              let body = await t('📦 Reorder suggestions are ready. Opening the menu…', uiLangExact, `reorder::${shopId}`);
+              body = await tagWithLocalizedMode(From, finalizeForSend(body, uiLangExact), uiLangExact);
+              await sendMessageViaAPI(From, body);
+              try { await resendInventoryListPicker(From, uiLangExact); } catch (_) {}
+              return;
+            }
+            case 'prices':
+            case 'short summary':
+            case 'full summary': {
+              const stickyAction = await getStickyActionQuick(From);
+              await handleDiagnosticPeek(From, cmd, requestId, stickyAction);
+              try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
+              return;
+            }
+            case 'stock value':
+            case 'inventory value':
+            case 'value summary':
+            case 'sales today':
+            case 'sales week':
+            case 'sales month':
+            case 'top 5 products month': {
+              // Route via existing quick-query router (supports richer outputs)
+              await routeQuickQueryRaw(cmd, From, uiLangExact, `${requestId}::voice-cmd`);
+              try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
+              return;
+            }
+            default: {
+              // Fallback: treat any other canonical command via quick-query router
+              await routeQuickQueryRaw(cmd, From, uiLangExact, `${requestId}::voice-cmd-fallback`);
+              try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
+              return;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[voice-cmd-unified] failed:', e?.message);
+        // Fall through to orchestrator/update parsing on failure
+      }
+      // [UNIQ:VOICE-CMD-UNIFIED-20251227] END — Multilingual inventory command short-circuit (voice)
 
     // --- Minimal hook: Activate Paid Plan command (voice path) ---
     const lowerCmd = String(cleanTranscript || '').trim().toLowerCase();
