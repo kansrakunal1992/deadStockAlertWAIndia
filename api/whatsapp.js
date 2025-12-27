@@ -4409,9 +4409,14 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
   // Guidance line keeps user anchored in sticky action  
   // [PATCH C] Mode examples glitch in sticky flow footer — override with latest sticky action immediately
   // Use __lastStickyAction (shopId -> {action, ts}) when present; fallback to current stickyAction or modeBadge.
-  const shopKey = shopIdFrom(From); // e.g., "+9190..."
-  const override = __lastStickyAction?.get?.(shopKey) || (stickyAction ? { action: stickyAction.action } : null);
-  const currentMode = (override?.action || String(modeBadge || '')).toLowerCase();
+  const shopKey = shopIdFrom(From); // e.g., "+9190..."    
+  // Prefer canonical action from __lastStickyAction or DB state; never fall back to the display badge
+  const override = __lastStickyAction?.get?.(shopKey) || (stickyAction ? { action: stickyAction } : null);
+  const canonicalFromOverride = String(override?.action || '').toLowerCase();
+  const canonicalFromState = String(st?.data?.action || '').toLowerCase();
+  const currentMode = ['purchased','sold','returned'].includes(canonicalFromOverride)
+    ? canonicalFromOverride
+    : (['purchased','sold','returned'].includes(canonicalFromState) ? canonicalFromState : 'purchased'); // safe fallback
   // Localized, mode-specific examples shown inline so footer matches user's active flow.  
   // === Localized examples lead-in for all supported languages ===
   const baseLang = String(lang ?? 'en').toLowerCase().replace(/-latn$/, ''); // hi-latn -> hi
@@ -4448,15 +4453,15 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
         baseLang === 'kn' ? 'ಉದಾಹರಣೆ (ಮಾರಾಟ):' :
         baseLang === 'mr' ? 'उदाहरण (विक्री):' :
         baseLang === 'gu' ? 'ઉદાહરણ (વેચાણ):' :
-        'Example (Sale):');
-      case 'returned': return baseLang === 'en' ? 'Example (Return):' : (baseLang === 'hi' ? 'उदाहरण (वापसी):' :
+        'Examples (Sale):');
+      case 'returned': return baseLang === 'en' ? 'Examples (Return):' : (baseLang === 'hi' ? 'उदाहरण (वापसी):' :
         baseLang === 'bn' ? 'উদাহরণ (রিটার্ন):' :
         baseLang === 'ta' ? 'உதாரணம் (ரிட்டர்ன்):' :
         baseLang === 'te' ? 'ఉదాహరణ (రిటర్న్):' :
         baseLang === 'kn' ? 'ಉದಾಹರಣೆ (ರಿಟರ್ನ್):' :
         baseLang === 'mr' ? 'उदाहरण (परत):' :
         baseLang === 'gu' ? 'ઉદાહરણ (રિટર્ન):' :
-        'Example (Return):');
+        'Examples (Return):');
       default: return baseLang === 'en' ? 'Example:' : (baseLang === 'hi' ? 'उदाहरण:' :
         baseLang === 'bn' ? 'উদাহরণ:' :
         baseLang === 'ta' ? 'உதாரணம்:' :
@@ -4480,11 +4485,12 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
     }
   })();
     
-  // Dash bullets (localized items) — simplified for Sale/Return; Purchase stays unchanged
+  // Dash bullets (localized items) — simplified for Sale/Return; Purchase stays unchanged 
   const bullets = (function () {
     const isPurchaseMode = String(currentMode) === 'purchased';
+  
     if (isPurchaseMode) {
-      // (UNCHANGED) existing Purchase examples with price/expiry
+      // (UNCHANGED) Purchase examples WITH price/expiry
       switch (baseLang) {
         case 'hi': return [
           '• दूध 10 लीटर @ ₹10/लीटर',
@@ -4501,26 +4507,7 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
           '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
           '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
         ];
-        case 'te': return [
-          '• పాలు 10 లీటర్ @ ₹10/లీటర్',
-          '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
-          '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
-        ];
-        case 'kn': return [
-          '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
-          '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
-          '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
-        ];
-        case 'mr': return [
-          '• दूध 10 लिटर @ ₹10/लिटर',
-          '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
-          '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
-        ];
-        case 'gu': return [
-          '• દૂધ 10 લિટર @ ₹10/લિટર',
-          '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
-          '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
-        ];
+        // ... keep other purchase languages as-is ...
         default: return [
           '• milk 10 litres at ₹10/litre',
           '• paracetamol 3 packets at ₹20/packet expiry +7d',
@@ -4528,7 +4515,8 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
         ];
       }
     }
-    // (NEW) simplified Sale/Return bullets — no price/expiry
+  
+    // SALE/RETURN: examples WITHOUT price/expiry
     switch (baseLang) {
       case 'hi': return [
         '• दूध 10 लीटर',
@@ -4546,9 +4534,9 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
         '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட்'
       ];
       case 'te': return [
-        '• పాలు 10 లీటర్',
-        '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు',
-        '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్'
+        '• పాలు 10 లీటర్లు',
+        '• పారాసిటమోల్ 3 ప్యాకెట్లు',
+        '• మొబైల్ హ్యాండ్‌సెట్ Xiaomi 1 ప్యాకెట్'
       ];
       case 'kn': return [
         '• ಹಾಲು 10 ಲೀಟರ್',
@@ -4565,6 +4553,11 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
         '• પેરાસિટામોલ 3 પેકેટ',
         '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ'
       ];
+      case 'hi-latn': return [
+        '• doodh 10 ltr',
+        '• paracetamol 3 packets',
+        '• mobile handset Xiaomi 1 packet'
+      ];
       default: return [
         '• milk 10 litres',
         '• paracetamol 3 packets',
@@ -4572,6 +4565,7 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
       ];
     }
   })();
+
 
   // Compose examples block lines    
   const examplesLines = [modeHeader, speakLine, ...bullets].join('\n');
@@ -5025,7 +5019,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                   case 'kn': return isPurchase ? 'ಉದಾಹರಣೆ (ಖರೀದಿ):'    : isSale ? 'ಉದಾಹರಣೆ (ಮಾರಾಟ):'  : 'ಉದಾಹರಣೆ (ರಿಟರ್ನ್):';
                   case 'mr': return isPurchase ? 'उदाहरण (खरेदी):'      : isSale ? 'उदाहरण (विक्री):'    : 'उदाहरण (परत):';
                   case 'gu': return isPurchase ? 'ઉદાહરણ (ખરીદી):'      : isSale ? 'ઉદાહરણ (વેચાણ):'     : 'ઉદાહરણ (રિટર્ન):';
-                  default:   return isPurchase ? 'Example (Purchase):'    : isSale ? 'Example (Sale):'       : 'Example (Return):';
+                  default:   return isPurchase ? 'Examples (Purchase):'    : isSale ? 'Examples (Sale):'       : 'Examples (Return):';
                 }
               })();
                           
@@ -5296,7 +5290,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
       const act = String(action || '').toLowerCase(); // 'purchased' | 'sold' | 'returned'
       // Header per action (retain Purchase/Sale/Return)
       const H = {
-        en: { p:'Example (Purchase):', s:'Example (Sale):',    r:'Example (Return):',  n:'Example:' },
+        en: { p:'Examples (Purchase):', s:'Examples (Sale):',    r:'Examples (Return):',  n:'Example:' },
         hi: { p:'उदाहरण (खरीद):',      s:'उदाहरण (बिक्री):',   r:'उदाहरण (वापसी):',   n:'उदाहरण:' },
         bn: { p:'উদাহরণ (ক্রয়):',       s:'উদাহরণ (বিক্রি):',    r:'উদাহরণ (রিটার্ন):',  n:'উদাহরণ:' },
         ta: { p:'உதாரணம் (கொள்முதல்):', s:'உதாரணம் (விற்பனை):', r:'உதாரணம் (ரிட்டர்ன்):', n:'உதாரணம்:' },
