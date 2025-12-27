@@ -14936,33 +14936,50 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       try {
         const rawText = String(cleanTranscript ?? '').trim();
         const canon = safeNormalizeForQuickQuery(rawText); // e.g., "Low stock." -> "low stock"
-        // Local, multilingual normalizer for voice-only path (extends normalizeCommandAlias for bn/ta/te/kn/mr/gu)
+        // Local, multilingual normalizer for voice-only path (extends normalizeCommandAlias for bn/ta/te/kn/mr/gu)        
         function _normalizeVoiceCommandAllLang(text, langHint) {
-          const t = safeNormalizeForQuickQuery(String(text ?? ''));
-          const L = String(langHint ?? 'en').toLowerCase();
-          // ---- direct exacts / regex first (language-agnostic)
-          if (/^low stock$/.test(t)) return 'low stock';
-          if (/^reorder suggestions?$/.test(t)) return 'reorder suggestions';
-          if (/^prices$/.test(t)) return 'prices';
-          if (/^(stock value|inventory value|value summary)$/.test(t)) return 'stock value';
-          const mExp = t.match(/^expiring\s+(0|7|30)$/i); if (mExp) return `expiring ${mExp[1]}`;
-          if (/^short summary$/.test(t)) return 'short summary';
-          if (/^full summary$/.test(t)) return 'full summary';
-          if (/^sales today$/.test(t)) return 'sales today';
-          if (/^sales week$/.test(t)) return 'sales week';
-          if (/^sales month$/.test(t)) return 'sales month';
-          if (/^(top 5 products month|top products month)$/.test(t)) return 'top 5 products month';
-          // ---- Hindi (Devanagari + Hinglish / hi-latn)
-          if (/\b(स्टॉक कम|कम स्टॉक)\b/.test(t)) return 'low stock';
-          if (/"(पुनः ऑर्डर सुझाव)"/.test(t) || /\b(पुनः ऑर्डर सुझाव|रीऑर्डर सुझाव|री ऑर्डर सुझाव)\b/.test(t)) return 'reorder suggestions';
-          if (/\b(मूल्य|कीमत|भाव|रेट)\b/.test(t)) return 'prices';
-          if (/\b(स्टॉक मूल्य|इन्वेंटरी मूल्य|कुल मूल्य)\b/.test(t)) return 'stock value';
-          if (/\b(संक्षिप्त सारांश|छोटा सारांश)\b/.test(t)) return 'short summary';
-          if (/\b(पूर्ण सारांश|विस्तृत सारांश|पूरा सारांश)\b/.test(t)) return 'full summary';
-          if (/\b(आज की बिक्री)\b/.test(t)) return 'sales today';
-          if (/\b(सप्ताह|इस सप्ताह की बिक्री)\b/.test(t)) return 'sales week';
-          if (/\b(महीने की बिक्री|मासिक बिक्री)\b/.test(t)) return 'sales month';
-          if (/\b(टॉप 5 उत्पाद|टॉप उत्पाद महीने)\b/.test(t)) return 'top 5 products month';
+                // Use Unicode-safe matching and avoid \b for Indic scripts.
+                const src = String(text ?? '');
+                const t = safeNormalizeForQuickQuery(src);     // punctuation-light, lower-case
+                const L = String(langHint ?? 'en').toLowerCase();
+                // ---- language-agnostic (English) exacts / regex
+                if (/^low stock$/.test(t)) return 'low stock';
+                if (/^reorder suggestions?$/.test(t)) return 'reorder suggestions';
+                if (/^prices$/.test(t)) return 'prices';
+                if (/^(stock value|inventory value|value summary)$/.test(t)) return 'stock value';
+                const mExp = t.match(/^expiring\s+(0|7|30)$/i); if (mExp) return `expiring ${mExp[1]}`;
+                if (/^short summary$/.test(t)) return 'short summary';
+                if (/^full summary$/.test(t)) return 'full summary';
+                if (/^sales today$/.test(t)) return 'sales today';
+                if (/^sales week$/.test(t)) return 'sales week';
+                if (/^sales month$/.test(t)) return 'sales month';
+                if (/^(top 5 products month|top products month)$/.test(t)) return 'top 5 products month';
+        
+                // ---- Hindi (Devanagari): handle "लो स्टॉक" + existing forms; strip the danda if present.
+                const srcHi = src.replace(/\u0964/g, ''); // remove Devanagari danda "।"
+                const hiLowStockRx1 = /लो\s*स्टॉक/u;      // "लो स्टॉक"
+                const hiLowStockRx2 = /कम\s*स्टॉक/u;      // "कम स्टॉक"
+                const hiLowStockRx3 = /स्टॉक\s*कम/u;      // "स्टॉक कम"
+                if (hiLowStockRx1.test(srcHi) || hiLowStockRx2.test(srcHi) || hiLowStockRx3.test(srcHi)) return 'low stock';
+                const hiReorderRx = /(पुनः|पुन:)\s*ऑर्डर\s*सुझाव|री\s*ऑर्डर\s*सुझाव|रीऑर्डर\s*सुझाव/u;
+                if (hiReorderRx.test(srcHi)) return 'reorder suggestions';
+                const hiPricesRx = /(मूल्य|कीमत|भाव|रेट)/u;
+                if (hiPricesRx.test(srcHi)) return 'prices';
+                const hiStockValueRx = /(स्टॉक\s*मूल्य|इन्वेंटरी\s*मूल्य|कुल\s*मूल्य)/u;
+                if (hiStockValueRx.test(srcHi)) return 'stock value';
+                const hiShortRx = /(संक्षिप्त\s*सारांश|छोटा\s*सारांश)/u;
+                if (hiShortRx.test(srcHi)) return 'short summary';
+                const hiFullRx = /(पूर्ण\s*सारांश|विस्तृत\s*सारांश|पूरा\s*सारांश)/u;
+                if (hiFullRx.test(srcHi)) return 'full summary';
+                const hiSalesTodayRx = /(आज\s*की\s*बिक्री)/u;
+                if (hiSalesTodayRx.test(srcHi)) return 'sales today';
+                const hiSalesWeekRx = /(इस\s*सप्ताह\s*की\s*बिक्री|सप्ताह\s*की\s*बिक्री)/u;
+                if (hiSalesWeekRx.test(srcHi)) return 'sales week';
+                const hiSalesMonthRx = /(महीने\s*की\s*बिक्री|मासिक\s*बिक्री)/u;
+                if (hiSalesMonthRx.test(srcHi)) return 'sales month';
+                const hiTopMonthRx = /(टॉप\s*5\s*उत्पाद|टॉप\s*उत्पाद\s*महीने)/u;
+                if (hiTopMonthRx.test(srcHi)) return 'top 5 products month';
+        
           // Hinglish (roman)
           if (/\b(kam stock)\b/i.test(t)) return 'low stock';
           if (/\b(re ?order sujhav|punah order sujhav|reorder suggestion)\b/i.test(t)) return 'reorder suggestions';
@@ -14971,42 +14988,51 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           if (/\b(short summary|chhota saransh)\b/i.test(t)) return 'short summary';
           if (/\b(full summary|poora saransh|vistrit saransh)\b/i.test(t)) return 'full summary';
           // ---- Bengali
-          if (/\b(স্টক কম)\b/.test(t)) return 'low stock';
+          if (/স্টক\s*কম/u.test(src)) return 'low stock';
           if (/\b(পুনঃঅর্ডার পরামর্শ)\b/.test(t)) return 'reorder suggestions';
           if (/\b(মূল্য)\b/.test(t)) return 'prices';
           if (/\b(স্টকের মূল্য)\b/.test(t)) return 'stock value';
           // ---- Tamil
-          if (/\b(இருப்பு குறைவு)\b/.test(t)) return 'low stock';
+          if (/இருப்பு\s*குறைவு/u.test(src)) return 'low stock';
           if (/\b(மீண்டும் ஆர்டர் பரிந்துரைகள்)\b/.test(t)) return 'reorder suggestions';
           if (/\b(விலைகள்)\b/.test(t)) return 'prices';
-          if (/\b(இருப்பு மதிப்பு)\b/.test(t)) return 'stock value';
+          if (/இருப்பு\s*மதிப்பு/u.test(src)) return 'stock value';
           // ---- Telugu
-          if (/\b(తక్కువ నిల్వ)\b/.test(t)) return 'low stock';
+          if (/తక్కువ\s*నిల్వ/u.test(src)) return 'low stock';
           if (/\b(పునః ఆర్డర్ సూచనలు)\b/.test(t)) return 'reorder suggestions';
           if (/\b(ధరలు)\b/.test(t)) return 'prices';
-          if (/\b(నిల్వ విలువ)\b/.test(t)) return 'stock value';
+          if (/నిల్వ\s*విలువ/u.test(src)) return 'stock value';
           // ---- Kannada
-          if (/\b(ಕಡಿಮೆ ಸಂಗ್ರಹ)\b/.test(t)) return 'low stock';
+          if (/ಕಡಿಮೆ\s*ಸಂಗ್ರಹ/u.test(src)) return 'low stock';
           if (/\b(ಮರುಆರ್ಡರ್ ಸಲಹೆಗಳು)\b/.test(t)) return 'reorder suggestions';
           if (/\b(ಬೆಲೆಗಳು)\b/.test(t)) return 'prices';
-          if (/\b(ಸ್ಟಾಕ್ ಮೌಲ್ಯ)\b/.test(t)) return 'stock value';
+          if (/ಸ್ಟಾಕ್\s*ಮೌಲ್ಯ/u.test(src)) return 'stock value';
           // ---- Marathi
-          if (/\b(कमी साठा)\b/.test(t)) return 'low stock';
+          if (/कमी\s*साठा/u.test(src)) return 'low stock';
           if (/\b(पुन्हा ऑर्डर सुचवणी)\b/.test(t)) return 'reorder suggestions';
           if (/\b(किंमती)\b/.test(t)) return 'prices';
-          if (/\b(साठा मूल्य|इन्वेंटरी मूल्य)\b/.test(t)) return 'stock value';
+          if (/साठा\s*मूल्य|इन्वेंटरी\s*मूल्य/u.test(src)) return 'stock value';
           // ---- Gujarati
-          if (/\b(ઓછો જથ્થો)\b/.test(t)) return 'low stock';
+          if (/ઓછો\s*જથ્થો/u.test(src)) return 'low stock';
           if (/\b(પુનઃ ઓર્ડર સૂચનો)\b/.test(t)) return 'reorder suggestions';
           if (/\b(કિંમતો)\b/.test(t)) return 'prices';
-          if (/\b(સ્ટોક મૂલ્ય)\b/.test(t)) return 'stock value';
+          if (/સ્ટોક\s*મૂલ્ય/u.test(src)) return 'stock value';
           return null;
         }
         // 1) Resolve canonical command via alias + multilingual normalizer
         const aliasCmd = normalizeCommandAlias(rawText, uiLangExact /* use UI exact variant */);
         const extraCmd = _normalizeVoiceCommandAllLang(rawText, uiLangExact);
-        const canonCmd = (canon === 'reorder suggestion') ? 'reorder suggestions' : canon;
-        const cmd = aliasCmd || extraCmd || (TERMINAL_COMMANDS.has(canonCmd) ? canonCmd : null);
+        const canonCmd = (canon === 'reorder suggestion') ? 'reorder suggestions' : canon;                
+        let cmd = aliasCmd || extraCmd || (TERMINAL_COMMANDS.has(canonCmd) ? canonCmd : null);
+        
+              // Fallback: if still not recognized, leverage your normalizer to get canonical English.
+              if (!cmd) {
+                try {
+                  const normText = await normalizeCommandText(rawText, uiLangExact, `${requestId}::vc-normalize`);
+                  const normCanon = safeNormalizeForQuickQuery(normText);
+                  if (TERMINAL_COMMANDS.has(normCanon)) cmd = normCanon;
+                } catch (_) { /* soft-fail; continue */ }
+              }
   
         // 2) Route recognized commands and STOP update parsing
         if (cmd) {
