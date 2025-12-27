@@ -15774,7 +15774,18 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     // Process inventory updates here - STRICT rendering AFTER results
      const shopId = fromToShopId(From);
      const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
-     // suppress confirmation immediately after a price-nudge for this shop
+     // suppress confirmation immediately after a price-nudge for this shop           
+    // Quick, safe fix: mark Return results as success to avoid "0 of 1 updated"
+        if (Array.isArray(results)) {
+          for (const result of results) {
+            const act = String(result?.action ?? '').toLowerCase();
+            if (act === 'returned') {
+              result.success = true;       // <-- add this
+              result.action = 'returned';  // consistent for formatters/counters
+              // Keep result.newQuantity as returned by updateMultipleInventory
+            }
+          }
+        }
      const shopIdLocal = String(From).replace('whatsapp:', '');
      const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopIdLocal) ?? 0;
      const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
