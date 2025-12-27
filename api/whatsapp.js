@@ -4479,52 +4479,100 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
       default:   return 'Type or speak (voice note):';
     }
   })();
-  
-  // Dash bullets (localized items)
+    
+  // Dash bullets (localized items) — simplified for Sale/Return; Purchase stays unchanged
   const bullets = (function () {
+    const isPurchaseMode = String(currentMode) === 'purchased';
+    if (isPurchaseMode) {
+      // (UNCHANGED) existing Purchase examples with price/expiry
+      switch (baseLang) {
+        case 'hi': return [
+          '• दूध 10 लीटर @ ₹10/लीटर',
+          '• पैरासिटामोल 3 पैकेट @ ₹20/पैकेट एक्सपायरी +7 दिन',
+          '• मोबाइल हैंडसेट Xiaomi 1 पैकेट @ ₹60000/पैकेट'
+        ];
+        case 'bn': return [
+          '• দুধ 10 লিটার @ ₹10/লিটার',
+          '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
+          '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
+        ];
+        case 'ta': return [
+          '• பால் 10 லிட்டர் @ ₹10/லிட்டர்',
+          '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
+          '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
+        ];
+        case 'te': return [
+          '• పాలు 10 లీటర్ @ ₹10/లీటర్',
+          '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
+          '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
+        ];
+        case 'kn': return [
+          '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
+          '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
+          '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
+        ];
+        case 'mr': return [
+          '• दूध 10 लिटर @ ₹10/लिटर',
+          '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
+          '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
+        ];
+        case 'gu': return [
+          '• દૂધ 10 લિટર @ ₹10/લિટર',
+          '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
+          '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
+        ];
+        default: return [
+          '• milk 10 litres at ₹10/litre',
+          '• paracetamol 3 packets at ₹20/packet expiry +7d',
+          '• mobile handset Xiaomi 1 packet at ₹60000/packet'
+        ];
+      }
+    }
+    // (NEW) simplified Sale/Return bullets — no price/expiry
     switch (baseLang) {
       case 'hi': return [
-        '• दूध 10 लीटर @ ₹10/लीटर',
-        '• पैरासिटामोल 3 पैकेट @ ₹20/पैकेट एक्सपायरी +7 दिन',
-        '• मोबाइल हैंडसेट Xiaomi 1 पैकेट @ ₹60000/पैकेट'
+        '• दूध 10 लीटर',
+        '• पैरासिटामोल 3 पैकेट',
+        '• मोबाइल हैंडसेट Xiaomi 1 पैकेट'
       ];
       case 'bn': return [
-        '• দুধ 10 লিটার @ ₹10/লিটার',
-        '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
-        '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
+        '• দুধ 10 লিটার',
+        '• প্যারাসিটামল 3 প্যাকেট',
+        '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট'
       ];
       case 'ta': return [
-        '• பால் 10 லிட்டர் @ ₹10/லிட்டர்',
-        '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
-        '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
+        '• பால் 10 லிட்டர்',
+        '• பாராசிடமால் 3 பாக்கெட்',
+        '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட்'
       ];
       case 'te': return [
-        '• పాలు 10 లీటర్ @ ₹10/లీటర్',
-        '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
-        '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
+        '• పాలు 10 లీటర్',
+        '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు',
+        '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్'
       ];
       case 'kn': return [
-        '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
-        '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
-        '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
+        '• ಹಾಲು 10 ಲೀಟರ್',
+        '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್',
+        '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್'
       ];
       case 'mr': return [
-        '• दूध 10 लिटर @ ₹10/लिटर',
-        '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
-        '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
+        '• दूध 10 लिटर',
+        '• पॅरासिटामॉल 3 पॅकेट',
+        '• मोबाइल हँडसेट Xiaomi 1 पॅकेट'
       ];
       case 'gu': return [
-        '• દૂધ 10 લિટર @ ₹10/લિટર',
-        '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
-        '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
+        '• દૂધ 10 લિટર',
+        '• પેરાસિટામોલ 3 પેકેટ',
+        '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ'
       ];
       default: return [
-        '• milk 10 litres at ₹10/litre',
-        '• paracetamol 3 packets at ₹20/packet expiry +7d',
-        '• mobile handset Xiaomi 1 packet at ₹60000/packet'
+        '• milk 10 litres',
+        '• paracetamol 3 packets',
+        '• mobile handset Xiaomi 1 packet'
       ];
     }
   })();
+
   // Compose examples block lines    
   const examplesLines = [modeHeader, speakLine, ...bullets].join('\n');
   examples = examplesLines;
@@ -4992,8 +5040,12 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                     langUi === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' :
                     'Type or speak (voice note):';
 
-              // Localized item examples (bullets)
-              const bullets = (function () {
+              
+            // Localized item examples (bullets) — simplified for Sale/Return taps; keep Purchase same
+            const bullets = (function () {
+              const isPurchaseTap = isPurchase === true;
+              if (isPurchaseTap) {
+                // (UNCHANGED) existing Purchase examples with price/expiry
                 switch (langUi) {
                   case 'hi': return [
                     '• दूध 10 लीटर @ ₹10/लीटर',
@@ -5002,7 +5054,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                   ];
                   case 'bn': return [
                     '• দুধ 10 লিটার @ ₹10/লিটার',
-                    '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
+                   '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
                     '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
                   ];
                   case 'ta': return [
@@ -5036,7 +5088,51 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                     '• mobile handset Xiaomi 1 packet at ₹60000/packet'
                   ];
                 }
-              })();
+              }
+              // (NEW) simplified for Sale/Return taps — no price/expiry
+              switch (langUi) {
+                case 'hi': return [
+                  '• दूध 10 लीटर',
+                  '• पैरासिटामोल 3 पैकेट',
+                  '• मोबाइल हैंडसेट Xiaomi 1 पैकेट'
+                ];
+                case 'bn': return [
+                  '• দুধ 10 লিটার',
+                  '• প্যারাসিটামল 3 প্যাকেট',
+                  '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট'
+                ];
+                case 'ta': return [
+                  '• பால் 10 லிட்டர்',
+                  '• பாராசிடமால் 3 பாக்கெட்',
+                  '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட்'
+                ];
+                case 'te': return [
+                  '• పాలు 10 లీటర్',
+                  '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు',
+                  '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్'
+                ];
+                case 'kn': return [
+                  '• ಹಾಲು 10 ಲೀಟರ್',
+                  '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್',
+                  '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್'
+                ];
+                case 'mr': return [
+                  '• दूध 10 लिटर',
+                  '• पॅरासिटामॉल 3 पॅकेट',
+                  '• मोबाइल हँडसेट Xiaomi 1 पॅकेट'
+                ];
+                case 'gu': return [
+                  '• દૂધ 10 લિટર',
+                  '• પેરાસિટામોલ 3 પેકેટ',
+                  '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ'
+                ];
+                default: return [
+                  '• milk 10 litres',
+                  '• paracetamol 3 packets',
+                  '• mobile handset Xiaomi 1 packet'
+                ];
+              }
+            })();
        
               const bodyExamples = [header, speakLine, ...bullets].join('\n');
               const reqId = String(req?.headers?.['x-request-id'] ?? Date.now());
@@ -15037,8 +15133,12 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
             let message = isSingleReturn && firstLineForReturn
               ? `${firstLineForReturn}\n\n${header}`
               : header;
-
-        let successCount = 0;                
+               
+        let successCount = 0;
+            // If we placed the single return line above, still count its success
+            if (isSingleReturn && processed[0]?.success) {
+              successCount++;
+            }    
         for (let i = 0; i < processed.length; i++) {
               const r = processed[i];
               if (isSingleReturn && i === 0) continue; // already placed above
