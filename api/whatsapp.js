@@ -11365,26 +11365,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           ? ` (Stock: ${newQty}${unitText2})`
           : '';
         confirmTextLine = `↩️ Returned ${Math.abs(update.quantity)}${unitText2} ${product}${stockText2}`;                        
-        
-          // --- Option B: for single-item returns, send ONE dedicated confirmation and suppress aggregated ---
-          try {
-            if (Array.isArray(updates) && updates.length === 1) {
-              await sendReturnConfirmationOnce(
-                `whatsapp:${shopId}`,
-                languageCode,
-                'return-confirmation',
-                {
-                  product: product,
-                  qty: Math.abs(update.quantity),
-                  unit: u || update.unit,
-                  newQuantity: newQty ?? null,
-                  reason: update.reason ?? null
-                }
-              );
-              // Prevent duplicate: omit this inline line from the aggregated ack for single-item return
-              confirmTextLine = '';
-            }
-          } catch (_) { /* best-effort */ }
+                          
+        // SINGLE-ITEM RETURN: do NOT send a separate confirmation here.
+        // Keep confirmTextLine so the aggregated confirmation includes it.
 
         // Collect per-update result for aggregator
         results.push({
@@ -15011,11 +14994,28 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       }
 
       // Aggregated confirmation (only for successful writes, and not right after a price‑nudge)
-      if (processed.length > 0) {
+      if (processed.length > 0) {               
         const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
-        let message = header;
-        let successCount = 0;
-        for (const r of processed) {
+            const isSingleReturn = (processed.length === 1) &&
+              (String(processed[0].action).toLowerCase() === 'returned');
+            let firstLineForReturn = '';
+            if (isSingleReturn) {
+              const r0 = processed[0];
+              let raw0 = r0?.inlineConfirmText ? r0.inlineConfirmText : formatResultLine(r0, COMPACT_MODE, false);
+              if (raw0) {
+                const needsStock0 = COMPACT_MODE && r0.newQuantity !== undefined && !/\(Stock:/.test(raw0);
+                if (needsStock0) raw0 += ` (Stock: ${r0.newQuantity} ${r0.unitAfter ?? r0.unit ?? ''})`;
+                firstLineForReturn = raw0.trim();
+              }
+            }
+            let message = isSingleReturn && firstLineForReturn
+              ? `${firstLineForReturn}\n\n${header}`
+              : header;
+
+        let successCount = 0;                
+        for (let i = 0; i < processed.length; i++) {
+              const r = processed[i];
+              if (isSingleReturn && i === 0) continue; // already placed above
           const rawLine = r?.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
           if (!rawLine) continue;
           const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
@@ -15775,11 +15775,36 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
      }
     
      // Aggregated confirmation (only for successful writes, and not right after a price-nudge)
-     if (processed.length > 0) {
-       const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
-       let message = header;
-       let successCount = 0;
-       for (const r of processed) {
+     if (processed.length > 0) {            
+     const header = chooseHeader(processed.length, COMPACT_MODE, /*isPrice*/ false);
+         // Return-only: place the per-item line BEFORE header when it's a single-item return
+          const isSingleReturn = (processed.length === 1) &&
+            (String(processed[0].action).toLowerCase() === 'returned');
+      
+          // Precompute the first line with stock tail if needed (single return case)
+          let firstLineForReturn = '';
+          if (isSingleReturn) {
+            const r0 = processed[0];
+            let raw0 = r0?.inlineConfirmText ? r0.inlineConfirmText : formatResultLine(r0, COMPACT_MODE, false);
+            if (raw0) {
+              const needsStock0 = COMPACT_MODE && r0.newQuantity !== undefined && !/\(Stock:/.test(raw0);
+              if (needsStock0) raw0 += ` (Stock: ${r0.newQuantity} ${r0.unitAfter ?? r0.unit ?? ''})`;
+              firstLineForReturn = raw0.trim();
+            }
+          }
+      
+          let message = isSingleReturn && firstLineForReturn
+            ? `${firstLineForReturn}\n\n${header}`
+            : header;
+
+       let successCount = 0;               
+       for (let i = 0; i < processed.length; i++) {
+              const r = processed[i];
+              // Skip the first loop append when we've already placed the single Return line above
+              if (isSingleReturn && i === 0) {
+                successCount += r?.success ? 1 : 0;
+                continue;
+              }
          const rawLine = r?.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
          if (!rawLine) continue;
          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
