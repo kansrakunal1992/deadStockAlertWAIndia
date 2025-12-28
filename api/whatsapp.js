@@ -245,6 +245,9 @@ async function maybeResendListPicker(From, lang, requestId) {
 if (typeof globalThis.topicForced === 'undefined') {
   globalThis.topicForced = null;
 }
+if (typeof globalThis.pricingFlavor === 'undefined') {
+  globalThis.pricingFlavor = null;
+}
 // Handled/apology guard: track per-request success to prevent late apologies
 const handledRequests = new Set();            // <- used by parse-error & upsell schedulers
 
