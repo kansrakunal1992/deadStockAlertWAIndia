@@ -4014,7 +4014,6 @@ function normalizeCommandAlias(text, langHint = 'en') {
       if (d >= 30) return 'expiring 30';
     }    
   // Hindi fallback (voice/text): map "आज की बिक्री" → sales today when lang is hi
-    const lang = String(langHint || 'en').toLowerCase();
     if (lang.startsWith('hi') && /(आज\s*की\s*(बिक्री|सेल))\s*$/.test(t)) {
       return 'sales today';
     }
