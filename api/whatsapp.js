@@ -2789,7 +2789,8 @@ const SWITCH_WORD = {
 // we should NOT recurse/re-route or re-orchestrate in the same cycle.
 const TERMINAL_COMMANDS = new Set([
   'short summary',
-  'full summary',    
+  'full summary',   
+  'prices',
   // Router single-pass: treat these read-only queries as terminal too
   'low stock',
   'reorder suggestions',
@@ -3967,8 +3968,10 @@ const COMMAND_ALIAS_MAP = {
  * Returns "reorder suggestions" / "prices" / "stock value" when aliases match,
  * but ONLY if the message does NOT look like a transaction.
  */
-function normalizeCommandAlias(text, langHint = 'en') {
-  const t = String(text || '').toLowerCase().trim();
+function normalizeCommandAlias(text, langHint = 'en') {    
+  const raw = String(text || '');
+    // Pre-normalize: remove Devanagari poorna viraam (U+0964) and double danda (U+0965)
+    const t = raw.replace(/[\u0964\u0965]/g, '').toLowerCase().trim();
   if (!t) return null;
 
   // DO NOT convert to command if it looks like a transaction (qty+unit or price)
@@ -3994,7 +3997,22 @@ function normalizeCommandAlias(text, langHint = 'en') {
     }
   }
   // Minimal heuristic: plain "reorder" => "reorder suggestions"
-  if (/^re[- ]?order\b/.test(t)) return 'reorder suggestions';
+  if (/^re[- ]?order\b/.test(t)) return 'reorder suggestions';    
+  // --- Fallback heuristics for natural phrases (EN/Hinglish) ---
+    // Sales week phrasing
+    if (/^sales\s+this\s+week$/.test(t)) return 'sales week';
+    // Top-5 month phrasing
+    if (/^top\s*5\s+(this\s+month|of\s+the\s+month)$/.test(t)) return 'top 5 products month';
+    // Expired -> expiring 0
+    if (/^expired$/.test(t)) return 'expiring 0';
+    // Expires in N days -> bucket to supported canonical values
+    const mExpNatural = t.match(/^expires\s+in\s+(\d+)\s+days$/);
+    if (mExpNatural) {
+      const d = Number(mExpNatural[1]);
+      if (d === 0) return 'expiring 0';
+      if (d <= 7) return 'expiring 7';
+      if (d >= 30) return 'expiring 30';
+    }
   return null;
 }
 
@@ -15185,10 +15203,20 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                 if (/^sales today$/.test(t)) return 'sales today';
                 if (/^sales week$/.test(t)) return 'sales week';
                 if (/^sales month$/.test(t)) return 'sales month';
-                if (/^(top 5 products month|top products month)$/.test(t)) return 'top 5 products month';
-        
+                if (/^(top 5 products month|top products month)$/.test(t)) return 'top 5 products month';                              
+                // --- English: additional natural phrases
+                if (/^sales\s+this\s+week$/.test(t)) return 'sales week';
+                if (/^top\s*5\s+(this\s+month|of\s+the\s+month)$/.test(t)) return 'top 5 products month';
+                if (/^expired$/.test(t)) return 'expiring 0';
+                const mExpNatural = t.match(/^expires\s+in\s+(\d+)\s+days$/);
+                if (mExpNatural) {
+                  const d = Number(mExpNatural[1]);
+                  if (d === 0) return 'expiring 0';
+                  if (d <= 7) return 'expiring 7';
+                  if (d >= 30) return 'expiring 30';
+                }
                 // ---- Hindi (Devanagari): handle "लो स्टॉक" + existing forms; strip the danda if present.
-                const srcHi = src.replace(/\u0964/g, ''); // remove Devanagari danda "।"
+                const srcHi = src.replace(/[\u0964\u0965]/g, ''); // "।" and "॥"
                 const hiLowStockRx1 = /लो\s*स्टॉक/u;      // "लो स्टॉक"
                 const hiLowStockRx2 = /कम\s*स्टॉक/u;      // "कम स्टॉक"
                 const hiLowStockRx3 = /स्टॉक\s*कम/u;      // "स्टॉक कम"
@@ -15210,45 +15238,130 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                 const hiSalesMonthRx = /(महीने\s*की\s*बिक्री|मासिक\s*बिक्री)/u;
                 if (hiSalesMonthRx.test(srcHi)) return 'sales month';
                 const hiTopMonthRx = /(टॉप\s*5\s*उत्पाद|टॉप\s*उत्पाद\s*महीने)/u;
-                if (hiTopMonthRx.test(srcHi)) return 'top 5 products month';
-        
+                if (hiTopMonthRx.test(srcHi)) return 'top 5 products month';                      
+                // Hindi: expired / expires in N days
+                const hiExpiredRx = /(एक्सपायर|समाप्त|खत्म)\s*$/u; // "expired"
+                if (hiExpiredRx.test(srcHi)) return 'expiring 0';
+                const hiExpires30Rx = /(30|३०)\s*दिन(ों)?\s*में\s*(एक्सपायर|समाप्त)/u; // "expires in 30 days"
+                if (hiExpires30Rx.test(srcHi)) return 'expiring 30';
+                const hiExpires7Rx = /(7|७)\s*दिन(ों)?\s*में\s*(एक्सपायर|समाप्त)/u; // "expires in 7 days"
+                if (hiExpires7Rx.test(srcHi)) return 'expiring 7';
+
           // Hinglish (roman)
           if (/\b(kam stock)\b/i.test(t)) return 'low stock';
           if (/\b(re ?order sujhav|punah order sujhav|reorder suggestion)\b/i.test(t)) return 'reorder suggestions';
           if (/\b(moolya|kimat|daam|rate|prices)\b/i.test(t)) return 'prices';
           if (/\b(stock moolya|inventory value|value summary)\b/i.test(t)) return 'stock value';
           if (/\b(short summary|chhota saransh)\b/i.test(t)) return 'short summary';
-          if (/\b(full summary|poora saransh|vistrit saransh)\b/i.test(t)) return 'full summary';
+          if (/\b(full summary|poora saransh|vistrit saransh)\b/i.test(t)) return 'full summary';                    
+          if (/\bexpires?\s+in\s+30\s+days?\b/i.test(t)) return 'expiring 30';
+          if (/\bexpires?\s+in\s+7\s+days?\b/i.test(t)) return 'expiring 7';
+          if (/\bexpired\b/i.test(t)) return 'expiring 0';
+
           // ---- Bengali
           if (/স্টক\s*কম/u.test(src)) return 'low stock';
           if (/\b(পুনঃঅর্ডার পরামর্শ)\b/.test(t)) return 'reorder suggestions';
           if (/\b(মূল্য)\b/.test(t)) return 'prices';
-          if (/\b(স্টকের মূল্য)\b/.test(t)) return 'stock value';
+          if (/\b(স্টকের মূল্য)\b/.test(t)) return 'stock value';                    
+          // BN: sales and top-5 this month
+            if (/\bআজকের\s*বিক্রি\b/u.test(src)) return 'sales today';
+            if (/\bএই\s*সপ্তাহের\s*বিক্রি\b/u.test(src)) return 'sales week';
+            if (/\bএই\s*মাসের\s*বিক্রি\b/u.test(src)) return 'sales month';
+            if (/\bএই\s*মাসের\s*সেরা\s*৫\b/u.test(src)) return 'top 5 products month';                    
+          // BN: expired / expires in N days
+            const bnExpiredRx = /(মেয়াদ(?:োত্তীর্ণ)?|মেয়াদ(?:োত্তীর্ণ)?|এক্সপায়ার|এক্সপায়ার)\s*$/u;
+            if (bnExpiredRx.test(src)) return 'expiring 0';
+            const bn30 = /(30|৩০)/u, bn7 = /(7|৭)/u;
+            if (new RegExp(`${bn30.source}\\s*দিন(?:ে|ের)?\\s*(মেয়াদ|মেয়াদ)\\s*শেষ|${bn30.source}\\s*দিন(?:ে|ের)?\\s*এক্সপায়ার`, 'u').test(src)) return 'expiring 30';
+            if (new RegExp(`${bn7.source}\\s*দিন(?:ে|ের)?\\s*(মেয়াদ|মেয়াদ)\\s*শেষ|${bn7.source}\\s*দিন(?:ে|ের)?\\s*এক্সপায়ার`, 'u').test(src)) return 'expiring 7';
+
           // ---- Tamil
           if (/இருப்பு\s*குறைவு/u.test(src)) return 'low stock';
           if (/\b(மீண்டும் ஆர்டர் பரிந்துரைகள்)\b/.test(t)) return 'reorder suggestions';
           if (/\b(விலைகள்)\b/.test(t)) return 'prices';
-          if (/இருப்பு\s*மதிப்பு/u.test(src)) return 'stock value';
+          if (/இருப்பு\s*மதிப்பு/u.test(src)) return 'stock value';                    
+          // TA: sales and top-5 this month
+            if (/இன்றைய\s*விற்பனை/u.test(src)) return 'sales today';
+            if (/இந்த\s*வார\s*விற்பனை/u.test(src)) return 'sales week';
+            if (/இந்த\s*மாத\s*விற்பனை/u.test(src)) return 'sales month';
+            if (/இந்த\s*மாத\s*சிறந்த\s*5/u.test(src)) return 'top 5 products month';                    
+          // TA: expired / expires in N days
+            const taExpiredRx = /(காலாவதி|காலாவதியானது)\s*$/u;
+            if (taExpiredRx.test(src)) return 'expiring 0';
+            const ta30 = /(30|௩௦)/u, ta7 = /(7|௭)/u;
+            if (new RegExp(`${ta30.source}\\s*நாட்களிலும்?\\s*காலாவதி`, 'u').test(src)) return 'expiring 30';
+            if (new RegExp(`${ta7.source}\\s*நாட்களிலும்?\\s*காலாவதி`, 'u').test(src)) return 'expiring 7';
+
           // ---- Telugu
           if (/తక్కువ\s*నిల్వ/u.test(src)) return 'low stock';
           if (/\b(పునః ఆర్డర్ సూచనలు)\b/.test(t)) return 'reorder suggestions';
           if (/\b(ధరలు)\b/.test(t)) return 'prices';
-          if (/నిల్వ\s*విలువ/u.test(src)) return 'stock value';
+          if (/నిల్వ\s*విలువ/u.test(src)) return 'stock value';                    
+          // TE: sales and top-5 this month
+            if (/ఈరోజు\s*అమ్మకాలు/u.test(src)) return 'sales today';
+            if (/ఈ\s*వారంలో\s*అమ్మకాలు/u.test(src)) return 'sales week';
+            if (/ఈ\s*నెల\s*అమ్మకాలు/u.test(src)) return 'sales month';
+            if (/ఈ\s*నెల\s*టాప్\s*5/u.test(src)) return 'top 5 products month';                    
+          // TE: expired / expires in N days
+            const teExpiredRx = /(గడువు\s*ముగిసింది)\s*$/u;
+            if (teExpiredRx.test(src)) return 'expiring 0';
+            const te30 = /(30|౩౦)/u, te7 = /(7|౭)/u;
+            if (new RegExp(`${te30.source}\\s*రోజుల్లో\\s*గడువు\\s*ముగుస్తుంది`, 'u').test(src)) return 'expiring 30';
+            if (new RegExp(`${te7.source}\\s*రోజుల్లో\\s*గడువు\\s*ముగుస్తుంది`, 'u').test(src)) return 'expiring 7';
+
           // ---- Kannada
           if (/ಕಡಿಮೆ\s*ಸಂಗ್ರಹ/u.test(src)) return 'low stock';
           if (/\b(ಮರುಆರ್ಡರ್ ಸಲಹೆಗಳು)\b/.test(t)) return 'reorder suggestions';
           if (/\b(ಬೆಲೆಗಳು)\b/.test(t)) return 'prices';
-          if (/ಸ್ಟಾಕ್\s*ಮೌಲ್ಯ/u.test(src)) return 'stock value';
-          // ---- Marathi
-          if (/कमी\s*साठा/u.test(src)) return 'low stock';
+          if (/ಸ್ಟಾಕ್\s*ಮೌಲ್ಯ/u.test(src)) return 'stock value';                    
+          // KN: sales and top-5 this month
+            if (/ಇಂದು\s*ಮಾರಾಟ/u.test(src)) return 'sales today';
+            if (/ಈ\s*ವಾರದ\s*ಮಾರಾಟ/u.test(src)) return 'sales week';
+            if (/ಈ\s*ತಿಂಗಳ\s*ಮಾರಾಟ/u.test(src)) return 'sales month';
+            if (/ಈ\s*ತಿಂಗಳ\s*ಟಾಪ್\s*5/u.test(src)) return 'top 5 products month';                    
+          // KN: expired / expires in N days
+            const knExpiredRx = /(ಅವಧಿ\s*ಮುಗಿದಿದೆ)\s*$/u;
+            if (knExpiredRx.test(src)) return 'expiring 0';
+            const kn30 = /(30|೩೦)/u, kn7 = /(7|೭)/u;
+            if (new RegExp(`${kn30.source}\\s*ದಿನಗಳಲ್ಲಿ\\s*ಅವಧಿ\\s*ಮುಗಿಯುತ್ತದೆ`, 'u').test(src)) return 'expiring 30';
+            if (new RegExp(`${kn7.source}\\s*ದಿನಗಳಲ್ಲಿ\\s*ಅವಧಿ\\s*ಮುಗಿಯುತ್ತದೆ`, 'u').test(src)) return 'expiring 7';
+
+          // ---- Marathi                    
+          // Strip poorna viraam/double-danda in Devanagari for Marathi as well
+            const srcMr = src.replace(/[\u0964\u0965]/g, '');
+            if (/कमी\s*साठा/u.test(srcMr)) return 'low stock';
           if (/\b(पुन्हा ऑर्डर सुचवणी)\b/.test(t)) return 'reorder suggestions';
-          if (/\b(किंमती)\b/.test(t)) return 'prices';
-          if (/साठा\s*मूल्य|इन्वेंटरी\s*मूल्य/u.test(src)) return 'stock value';
+          if (/\b(किंमती)\b/.test(t)) return 'prices';                    
+          if (/साठा\s*मूल्य|इन्वेंटरी\s*मूल्य/u.test(srcMr)) return 'stock value';
+            // MR: sales and top-5 this month
+            if (/आजची\s*विक्री/u.test(srcMr)) return 'sales today';
+            if (/या\s*आठवड्याची\s*विक्री/u.test(srcMr)) return 'sales week';
+            if (/या\s*महिन्याची\s*विक्री/u.test(srcMr)) return 'sales month';
+            if (/या\s*महिन्याचे\s*टॉप\s*5/u.test(srcMr)) return 'top 5 products month';                    
+          // MR: expired / expires in N days
+            const mrExpiredRx = /(कालबाह्य|एक्सपायर)\s*$/u;
+            if (mrExpiredRx.test(srcMr)) return 'expiring 0';
+            const mr30 = /(30|३०)/u, mr7 = /(7|७)/u;
+            if (new RegExp(`${mr30.source}\\s*दिवस(?:ात|ांत)\\s*(कालबाह्य|एक्सपायर)`, 'u').test(srcMr)) return 'expiring 30';
+            if (new RegExp(`${mr7.source}\\s*दिवस(?:ात|ांत)\\s*(कालबाह्य|এক্সপायर|एक्सपायर)`, 'u').test(srcMr)) return 'expiring 7';
+
           // ---- Gujarati
           if (/ઓછો\s*જથ્થો/u.test(src)) return 'low stock';
           if (/\b(પુનઃ ઓર્ડર સૂચનો)\b/.test(t)) return 'reorder suggestions';
           if (/\b(કિંમતો)\b/.test(t)) return 'prices';
-          if (/સ્ટોક\s*મૂલ્ય/u.test(src)) return 'stock value';
+          if (/સ્ટોક\s*મૂલ્ય/u.test(src)) return 'stock value';                    
+          // GU: sales and top-5 this month
+            if (/આજની\s*વેચાણ/u.test(src)) return 'sales today';
+            if (/આ\s*અઠવાડિયાની\s*વેચાણ/u.test(src)) return 'sales week';
+            if (/આ\s*મહિનાની\s*વેચાણ/u.test(src)) return 'sales month';
+            if (/આ\s*મહિનાના\s*ટોપ\s*5/u.test(src)) return 'top 5 products month';                    
+          // GU: expired / expires in N days
+            const guExpiredRx = /(સમાપ્ત|એક્સપાયર)\s*$/u;
+            if (guExpiredRx.test(src)) return 'expiring 0';
+            const gu30 = /(30|૩૦)/u, gu7 = /(7|૭)/u;
+            if (new RegExp(`${gu30.source}\\s*દિવસમાં\\s*(સમાપ્ત|એક્સપાયર)`, 'u').test(src)) return 'expiring 30';
+            if (new RegExp(`${gu7.source}\\s*દિવસમાં\\s*(સમાપ્ત|એક્સપાયર)`, 'u').test(src)) return 'expiring 7';
+
           return null;
         }
         // 1) Resolve canonical command via alias + multilingual normalizer
