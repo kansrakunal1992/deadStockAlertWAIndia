@@ -1919,9 +1919,8 @@ function seenDuplicateCorrection(shopId, payload) {
  * - aiTxn: parsed transaction skeleton (NEVER auto-applied; deterministic parser still decides).
  * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
  */
-
 async function applyAIOrchestration(text, From, detectedLanguageHint, requestId, stickyActionCached) {
-  let topicForced = null; // scope guard
+  var topicForced = null; // TDZ guard: single binding for the whole function
 // LEGACY: pinned language from onboarding_trial_capture (PRESERVED) — run BEFORE deriving hintedLang
  try {
    const shopIdTmp = String(From ?? '').replace('whatsapp:', '');
@@ -2133,7 +2132,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         pricingFlavor = (activated && looksLikeInventoryPricing(text)) ? 'inventory_pricing' : 'tool_pricing';
       }
       
-      const _topicForcedLog = (typeof topicForced === 'undefined') ? null : topicForced;
+      const _topicForcedLog = topicForced ?? null;
        console.log('[orchestrator]', {
          requestId,
          language,
@@ -2183,7 +2182,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
      // --- END: alias-based command normalization for legacy path ---
 
     // --- Topic detection (PRESERVED) ---
-    const topicForced = classifyQuestionTopic(text);
+    topicForced = classifyQuestionTopic(text) || null;
     if (topicForced) { legacy.kind = 'question'; }
 
     // --- Pricing flavor (PRESERVED) ---
@@ -2225,7 +2224,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
       if (stickyAction) { isQuestion = false; normalizedCommand = null; }
     } catch { /* noop */ }
        
-     const _topicForcedLog = (typeof topicForced === 'undefined') ? null : topicForced;
+     const _topicForcedLog = topicForced ?? null;
      console.log('[orchestrator]', {
        requestId,
        language,
@@ -15150,9 +15149,18 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
               return;
             }
           }
-        }
+        }            
       } catch (e) {
-        console.warn('[voice-cmd-unified] failed:', e?.message);
+        // TDZ-aware: do not print raw TDZ messages; map to a stable error code.
+        // Also avoid touching an undeclared topicForced symbol in this scope.
+        const isTDZ = /Cannot access 'topicForced' before initialization|topicForced is not defined/i
+          .test(String(e?.message || ''));
+        const _topicForcedLog = (typeof topicForced === 'undefined') ? null : topicForced;
+        console.warn('[voice-cmd-unified] error:', {
+          code: isTDZ ? 'orchestrator-topicForced-tdz' : 'voice-cmd-unified-error',
+          message: e?.message ?? 'unknown',
+          topicForced: _topicForcedLog
+        });
         // Fall through to orchestrator/update parsing on failure
       }
       // [UNIQ:VOICE-CMD-UNIFIED-20251227] END — Multilingual inventory command short-circuit (voice)
@@ -15470,12 +15478,13 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           const handled = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
           if (handled) return; // reply already sent
         }
-      } catch (e) {        
-            const topicForced = null; // <— guard: must exist in this scope
-             console.warn(
-               `[${requestId}] Quick-query (voice) normalization failed, falling back.`,
-               { error: e?.message, topicForced }
-             );
+      } catch (e) {                                
+            // Use TDZ-safe topicForced guard: never redeclare; log as null when not available.
+              const _topicForcedLog = (typeof topicForced === 'undefined') ? null : topicForced;
+              console.warn(
+                `[${requestId}] Quick-query (voice) normalization failed, falling back.`,
+                { error: e?.message, topicForced: _topicForcedLog }
+              );
       }
     
     // Check if we're awaiting batch selection
