@@ -239,6 +239,12 @@ async function maybeResendListPicker(From, lang, requestId) {
 // STEP 2: HOISTED GLOBALS (fix early references like "handledRequests is not defined")
 // Place all global Sets/Maps and TTLs at the very top, right after imports.
 // ---------------------------------------------------------------------------
+// [UNIQ:GLOBAL-TOPICFORCED-GUARD-001]
+// Hard guard: ensure a process-global symbol exists so any stray free reference
+// in legacy loggers won't crash a turn. Safe default is null.
+if (typeof globalThis.topicForced === 'undefined') {
+  globalThis.topicForced = null;
+}
 // Handled/apology guard: track per-request success to prevent late apologies
 const handledRequests = new Set();            // <- used by parse-error & upsell schedulers
 
