@@ -3719,35 +3719,247 @@ const CMD_LABELS = {
   },
 };
 
+
 // ====== COMMAND ALIASES (multilingual) -> canonical command ======
+// Utility: append Poorna Viraam (।) variants for Devanagari scripts (Hindi/Marathi)
+const appendDandaVariants = (arr) => [...arr, ...arr.map(s => s + '।')];
+
 const COMMAND_ALIAS_MAP = {
+  // ---------- English ----------
   en: {
     'reorder suggestions': [
       'reorder', 're-order', 'reorder suggestion', 'restock suggestions',
       'repeat order', 'replenishment', 'suggest reorder'
     ],
     'prices': ['price list', 'prices', 'show prices'],
-    'stock value': ['stock value', 'inventory value', 'value summary']
+
+    // Value family (router already accepts stock/inventory/value summary)
+    'stock value': ['stock value', 'inventory value', 'value summary'],
+    'inventory value': ['inventory value', 'stock value', 'value summary'],
+
+    // Sales
+    'sales today': ['sales today', 'today’s sales', 'today sales'],
+    'sales week': ['sales this week', 'sales week', 'this week sales'],
+    'sales month': ['sales this month', 'sales month', 'this month sales'],
+
+    // Summaries
+    'short summary': ['short summary', 'summary'],
+    'full summary': ['full summary', 'detailed summary'],
+
+    // Stock/Expiry
+    'low stock': ['low stock', 'stock low', 'stockout'],
+    'expiring 0': ['expired items', 'show expired stock', 'expired stock'],
+    'expiring 30': ['expires in 30 days', 'expiring in 30 days'],
+
+    // Top movers (month)
+    'top 5 products month': ['top 5 this month', 'top 5 products this month']
   },
-  hi: { // Devanagari
-    'reorder suggestions': [
+
+  // ---------- Hindi (Devanagari) ----------
+  hi: {
+    // Reorder/Prices/Value (existing + additions)
+    'reorder suggestions': appendDandaVariants([
       'रीऑर्डर', 'री ऑर्डर', 'रीऑर्डर सुझाव', 'री ऑर्डर सुझाव',
       'पुनः ऑर्डर', 'पुन: ऑर्डर', 'पुनः ऑर्डर सुझाव', 'पुन: ऑर्डर सुझाव',
       'फिर से ऑर्डर', 'फिरसे ऑर्डर'
-    ],
-    'prices': ['कीमत', 'भाव', 'रेट', 'मूल्य', 'कीमत सूची'],
-    'stock value': ['स्टॉक मूल्य', 'इन्वेंटरी मूल्य', 'कुल मूल्य']
+    ]),
+    'prices': appendDandaVariants(['कीमत', 'भाव', 'रेट', 'मूल्य', 'कीमत सूची']),
+    'stock value': appendDandaVariants(['स्टॉक मूल्य', 'इन्वेंटरी मूल्य', 'कुल मूल्य']),
+    'inventory value': appendDandaVariants(['इन्वेंटरी मूल्य', 'स्टॉक मूल्य', 'कुल मूल्य']),
+
+    // Sales
+    'sales today': appendDandaVariants([
+      'आज की बिक्री', 'आज की विक्री', 'आज का सेल', 'आज की सेल'
+    ]),
+    'sales week': appendDandaVariants([
+      'इस सप्ताह की बिक्री', 'इस हफ्ते की बिक्री', 'हफ्ते की सेल', 'सप्ताह की सेल'
+    ]),
+    'sales month': appendDandaVariants([
+      'इस महीने की बिक्री', 'इस माह की बिक्री', 'महीने की बिक्री', 'महीने की सेल'
+    ]),
+
+    // Summaries
+    'short summary': appendDandaVariants(['छोटा सारांश', 'संक्षिप्त सारांश']),
+    'full summary': appendDandaVariants(['पूरा सारांश', 'विस्तृत सारांश']),
+
+    // Stock/Expiry
+    'low stock': appendDandaVariants(['स्टॉक कम', 'कम स्टॉक', 'स्टॉक की कमी']),
+    'expiring 0': appendDandaVariants([
+      'मियाद समाप्त', 'समाप्त स्टॉक', 'एक्सपायर्ड स्टॉक'
+    ]),
+    'expiring 30': appendDandaVariants([
+      '30 दिन में समाप्त', '30 दिन में खत्म', '30 दिन में एक्सपायर',
+      '३० दिन में समाप्त', '३० दिन में खत्म', '३० दिन में एक्सपायर' // Devanagari digits
+    ]),
+
+    // Top movers (month)
+    'top 5 products month': appendDandaVariants([
+      'इस महीने के शीर्ष 5 उत्पाद', 'महीने के टॉप 5 प्रोडक्ट', 'शीर्ष 5 उत्पाद (मासिक)'
+    ])
   },
-  'hi-latn': { // Hinglish / Roman Hindi
+
+  // ---------- Hinglish / Roman Hindi ----------
+  'hi-latn': {
     'reorder suggestions': [
       'reorder', 're order', 'reorder sujhav', 'riorder sujhav',
       'punah order', 'punah order sujhav', 'phir se order', 'order repeat',
       'reorder salah', 'reorder suggestion'
     ],
     'prices': ['moolya', 'kimat', 'daam', 'rate', 'prices'],
-    'stock value': ['stock moolya', 'inventory value', 'value summary']
+    'stock value': ['stock moolya', 'inventory value', 'value summary'],
+    'inventory value': ['inventory value', 'stock moolya', 'value summary'],
+
+    'sales today': ['aaj ki bikri', 'aaj ki sale', 'aaj ka sale', 'aaj ki vikri'],
+    'sales week': ['is hafte ki bikri', 'is week ki bikri', 'hafte ki sale', 'week ki sale'],
+    'sales month': ['is mahine ki bikri', 'is month ki bikri', 'mahine ki sale', 'month ki sale'],
+
+    'short summary': ['chhota saraansh', 'short summary', 'sankshept saraansh'],
+    'full summary': ['poora saraansh', 'full summary', 'vistrit saraansh'],
+
+    'low stock': ['kam stock', 'stock kam', 'stock ki kami'],
+    'expiring 0': ['expired stock', 'expiry ho gaya', 'miyad samapt', 'khatam hua stock'],
+    'expiring 30': ['30 din me khatam', '30 din me expire', '30 din me samapt'],
+
+    'top 5 products month': [
+      'mahine ke top 5 products', 'is month ke top 5 products', 'top 5 products month'
+    ]
   },
-  // (Optionally add bn/ta/te/kn/mr/gu variants later)
+
+  // ---------- Bengali ----------
+  bn: {
+    'reorder suggestions': [
+      'পুনঃ অর্ডার পরামর্শ', 'রিস্টক সাজেশন'
+    ],
+    'prices': ['মূল্য তালিকা', 'দাম দেখাও', 'দামের তালিকা'],
+    'stock value': ['স্টকের মূল্য', 'ইনভেন্টরির মূল্য', 'মোট মূল্য'],
+    'inventory value': ['ইনভেন্টরির মূল্য', 'স্টকের মূল্য', 'মোট মূল্য'],
+
+    'sales today': ['আজকের বিক্রি', 'আজকের সেল'],
+    'sales week': ['এই সপ্তাহের বিক্রি', 'এই সপ্তাহের সেল'],
+    'sales month': ['এই মাসের বিক্রি', 'এই মাসের সেল'],
+
+    'short summary': ['সংক্ষিপ্ত সারাংশ', 'ছোট সারাংশ'],
+    'full summary': ['সম্পূর্ণ সারাংশ', 'বিস্তৃত সারাংশ'],
+
+    'low stock': ['স্টক কম', 'কম স্টক'],
+    'expiring 0': ['মেয়াদোত্তীর্ণ', 'এক্সপায়ার্ড স্টক'],
+    'expiring 30': [
+      '৩০ দিনে শেষ', '৩০ দিনের মধ্যে মেয়াদ শেষ', '৩০ দিনে মেয়াদ শেষ',
+      '30 দিনে শেষ', '30 দিনের মধ্যে মেয়াদ শেষ' // ASCII digit variants
+    ],
+
+    'top 5 products month': ['এই মাসের শীর্ষ ৫ পণ্য', 'টপ ৫ পণ্য (মাসিক)']
+  },
+
+  // ---------- Tamil ----------
+  ta: {
+    'reorder suggestions': [
+      'மீண்டும் ஆர்டர் பரிந்துரைகள்', 'மீண்டு ஆர்டர் பரிந்துரைகள்'
+    ],
+    'prices': ['விலை பட்டியல்', 'விலை', 'விலை காண்பி'],
+    'stock value': ['ஸ்டாக் மதிப்பு', 'இருப்பின் மதிப்பு', 'மொத்த மதிப்பு'],
+    'inventory value': ['இருப்பின் மதிப்பு', 'ஸ்டாக் மதிப்பு', 'மொத்த மதிப்பு'],
+
+    'sales today': ['இன்றைய விற்பனை', 'இன்று விற்பனை'],
+    'sales week': ['இந்த வார விற்பனை'],
+    'sales month': ['இந்த மாத விற்பனை'],
+
+    'short summary': ['சுருக்கம்', 'சுருக்கமான சுருக்கம்'],
+    'full summary': ['முழு சுருக்கம்', 'விரிவான சுருக்கம்'],
+
+    'low stock': ['இருப்பு குறைவு', 'குறைந்த ஸ்டாக்', 'குறைவான ஸ்டாக்'],
+    'expiring 0': ['காலாவதி', 'காலாவதியான ஸ்டாக்'],
+    'expiring 30': ['30 நாட்களில் காலாவதி', '30 நாள் காலாவதி'],
+
+    'top 5 products month': ['இந்த மாதத்தின் சிறந்த 5 பொருட்கள்', 'சிறந்த 5 பொருட்கள் (மாதம்)']
+  },
+
+  // ---------- Telugu ----------
+  te: {
+    'reorder suggestions': ['మళ్లీ ఆర్డర్ సూచనలు', 'రిస్టాక్ సూచనలు'],
+    'prices': ['ధరల జాబితా', 'ధరలు', 'ధర చూపు'],
+    'stock value': ['స్టాక్ విలువ', 'ఇన్వెంటరీ విలువ', 'మొత్తం విలువ'],
+    'inventory value': ['ఇన్వెంటరీ విలువ', 'స్టాక్ విలువ', 'మొత్తం విలువ'],
+
+    'sales today': ['ఈరోజు అమ్మకాలు'],
+    'sales week': ['ఈ వారం అమ్మకాలు'],
+    'sales month': ['ఈ నెల అమ్మకాలు'],
+
+    'short summary': ['సంక్షిప్త సారాంశం', 'చిన్న సారాంశం'],
+    'full summary': ['పూర్తి సారాంశం', 'వివరణాత్మక సారాంశం'],
+
+    'low stock': ['స్టాక్ తక్కువ', 'తక్కువ స్టాక్'],
+    'expiring 0': ['గడువు ముగిసింది', 'ముగిసిన స్టాక్'],
+    'expiring 30': ['30 రోజుల్లో గడువు ముగుస్తుంది', '30 రోజుల్లో ముగుస్తుంది'],
+
+    'top 5 products month': ['ఈ నెల టాప్ 5 ఉత్పత్తులు']
+  },
+
+  // ---------- Kannada ----------
+  kn: {
+    'reorder suggestions': ['ಮರುಆರ್ಡರ್ ಸಲಹೆಗಳು', 'ರಿಸ್ಟಾಕ್ ಸಲಹೆಗಳು'],
+    'prices': ['ಬೆಲೆಪಟ್ಟಿ', 'ಬೆಲೆಗಳು', 'ಬೆಲೆ ತೋರಿಸು'],
+    'stock value': ['ಸ್ಟಾಕ್ ಮೌಲ್ಯ', 'ಇನ್ವೆಂಟರಿ ಮೌಲ್ಯ', 'ಒಟ್ಟು ಮೌಲ್ಯ'],
+    'inventory value': ['ಇನ್ವೆಂಟರಿ ಮೌಲ್ಯ', 'ಸ್ಟಾಕ್ ಮೌಲ್ಯ', 'ಒಟ್ಟು ಮೌಲ್ಯ'],
+
+    'sales today': ['ಇಂದಿನ ಮಾರಾಟ'],
+    'sales week': ['ಈ ವಾರದ ಮಾರಾಟ'],
+    'sales month': ['ಈ ತಿಂಗಳ ಮಾರಾಟ'],
+
+    'short summary': ['ಸಂಕ್ಷಿಪ್ತ ಸಾರಾಂಶ', 'ಕಿರು ಸಾರಾಂಶ'],
+    'full summary': ['ಪೂರ್ಣ ಸಾರಾಂಶ', 'ವಿಸ್ತೃತ ಸಾರಾಂಶ'],
+
+    'low stock': ['ಕಡಿಮೆ ಸ್ಟಾಕ್', 'ಸ್ಟಾಕ್ ಕಡಿಮೆ'],
+    'expiring 0': ['ಆವಧಿ ಮುಗಿದಿದೆ', 'ಮುಕ್ತಾಯವಾದ ಸ್ಟಾಕ್'],
+    'expiring 30': ['30 ದಿನಗಳಲ್ಲಿ ಆವಧಿ ಮುಗಿಯುತ್ತದೆ'],
+
+    'top 5 products month': ['ಈ ತಿಂಗಳ ಟಾಪ್ 5 ಉತ್ಪನ್ನಗಳು']
+  },
+
+  // ---------- Marathi (Devanagari) ----------
+  mr: {
+    'reorder suggestions': appendDandaVariants(['पुन्हा ऑर्डर सूचना', 'रीऑर्डर सूचना']),
+    'prices': appendDandaVariants(['किंमत यादी', 'किंमती', 'किंमत दाखवा']),
+    'stock value': appendDandaVariants(['स्टॉक मूल्य', 'इन्व्हेंटरी मूल्य', 'एकूण मूल्य']),
+    'inventory value': appendDandaVariants(['इन्व्हेंटरी मूल्य', 'स्टॉक मूल्य', 'एकूण मूल्य']),
+
+    'sales today': appendDandaVariants(['आजची विक्री', 'आजचा सेल', 'आजची सेल']),
+    'sales week': appendDandaVariants(['या आठवड्याची विक्री', 'आठवड्याची विक्री']),
+    'sales month': appendDandaVariants(['या महिन्याची विक्री', 'महिन्याची विक्री']),
+
+    'short summary': appendDandaVariants(['संक्षिप्त सारांश', 'छोटा सारांश']),
+    'full summary': appendDandaVariants(['पूर्ण सारांश', 'विस्तृत सारांश']),
+
+    'low stock': appendDandaVariants(['कमी स्टॉक', 'स्टॉक कमी']),
+    'expiring 0': appendDandaVariants(['मुदत संपली', 'एक्सपायर्ड स्टॉक']),
+    'expiring 30': appendDandaVariants([
+      '30 दिवसांत संपणार', '30 दिवसांत मुदत संपते',
+      '३० दिवसांत संपणार', '३० दिवसांत मुदत संपते' // Devanagari digits
+    ]),
+
+    'top 5 products month': appendDandaVariants(['या महिन्याचे टॉप ५ उत्पादने', 'या महिन्याचे टॉप 5 उत्पादने'])
+  },
+
+  // ---------- Gujarati ----------
+  gu: {
+    'reorder suggestions': ['પુનઃ ઑર્ડર સૂચનો', 'રિસ્ટોક સૂચનો'],
+    'prices': ['ભાવ યાદી', 'ભાવ', 'ભાવ બતાવો'],
+    'stock value': ['સ્ટોક મૂલ્ય', 'ઇન્વેન્ટરી મૂલ્ય', 'કુલ મૂલ્ય'],
+    'inventory value': ['ઇન્વેન્ટરી મૂલ્ય', 'સ્ટોક મૂલ્ય', 'કુલ મૂલ્ય'],
+
+    'sales today': ['આજની વેચાણ', 'આજનો સેલ', 'આજની સેલ'],
+    'sales week': ['આ અઠવાડિયાની વેચાણ', 'આ સપ્તાહની વેચાણ'],
+    'sales month': ['આ મહિનાની વેચાણ'],
+
+    'short summary': ['સંક્ષિપ્ત સારાંશ', 'નાનું સારાંશ'],
+    'full summary': ['પૂર્ણ સારાંશ', 'વિસ્તૃત સારાંશ'],
+
+    'low stock': ['સ્ટોક ઓછો', 'ઓછો સ્ટોક'],
+    'expiring 0': ['મુદત પૂર્ણ', 'એક્સપાયર્ડ સ્ટોક'],
+    'expiring 30': ['30 દિવસમાં પૂર્ણ', '30 દિવસમાં મુદત પૂર્ણ'],
+
+    'top 5 products month': ['આ મહિનાના ટોપ 5 પ્રોડક્ટ્સ']
+  }
 };
 
 /**
