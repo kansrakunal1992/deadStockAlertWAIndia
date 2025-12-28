@@ -15052,15 +15052,65 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
               await sendMessageViaAPI(From, finalizeForSend(msg, uiLangExact));
               try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
               return;
-            }
-            case 'reorder suggestions': {
-              // Minimal UX if renderer not available: nudge + List-Picker
-              let body = await t('📦 Reorder suggestions are ready. Opening the menu…', uiLangExact, `reorder::${shopId}`);
-              body = await tagWithLocalizedMode(From, finalizeForSend(body, uiLangExact), uiLangExact);
-              await sendMessageViaAPI(From, body);
-              try { await resendInventoryListPicker(From, uiLangExact); } catch (_) {}
-              return;
-            }
+            }            
+          case 'reorder suggestions': {
+                  try {
+                    // Call real DB helper (Airtable-backed) to compute reorder recommendations.
+                    const r = await getReorderSuggestions(shopId, {
+                      days: 30,
+                      leadTimeDays: 3,
+                      safetyDays: 2,
+                      minDailyRate: 0.2,
+                    });
+          
+                    if (r?.success && Array.isArray(r.suggestions) && r.suggestions.length) {
+                      const header = uiLangExact.startsWith('hi')
+                        ? '📦 रीऑर्डर सुझाव तैयार हैं:'
+                        : '📦 Reorder suggestions:';
+          
+                      const lines = r.suggestions.slice(0, 10).map(s => {
+                        const name     = s.name ?? s.product ?? '';
+                        const unitDisp = displayUnit(s.unit ?? 'pieces', uiLangExact);
+                        const current  = `${s.currentQty ?? 0} ${unitDisp}`;
+                        const need     = `${s.reorderQty ?? 0} ${unitDisp}`;
+                        const cover    = (s.daysCover != null && r.targetCoverDays != null)
+                          ? (uiLangExact.startsWith('hi')
+                              ? `• कवरेज: ${s.daysCover}/${r.targetCoverDays} दिन`
+                              : `• coverage: ${s.daysCover}/${r.targetCoverDays} days`)
+                          : '';
+                        return `• ${name} — order ${need} (stock: ${current}) ${cover}`.trim();
+                      }).join('\n');
+          
+                      let body = [header, lines].join('\n');
+                      body = await t(body, uiLangExact, `reorder::${shopId}`);
+                      body = await tagWithLocalizedMode(From, finalizeForSend(body, uiLangExact), uiLangExact);
+                      await sendMessageViaAPI(From, body);
+                    } else {
+                      let msg = await t(
+                        uiLangExact.startsWith('hi')
+                          ? 'अभी कोई रीऑर्डर सुझाव उपलब्ध नहीं हैं।'
+                          : 'No reorder suggestions right now.',
+                        uiLangExact,
+                        `reorder::${shopId}::none`
+                      );
+                      msg = await tagWithLocalizedMode(From, finalizeForSend(msg, uiLangExact), uiLangExact);
+                      await sendMessageViaAPI(From, msg);
+                    }
+                  } catch (e) {
+                    let errMsg = await t(
+                      uiLangExact.startsWith('hi')
+                        ? 'माफ़ कीजिए—रीऑर्डर सुझाव निकालने में समस्या हुई।'
+                        : 'Sorry—could not compute reorder suggestions.',
+                      uiLangExact,
+                      `reorder::${shopId}::error`
+                    );
+                    errMsg = await tagWithLocalizedMode(From, finalizeForSend(errMsg, uiLangExact), uiLangExact);
+                    await sendMessageViaAPI(From, errMsg);
+                  }
+                  // Keep UX: resurface the menu after sending suggestions.
+                  try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
+                  return;
+                }
             case 'prices':
             case 'short summary':
             case 'full summary': {
