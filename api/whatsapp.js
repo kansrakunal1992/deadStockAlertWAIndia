@@ -1920,7 +1920,8 @@ function seenDuplicateCorrection(shopId, payload) {
  * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
  */
 
-async function applyAIOrchestration(text, From, detectedLanguageHint, requestId, stickyActionCached) {   
+async function applyAIOrchestration(text, From, detectedLanguageHint, requestId, stickyActionCached) {
+  let topicForced = null; // scope guard
 // LEGACY: pinned language from onboarding_trial_capture (PRESERVED) — run BEFORE deriving hintedLang
  try {
    const shopIdTmp = String(From ?? '').replace('whatsapp:', '');
@@ -2088,7 +2089,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
     // --- END: alias-based command normalization ---
 
       // --- Topic detection (PRESERVED) ---
-      const topicForced = classifyQuestionTopic(text);
+      topicForced = classifyQuestionTopic(text) || null;
       if (topicForced) { route.kind = 'question'; }
 
       // --- Language exact variant lock (PRESERVED) ---           
@@ -2131,11 +2132,15 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         } catch { /* best effort */ }
         pricingFlavor = (activated && looksLikeInventoryPricing(text)) ? 'inventory_pricing' : 'tool_pricing';
       }
-
-      console.log('[orchestrator]', {
-        requestId, language, kind: route.kind,
-        normalizedCommand: normalizedCommand ?? '—',
-        topicForced, pricingFlavor
+      
+      const _topicForcedLog = (typeof topicForced === 'undefined') ? null : topicForced;
+       console.log('[orchestrator]', {
+         requestId,
+         language,
+         kind: route.kind,
+         normalizedCommand: normalizedCommand ?? '—',
+         topicForced: _topicForcedLog,
+         pricingFlavor
       });
       const identityAsked = (typeof isNameQuestion === 'function') ? isNameQuestion(text) : false;
       return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
@@ -2219,11 +2224,15 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
       const stickyAction = await getStickyActionQuick(From);
       if (stickyAction) { isQuestion = false; normalizedCommand = null; }
     } catch { /* noop */ }
-
-    console.log('[orchestrator]', {
-      requestId, language, kind: legacy.kind,
-      normalizedCommand: normalizedCommand ?? '—',
-      topicForced, pricingFlavor
+       
+     const _topicForcedLog = (typeof topicForced === 'undefined') ? null : topicForced;
+     console.log('[orchestrator]', {
+       requestId,
+       language,
+       kind: legacy.kind,
+       normalizedCommand: legacyNormalizedCommand ?? '—',
+       topicForced: _topicForcedLog,
+       pricingFlavor
     });
 
     const identityAsked = (typeof isNameQuestion === 'function') ? isNameQuestion(text) : false;
@@ -14845,7 +14854,10 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     console.log(`[${requestId}] [3] Transcribing with Soniox (async REST)...`);
         const shopId = fromToShopId(From);
         // Write FLAC to a temp file for Soniox Files API upload
-        const tmpDir = '/tmp';
+        const tmpDir = '/tmp';            
+        // Guard: some downstream logging paths may reference `topicForced`
+          // Ensure the symbol exists in this function scope.
+          let topicForced = null;
         const tmpPath = `${tmpDir}/voice_${requestId}.flac`;                
         await fs.promises.writeFile(tmpPath, flacBuffer);
             // Decide exact language for this turn → prefer pinned over detector, avoid mid-turn downgrades.
@@ -15458,8 +15470,12 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           const handled = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
           if (handled) return; // reply already sent
         }
-      } catch (e) {
-        console.warn(`[${requestId}] Quick-query (voice) normalization failed, falling back.`, e?.message);
+      } catch (e) {        
+            const topicForced = null; // <— guard: must exist in this scope
+             console.warn(
+               `[${requestId}] Quick-query (voice) normalization failed, falling back.`,
+               { error: e?.message, topicForced }
+             );
       }
     
     // Check if we're awaiting batch selection
