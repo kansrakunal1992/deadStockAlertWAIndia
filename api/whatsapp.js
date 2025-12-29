@@ -883,7 +883,6 @@ async function composeLowStockLocalized(shopId, lang, requestId) {
     ? '➡️ कार्रवाई: "पुन: ऑर्डर सुझाव" देखें या "मूल्य" की समीक्षा करें।'
     : '➡️ Action: check "reorder suggestions" or review "prices".';
   const body = [header, resolved, more, '', actionLine].filter(Boolean).join('\n');
-  body = localizeQuotedCommands(body, lang);
   // Respect your Nativeglish anchors + footer/mode tags
   const msg0 = await tx(body, lang, `whatsapp:${shopId}`, 'low-stock', `lowstock::${shopId}`);
   return nativeglishWrap(await tagWithLocalizedMode(`whatsapp:${shopId}`, msg0, lang), lang);
@@ -4109,9 +4108,9 @@ async function resendInventoryListPicker(From, langHint = 'en') {
     const toNumber = String(From).replace('whatsapp:', '');
         // Derive user's preferred language if caller omitted or passed a stale hint
         // Fast, TTL-cached; falls back to the provided hint.
-        let langResolved = await getPreferredLangQuick(From, langHint);                
-        // Fix C: honor caller hint when preference read fails
-        langResolved = canonicalizeLang(langResolved ?? langHint);
+        let langResolved = await getPreferredLangQuick(From, langHint);
+        // Canonicalize & normalize to base for ContentSid bundle creation
+        langResolved = canonicalizeLang(langResolved);
         await ensureLangTemplates(langResolved);
         const sids = getLangSids(langResolved);
 
@@ -4347,7 +4346,8 @@ function _safeBoolean(v) {
 const SEND_EARLY_ACK = String(process.env.SEND_EARLY_ACK ?? 'true').toLowerCase() === 'true';
 const EARLY_ACK_TIMEOUT_MS = Number(process.env.EARLY_ACK_TIMEOUT_MS ?? 500);
 const _recentAcks = (globalThis._recentAcks = globalThis._recentAcks ?? new Map()); // from -> {at}
-const ACK_SILENCE_WINDOW_MS = Number(process.env.ACK_SILENCE_WINDOW_MS ?? 1200); // 1.2s default
+const ACK_SILENCE_WINDOW_MS = Number(process.env.ACK_SILENCE_WINDOW_MS ?? 1200);
+
 function wasAckRecentlySent(From, windowMs = ACK_SILENCE_WINDOW_MS) {
   try {
     const prev = _recentAcks.get(String(From));
@@ -4364,15 +4364,11 @@ async function getPreferredLangQuick(From, hint = 'en') {
   const fallback = String(hint ?? 'en').toLowerCase();
   try {
     // reuse your languageCache if present (best-effort)
-    for (const [key, val] of languageCache) {              
-        if (String(key).startsWith(String(From))) {
-                const age = Date.now() - (val?.timestamp ?? 0);
-                // Fix C: validate presence of .language (cache may store translation-only entries)
-                const lang = val?.language;
-                if (age < LANGUAGE_CACHE_TTL && lang) {
-                  return String(lang).toLowerCase();
-                }
-              }
+    for (const [key, val] of languageCache) {
+      if (String(key).startsWith(String(From))) {
+        const age = Date.now() - (val?.timestamp ?? 0);
+        if (age < LANGUAGE_CACHE_TTL) return String(val.language ?? fallback).toLowerCase();
+      }
     }
   } catch {}
   try {
@@ -5876,7 +5872,7 @@ if (payload === 'confirm_paid') {
       const prefLP = await getUserPreference(shopIdLP);
       if (prefLP?.success && prefLP.language) lpLang = String(prefLP.language).toLowerCase();
     } catch (_) { /* best effort */ }
-  
+    
   // ✅ Ultra‑early localized ACK using saved preference
   await sendProcessingAckQuick(from, 'text', lpLang);
 
