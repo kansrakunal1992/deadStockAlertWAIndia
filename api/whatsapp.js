@@ -10968,9 +10968,11 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
     const product = await translateProductName(raw, requestId + ':return');
     const result = await updateInventory(shopId, product, Math.abs(qty), unit); // add back
     let message = `↩️ Return processed — ${product}: +${qty} ${unit}`;
-    if (result?.success) {
-      const u = result.unit ?? unit;
-      message += ` (Stock: ${result.newQuantity} ${u})`;
+    if (result?.success) {              
+        const u = result.unit ?? unit;
+              // PRODUCT-level total after return; fall back to newQuantity if needed
+              const finalQty = result.totalQuantityAfter ?? result.quantityAfter ?? result.newQuantity;
+              message += ` (Stock: ${finalQty} ${u})`;
     }
     const msg = await t(message, detectedLanguage, requestId);
     await sendMessageQueued(From, msg);
@@ -11307,9 +11309,11 @@ try{
     const product = await translateProductName(raw, requestId + ':return');
     const result = await updateInventory(shopId, product, Math.abs(qty), unit); // add back
     let message = `↩️ Return processed — ${product}: +${qty} ${unit}`;
-    if (result?.success) {
-      const u = result.unit ?? unit;
-      message += ` (Stock: ${result.newQuantity} ${u})`;
+    if (result?.success) {              
+        const u = result.unit ?? unit;
+              // PRODUCT-level total after return; fall back to newQuantity if needed
+              const finalQty = result.totalQuantityAfter ?? result.quantityAfter ?? result.newQuantity;
+              message += ` (Stock: ${finalQty} ${u})`;
     }
     const msg = await t(message, detectedLanguage, requestId);       
     await sendMessageQueued(From, msg);
@@ -14486,9 +14490,11 @@ async function tryHandleReturnText(transcript, from, detectedLanguage, requestId
   const product = await translateProductName(raw, requestId + ':return-text');
   const result = await updateInventory(shopId, product, Math.abs(qty), unit);
   let message = `↩️ Return processed — ${product}: +${qty} ${unit}`;
-  if (result?.success) {
-    const u = result.unit ?? unit;
-    message += ` (Stock: ${result.newQuantity} ${u})`;
+  if (result?.success) {          
+      const u = result.unit ?? unit;
+          // PRODUCT-level total after return; fall back to newQuantity if needed
+          const finalQty = result.totalQuantityAfter ?? result.quantityAfter ?? result.newQuantity;
+          message += ` (Stock: ${finalQty} ${u})`;
   }
   const msg = await t(message, detectedLanguage, requestId);
   await sendMessageViaAPI(from, msg);
@@ -17423,10 +17429,14 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                if (!r?.success || r?.needsPrice || r?.awaiting || r?.needsUserInput) {
                  // Do not send a confirmation body if price is missing or further input is needed
                  return;
-               }
-              const unit  = u.unit ?? r.unitAfter ?? r.unit ?? '';
-              const stockSuffix = (r?.newQuantity != null) ? ` (Stock: ${r.newQuantity} ${unit})` : '';
-              const finalBody   = `${await translateP}${stockSuffix}`;
+               }                        
+            const unit = u.unit ?? r.unitAfter ?? r.unit ?? '';
+            // PRODUCT-level total stock after update; fall back to old field only if needed
+            const finalStockQty = (r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity);
+            const stockSuffix = (finalStockQty != null)
+              ? ` (Stock: ${finalStockQty} ${unit})`
+              : '';
+            const finalBody = `${await translateP}${stockSuffix}`;
               await _sendConfirmOnceByBody(From, langExact, requestId, finalBody);
               try { await clearUserState(From); } catch (_){}
               try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_){}
@@ -18958,9 +18968,11 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
 
       for (const r of processed) {
         const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
-        if (!rawLine) continue;
-        const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-        const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+        if (!rawLine) continue;               
+        // PRODUCT-level total for stock suffix
+            const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
+            const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
+            const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
         message += `${rawLine}${stockPart}\n`;
         if (r.success) successCount++; 
       }
@@ -19055,9 +19067,11 @@ async function handleInventoryState(Body, From, state, requestId, res) {
 
         for (const r of processed) {
           const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
-          if (!rawLine) continue;
-          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+          if (!rawLine) continue;                    
+          // PRODUCT-level total for stock suffix
+              const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
+              const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
+              const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
           message += `${rawLine}${stockPart}\n`;
           if (r.success) successCount++;
         }
@@ -19334,9 +19348,11 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         let successCount = 0;
         for (const r of processed) {
           const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
-          if (!rawLine) continue;
-          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+          if (!rawLine) continue;                    
+          // PRODUCT-level total for stock suffix
+                const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
+                const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
+                const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
           message += `${String(rawLine).trim()}${stockPart}\n`;
           if (r.success) successCount++;
         }
@@ -19617,9 +19633,11 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       let successCount = 0;
       for (const r of processed) {
         const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
-        if (!rawLine) continue;
-        const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-        const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+        if (!rawLine) continue;                
+        // PRODUCT-level total for stock suffix
+              const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
+              const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
+              const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
         message += `${rawLine}${stockPart}\n`;
         if (r.success) successCount++;
       }
@@ -19733,9 +19751,11 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       let successCount2 = 0;
       for (const r of processed2) {
         const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
-        if (!rawLine) continue;
-        const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-        const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+        if (!rawLine) continue;                
+        // PRODUCT-level total for stock suffix
+            const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
+            const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
+            const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
         message2 += `${rawLine}${stockPart}\n`;
         if (r.success) successCount2++;
       }
@@ -19884,9 +19904,11 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
         let successCount = 0;
         for (const r of processed) {
           const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
-          if (!rawLine) continue;
-          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+          if (!rawLine) continue;         
+          // PRODUCT-level total for stock suffix
+                const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
+                const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
+                const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
           message += `${rawLine}${stockPart}\n`;
           if (r.success) successCount++;
         }
@@ -19975,12 +19997,34 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
                 const header = chooseHeader(processed.length, COMPACT_MODE, false);
                 let message = header;
                 let successCount = 0;
-                for (const r of processed) {
-                  const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
-                  if (!rawLine) continue;
-                  const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-                  const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
-                  message += `${rawLine}${stockPart}\n`;
+                for (const r of processed) {                  
+                    const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
+                      if (!rawLine) continue;
+                      // If a previous formatter leaked 'undefined', rebuild with safe product-name fallbacks
+                      if (/\bundefined\b/i.test(rawLine)) {
+                        const productName =
+                          r.productDisplay ?? r.product ?? r.productName ?? r.name ?? r.item ?? r.title ?? 'item';
+                        rawLine = (String(r.action).toLowerCase() === 'sold'
+                          ? composeSaleConfirmation({
+                              product: productName,
+                              qty: r.quantity,
+                              unit: r.unitAfter ?? r.unit ?? '',
+                              pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
+                              newQuantity: r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity
+                            })
+                          : composePurchaseConfirmation({
+                              product: productName,
+                              qty: r.quantity,
+                              unit: r.unitAfter ?? r.unit ?? '',
+                              pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
+                              newQuantity: r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity
+                            }));
+                      }
+                      // PRODUCT-level total stock for the suffix when compact mode needs it
+                      const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
+                      const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
+                      const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
+                      message += `${rawLine}${stockPart}\n`;
                   if (r.success) successCount++;
                 }
                 message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
@@ -20398,9 +20442,11 @@ const header = chooseHeader(processed.length, COMPACT_MODE, false);
 
       for (const r of processed) {
         const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
-        if (!rawLine) continue;
-        const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-        const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+        if (!rawLine) continue;                
+        // PRODUCT-level total for stock suffix
+            const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
+            const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
+            const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
         message += `${rawLine}${stockPart}\n`;
         if (r.success) successCount++;
       }
