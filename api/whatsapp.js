@@ -4347,6 +4347,7 @@ const SEND_EARLY_ACK = String(process.env.SEND_EARLY_ACK ?? 'true').toLowerCase(
 const EARLY_ACK_TIMEOUT_MS = Number(process.env.EARLY_ACK_TIMEOUT_MS ?? 500);
 const _recentAcks = (globalThis._recentAcks = globalThis._recentAcks ?? new Map()); // from -> {at}
 const ACK_SILENCE_WINDOW_MS = Number(process.env.ACK_SILENCE_WINDOW_MS ?? 1200);
+const EARLY_ACK = { listPicker: true, text: false, voice: true };
 
 function wasAckRecentlySent(From, windowMs = ACK_SILENCE_WINDOW_MS) {
   try {
@@ -4432,24 +4433,28 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
   }
 }
 
-// Convenience wrapper: pass inbound Body to derive a better early hint.
-// Keeps ultra‑early property and avoids touching all call sites’ preference logic.
+
+// Convenience wrapper (DISABLED for text ACK):
+// We now compute the language hint but DO NOT send any early ACK on the text path.
 async function sendProcessingAckQuickFromText(From, kind = 'text', sourceText = '') {
   try {
     if (wasAckRecentlySent(From)) return; // prevent duplicate ack
-    if (!SEND_EARLY_ACK) return;
+    if (!SEND_EARLY_ACK) return;    
     const t = String(sourceText || '').trim().toLowerCase();
-     const isCommandOnly = ['mode','help','demo','trial','paid'].includes(t);
-     const hint = isCommandOnly ? 'en' : guessLangFromInput(sourceText);    
-    // If interactive tap (empty/very short), prefer saved language
-       if (!t || t.length < 3) {
-         try {
-           const prefLang = await getPreferredLangQuick(From, hint);
-           hint = String(prefLang ?? hint).toLowerCase();
-         } catch { /* keep hint as-is */ }
-       }
-    console.log(`[ACK-TEXT] about to ack for text from=${From} hint=${hint}`);
-    return await sendProcessingAckQuick(From, kind, hint);
+    const isCommandOnly = ['mode','help','demo','trial','paid'].includes(t);
+    let hint = isCommandOnly ? 'en' : guessLangFromInput(sourceText);
+    
+    // If interactive tap (empty/very short), prefer saved language       
+    if (!t || t.length < 3) {
+      try {
+        const prefLang = await getPreferredLangQuick(From, hint);
+        hint = String(prefLang ?? hint).toLowerCase();
+      } catch { /* keep hint as-is */ }
+    }
+    // Previously this function sent an early ACK for text.
+    // We now suppress it to ensure ACK only comes from the List‑Picker path.
+    console.log(`[ACK-TEXT] suppressed early ACK for text from=${From} hint=${hint}`);
+    return; // NO‑OP: do NOT call sendProcessingAckQuick here
   } catch (e) {
     try { console.warn('[ack-fast-wrapper] failed:', e?.message); } catch {}
   }
@@ -5873,8 +5878,13 @@ if (payload === 'confirm_paid') {
       const prefLP = await getUserPreference(shopIdLP);
       if (prefLP?.success && prefLP.language) lpLang = String(prefLP.language).toLowerCase();
     } catch (_) { /* best effort */ }
-
-    const route = (cmd) => handleQuickQueryEN(cmd, from, lpLang, 'lp');
+    
+  // ✅ Ultra‑early localized ACK using saved preference 
+  if (EARLY_ACK.listPicker) {
+  await sendProcessingAckQuick(from, 'text', lpLang);
+  }
+  
+   const route = (cmd) => handleQuickQueryEN(cmd, from, lpLang, 'lp');
    switch (listId) {
              
         case 'list_short_summary':                      
