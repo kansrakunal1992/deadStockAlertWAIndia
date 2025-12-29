@@ -1929,19 +1929,22 @@ function seenDuplicateCorrection(shopId, payload) {
  * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
  */
 async function applyAIOrchestration(text, From, detectedLanguageHint, requestId, stickyActionCached) {
-  var topicForced = null; // TDZ guard: single binding for the whole function
+  var topicForced = null; // TDZ guard: single binding for the whole function    
+  // LOCAL MUTABLE COPY: never write into function parameter (can be const/frozen in some runtimes)
+    let detectedHint = String(detectedLanguageHint ?? 'en').toLowerCase();
+    let hintedLang = ensureLangExact(detectedHint ?? 'en');
 // LEGACY: pinned language from onboarding_trial_capture (PRESERVED) — run BEFORE deriving hintedLang
  try {
    const shopIdTmp = String(From ?? '').replace('whatsapp:', '');
    const st = await getUserStateFromDB(shopIdTmp).catch(() => null);
    if (st?.mode === 'onboarding_trial_capture') {
      const pinned = st?.data?.lang ?? (await getUserPreference(shopIdTmp).catch(() => ({})))?.language;
-     if (pinned) detectedLanguageHint = String(pinned).toLowerCase();
+     if (pinned) detectedHint = String(pinned).toLowerCase();
    }
  } catch {}
- 
- // Declare hintedLang after any possible override of detectedLanguageHint
- const hintedLang = ensureLangExact(detectedLanguageHint ?? 'en');
+  
+// Recompute hintedLang after possible override
+  hintedLang = ensureLangExact(detectedHint ?? 'en');
 
   // === Helpers (defined once) ===
   function withTimeout(promise, ms, fallback) {
@@ -1957,7 +1960,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
   // If the message is a greeting, do not let orchestrator map it to "short summary".
   // We return a neutral route with no command and no question.
   if (_isGreeting(text)) {
-    const language = ensureLangExact(detectedLanguageHint ?? 'en');
+    let language = ensureLangExact(detectedHint ?? 'en');
     console.log('[orchestrator] Greeting detected; suppressing command normalization.');
     return {
       language,
@@ -2007,19 +2010,10 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
   }
 
   try {
-    // --- LEGACY: pinned language from onboarding_trial_capture (PRESERVED) ---
-    try {
-      const shopIdTmp = String(From ?? '').replace('whatsapp:', '');
-      const st = await getUserStateFromDB(shopIdTmp).catch(() => null);
-      if (st?.mode === 'onboarding_trial_capture') {
-        const pinned = st?.data?.lang ?? (await getUserPreference(shopIdTmp).catch(() => ({})))?.language;
-        if (pinned) detectedLanguageHint = String(pinned).toLowerCase();
-      }
-    } catch {}
-
+    // (duplicate pinned-language override removed; handled above)
     // --- LEGACY: short-circuit when orchestrator disabled (PRESERVED) ---
     if (!USE_AI_ORCHESTRATOR) {
-      return { language: detectedLanguageHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
+      return { language: detectedHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
     }
 
     const shopId = shopIdFrom(From);
@@ -2049,12 +2043,12 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
     // ---- NEW FAST PATH (Deepseek single call) when ENABLE_FAST_CLASSIFIER=true ----
     if (ENABLE_FAST_CLASSIFIER) {
       console.log('[fast-classifier] on req=%s timeout=%sms model=deepseek-chat', requestId, String(FAST_CLASSIFIER_TIMEOUT_MS ?? '1200'));
-      const out = await classifyAndRoute(text, detectedLanguageHint);    
+      const out = await classifyAndRoute(text, detectedHint);
           
         // --- DEFENSIVE: do not normalize commands for greetings ---
         if (_isGreeting(text)) {
           return {
-            language: ensureLangExact(out?.language ?? detectedLanguageHint ?? 'en'),
+            language: ensureLangExact(out?.language ?? detectedHint ?? 'en'),
             isQuestion: false,
             normalizedCommand: null,
             aiTxn: null,
@@ -2103,7 +2097,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
       // --- Language exact variant lock (PRESERVED) ---           
       const orchestratedLang = ensureLangExact(route.language ?? hintedLang);
       // NEW: prefer user's hint when it's non‑English; else fall back to orchestrated
-      const language = (hintedLang !== 'en') ? hintedLang : orchestratedLang;
+      let language = (hintedLang !== 'en') ? hintedLang : orchestratedLang;
 
       // Save preference in background (no await)
       inBackground('savePref', async () => {
@@ -2215,7 +2209,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
     
       const orchestratedLang = ensureLangExact(legacy.language ?? hintedLang);
       // NEW: prefer user's hint when it's non‑English; else fall back to orchestrated
-      const language = (hintedLang !== 'en') ? hintedLang : orchestratedLang;
+      let language = (hintedLang !== 'en') ? hintedLang : orchestratedLang;
     try {
       if (typeof saveUserPreference === 'function') {
         await saveUserPreference(shopId, language);
@@ -2248,7 +2242,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
 
   } catch (e) {
     console.warn('[applyAIOrchestration] fallback due to error:', e?.message);
-    const language = ensureLangExact(detectedLanguageHint ?? 'en');
+    let language = ensureLangExact(detectedHint ?? 'en');
     const normalizedCommand = resolveSummaryIntent(text) ?? null;
     const identityAsked = isNameQuestion?.(text) ?? false;
     return { language, isQuestion: await looksLikeQuestion(text, language), normalizedCommand, aiTxn: null, questionTopic: null, pricingFlavor: null, identityAsked };
@@ -15502,7 +15496,15 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         console.warn('[voice-cmd-unified] error:', {
           code: isTDZ ? 'orchestrator-topicForced-tdz' : 'voice-cmd-unified-error',
           message: e?.message ?? 'unknown'
-        });
+        });        
+      // NEW: If this request was already marked handled in the voice-cmd block,
+        // do NOT fall through to orchestrator. Stop here.
+        try {
+          if (handledRequests?.has(requestId)) {
+            console.log(`[${requestId}] voice-cmd short-circuit failed but request already handled → skipping orchestrator`);
+            return;
+          }
+        } catch (_) {}
         // Fall through to orchestrator/update parsing on failure
       }
       // [UNIQ:VOICE-CMD-UNIFIED-20251227] END — Multilingual inventory command short-circuit (voice)
@@ -15568,10 +15570,15 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         }
       } catch { /* soft-fail: continue */ }
 
-    // ===== EARLY EXIT: AI orchestrator on the transcript =====
+    // ===== EARLY EXIT: AI orchestrator on the transcript =====      
+    // NEW: Hard guard — if this request was already handled by voice-cmd short-circuit,
+    // skip AI orchestrator entirely.
+    if (handledRequests?.has(requestId)) {
+      console.log(`[${requestId}] orchestrator skipped (already handled in voice-cmd)`);
+    } else {
       try {
         const orch = await applyAIOrchestration(cleanTranscript, From, detectedLanguage, requestId);
-          const FORCE_INVENTORY = !!orch?.forceInventory;
+        const FORCE_INVENTORY = !!orch?.forceInventory;
         /* VOICE_HANDLER_PATCH */
         try {
           if (orch?.normalizedCommand) {
