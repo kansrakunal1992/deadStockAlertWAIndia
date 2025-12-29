@@ -5872,9 +5872,6 @@ if (payload === 'confirm_paid') {
       const prefLP = await getUserPreference(shopIdLP);
       if (prefLP?.success && prefLP.language) lpLang = String(prefLP.language).toLowerCase();
     } catch (_) { /* best effort */ }
-    
-  // ✅ Ultra‑early localized ACK using saved preference
-  await sendProcessingAckQuick(from, 'text', lpLang);
 
     const route = (cmd) => handleQuickQueryEN(cmd, from, lpLang, 'lp');
    switch (listId) {
