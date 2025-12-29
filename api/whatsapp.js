@@ -1331,8 +1331,11 @@ async function parseMultipleUpdates(reqOrText, requestId) {
             if (UI_PRODUCT_DO_NOT_TRANSLATE.has(n)) return name; // preserve as spoken
             try { return await translateProductName(name, tag); } catch { return name; }
           }
-
-          update.productDisplay = await translateProductNameSafeForUI(update.product, 'rule-parsing');                                       
+                  
+        // UI-only: human-friendly name
+                  update.productDisplay = await translateProductNameSafeForUI(update.product, 'rule-parsing');
+                  // DB-only: raw product per write policy (never translated/normalized)
+                  update.productRawForDb = resolveProductNameForWrite(update.product);                        
             } else if (pendingAction) {
                       // Verb-less fallback: only when sticky mode exists AND AI has already failed
                       const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
@@ -1340,8 +1343,11 @@ async function parseMultipleUpdates(reqOrText, requestId) {
                       const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;                                           
                       const alt = parseSimpleWithoutVerb(trimmed, finalAction);
                               if (alt) {
-                                // Keep RAW for DB writes; translate ONLY for UI
+                                // Keep RAW for DB writes; translate ONLY for UI                                                               
+                                // UI-only
                                 alt.productDisplay = await translateProductName(alt.product, 'rule-parsing');
+                                // DB-only
+                                alt.productRawForDb = resolveProductNameForWrite(alt.product);
                                 if (isValidInventoryUpdate(alt)) {
                                   updates.push(alt);
                                   continue;
