@@ -2091,23 +2091,21 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
     // --- END: alias-based command normalization ---
 
       // --- Topic detection (PRESERVED) ---
-      topicForced = classifyQuestionTopic(text) || null;
+      let topicForced = classifyQuestionTopic(text) || null;
       if (topicForced) { route.kind = 'question'; }
 
-      // --- Language exact variant lock (PRESERVED) ---           
-      const orchestratedLang = ensureLangExact(route.language ?? hintedLang);
-      // NEW: prefer user's hint when it's non‑English; else fall back to orchestrated
-      let language = (hintedLang !== 'en') ? hintedLang : orchestratedLang;
+      // --- Language exact variant lock (PRESERVED) ---                       
+      const orchestratedLangLocal = ensureLangExact(route.language ?? hintedLang);
+      let languageLocal = (hintedLang !== 'en') ? hintedLang : orchestratedLangLocal;
 
       // Save preference in background (no await)
       inBackground('savePref', async () => {
-        try { if (typeof saveUserPreference === 'function') await saveUserPreference(shopIdFrom(From), language); } catch {}
+        try { if (typeof saveUserPreference === 'function') await saveUserPreference(shopIdFrom(From), languageLocal); } catch {}
       });
 
-      // --- Sticky safety: prefer cached sticky; else bounded fetch ---
-      let isQuestion = (route.kind === 'question');
-      // normalizedCommand already set/updated by alias normalizer above
-      const aiTxn = route.kind === 'transaction' ? route.transaction : null;
+      // --- Sticky safety: prefer cached sticky; else bounded fetch ---            
+      let isQuestionLocal = (route.kind === 'question');
+      let aiTxnLocal = route.kind === 'transaction' ? route.transaction : null;
 
       let stickyAction = stickyActionCached ?? await withTimeout(
         (typeof getStickyActionQuick === 'function'
@@ -2115,11 +2113,16 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
           : Promise.resolve(null)),
         150, () => null
       );
-      if (stickyAction) { isQuestion = false; normalizedCommand = null; }
+      if (stickyAction) {                
+        isQuestionLocal = false;
+        normalizedCommand = null;
+        // (if you ever clear aiTxn here, ensure it's 'let' above)
+        // aiTxnLocal = null;
+      }
 
-      // --- Pricing flavor: only when pricing; bounded parallel fetches ---
-      let pricingFlavor = null;
-      if (topicForced === 'pricing') {
+      // --- Pricing flavor: only when pricing; bounded parallel fetches ---            
+      let pricingFlavorLocal = null;
+      if (topicForcedLocal === 'pricing') {
         let activated = false;
         try {
           const [planInfoRes, prefRes] = await Promise.allSettled([
@@ -2132,20 +2135,28 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
           const activeTrial = (plan === 'trial' && end && new Date(end).getTime() > Date.now());
           activated = (plan === 'paid') || activeTrial;
         } catch { /* best effort */ }
-        pricingFlavor = (activated && looksLikeInventoryPricing(text)) ? 'inventory_pricing' : 'tool_pricing';
+        pricingFlavorLocal = (activated && looksLikeInventoryPricing(text)) ? 'inventory_pricing' : 'tool_pricing';
       }
       
-      const _topicForcedLog = topicForced ?? null;
+      const _topicForcedLog = topicForcedLocal ?? null;
        console.log('[orchestrator]', {
          requestId,
-         language,
+         language: languageLocal,
          kind: route.kind,
          normalizedCommand: normalizedCommand ?? '—',
          topicForced: _topicForcedLog,
-         pricingFlavor
+         pricingFlavor: pricingFlavorLocal
       });
       const identityAsked = (typeof isNameQuestion === 'function') ? isNameQuestion(text) : false;
-      return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
+      return { 
+            language: languageLocal,
+            isQuestion: isQuestionLocal,
+            normalizedCommand,
+            aiTxn: aiTxnLocal,
+            questionTopic: topicForcedLocal,
+            pricingFlavor: pricingFlavorLocal,
+            identityAsked
+       };
     }
 
     // ---- LEGACY PATH (Gate OFF): original Deepseek orchestrator call (PRESERVED) ----
@@ -2241,7 +2252,13 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
     return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
 
   } catch (e) {
-    console.warn('[applyAIOrchestration] fallback due to error:', e?.message);
+    console.warn('[applyAIOrchestration] fallback due to error:', e?.message);        
+    console.warn('[applyAIOrchestration] stack:', e?.stack);
+    console.warn('[applyAIOrchestration] ctx:', {
+        requestId,
+        textSample: String(text ?? '').slice(0, 160),
+        detectedLanguageHint
+      });
     let language = ensureLangExact(detectedHint ?? 'en');
     const normalizedCommand = resolveSummaryIntent(text) ?? null;
     const identityAsked = isNameQuestion?.(text) ?? false;
