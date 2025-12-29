@@ -4386,8 +4386,8 @@ async function getPreferredLangQuick(From, hint = 'en') {
  */
 async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
   try {        
+    if (wasAckRecentlySent(From)) return; // prevent duplicate ack
     if (!SEND_EARLY_ACK) return;           
-
         // Activation gate (ALL kinds): suppress ultra‑early ack until Trial/Paid is active
             const shopId = String(From ?? '').replace('whatsapp:', '');
             try {
@@ -4435,11 +4435,18 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
 // Keeps ultra‑early property and avoids touching all call sites’ preference logic.
 async function sendProcessingAckQuickFromText(From, kind = 'text', sourceText = '') {
   try {
+    if (wasAckRecentlySent(From)) return; // prevent duplicate ack
     if (!SEND_EARLY_ACK) return;
-
     const t = String(sourceText || '').trim().toLowerCase();
      const isCommandOnly = ['mode','help','demo','trial','paid'].includes(t);
-     const hint = isCommandOnly ? 'en' : guessLangFromInput(sourceText);
+     const hint = isCommandOnly ? 'en' : guessLangFromInput(sourceText);    
+    // If interactive tap (empty/very short), prefer saved language
+       if (!t || t.length < 3) {
+         try {
+           const prefLang = await getPreferredLangQuick(From, hint);
+           hint = String(prefLang ?? hint).toLowerCase();
+         } catch { /* keep hint as-is */ }
+       }
     return await sendProcessingAckQuick(From, kind, hint);
   } catch (e) {
     try { console.warn('[ack-fast-wrapper] failed:', e?.message); } catch {}
@@ -5864,6 +5871,10 @@ if (payload === 'confirm_paid') {
       const prefLP = await getUserPreference(shopIdLP);
       if (prefLP?.success && prefLP.language) lpLang = String(prefLP.language).toLowerCase();
     } catch (_) { /* best effort */ }
+    
+  // ✅ Ultra‑early localized ACK using saved preference
+  await sendProcessingAckQuick(from, 'text', lpLang);
+
     const route = (cmd) => handleQuickQueryEN(cmd, from, lpLang, 'lp');
    switch (listId) {
              
