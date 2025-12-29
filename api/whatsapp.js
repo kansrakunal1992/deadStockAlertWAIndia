@@ -7087,15 +7087,24 @@ async function _sendConfirmOnceByBody(From, detectedLanguage, requestId, body) {
 }
 
 function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity }) {
-  const unitText  = unit ? ` ${unit}` : '';
-  const priceText = (Number(pricePerUnit) > 0)
-    ? ` at ₹${Number(pricePerUnit).toFixed(2)}/${unit}`
-    : '';
-  const stockText = (newQuantity !== undefined && newQuantity !== null)
-    ? ` (Stock: ${newQuantity}${unitText})`
-    : '';
-  // Use 🛒 for sold (parallel to ↩️ for returned and 📦 for purchased)
-  return `🛒 Sold ${Math.abs(qty)}${unitText} ${product}${priceText}${stockText}`;
+  const unitText = unit ? ` ${unit}` : '';
+
+  const qtyNum = Number(qty);
+  const priceNum = Number(pricePerUnit);
+
+  const hasPrice = Number.isFinite(priceNum) && priceNum >= 0; // show ₹0.00 if valid zero
+  const perUnitText = unit ? `/${unit}` : '';
+  const priceText = hasPrice ? ` at ₹${priceNum.toFixed(2)}${perUnitText}` : '';
+
+  const hasStock = newQuantity !== undefined && newQuantity !== null;
+  const stockText = hasStock ? ` (Stock: ${newQuantity}${unitText})` : '';
+
+  const productName =
+    (typeof product === 'string' ? product.trim() : '') || 'item';
+
+  const safeQty = Number.isFinite(qtyNum) ? Math.abs(qtyNum) : qty;
+
+  return `🛒 Sold ${safeQty}${unitText} ${productName}${priceText}${stockText}`;
 }
 
 // === Support link (from environment) ===
@@ -16663,14 +16672,15 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       if (!justNudged && processed.length === 1) {
         const x = processed[0];
         const act = String(x.action).toLowerCase();
-        if (x.needsPrice || x.awaiting || x.needsUserInput) { /* safety */ return; }
+        if (x.needsPrice || x.awaiting || x.needsUserInput) { /* safety */ return; }                
         const common = {
-          product: x.product,
-          qty: x.quantity,
-          unit: x.unitAfter ?? x.unit ?? '',
-          pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
-          newQuantity: x.newQuantity
-        };
+           // Wider fallback chain to avoid "undefined"
+           product: x.productDisplay ?? x.product ?? x.productName ?? x.name ?? x.item ?? x.title ?? 'item',
+           qty: x.quantity,
+           unit: x.unitAfter ?? x.unit ?? '',
+           pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+           newQuantity: x.newQuantity
+         };
         if (act === 'sold') {
           await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common);
           // CTA gated: only last trial day
@@ -16725,9 +16735,30 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
             }    
         for (let i = 0; i < processed.length; i++) {
               const r = processed[i];
-              if (isSingleReturn && i === 0) continue; // already placed above
-          const rawLine = r?.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
-          if (!rawLine) continue;
+              if (isSingleReturn && i === 0) continue; // already placed above          
+             let rawLine = r?.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+             if (!rawLine) continue;
+             // If earlier code produced "undefined", rebuild with safe fallbacks
+             if (/\bundefined\b/.test(rawLine)) {
+               const productName =
+                 r.productDisplay ?? r.product ?? r.productName ?? r.name ?? r.item ?? r.title ?? 'item';
+               rawLine =
+                 String(r.action).toLowerCase() === 'sold'
+                   ? composeSaleConfirmation({
+                       product: productName,
+                       qty: r.quantity,
+                       unit: r.unitAfter ?? r.unit ?? '',
+                       pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
+                       newQuantity: r.newQuantity
+                     })
+                   : composePurchaseConfirmation({
+                       product: productName,
+                       qty: r.quantity,
+                       unit: r.unitAfter ?? r.unit ?? '',
+                       pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
+                       newQuantity: r.newQuantity
+                     });
+             }
           const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
           const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
           message += `\n${String(rawLine).trim()}${stockPart}`;
@@ -17362,11 +17393,26 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         // --- NEW: single-update fast path with parallel translation + DB update ---
             if (Array.isArray(parsedUpdatesEarly) && parsedUpdatesEarly.length === 1 && (FORCE_INVENTORY || !orch.isQuestion)) {
               const u = parsedUpdatesEarly[0];
-              // Compose a minimal confirmation body (no stock suffix) from parsed update
-              const baseBody =
-                (String(u.action).toLowerCase() === 'sold'
-                  ? composeSaleConfirmation({ product: u.productDisplay ?? u.product, qty: u.quantity, unit: u.unit, pricePerUnit: u.pricePerUnit, newQuantity: undefined })
-                  : composePurchaseConfirmation({ product: u.productDisplay ?? u.product, qty: u.quantity, unit: u.unit, pricePerUnit: u.pricePerUnit, newQuantity: undefined }));
+              // Compose a minimal confirmation body (no stock suffix) from parsed update                          
+              const productName =
+                 u.productDisplay ?? u.product ?? u.productName ?? u.name ?? u.item ?? u.title ?? '';
+              
+               const baseBody =
+                 (String(u.action).toLowerCase() === 'sold'
+                   ? composeSaleConfirmation({
+                       product: productName,
+                       qty: u.quantity,
+                       unit: u.unit,
+                       pricePerUnit: u.pricePerUnit,
+                       newQuantity: undefined
+                     })
+                   : composePurchaseConfirmation({
+                       product: productName,
+                       qty: u.quantity,
+                       unit: u.unit,
+                       pricePerUnit: u.pricePerUnit,
+                       newQuantity: undefined
+                     }));
               // Start translation immediately while DB update runs
               const translateP = t(baseBody, langExact, `${requestId}::confirm-base`);
               // Kick DB update in parallel (single-item array)
@@ -17487,14 +17533,14 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
      if (!justNudged && processed.length === 1) {
        const x = processed[0];
        const act = String(x.action).toLowerCase();
-       if (x.needsPrice || x.awaiting || x.needsUserInput) return;
+       if (x.needsPrice || x.awaiting || x.needsUserInput) return;        
        const common = {
-         product: x.product,
-         qty: x.quantity,
-         unit: x.unitAfter ?? x.unit ?? '',
-         pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
-         newQuantity: x.newQuantity
-       };
+          product: x.productDisplay ?? x.product ?? x.productName ?? x.name ?? x.item ?? x.title ?? 'item',
+          qty: x.quantity,
+          unit: x.unitAfter ?? x.unit ?? '',
+          pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+          newQuantity: x.newQuantity
+        };
        if (act === 'sold')  { await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common); return; }
        if (act === 'purchased' && !x.needsPrice && !x.awaiting && !x.needsUserInput) { await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common); return; }
      }
@@ -17530,7 +17576,28 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                 successCount += r?.success ? 1 : 0;
                 continue;
               }
-         const rawLine = r?.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+       
+         let rawLine = r?.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+         if (rawLine && /\bundefined\b/.test(rawLine)) {
+           const productName =
+             r.productDisplay ?? r.product ?? r.productName ?? r.name ?? r.item ?? r.title ?? 'item';
+           rawLine =
+             String(r.action).toLowerCase() === 'sold'
+               ? composeSaleConfirmation({
+                   product: productName,
+                   qty: r.quantity,
+                   unit: r.unitAfter ?? r.unit ?? '',
+                   pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
+                   newQuantity: r.newQuantity
+                 })
+               : composePurchaseConfirmation({
+                   product: productName,
+                   qty: r.quantity,
+                   unit: r.unitAfter ?? r.unit ?? '',
+                   pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
+                   newQuantity: r.newQuantity
+                 });
+         }
          if (!rawLine) continue;
          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
