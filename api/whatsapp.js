@@ -15572,6 +15572,8 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
 
     // ===== EARLY EXIT: AI orchestrator on the transcript =====      
     // NEW: Hard guard — if this request was already handled by voice-cmd short-circuit,
+    // skip AI orchestrator entirely.    
+    // NEW: Hard guard — if this request was already handled by voice-cmd short-circuit,
     // skip AI orchestrator entirely.
     if (handledRequests?.has(requestId)) {
       console.log(`[${requestId}] orchestrator skipped (already handled in voice-cmd)`);
@@ -15590,12 +15592,12 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                 From,
                 _safeLang(orch.language, detectedLanguage, 'en'),
                 `${requestId}::terminal-voice`
-              );              
-            // B: Immediately resurface the Inventory List-Picker after terminal command
-                      try {
-                        const langForUi = _safeLang(orch.language, detectedLanguage, 'en');
-                        await maybeResendListPicker(From, langForUi, requestId);
-                      } catch (_) { /* best effort */ }
+              );
+              // B: Immediately resurface the Inventory List-Picker after terminal command
+              try {
+                const langForUi = _safeLang(orch.language, detectedLanguage, 'en');
+                await maybeResendListPicker(From, langForUi, requestId);
+              } catch (_) { /* best effort */ }
               return;
             }
             if (_aliasDepth(requestId) >= MAX_ALIAS_DEPTH) {
@@ -15610,55 +15612,53 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           }
         } catch (_) { /* noop */ }
         /* END VOICE_HANDLER_PATCH */
-               
         // [UNIQ:ORCH-VAR-LOCK-ENTRY-02] keep exact variant
         const langExact = ensureLangExact(orch.language ?? detectedLanguage ?? 'en');
-
         // [SALES-QA-IDENTITY-ROUTER] short-circuit identity questions (voice path)
-         if (orch.identityAsked === true) {
-           handledRequests.add(requestId);
-           const idLine = identityTextByLanguage(langExact); // Saamagrii.AI stays Latin; "friend" localized
-           const tagged = await tagWithLocalizedMode(From, idLine, langExact);
-           await sendMessageDedup(From, finalizeForSend(tagged, langExact));
-           return;
-         }
-
+        if (orch.identityAsked === true) {
+          handledRequests.add(requestId);
+          const idLine = identityTextByLanguage(langExact); // Saamagrii.AI stays Latin; "friend" localized
+          const tagged = await tagWithLocalizedMode(From, idLine, langExact);
+          await sendMessageDedup(From, finalizeForSend(tagged, langExact));
+          return;
+        }
         // Question → answer & exit
         if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
           handledRequests.add(requestId);
           const ans = await composeAISalesAnswer(shopId, cleanTranscript, uiLangExact);
           const msg = await t(ans, uiLangExact, `${requestId}::sales-qa-voice`);
-          await sendMessageDedup(From, msg);                  
+          await sendMessageDedup(From, msg);
           try {
-                  const isActivated = await isUserActivated(shopId);
-                  const buttonLang = langExact.includes('-latn') ? langExact.split('-')[0] : langExact; // FIX: use langExact in voice path
-                  await sendSalesQAButtons(From, buttonLang, isActivated);
-                } catch (e) {
-                  console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
-                }                  
-        // PAID-CTA: show activation card after the Q&A reply (throttled)
-        try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}                    
-        return;
+            const isActivated = await isUserActivated(shopId);
+            const buttonLang = langExact.includes('-latn') ? langExact.split('-')[0] : langExact; // FIX: use langExact in voice path
+            await sendSalesQAButtons(From, buttonLang, isActivated);
+          } catch (e) {
+            console.warn(`[${requestId}] qa-buttons send failed:`, e?.message);
+          }
+          // PAID-CTA: show activation card after the Q&A reply (throttled)
+          try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}
+          return;
         }
         // Read‑only normalized command → route & exit
         if (!FORCE_INVENTORY && orch.normalizedCommand) {
-            // NEW: “demo” as a terminal command → play video + buttons
-              if (orch.normalizedCommand.trim().toLowerCase() === 'demo') {
-                handledRequests.add(requestId);
-                await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
-                const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
-                res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
-                return;
-              }
+          // NEW: “demo” as a terminal command → play video + buttons
+          if (orch.normalizedCommand.trim().toLowerCase() === 'demo') {
+            handledRequests.add(requestId);
+            await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
+            const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+            res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
+            return;
+          }
           handledRequests.add(requestId);
           await routeQuickQueryRaw(orch.normalizedCommand, From, uiLangExact, `${requestId}::ai-norm-voice`);
-          try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}                        
+          try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}
           return;
         }
       } catch (e) {
         console.warn(`[${requestId}] orchestrator (voice) early-exit error:`, e?.message);
         // fall through gracefully
       }
+    }
       
     // First, try to parse as inventory update (higher priority)
     try {
