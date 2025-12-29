@@ -17516,8 +17516,34 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);          
          
     // Process inventory updates here - STRICT rendering AFTER results
-     const shopId = fromToShopId(From);
-     const results = await updateMultipleInventory(shopId, parsedUpdates, detectedLanguage);
+     const shopId = fromToShopId(From);     
+    // ---- FIX: ensure product is defined for every update before DB writes ----
+        const sanitizedUpdates = parsedUpdates
+          .map((u) => {
+            // Prefer raw product keys; fall back to common aliases if needed
+            const rawName =
+              u?.product ??
+              u?.productName ??
+              u?.name ??
+              u?.item ??
+              u?.title ??
+              '';
+            // Use your unified policy: raw AI product only (no translation/normalization)
+            const resolved = resolveProductNameForWrite(rawName);
+            if (resolved && typeof resolved === 'string' && resolved.trim().length > 0) {
+              return { ...u, product: resolved.trim() };
+            }
+            // Guard: drop this update to avoid "Update ... - undefined" downstream
+            console.warn(`[${requestId}] Dropping update with undefined/empty product`, { update: u });
+            return null;
+          })
+          .filter(Boolean);
+        if (sanitizedUpdates.length === 0) {
+          // Nothing safe to write → send a compact parse error and exit gracefully
+          await safeSendParseError(From, detectedLanguage, requestId, 'Sorry—I couldn’t identify the product. Please resend, e.g., “sold sugar 2 kg”.');
+          return true;
+        }
+        const results = await updateMultipleInventory(shopId, sanitizedUpdates, detectedLanguage);
      // suppress confirmation immediately after a price-nudge for this shop           
     // Quick, safe fix: mark Return results as success to avoid "0 of 1 updated"
         if (Array.isArray(results)) {
