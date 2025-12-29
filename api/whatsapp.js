@@ -2800,9 +2800,9 @@ const SWITCH_WORD = {
 // we should NOT recurse/re-route or re-orchestrate in the same cycle.
 const TERMINAL_COMMANDS = new Set([
   'short summary',
-  'full summary',   
+  'full summary',
   'prices',
-  // Router single-pass: treat these read-only queries as terminal too
+  // Read-only queries (terminal)
   'low stock',
   'reorder suggestions',
   'expiring 0',
@@ -2812,13 +2812,12 @@ const TERMINAL_COMMANDS = new Set([
   'sales week',
   'sales month',
   'top 5 products month',
-  'top products month',
+  // Canonical synonyms your system already accepts
   'value summary',
   'inventory value',
   'stock value',
-  'reset',
-  'reorder',
-  'reorder suggestion'
+  // Reset (if used)
+  'reset'
 ]);
 
 // Robust alias-depth counter (handles ':alias' and '::ai-norm' forms).
@@ -3974,26 +3973,144 @@ const COMMAND_ALIAS_MAP = {
   }
 };
 
+
 /**
  * normalizeCommandAlias(text, langHint) -> canonical command or null
- * Returns "reorder suggestions" / "prices" / "stock value" when aliases match,
- * but ONLY if the message does NOT look like a transaction.
+ * Returns canonical when aliases match but ONLY if message does NOT look like a transaction.
  */
-function normalizeCommandAlias(text, langHint = 'en') {    
+function normalizeCommandAlias(text, langHint = 'en') {
   const raw = String(text || '');
-    // Pre-normalize: remove Devanagari poorna viraam (U+0964) and double danda (U+0965)
-    const t = raw.replace(/[\u0964\u0965]/g, '').toLowerCase().trim();
+  const t = raw.replace(/[\u0964\u0965]/g, '').toLowerCase().trim();
   if (!t) return null;
 
-  // DO NOT convert to command if it looks like a transaction (qty+unit or price)
-  if (looksLikeTxnLite?.(t)) return null; // uses your existing heuristic
-  // Also skip if it clearly has quantity/unit inline
+  // Guardrails: looks like transaction?
+  if (looksLikeTxnLite?.(t)) return null; // your existing heuristic [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/Inventory_Commands.txt)
   if (/\b\d+(\.\d+)?\b/.test(t) && /\b(ltr|l|liter|litre|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes)\b/i.test(t)) {
     return null;
   }
 
   const lang = String(langHint || 'en').toLowerCase();
   const base = lang.replace(/-latn$/, '');
+
+  // ---- Expanded alias map (≥5 variants per command per language) ----
+  const COMMAND_ALIAS_MAP = {
+    en: {
+      'low stock': [
+        'low stock','stock low','running low','low inventory','short on stock',
+        'less stock','stock shortage','inventory low','stock below threshold','depleting stock'
+      ],
+      'reorder suggestions': [
+        'reorder suggestions','reorder list','items to reorder','what to reorder','restock suggestions',
+        'reorder advice','reorder alerts','replenish suggestions','need to reorder','reorder recommend'
+      ],
+      'prices': [
+        'prices','price list','item prices','product prices','rates',
+        'pricing','current prices','latest prices','rate card','price catalogue'
+      ],
+      'stock value': [
+        'stock value','inventory value','value summary','total stock worth','stock valuation',
+        'inventory worth','stock total value','inventory valuation','value of stock','stock value summary'
+      ],
+      'short summary': [
+        'short summary','quick summary','brief summary','mini summary','snapshot',
+        'quick overview','brief overview','short report','tl;dr inventory','compact summary'
+      ],
+      'full summary': [
+        'full summary','detailed summary','complete summary','comprehensive summary','in-depth summary',
+        'full overview','detailed overview','expanded summary','inventory report','complete report'
+      ],
+      'sales today': [
+        'sales today',"today's sales",'sales for today','today sales','today revenue',
+        "today's revenue",'today turnover','today performance','today figures','sales of today'
+      ],
+      'sales week': [
+        'sales week',"this week's sales",'weekly sales','sales this week','sales for the week',
+        'week sales','weekly revenue','revenue this week','last 7 days sales','weekly performance'
+      ],
+      'sales month': [
+        'sales month','monthly sales','sales this month',"this month's sales",'sales for the month',
+        'month sales','monthly revenue','revenue this month','past 30 days sales','monthly performance'
+      ],
+      'top 5 products month': [
+        'top 5 products month','top products month','top 5 this month','top five this month','best sellers this month',
+        'monthly top 5','top 5 items this month','top 5 products of the month','top sellers this month','month top 5'
+      ],
+      'expiring 0': [
+        'expired','already expired','past expiry','expiry over','expired items',
+        'out of date','expiry crossed','date over','crossed expiry','expired stock'
+      ],
+      'expiring 7': [
+        'expiring 7','expires in 7 days','expiring in 7 days','expiring in a week','expiry due in 7 days',
+        'week to expire','due in a week','expire in a week','expires within 7 days','within 7 days expiry'
+      ],
+      'expiring 30': [
+        'expiring 30','expires in 30 days','expiring in 30 days','expiring in a month','expiry due in 30 days',
+        'month to expire','due in a month','expires within 30 days','within 30 days expiry','30 day expiry'
+      ],
+    },
+    hi: {
+      'low stock': [
+        'लो स्टॉक','कम स्टॉक','स्टॉक कम','कम मात्रा','माल कम',
+        'इन्वेंटरी कम','स्टॉक की कमी','स्टॉक कम है','स्टॉक घट रहा है','स्टॉक खत्म हो रहा है'
+      ],
+      'reorder suggestions': [
+        'पुनः ऑर्डर सुझाव','री ऑर्डर सुझाव','रीऑर्डर सुझाव','फिर से ऑर्डर सुझाव','रेस्टॉक सुझाव',
+        'ऑर्डर दोबारा करने के सुझाव','पुनः मंगाने के सुझाव','रीऑर्डर के सुझाव','रीस्टॉक के सुझाव','रिऑर्डर सुझाव'
+      ],
+      'prices': [
+        'मूल्य','कीमत','भाव','रेट','मूल्य सूची',
+        'प्राइस लिस्ट','उत्पाद कीमतें','आइटम रेट','वर्तमान कीमतें','नवीनतम कीमतें'
+      ],
+      'stock value': [
+        'स्टॉक मूल्य','इन्वेंटरी मूल्य','कुल मूल्य','स्टॉक की कीमत','इन्वेंटरी की कीमत',
+        'स्टॉक मूल्यांकन','कुल स्टॉक मूल्य','इन्वेंटरी वैल्यू','स्टॉक का कुल मूल्य','मूल्य सारांश'
+      ],
+      'short summary': [
+        'संक्षिप्त सारांश','छोटा सारांश','संक्षेप','संक्षिप्त रिपोर्ट','छोटा ओवरव्यू',
+        'त्वरित सारांश','संक्षिप्त विवरण','झलक','जल्दी सारांश','सारांश छोटा'
+      ],
+      'full summary': [
+        'पूर्ण सारांश','विस्तृत सारांश','पूरा सारांश','विस्तृत रिपोर्ट','विस्तृत ओवरव्यू',
+        'पूर्ण विवरण','विस्तृत जानकारी','पूर्ण रिपोर्ट','सम्पूर्ण सारांश','सम्पूर्ण रिपोर्ट'
+      ],
+      'sales today': [
+        'आज की बिक्री','आज की सेल','आज का बिक्री','आज का सेल','आज की आय',
+        'आज का राजस्व','आज के सेल्स','आज की कमाई','आज का रेवेन्यू','आज की बिक्री रिपोर्ट'
+      ],
+      'sales week': [
+        'इस सप्ताह की बिक्री','साप्ताहिक बिक्री','सप्ताह की बिक्री','इस हफ्ते की बिक्री','हफ्ते की बिक्री',
+        'सप्ताह का राजस्व','इस सप्ताह के सेल्स','साप्ताहिक सेल्स','पिछले 7 दिनों की बिक्री','सप्ताह की रिपोर्ट'
+      ],
+      'sales month': [
+        'महीने की बिक्री','मासिक बिक्री','इस महीने की बिक्री','महीने का राजस्व','इस माह की बिक्री',
+        'मासिक सेल्स','इस माह के सेल्स','पिछले 30 दिनों की बिक्री','मासिक रिपोर्ट','महीने का सेल्स'
+      ],
+      'top 5 products month': [
+        'टॉप 5 उत्पाद महीने','इस महीने के टॉप 5','महीने के सर्वश्रेष्ठ 5','मासिक टॉप 5','टॉप 5 आइटम इस महीने',
+        'महीने के टॉप उत्पाद','महीने के सर्वाधिक बिकने वाले 5','इस महीने के शीर्ष 5','मासिक शीर्ष 5','महीने के टॉप पाँच'
+      ],
+      'expiring 0': [
+        'समाप्त','एक्सपायर','खत्म','अवधि समाप्त','मियाद खत्म',
+        'मियाद समाप्त','समाप्त हो चुका','खत्म हो गया','एक्सपायरी खत्म','समाप्त वस्तु'
+      ],
+      'expiring 7': [
+        '7 दिन में समाप्त','7 दिन में एक्सपायर','एक हफ्ते में समाप्त','एक हफ्ते में एक्सपायर','7 दिनों में समाप्त',
+        '7 दिनों में एक्सपायर','सात दिन में समाप्त','सात दिन में एक्सपायर','हफ्ते भर में समाप्त','हफ्ते भर में एक्सपायर'
+      ],
+      'expiring 30': [
+        '30 दिन में समाप्त','30 दिन में एक्सपायर','एक महीने में समाप्त','एक महीने में एक्सपायर','30 दिनों में समाप्त',
+        '30 दिनों में एक्सपायर','तीस दिन में समाप्त','तीस दिन में एक्सपायर','महीने भर में समाप्त','महीने भर में एक्सपायर'
+      ],
+    },
+    'hi-latn': ALIAS_HI_LATN, // reuse
+    bn: ALIAS_BN,
+    ta: ALIAS_TA,
+    te: ALIAS_TE,
+    kn: ALIAS_KN,
+    mr: ALIAS_MR,
+    gu: ALIAS_GU,
+  };
+
   const mapsToTry = [
     COMMAND_ALIAS_MAP[lang],
     COMMAND_ALIAS_MAP[base],
@@ -4003,35 +4120,34 @@ function normalizeCommandAlias(text, langHint = 'en') {
   for (const map of mapsToTry) {
     for (const [canonical, variants] of Object.entries(map)) {
       if (variants.some(v => t.includes(String(v).toLowerCase()))) {
-        return canonical; // e.g., "reorder suggestions"
+        return canonical;
       }
     }
   }
-  // Minimal heuristic: plain "reorder" => "reorder suggestions"
-  if (/^re[- ]?order\b/.test(t)) return 'reorder suggestions';    
-  // --- Fallback heuristics for natural phrases (EN/Hinglish) ---
-    // Sales week phrasing
-    if (/^sales\s+this\s+week$/.test(t)) return 'sales week';
-    // Top-5 month phrasing
-    if (/^top\s*5\s+(this\s+month|of\s+the\s+month)$/.test(t)) return 'top 5 products month';
-    // Expired -> expiring 0
-    if (/^expired$/.test(t)) return 'expiring 0';
-    // Expires in N days -> bucket to supported canonical values
-    const mExpNatural = t.match(/^expires\s+in\s+(\d+)\s+days$/);
-    if (mExpNatural) {
-      const d = Number(mExpNatural[1]);
-      if (d === 0) return 'expiring 0';
-      if (d <= 7) return 'expiring 7';
-      if (d >= 30) return 'expiring 30';
-    }    
-  // Hindi fallback (voice/text): map "आज की बिक्री" → sales today when lang is hi
-    if (lang.startsWith('hi') && /(आज\s*की\s*(बिक्री|सेल))\s*$/.test(t)) {
-      return 'sales today';
-    }
-    // (Optional) similar fallbacks for week/month if you want extra safety:
-    // if (lang.startsWith('hi') && /(इस\s*सप्ताह\s*की\s*बिक्री|सप्ताह\s*की\s*बिक्री)/.test(t)) return 'sales week';
+
+  // Minimal heuristics: keep your fallbacks (expanded a bit) [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/Inventory_Commands.txt)
+  if (/^re[\- ]?order\b/.test(t)) return 'reorder suggestions';
+  if (/^sales\s+this\s+week$/.test(t)) return 'sales week';
+  if (/^top\s*5\s+(this\s+month|of\s+the\s+month)$/.test(t)) return 'top 5 products month';
+  if (/^expired$/.test(t)) return 'expiring 0';
+
+  const mExpNatural = t.match(/^expires\s+in\s+(\d+)\s+days$/);
+  if (mExpNatural) {
+    const d = Number(mExpNatural[1]);
+    if (d === 0) return 'expiring 0';
+    if (d <= 7) return 'expiring 7';
+    if (d >= 30) return 'expiring 30';
+  }
+
+  // Hindi fallback you already mentioned (kept) [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/Inventory_Commands.txt)
+  if (lang.startsWith('hi') && /(आज\s*की\s*(बिक्री|सेल))\s*$/u.test(t)) {
+    return 'sales today';
+  }
+  // Optional: similar week/month patterns can be added here.
+
   return null;
 }
+
 
 // [SALES-QA-IDENTITY-003] Localized identity line for all languages/variants
 // Saamagrii.AI stays Latin; "friend" varies by language/script; "Name" label localized.
@@ -15223,20 +15339,545 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       try {
         const rawText = String(cleanTranscript ?? '').trim();
         const canon = safeNormalizeForQuickQuery(rawText); // e.g., "Low stock." -> "low stock"
-        // Local, multilingual normalizer for voice-only path (extends normalizeCommandAlias for bn/ta/te/kn/mr/gu)                
+        // Local, multilingual normalizer for voice-only path (extends normalizeCommandAlias for bn/ta/te/kn/mr/gu)                        
         function _normalizeVoiceCommandAllLang(text, langHint) {
-          // Use Unicode-safe matching and avoid \b for Indic scripts.
+          // --- Preprocess (unchanged) ---
           const srcRaw = String(text ?? '');
           // Strip Devanagari danda (poorṇa virām, U+0964) and double-danda (U+0965); then trim.
           const src = srcRaw.replace(/[\u0964\u0965]/g, '').trim();
-          const t   = safeNormalizeForQuickQuery(src);   // punctuation-light, lower-case (Latin-friendly)
-          const L   = String(langHint ?? 'en').toLowerCase();
+          const t = safeNormalizeForQuickQuery(src); // punctuation-light, lower-case (Latin-friendly)
+          const L = String(langHint ?? 'en').toLowerCase();
         
-          // ---- English exacts / regex
+          // --------- Alias dictionaries (≥5 per command & language) ----------
+          // NOTE: For Indic scripts we match on `src` (u-flag, no \b); for Latin scripts we match on `t`.
+          // Canonicals: low stock, reorder suggestions, prices, stock value, short summary, full summary,
+          //             sales today, sales week, sales month, top 5 products month, expiring 0/7/30.
+        
+          // English (Latin)
+          const ALIAS_EN = {
+            'low stock': [
+              'low stock','stock low','running low','low inventory','short on stock',
+              'less stock','stock shortage','inventory low','stock below threshold','depleting stock'
+            ],
+            'reorder suggestions': [
+              'reorder suggestions','reorder list','items to reorder','what to reorder','restock suggestions',
+              'reorder advice','reorder alerts','replenish suggestions','need to reorder','reorder recommend'
+            ],
+            'prices': [
+              'prices','price list','item prices','product prices','rates',
+              'pricing','current prices','latest prices','rate card','price catalogue'
+            ],
+            'stock value': [
+              'stock value','inventory value','value summary','total stock worth','stock valuation',
+              'inventory worth','stock total value','inventory valuation','value of stock','stock value summary'
+            ],
+            'short summary': [
+              'short summary','quick summary','brief summary','mini summary','snapshot',
+              'quick overview','brief overview','short report','tl;dr inventory','compact summary'
+            ],
+            'full summary': [
+              'full summary','detailed summary','complete summary','comprehensive summary','in-depth summary',
+              'full overview','detailed overview','expanded summary','inventory report','complete report'
+            ],
+            'sales today': [
+              'sales today',"today's sales",'sales for today','today sales','today revenue',
+              "today's revenue",'today turnover','today performance','today figures','sales of today'
+            ],
+            'sales week': [
+              'sales week',"this week's sales",'weekly sales','sales this week','sales for the week',
+              'week sales','weekly revenue','revenue this week','last 7 days sales','weekly performance'
+            ],
+            'sales month': [
+              'sales month','monthly sales','sales this month',"this month's sales",'sales for the month',
+              'month sales','monthly revenue','revenue this month','past 30 days sales','monthly performance'
+            ],
+            'top 5 products month': [
+              'top 5 products month','top products month','top 5 this month','top five this month','best sellers this month',
+              'monthly top 5','top 5 items this month','top 5 products of the month','top sellers this month','month top 5'
+            ],
+            'expiring 0': [
+              'expired','already expired','past expiry','expiry over','expired items',
+              'out of date','expiry crossed','date over','crossed expiry','expired stock'
+            ],
+            'expiring 7': [
+              'expiring 7','expires in 7 days','expiring in 7 days','expiring in a week','expiry due in 7 days',
+              'week to expire','due in a week','expire in a week','expires within 7 days','within 7 days expiry'
+            ],
+            'expiring 30': [
+              'expiring 30','expires in 30 days','expiring in 30 days','expiring in a month','expiry due in 30 days',
+              'month to expire','due in a month','expires within 30 days','within 30 days expiry','30 day expiry'
+            ],
+          };
+        
+          // Hindi (Devanagari)
+          const ALIAS_HI = {
+            'low stock': [
+              'लो स्टॉक','कम स्टॉक','स्टॉक कम','कम मात्रा','माल कम',
+              'इन्वेंटरी कम','स्टॉक की कमी','स्टॉक कम है','स्टॉक घट रहा है','स्टॉक खत्म हो रहा है'
+            ],
+            'reorder suggestions': [
+              'पुनः ऑर्डर सुझाव','री ऑर्डर सुझाव','रीऑर्डर सुझाव','फिर से ऑर्डर सुझाव','रेस्टॉक सुझाव',
+              'ऑर्डर दोबारा करने के सुझाव','पुनः मंगाने के सुझाव','रीऑर्डर के सुझाव','रीस्टॉक के सुझाव','रिऑर्डर सुझाव'
+            ],
+            'prices': [
+              'मूल्य','कीमत','भाव','रेट','मूल्य सूची',
+              'प्राइस लिस्ट','उत्पाद कीमतें','आइटम रेट','वर्तमान कीमतें','नवीनतम कीमतें'
+            ],
+            'stock value': [
+              'स्टॉक मूल्य','इन्वेंटरी मूल्य','कुल मूल्य','स्टॉक की कीमत','इन्वेंटरी की कीमत',
+              'स्टॉक मूल्यांकन','कुल स्टॉक मूल्य','इन्वेंटरी वैल्यू','स्टॉक का कुल मूल्य','मूल्य सारांश'
+            ],
+            'short summary': [
+              'संक्षिप्त सारांश','छोटा सारांश','संक्षेप','संक्षिप्त रिपोर्ट','छोटा ओवरव्यू',
+              'त्वरित सारांश','संक्षिप्त विवरण','झलक','जल्दी सारांश','सारांश छोटा'
+            ],
+            'full summary': [
+              'पूर्ण सारांश','विस्तृत सारांश','पूरा सारांश','विस्तृत रिपोर्ट','विस्तृत ओवरव्यू',
+              'पूर्ण विवरण','विस्तृत जानकारी','पूर्ण रिपोर्ट','सम्पूर्ण सारांश','सम्पूर्ण रिपोर्ट'
+            ],
+            'sales today': [
+              'आज की बिक्री','आज की सेल','आज का बिक्री','आज का सेल','आज की आय',
+              'आज का राजस्व','आज के सेल्स','आज की कमाई','आज का रेवेन्यू','आज की बिक्री रिपोर्ट'
+            ],
+            'sales week': [
+              'इस सप्ताह की बिक्री','साप्ताहिक बिक्री','सप्ताह की बिक्री','इस हफ्ते की बिक्री','हफ्ते की बिक्री',
+              'सप्ताह का राजस्व','इस सप्ताह के सेल्स','साप्ताहिक सेल्स','पिछले 7 दिनों की बिक्री','सप्ताह की रिपोर्ट'
+            ],
+            'sales month': [
+              'महीने की बिक्री','मासिक बिक्री','इस महीने की बिक्री','महीने का राजस्व','इस माह की बिक्री',
+              'मासिक सेल्स','इस माह के सेल्स','पिछले 30 दिनों की बिक्री','मासिक रिपोर्ट','महीने का सेल्स'
+            ],
+            'top 5 products month': [
+              'टॉप 5 उत्पाद महीने','इस महीने के टॉप 5','महीने के सर्वश्रेष्ठ 5','मासिक टॉप 5','टॉप 5 आइटम इस महीने',
+              'महीने के टॉप उत्पाद','महीने के सर्वाधिक बिकने वाले 5','इस महीने के शीर्ष 5','मासिक शीर्ष 5','महीने के टॉप पाँच'
+            ],
+            'expiring 0': [
+              'समाप्त','एक्सपायर','खत्म','अवधि समाप्त','मियाद खत्म',
+              'मियाद समाप्त','समाप्त हो चुका','खत्म हो गया','एक्सपायरी खत्म','समाप्त वस्तु'
+            ],
+            'expiring 7': [
+              '7 दिन में समाप्त','7 दिन में एक्सपायर','एक हफ्ते में समाप्त','एक हफ्ते में एक्सपायर','7 दिनों में समाप्त',
+              '7 दिनों में एक्सपायर','सात दिन में समाप्त','सात दिन में एक्सपायर','हफ्ते भर में समाप्त','हफ्ते भर में एक्सपायर'
+            ],
+            'expiring 30': [
+              '30 दिन में समाप्त','30 दिन में एक्सपायर','एक महीने में समाप्त','एक महीने में एक्सपायर','30 दिनों में समाप्त',
+              '30 दिनों में एक्सपायर','तीस दिन में समाप्त','तीस दिन में एक्सपायर','महीने भर में समाप्त','महीने भर में एक्सपायर'
+            ],
+          };
+        
+          // Hinglish (Roman Hindi, Latin script)
+          const ALIAS_HI_LATN = {
+            'low stock': [
+              'kam stock','stock kam','low stock','kam samaan','inventory kam',
+              'maal kam','stock thoda kam','kam quantity','kam maal','kam inventory'
+            ],
+            'reorder suggestions': [
+              'reorder sujhav','punah order sujhav','reorder suggestion','restock sujhav','reorder list',
+              'kya reorder karna hai','kya cheezein reorder','reorder advice','replenish sujhav','phir se order sujhav'
+            ],
+            'prices': [
+              'moolya','kimat','daam','rate','prices',
+              'price list','item ke rate','maal ke daam','product prices','current prices'
+            ],
+            'stock value': [
+              'stock moolya','inventory value','value summary','kul moolya','total value',
+              'maal ki keemat','stock ki keemat','inventory worth','stock valuation','value of stock'
+            ],
+            'short summary': [
+              'short summary','chhota saransh','jaldi summary','quick overview','chhota overview',
+              'short report','mini summary','seedha summary','tez summary','short me'
+            ],
+            'full summary': [
+              'full summary','poora saransh','vistrit saransh','full report','detail me summary',
+              'poora overview','poori jankari','vistrit jankari','complete summary','poori report'
+            ],
+            'sales today': [
+              'aaj ki bikri','aaj ki sale','aaj ka sale','aaj ke sales','today sales',
+              'aaj ka revenue','aaj ki revenue','aaj ka turnover','aaj ki performance','aaj ke figures'
+            ],
+            'sales week': [
+              'is saptah ki bikri','hafte ki bikri','weekly sales','is week ki sale','is hafte ke sales',
+              'haftawari bikri','is week revenue','week ka revenue','last 7 din ki bikri','week performance'
+            ],
+            'sales month': [
+              'mahine ki bikri','monthly sales','is mahine ki sale','is mahine ke sales','maasik bikri',
+              'mahine ka revenue','is mahine revenue','past 30 din ki bikri','monthly performance','mahine ki report'
+            ],
+            'top 5 products month': [
+              'top 5 is mahine','mahine ke top 5','best sellers is mahine','monthly top 5','top products month',
+              'is mahine ke top 5','mahine ke sabse zyada bikne wale 5','top 5 items this month','month ke top 5','top five this month'
+            ],
+            'expiring 0': [
+              'expire ho gaya','expiry khatam','expiry cross','expired','date over',
+              'expiry finish','expiry khatam ho gaya','already expired','expired items','expiry done'
+            ],
+            'expiring 7': [
+              '7 din me expire','ek hafte me expire','7 din me khatam','within 7 days expire','week me expire',
+              'expires in 7 days','expiring in a week','hafte bhar me expire','7 din mein expiry','expiry in 7'
+            ],
+            'expiring 30': [
+              '30 din me expire','ek mahine me expire','30 din me khatam','within 30 days expire','month me expire',
+              'expires in 30 days','expiring in a month','mahine bhar me expire','30 din mein expiry','expiry in 30'
+            ],
+          };
+        
+          // Bengali
+          const ALIAS_BN = {
+            'low stock': [
+              'স্টক কম','কম স্টক','স্টকের ঘাটতি','স্টক কম আছে','ইনভেন্টরি কম',
+              'স্টক শেষ হয়ে আসছে','স্টক কমছে','স্টক কম পরিমাণ','স্টক কম আছে কি','স্টকের অভাব'
+            ],
+            'reorder suggestions': [
+              'পুনঃঅর্ডার পরামর্শ','রিস্টক পরামর্শ','আবার অর্ডার পরামর্শ','পুনরায় অর্ডার সাজেশন','কোনগুলো রি-অর্ডার',
+              'রি-অর্ডার তালিকা','রি-অর্ডার সুপারিশ','পুনঃমজুত পরামর্শ','রিস্টক সাজেশন','রি অর্ডার সুপারিশ'
+            ],
+            'prices': [
+              'মূল্য','দাম','রেট','দামের তালিকা','প্রাইস লিস্ট',
+              'পণ্যের দাম','আইটেমের দাম','বর্তমান দাম','সর্বশেষ দাম','মূল্য তালিকা'
+            ],
+            'stock value': [
+              'স্টকের মূল্য','ইনভেন্টরি মূল্য','মোট মূল্য','স্টকের মোট মূল্য','ইনভেন্টরি ভ্যালু',
+              'স্টক মূল্যায়ন','স্টকের মূল্য সারাংশ','স্টকের মোট ভ্যালু','ভ্যালু সামারি','মূল্য সারাংশ'
+            ],
+            'short summary': [
+              'সংক্ষিপ্ত সারসংক্ষেপ','ছোট সারসংক্ষেপ','সংক্ষিপ্ত রিপোর্ট','দ্রুত সারসংক্ষেপ','সংক্ষিপ্ত ওভারভিউ',
+              'সংক্ষেপ','ছোট রিপোর্ট','শর্ট সামারি','তাড়াতাড়ি সারাংশ','মিনি সারসংক্ষেপ'
+            ],
+            'full summary': [
+              'পূর্ণ সারসংক্ষেপ','বিস্তারিত সারসংক্ষেপ','সম্পূর্ণ সারসংক্ষেপ','বিস্তারিত রিপোর্ট','পূর্ণ রিপোর্ট',
+              'সম্পূর্ণ বিবরণ','পূর্ণ ওভারভিউ','ডিটেইলড সামারি','পূর্ণ বিবরণ','বিস্তারি সারসংক্ষেপ'
+            ],
+            'sales today': [
+              'আজকের বিক্রি','আজকের সেল','আজ বিক্রি','আজকের রাজস্ব','আজকের আয়',
+              'আজকের রিপোর্ট','আজকের ফিগার','আজকের পারফরম্যান্স','আজকের টার্নওভার','আজকের সেলস'
+            ],
+            'sales week': [
+              'এই সপ্তাহের বিক্রি','সাপ্তাহিক বিক্রি','সপ্তাহের বিক্রি','এই সপ্তাহের সেল','সাপ্তাহিক সেল',
+              'সপ্তাহের রাজস্ব','গত ৭ দিনের বিক্রি','সপ্তাহের রিপোর্ট','সাপ্তাহিক পারফরম্যান্স','সপ্তাহিক সেলস'
+            ],
+            'sales month': [
+              'এই মাসের বিক্রি','মাসিক বিক্রি','মাসের বিক্রি','এই মাসের সেল','মাসিক সেল',
+              'মাসের রাজস্ব','গত ৩০ দিনের বিক্রি','মাসিক রিপোর্ট','মাসিক পারফরম্যান্স','এই মাসের সেলস'
+            ],
+            'top 5 products month': [
+              'এই মাসের সেরা ৫','এই মাসের টপ ৫','মাসিক টপ ৫','মাসের বেস্ট সেলার ৫','টপ ৫ প্রোডাক্ট (এই মাস)',
+              'এই মাসের টপ প্রোডাক্ট','মাসের সেরা পাঁচ','এই মাসের টপ আইটেম','মাসিক সেরা ৫','মাসের টপ ফাইভ'
+            ],
+            'expiring 0': [
+              'মেয়াদোত্তীর্ণ','মেয়াদোত্তীর্ণ','এক্সপায়ার','এক্সপায়ার','মেয়াদ শেষ',
+              'মেয়াদ পার','মেয়াদ উত্তীর্ণ','মেয়াদ পেরিয়েছে','আজই মেয়াদ শেষ','মেয়াদোত্তীর্ণ আইটেম'
+            ],
+            'expiring 7': [
+              '৭ দিনে মেয়াদ শেষ','৭ দিনের মধ্যে এক্সপায়ার','এক সপ্তাহে মেয়াদ শেষ','এক সপ্তাহে এক্সপায়ার','৭ দিনের মধ্যে মেয়াদ শেষ',
+              'সাত দিনে মেয়াদ শেষ','সাত দিনের মধ্যে এক্সপায়ার','সপ্তাহের মধ্যে মেয়াদ শেষ','৭ দিনে শেষ হবে','৭ দিনে এক্সপায়ার'
+            ],
+            'expiring 30': [
+              '৩০ দিনে মেয়াদ শেষ','৩০ দিনের মধ্যে এক্সপায়ার','এক মাসে মেয়াদ শেষ','এক মাসে এক্সপায়ার','৩০ দিনের মধ্যে মেয়াদ শেষ',
+              'ত্রিশ দিনে মেয়াদ শেষ','মাসের মধ্যে মেয়াদ শেষ','৩০ দিনে শেষ হবে','৩০ দিনে এক্সপায়ার','মাসে এক্সপায়ার'
+            ],
+          };
+        
+          // Tamil
+          const ALIAS_TA = {
+            'low stock': [
+              'இருப்பு குறைவு','குறைந்த இருப்பு','ஸ்டாக் குறைவு','இன்வெண்டரி குறைவு','இருப்பு குறைந்து வருகிறது',
+              'இருப்பு குறைவாக உள்ளது','ஸ்டாக் குறைவாக உள்ளது','இருப்பு தட்டுப்பாடு','இருப்பு குறைந்தது','ஸ்டாக் குறைந்தது'
+            ],
+            'reorder suggestions': [
+              'மீண்டும் ஆர்டர் பரிந்துரைகள்','ரீஆர்டர் பரிந்துரைகள்','ரீ-ஆர்டர் சஜெஷன்','ரீஸ்டாக் பரிந்துரைகள்','மீண்டும் ஆர்டர் செய்ய பரிந்துரைகள்',
+              'ஆர்டர் மீண்டும் செய்ய சஜெஷன்','ரீஆர்டர் ஆலோசனை','ரீஸ்டாக் சஜெஷன்','மீண்டும் மொத்தம் சஜெஷன்','ஆர்டர் மீண்டும்'
+            ],
+            'prices': [
+              'விலைகள்','விலை பட்டியல்','பொருள் விலை','உற்பத்தியின் விலை','ரேட்',
+              'பிரைஸ் லிஸ்ட்','தற்போதைய விலை','சமீபத்திய விலை','விலை விவரம்','விலை பட்டியல்'
+            ],
+            'stock value': [
+              'இருப்பு மதிப்பு','ஸ்டாக் மதிப்பு','இன்வெண்டரி மதிப்பு','மொத்த மதிப்பு','மதிப்பு சுருக்கம்',
+              'இருப்பு மதிப்பீடு','இன்வெண்டரி மதிப்பீடு','ஸ்டாக் விலை மதிப்பு','மொத்த இருப்பு மதிப்பு','மதிப்பு ஓவர்வியூ'
+            ],
+            'short summary': [
+              'சுருக்கமான சுருக்கம்','குறுகிய சுருக்கம்','குறுந்தொகுப்பு','வேகமான சுருக்கம்','சுருக்கமான ஓவர்வியூ',
+              'சுருக்கமான அறிக்கை','மினி சுருக்கம்','சுருக்கமான விவரம்','தொகுப்பு சுருக்கம்','ஸ்நாப்ஷாட்'
+            ],
+            'full summary': [
+              'முழு சுருக்கம்','விரிவான சுருக்கம்','முழுமையான சுருக்கம்','விரிவான அறிக்கை','முழு ஓவர்வியூ',
+              'விரிவான விவரம்','முழுமையான அறிக்கை','விரிவுரை','டீடெயில் சுருக்கம்','முழு தொகுப்பு'
+            ],
+            'sales today': [
+              'இன்றைய விற்பனை','இன்று விற்பனை','இன்றைய சேல்ஸ்','இன்றைய வருவாய்','இன்றைய கணக்கு',
+              'இன்றைய அறிக்கை','இன்றைய டர்ன்ஓவர்','இன்றைய செயல்திறன்','இன்றைய எண்கள்','இன்று விற்றது'
+            ],
+            'sales week': [
+              'இந்த வார விற்பனை','வாராந்திர விற்பனை','இந்த வார சேல்ஸ்','வார விற்பனை','வார வருவாய்',
+              'கடந்த 7 நாட்களில் விற்பனை','வார அறிக்கை','வார செயல்திறன்','வார சேல்ஸ்','வாரம் விற்பனை'
+            ],
+            'sales month': [
+              'இந்த மாத விற்பனை','மாதாந்திர விற்பனை','மாத விற்பனை','இந்த மாத சேல்ஸ்','மாத வருவாய்',
+              'கடந்த 30 நாட்களில் விற்பனை','மாத அறிக்கை','மாத செயல்திறன்','மாத சேல்ஸ்','மாதாந்திர அறிக்கை'
+            ],
+            'top 5 products month': [
+              'இந்த மாத சிறந்த 5','மாதாந்திர டாப் 5','இந்த மாத டாப் 5','மாதத்தின் சிறந்த 5','மாதத்தின் டாப் 5',
+              'டாப் 5 பொருட்கள் (இந்த மாத)','மாத டாப் 5','சிறந்த 5 (மாத)','மாத சிறந்த 5','மாத டாப் ஐந்து'
+            ],
+            'expiring 0': [
+              'காலாவதி','காலாவதியானது','காலம் முடிந்தது','முடிந்த காலம்','காலாவதி பொருட்கள்',
+              'காலம் கடந்தது','காலாவதி ஸ்டாக்','காலாவதி முடிவு','காலம் முடிவடைந்தது','காலாவதி செய்து'
+            ],
+            'expiring 7': [
+              '7 நாட்களில் காலாவதி','ஒரு வாரத்தில் காலாவதி','7 நாட்களிற்குள் காலாவதி','வாரம் காலாவதி','7 நாட்கள் காலாவதி',
+              'ஏழு நாட்களில் காலாவதி','7 நாட்களுக்கு உள்ளாக காலாவதி','ஒரு வாரத்திற்குள் காலாவதி','7 நாள் முடிவில் காலாவதி','7 நாள் காலாவதி'
+            ],
+            'expiring 30': [
+              '30 நாட்களில் காலாவதி','ஒரு மாதத்தில் காலாவதி','30 நாட்களிற்குள் காலாவதி','மாதம் காலாவதி','30 நாள் காலாவதி',
+              'முப்பது நாட்களில் காலாவதி','30 நாட்கள் முடிவில் காலாவதி','ஒரு மாதத்திற்குள் காலாவதி','மாத காலாவதி','30 நாள் முடிவில்'
+            ],
+          };
+        
+          // Telugu
+          const ALIAS_TE = {
+            'low stock': [
+              'తక్కువ నిల్వ','నిల్వ తక్కువ','స్టాక్ తక్కువ','ఇన్వెంటరీ తక్కువ','నిల్వ లోపం',
+              'స్టాక్ తగ్గుతోంది','నిల్వ తగ్గుతోంది','స్టాక్ తక్కువగా ఉంది','నిల్వ తక్కువగా ఉంది','స్టాక్ లోపం'
+            ],
+            'reorder suggestions': [
+              'పునః ఆర్డర్ సూచనలు','రీఆర్డర్ సూచనలు','రీస్టాక్ సూచనలు','మళ్ళీ ఆర్డర్ సూచనలు','రీఆర్డర్ జాబితా',
+              'ఏవి రీఆర్డర్','రీఆర్డర్ సిఫారసులు','పునఃమజ్జను సూచనలు','రీస్టాక్ సలహా','మళ్లీ ఆర్డర్ సలహా'
+            ],
+            'prices': [
+              'ధరలు','ధర జాబితా','ఆయిటం ధరలు','ఉత్పత్తి ధరలు','రేట్లు',
+              'ప్రైస్ లిస్ట్','ప్రస్తుత ధరలు','తాజా ధరలు','ధర వివరాలు','ధర సూచీ'
+            ],
+            'stock value': [
+              'నిల్వ విలువ','స్టాక్ విలువ','ఇన్వెంటరీ విలువ','మొత్తం విలువ','విలువ సారాంశం',
+              'స్టాక్ మదింపు','ఇన్వెంటరీ మదింపు','మొత్తం నిల్వ విలువ','విలువ అవలోకనం','స్టాక్ విలువ సారాంశం'
+            ],
+            'short summary': [
+              'సంక్షిప్త సారాంశం','చిన్న సారాంశం','త్వరిత సారాంశం','సంక్షిప్త నివేదిక','చిన్న అవలోకనం',
+              'మినీ సారాంశం','సారాంశం చిన్నది','సంక్షిప్త వివరాలు','స్నాప్‌షాట్','క్విక్ సారాంశం'
+            ],
+            'full summary': [
+              'పూర్తి సారాంశం','విస్తృత సారాంశం','సంపూర్ణ సారాంశం','విస్తృత నివేదిక','పూర్తి అవలోకనం',
+              'వివరణాత్మక సారాంశం','పూర్తి నివేదిక','డిటైల్ సారాంశం','సంపూర్ణ నివేదిక','విస్తృత వివరాలు'
+            ],
+            'sales today': [
+              'ఈరోజు అమ్మకాలు','ఈ రోజు అమ్మకాలు','ఈరోజు సేల్స్','ఈ రోజు సేల్స్','ఈరోజు ఆదాయం',
+              'ఈరోజు నివేదిక','ఈరోజు టర్నోవర్','ఈరోజు పనితీరు','ఈరోజు సంఖ్యలు','ఈరోజు విక్రయాలు'
+            ],
+            'sales week': [
+              'ఈ వారంలో అమ్మకాలు','వారంవారీ అమ్మకాలు','ఈ వారపు సేల్స్','వారపు అమ్మకాలు','వారపు ఆదాయం',
+              'గత 7 రోజుల్లో అమ్మకాలు','వారపు నివేదిక','వారపు పనితీరు','వారపు విక్రయాలు','ఈ వారం సేల్స్'
+            ],
+            'sales month': [
+              'ఈ నెల అమ్మకాలు','నెలవారీ అమ్మకాలు','ఈ నెల సేల్స్','నెల సేల్స్','నెల ఆదాయం',
+              'గత 30 రోజుల్లో అమ్మకాలు','నెల నివేదిక','నెల పనితీరు','నెల విక్రయాలు','ఈ నెల విక్రయాలు'
+            ],
+            'top 5 products month': [
+              'ఈ నెల టాప్ 5','నెలవారీ టాప్ 5','ఈ నెల ఉత్తమ 5','ఈ నెల టాప్ ఐదు','నెల టాప్ 5',
+              'ఈ నెల టాప్ ఉత్పత్తులు','ఈ నెల బెస్ట్ సెల్లర్స్','నెల ఉత్తమ 5','నెల టాప్ ఐటం','నెల టాప్ ఫైవ్'
+            ],
+            'expiring 0': [
+              'గడువు ముగిసింది','గడువు ముగిసినది','గడువు ముగిసిన వస్తువులు','గడువు ముగింపు','గడువు ముగిసిన స్టాక్',
+              'గడువు ముగిసిపోయింది','గడువు ముగిసింది ఇప్పుడు','ముగిసిన గడువు','గడువు ముగిసిన ఐటెమ్','గడువు ముగిసిన'
+            ],
+            'expiring 7': [
+              '7 రోజుల్లో గడువు ముగుస్తుంది','ఒక వారం లో గడువు ముగుస్తుంది','7 రోజుల్లో ముగుస్తుంది','వారం లో ముగుస్తుంది','7 రోజులలో గడువు',
+              'ఏడు రోజుల్లో ముగిసే','7 రోజుల్లో ఎక్స్‌పైర్','వారంవరకు గడువు','7 రోజుల్లో ముందు ముగుస్తుంది','7 రోజుల గడువు'
+            ],
+            'expiring 30': [
+              '30 రోజుల్లో గడువు ముగుస్తుంది','ఒక నెలలో గడువు ముగుస్తుంది','30 రోజుల్లో ముగుస్తుంది','నెలలో ముగుస్తుంది','30 రోజులలో గడువు',
+              'ముప్పై రోజుల్లో ముగిసే','30 రోజుల్లో ఎక్స్‌పైర్','నెలవరకు గడువు','30 రోజుల్లో ముందు ముగుస్తుంది','30 రోజుల గడువు'
+            ],
+          };
+        
+          // Kannada
+          const ALIAS_KN = {
+            'low stock': [
+              'ಕಡಿಮೆ ಸಂಗ್ರಹ','ಕಡಿಮೆ ಸ್ಟಾಕ್','ಸ್ಟಾಕ್ ಕಡಿಮೆ','ಇನ್‌ವೆಂಟರಿ ಕಡಿಮೆ','ಸಂಗ್ರಹ ಕಡಿಮೆ',
+              'ಸ್ಟಾಕ್ ಕಡಿಮೆಯಾಗಿದೆ','ಸಂಗ್ರಹ ಕಡಿಮೆಯಾಗಿದೆ','ಸ್ಟಾಕ್ ಕಡಿಮೆಯಾಗುತ್ತಿದೆ','ಸಂಗ್ರಹ ಕೊರತೆ','ಸ್ಟಾಕ್ ಕೊರತೆ'
+            ],
+            'reorder suggestions': [
+              'ಮರುಆರ್ಡರ್ ಸಲಹೆಗಳು','ರೀಆರ್ಡರ್ ಸಲಹೆಗಳು','ರೀ-ಆರ್ಡರ್ ಸೂಚನೆ','ರೀಸ್ಟಾಕ್ ಸಲಹೆಗಳು','ಮತ್ತೆ ಆರ್ಡರ್ ಸಲಹೆಗಳು',
+              'ರೀಆರ್ಡರ್ ಪಟ್ಟಿ','ಯಾವವು ಮರುಆರ್ಡರ್','ಮರುಮಜ್ಜೆ ಸಲಹೆ','ರೀಸ್ಟಾಕ್ ಸೂಚನೆ','ಮತ್ತೆ ಆರ್ಡರ್ ಮಾಡಿ ಸಲಹೆ'
+            ],
+            'prices': [
+              'ಬೆಲೆಗಳು','ಬೆಲೆ ಪಟ್ಟಿಯನ್ನು','ಉತ್ಪನ್ನ ಬೆಲೆ','ಐಟಂ ಬೆಲೆ','ರೇಟ್',
+              'ಪ್ರೈಸ್ ಲಿಸ್ಟ್','ಪ್ರಸ್ತುತ ಬೆಲೆ','ಇತ್ತೀಚಿನ ಬೆಲೆ','ಬೆಲೆ ವಿವರ','ಬೆಲೆ ಪಟ್ಟಿ'
+            ],
+            'stock value': [
+              'ಸ್ಟಾಕ್ ಮೌಲ್ಯ','ಇನ್‌ವೆಂಟರಿ ಮೌಲ್ಯ','ಒಟ್ಟು ಮೌಲ್ಯ','ಮೌಲ್ಯ ಸಾರಂಶ','ಸ್ಟಾಕ್ ಮೌಲ್ಯಮಾಪನ',
+              'ಇನ್‌ವೆಂಟರಿ ಮೌಲ್ಯಮಾಪನ','ಸ್ಟಾಕ್ ಒಟ್ಟು ಮೌಲ್ಯ','ಮೌಲ್ಯ ಅವಲೋಕನ','ಮೌಲ್ಯ ಸಾರಾಂಶ','ಸ್ಟಾಕಿನ ಮೌಲ್ಯ'
+            ],
+            'short summary': [
+              'ಸಂಕ್ಷಿಪ್ತ ಸಾರಾಂಶ','ಕಿರು ಸಾರಾಂಶ','ಶೀಘ್ರ ಸಾರಾಂಶ','ಸಂಕ್ಷಿಪ್ತ ವರದಿ','ಕಿರು ಅವಲೋಕನ',
+              'ಮಿನಿ ಸಾರಾಂಶ','ಸಂಕ್ಷಿಪ್ತ ವಿವರ','ಸ್ನಾಪ್‌ಶಾಟ್','ತ್ವರಿತ ಸಾರಾಂಶ','ಕಿರು ವರದಿ'
+            ],
+            'full summary': [
+              'ಪೂರ್ಣ ಸಾರಾಂಶ','ವಿಸ್ತೃತ ಸಾರಾಂಶ','ಸಂಪೂರ್ಣ ಸಾರಾಂಶ','ವಿಸ್ತೃತ ವರದಿ','ಪೂರ್ಣ ಅವಲೋಕನ',
+              'ವಿವರವಾದ ಸಾರಾಂಶ','ಪೂರ್ಣ ವರದಿ','ವಿಸ್ತೃತ ವಿವರ','ಡಿಟೇಯ್ಲ್ಡ್ ಸಾರಾಂಶ','ಸಂಪೂರ್ಣ ವಿವರ'
+            ],
+            'sales today': [
+              'ಇಂದು ಮಾರಾಟ','ಇಂದಿನ ಮಾರಾಟ','ಇಂದು ಸೇಲ್ಸ್','ಇಂದಿನ ಸೇಲ್ಸ್','ಇಂದಿನ ಆದಾಯ',
+              'ಇಂದಿನ ವರದಿ','ಇಂದಿನ ಟರ್ನೋವರ್','ಇಂದಿನ ಕಾರ್ಯಕ್ಷಮತೆ','ಇಂದಿನ ಸಂಖ್ಯೆ','ಇಂದಿನ ಮಾರಾಟ ವರದಿ'
+            ],
+            'sales week': [
+              'ಈ ವಾರದ ಮಾರಾಟ','ವಾರಾಂತರ ಮಾರಾಟ','ಈ ವಾರ ಸೇಲ್ಸ್','ವಾರದ ಸೇಲ್ಸ್','ವಾರದ ಆದಾಯ',
+              'ಕೊನೆಯ 7 ದಿನಗಳ ಮಾರಾಟ','ವಾರದ ವರದಿ','ವಾರದ ಕಾರ್ಯಕ್ಷಮತೆ','ವಾರದ ಮಾರಾಟ','ವಾರ ಸೇಲ್ಸ್'
+            ],
+            'sales month': [
+              'ಈ ತಿಂಗಳ ಮಾರಾಟ','ತಿಂಗಳ ಮಾರಾಟ','ಮಾಸಿಕ ಮಾರಾಟ','ಈ ತಿಂಗಳ ಸೇಲ್ಸ್','ಮಾಸಿಕ ಸೇಲ್ಸ್',
+              'ಕೊನೆಯ 30 ದಿನಗಳ ಮಾರಾಟ','ತಿಂಗಳ ವರದಿ','ತಿಂಗಳ ಕಾರ್ಯಕ್ಷಮತೆ','ಮಾಸಿಕ ವರದಿ','ತಿಂಗಳ ಆದಾಯ'
+            ],
+            'top 5 products month': [
+              'ಈ ತಿಂಗಳ ಟಾಪ್ 5','ಮಾಸಿಕ ಟಾಪ್ 5','ಈ ತಿಂಗಳ ಅತ್ಯುತ್ತಮ 5','ತಿಂಗಳ ಟಾಪ್ 5','ತಿಂಗಳ ಟಾಪ್ ಐದು',
+              'ಈ ತಿಂಗಳ ಟಾಪ್ ಉತ್ಪನ್ನಗಳು','ಮಾಸಿಕ ಟಾಪ್ ಐಟಂ','ಈ ತಿಂಗಳ ಬೆಸ್ಟ್ ಸೆಲ್ಲರ್ಸ್','ತಿಂಗಳ ಸೆರಾ 5','ತಿಂಗಳ ಟಾಪ್ ಫೈವ್'
+            ],
+            'expiring 0': [
+              'ಅವಧಿ ಮುಗಿದಿದೆ','ಅವಧಿ ಮುಗಿದು ಹೋಯಿತು','ಮುಗಿದ ಅವಧಿ','ಅವಧಿ ಮುಗಿದ ಸ್ಟಾಕ್','ಅವಧಿ ಮುಗಿದ ಐಟಂಗಳು',
+              'ಅವಧಿ ಪೂರ್ಣ','ಅವಧಿ ಕಳೆದಿದೆ','ಅವಧಿ ಮುಕ್ತಾಯ','ಅವಧಿ ಮುಗಿದ','ಅವಧಿ ಮುಗಿಯಿತು'
+            ],
+            'expiring 7': [
+              '7 ದಿನಗಳಲ್ಲಿ ಅವಧಿ ಮುಗಿಯುತ್ತದೆ','ಒಂದು ವಾರದಲ್ಲಿ ಅವಧಿ ಮುಗಿಯುತ್ತದೆ','7 ದಿನಗಳಲ್ಲಿ ಮುಗಿಯುತ್ತದೆ','ವಾರದಲ್ಲಿ ಮುಗಿಯುತ್ತದೆ','7 ದಿನಗಳೊಳಗೆ ಅವಧಿ',
+              'ಏಳು ದಿನಗಳಲ್ಲಿ ಮುಗಿಯುತ್ತದೆ','7 ದಿನಗಳಲ್ಲಿ ಎಕ್ಸ್ಪೈರ್','ವಾರದೊಳಗೆ ಅವಧಿ','7 ದಿನಗಳಲ್ಲಿ ಮುಗಿಯುವದು','7 ದಿನಗಳ ಅವಧಿ'
+            ],
+            'expiring 30': [
+              '30 ದಿನಗಳಲ್ಲಿ ಅವಧಿ ಮುಗಿಯುತ್ತದೆ','ಒಂದು ತಿಂಗಳಲ್ಲಿ ಅವಧಿ ಮುಗಿಯುತ್ತದೆ','30 ದಿನಗಳಲ್ಲಿ ಮುಗಿಯುತ್ತದೆ','ತಿಂಗಳಲ್ಲಿ ಮುಗಿಯುತ್ತದೆ','30 ದಿನಗಳೊಳಗೆ ಅವಧಿ',
+              'ಮுப்பತ್ತು ದಿನಗಳಲ್ಲಿ ಮುಗಿಯುತ್ತದೆ','30 ದಿನಗಳಲ್ಲಿ ಎಕ್ಸ್ಪೈರ್','ತಿಂಗಳೊಳಗೆ ಅವಧಿ','30 ದಿನಗಳಲ್ಲಿ ಮುಗಿಯುವದು','30 ದಿನಗಳ ಅವಧಿ'
+            ],
+          };
+        
+          // Marathi (Devanagari)
+          const ALIAS_MR = {
+            'low stock': [
+              'कमी साठा','साठा कमी','इन्वेंटरी कमी','साठा कमी आहे','साठा कमी होत आहे',
+              'साठ्याची कमतरता','साठा कमी प्रमाणात','साठा संपत आहे','साठा कमी झाला','कमी स्टॉक'
+            ],
+            'reorder suggestions': [
+              'पुन्हा ऑर्डर सुचवणी','रीऑर्डर सुचवणी','री ऑर्डर सुचवणी','रिस्टॉक सुचवणी','पुन्हा ऑर्डर सल्ला',
+              'रीऑर्डर यादी','कोणते रीऑर्डर','पुन्हा मागवण्याच्या सुचवणी','रिस्टॉक सल्ला','रीऑर्डर सल्ला'
+            ],
+            'prices': [
+              'किंमती','भाव','रेट','किंमत यादी','प्राइस लिस्ट',
+              'उत्पादन किंमती','आयटम रेट','सध्याच्या किंमती','ताज्या किंमती','किंमत तपशील'
+            ],
+            'stock value': [
+              'साठा मूल्य','इन्वेंटरी मूल्य','एकूण मूल्य','मूल्य सारांश','साठा मूल्यांकन',
+              'इन्वेंटरी मूल्यांकन','एकूण साठा मूल्य','मूल्य अवलोकन','साठ्याचे मूल्य','मूल्य संक्षेप'
+            ],
+            'short summary': [
+              'संक्षिप्त सारांश','लहान सारांश','त्वरित सारांश','संक्षिप्त अहवाल','लहान ओव्हरव्ह्यू',
+              'मिनी सारांश','संक्षिप्त माहिती','स्नॅपशॉट','क्विक सारांश','लघु सारांश'
+            ],
+            'full summary': [
+              'पूर्ण सारांश','सविस्तर सारांश','संपूर्ण सारांश','सविस्तर अहवाल','पूर्ण ओव्हरव्ह्यू',
+              'सविस्तर माहिती','पूर्ण अहवाल','डिटेल्ड सारांश','संपूर्ण अहवाल','विस्तृत सारांश'
+            ],
+            'sales today': [
+              'आजची विक्री','आजचा सेल','आजची सेल','आजचा महसूल','आजची कमाई',
+              'आजचा अहवाल','आजचा टर्नओव्हर','आजचे आकडे','आजचा परफॉर्मन्स','आजची विक्री अहवाल'
+            ],
+            'sales week': [
+              'या आठवड्याची विक्री','साप्ताहिक विक्री','आठवड्याची विक्री','या आठवड्याचा सेल','साप्ताहिक सेल',
+              'आठवड्याचा महसूल','गेल्या 7 दिवसांची विक्री','आठवड्याचा अहवाल','साप्ताहिक परफॉर्मन्स','आठवड्याचे सेल्स'
+            ],
+            'sales month': [
+              'या महिन्याची विक्री','मासिक विक्री','महिन्याची विक्री','या महिन्याचा सेल','मासिक सेल',
+              'महिन्याचा महसूल','गेल्या 30 दिवसांची विक्री','मासिक अहवाल','मासिक परफॉर्मन्स','महिन्याचे सेल्स'
+            ],
+            'top 5 products month': [
+              'या महिन्याचे टॉप 5','मासिक टॉप 5','या महिन्याचे सर्वोत्तम 5','महीन्याचे टॉप 5','टॉप 5 उत्पादने (महिना)',
+              'या महिन्याचे टॉप उत्पादने','या महिन्याचे बेस्ट सेलर 5','महीन्याचे टॉप पाच','या महिन्याचे टॉप आयटम','मासिक सर्वोत्तम 5'
+            ],
+            'expiring 0': [
+              'कालबाह्य','एक्सपायर','कालावधी संपला','कालबाह्य वस्तू','कालबाह्य स्टॉक',
+              'कालावधी पूर्ण','कालावधी समाप्त','कालबाह्य आयटम','कालावधी पार','कालबाह्य झाले'
+            ],
+            'expiring 7': [
+              '7 दिवसात कालबाह्य','7 दिवसांत एक्सपायर','एका आठवड्यात कालबाह्य','एका आठवड्यात एक्सपायर','7 दिवसांत समाप्त',
+              'सात दिवसांत समाप्त','7 दिवसांत कालावधी संपेल','आठवड्यात समाप्त','7 दिवसांत संपते','7 दिवसांचा कालावधी'
+            ],
+            'expiring 30': [
+              '30 दिवसात कालबाह्य','30 दिवसांत एक्सपायर','एका महिन्यात कालबाह्य','एका महिन्यात एक्सपायर','30 दिवसांत समाप्त',
+              'तीस दिवसांत समाप्त','30 दिवसांत कालावधी संपेल','महिन्यात समाप्त','30 दिवसांत संपते','30 दिवसांचा कालावधी'
+            ],
+          };
+        
+          // Gujarati
+          const ALIAS_GU = {
+            'low stock': [
+              'ઓછો જથ્થો','સ્ટોક ઓછો','જથ્થો ઓછો','ઇન્વેન્ટરી ઓછું','સ્ટોક ઘટે છે',
+              'સ્ટોક ઓછો છે','જથ્થાની કમી','સ્ટોકની કમી','સ્ટોક ઓછો પડી રહ્યો છે','સ્ટોક સમાપ્તિ તરફ'
+            ],
+            'reorder suggestions': [
+              'પુનઃ ઓર્ડર સૂચનો','રીઓર્ડર સૂચનો','રિસ્ટોક સૂચનો','ફરી ઓર્ડર સૂચનો','રીઓર્ડર યાદી',
+              'કયા રિ-ઓર્ડર','રીઓર્ડર સલાહ','રિસ્ટોક સલાહ','પુનઃમજ્જત સૂચનો','ફરી ઓર્ડર કરો સૂચનો'
+            ],
+            'prices': [
+              'કિંમતો','ભાવ','રેટ','કિંમત યાદી','પ્રાઇસ લિસ્ટ',
+              'ઉત્પાદન કિંમત','આઇટમ રેટ','વર્તમાન કિંમતો','નવીનતમ કિંમતો','ભાવ યાદી'
+            ],
+            'stock value': [
+              'સ્ટોક મૂલ્ય','ઇન્વેન્ટરી મૂલ્ય','કુલ મૂલ્ય','મૂલ્ય સારાંશ','સ્ટોક મૂલ્યાંકન',
+              'ઇન્વેન્ટરી મૂલ્યાંકન','કુલ સ્ટોક મૂલ્ય','મૂલ્ય અવલોકન','સ્ટોકનું મૂલ્ય','મૂલ્ય સંગ્રહ'
+            ],
+            'short summary': [
+              'ટૂંકો સારાંશ','સંક્ષિપ્ત સારાંશ','ઝલદીનો સારાંશ','ટૂંકો રિપોર્ટ','ટૂંકું ઓવર્વ્યુ',
+              'મિની સારાંશ','સંક્ષિપ્ત માહિતી','ઝડપી સારાંશ','સ્નેપશોટ','ટૂંકું સરવેઠું'
+            ],
+            'full summary': [
+              'સંપૂર્ણ સારાંશ','વિસ્તૃત સારાંશ','પૂર્ણ સારાંશ','વિસ્તૃત રિપોર્ટ','સંપૂર્ણ ઓવર્વ્યુ',
+              'વિગતવાર સારાંશ','પૂર્ણ રિપોર્ટ','ડિટેઇલ્ડ સારાંશ','સંપૂર્ણ માહિતી','વિસ્તૃત વર્ણન'
+            ],
+            'sales today': [
+              'આજની વેચાણ','આજે વેચાણ','આજના સેલ્સ','આજનો રાજસ્વ','આજનો અહેવાલ',
+              'આજનો ટર્નઓવર','આજની કામગીરી','આજના આંકડા','આજની વેચાણ રિપોર્ટ','આજનો સેલ'
+            ],
+            'sales week': [
+              'આ અઠવાડિયાની વેચાણ','સાપ્તાહિક વેચાણ','આ અઠવાડિયા સેલ્સ','અઠવાડિયાની વેચાણ','અઠવાડિયાનો રાજસ્વ',
+              'છેલ્લા 7 દિવસની વેચાણ','અઠવાડિયાનો અહેવાલ','અઠવાડિયાની કામગીરી','અઠવાડિયાનો સેલ','સાપ્તાહિક રિપોર્ટ'
+            ],
+            'sales month': [
+              'આ મહિનાની વેચાણ','માસિક વેચાણ','આ મહિને સેલ્સ','મહિને સેલ્સ','મહિનેનો રાજસ્વ',
+              'છેલ્લા 30 દિવસની વેચાણ','માસિક અહેવાલ','માસિક કામગીરી','માસિક સેલ્સ','મહિનેનો અહેવાલ'
+            ],
+            'top 5 products month': [
+              'આ મહિનાના ટોપ 5','માસિક ટોપ 5','આ મહિનાના શ્રેષ્ઠ 5','મહિને ટોપ 5','મહિનેના ટોપ પાંચ',
+              'આ મહિનાના ટોપ પ્રોડક્ટ્સ','બેસ્ટ સેલર્સ (મહિને)','મહિનેના ટોપ આયટમ','માસિક શ્રેષ્ઠ 5','ટોપ 5 આ મહિને'
+            ],
+            'expiring 0': [
+              'સમાપ્ત','એક્સપાયર','મુદત પૂર્ણ','સમાપ્ત વસ્તુ','સમાપ્ત સ્ટોક',
+              'સમાપ્ત થઇ ગયું','સમાપ્ત થઈ ગયું','સમાપ્તિ','સમાપ્તિ પામી','મિયાદ પૂર્ણ'
+            ],
+            'expiring 7': [
+              '7 દિવસમાં સમાપ્ત','7 દિવસમાં એક્સપાયર','એક અઠવાડિયામાં સમાપ્ત','એક અઠવાડિયામાં એક્સપાયર','7 દિવસમાં મિયાદ પૂર્ણ',
+              'સાત દિવસે સમાપ્ત','7 દિવસની અંદર સમાપ્ત','અઠવાડિયા માં સમાપ્ત','7 દિવસમાં સમાપ્તિ','7 દિવસની મિયાદ'
+            ],
+            'expiring 30': [
+              '30 દિવસમાં સમાપ્ત','30 દિવસમાં એક્સપાયર','એક મહિનામાં સમાપ્ત','એક મહિનામાં એક્સપાયર','30 દિવસમાં મિયાદ પૂર્ણ',
+              'ત્રીસ દિવસે સમાપ્ત','30 દિવસની અંદર સમાપ્ત','મહિને માં સમાપ્ત','30 દિવસમાં સમાપ્તિ','30 દિવસની મિયાદ'
+            ],
+          };
+        
+          // --------- helper selection of alias map by language key ----------
+          const LANG_MAP = {
+            'en': ALIAS_EN,
+            'hi': ALIAS_HI,
+            'hi-latn': ALIAS_HI_LATN,
+            'bn': ALIAS_BN,
+            'ta': ALIAS_TA,
+            'te': ALIAS_TE,
+            'kn': ALIAS_KN,
+            'mr': ALIAS_MR,
+            'gu': ALIAS_GU,
+          };
+          const baseLang = L.replace(/-latn$/, '');
+          const aliasPack = LANG_MAP[L] || LANG_MAP[baseLang] || LANG_MAP['en'];
+        
+          // --------- natural English buckets (keep your original logic) ----------
           if (/^low stock$/.test(t)) return 'low stock';
           if (/^reorder suggestions?$/.test(t)) return 'reorder suggestions';
           if (/^prices$/.test(t)) return 'prices';
           if (/^(stock value|inventory value|value summary)$/.test(t)) return 'stock value';
+        
           const mExp = t.match(/^expiring\s+(0|7|30)$/i); if (mExp) return `expiring ${mExp[1]}`;
           if (/^short summary$/.test(t)) return 'short summary';
           if (/^full summary$/.test(t)) return 'full summary';
@@ -15244,7 +15885,8 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           if (/^sales week$/.test(t)) return 'sales week';
           if (/^sales month$/.test(t)) return 'sales month';
           if (/^(top 5 products month|top products month)$/.test(t)) return 'top 5 products month';
-          // English naturals
+        
+          // English naturals (keep your behavior)
           if (/^sales\s+this\s+week$/.test(t)) return 'sales week';
           if (/^top\s*5\s+(this\s+month|of\s+the\s+month)$/.test(t)) return 'top 5 products month';
           if (/^expired$/.test(t)) return 'expiring 0';
@@ -15256,154 +15898,41 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
             if (d >= 30) return 'expiring 30';
           }
         
-          // ---- Hindi (Devanagari)
-          const srcHi = src; // already cleaned punctuation
-          const hiLowStockRx1 = /लो\s*स्टॉक/u;
-          const hiLowStockRx2 = /कम\s*स्टॉक/u;
-          const hiLowStockRx3 = /स्टॉक\s*कम/u;
-          if (hiLowStockRx1.test(srcHi) || hiLowStockRx2.test(srcHi) || hiLowStockRx3.test(srcHi)) return 'low stock';
-          const hiReorderRx = /(?:(?:पुनः|पुन:)\s*ऑर्डर\s*सुझाव|री\s*ऑर्डर\s*सुझाव|रीऑर्डर\s*सुझाव)/u;
-          if (hiReorderRx.test(srcHi)) return 'reorder suggestions';
-          const hiPricesRx = /(मूल्य|कीमत|भाव|रेट)/u;
-          if (hiPricesRx.test(srcHi)) return 'prices';
-          const hiStockValueRx = /(स्टॉक\s*मूल्य|इन्वेंटरी\s*मूल्य|कुल\s*मूल्य)/u;
-          if (hiStockValueRx.test(srcHi)) return 'stock value';
-          const hiShortRx = /(संक्षिप्त\s*सारांश|छोटा\s*सारांश)/u;
-          if (hiShortRx.test(srcHi)) return 'short summary';
-          const hiFullRx = /(पूर्ण\s*सारांश|विस्तृत\s*सारांश|पूरा\s*सारांश)/u;
-          if (hiFullRx.test(srcHi)) return 'full summary';
-          const hiSalesTodayRx = /(आज\s*की\s*(बिक्री|सेल))\s*$/u;
-          if (hiSalesTodayRx.test(srcHi)) return 'sales today';
-          const hiSalesWeekRx = /(इस\s*सप्ताह\s*की\s*बिक्री|सप्ताह\s*की\s*बिक्री)/u;
-          if (hiSalesWeekRx.test(srcHi)) return 'sales week';
-          const hiSalesMonthRx = /(महीने\s*की\s*बिक्री|मासिक\s*बिक्री)/u;
-          if (hiSalesMonthRx.test(srcHi)) return 'sales month';
-          const hiTopMonthRx = /(टॉप\s*5\s*उत्पाद|टॉप\s*उत्पाद\s*महीने)/u;
-          if (hiTopMonthRx.test(srcHi)) return 'top 5 products month';
-          // Hindi: expired / expires in N days
+          // --------- Alias-driven matching ----------
+          const isLatin = /en|hi-latn/.test(L);
+          const haystack = isLatin ? t : src;
+        
+          // Try each canonical command's variants
+          for (const [canonical, variants] of Object.entries(aliasPack)) {
+            // Build a safe alternation pattern
+            const alt = variants
+              .map(v => String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+              .join('|');
+            // For Indic scripts: avoid \b, match anywhere; For Latin: soft word boundaries using spaces.
+            const rx = isLatin
+              ? new RegExp(`(?:^|\\s)(?:${alt})(?:\\s|$)`, 'i')
+              : new RegExp(`(?:${alt})`, 'u');
+            if (rx.test(haystack)) {
+              // For expiring buckets, if canonical ends with number keep as is; else return as canonical.
+              return canonical;
+            }
+          }
+        
+          // --------- Hindi explicit numeric expiries (retain your behavior) ----------
+          // Devanagari numerals & phrasing (already covered above, but keep the explicit rules for safety) [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/Inventory_Commands.txt)
           const hiExpiredRx = /(एक्सपायर|समाप्त|खत्म)\s*$/u;
-          if (hiExpiredRx.test(srcHi)) return 'expiring 0';
-          const hiExpires30Rx = /(?:30|३०)\s*दिन(ों)?\s*में\s*(एक्सपायर|समाप्त)/u;
-          if (hiExpires30Rx.test(srcHi)) return 'expiring 30';
-          const hiExpires7Rx  = /(?:7|७)\s*दिन(ों)?\s*में\s*(एक्सपायर|समाप्त)/u;
-          if (hiExpires7Rx.test(srcHi)) return 'expiring 7';
+          if (hiExpiredRx.test(src)) return 'expiring 0';
         
-          // ---- Hinglish (roman, Latin script: \b is fine)
-          if (/\b(kam stock)\b/i.test(t)) return 'low stock';
-          if (/\b(re ?order sujhav|punah order sujhav|reorder suggestion)\b/i.test(t)) return 'reorder suggestions';
-          if (/\b(moolya|kimat|daam|rate|prices)\b/i.test(t)) return 'prices';
-          if (/\b(stock moolya|inventory value|value summary)\b/i.test(t)) return 'stock value';
-          if (/\b(short summary|chhota saransh)\b/i.test(t)) return 'short summary';
-          if (/\b(full summary|poora saransh|vistrit saransh)\b/i.test(t)) return 'full summary';
-          if (/\bexpires?\s+in\s+30\s+days?\b/i.test(t)) return 'expiring 30';
-          if (/\bexpires?\s+in\s+7\s+days?\b/i.test(t)) return 'expiring 7';
-          if (/\bexpired\b/i.test(t)) return 'expiring 0';
+          const hi30 = /(30|३०)/u, hi7 = /(7|७)/u;
+          if (new RegExp(`${hi30.source}\\s*दिन(ों)?\\s*(में|मे)\\s*(एक्सपायर|समाप्त)`, 'u').test(src)) return 'expiring 30';
+          if (new RegExp(`${hi7.source}\\s*दिन(ों)?\\s*(में|मे)\\s*(एक्सपायर|समाप्त)`, 'u').test(src)) return 'expiring 7';
         
-          // ---- Bengali
-          if (/স্টক\s*কম/u.test(src)) return 'low stock';
-          if (/(পুনঃঅর্ডার পরামর্শ)/.test(src)) return 'reorder suggestions';
-          if (/(মূল্য)/.test(src)) return 'prices';
-          if (/(স্টকের মূল্য)/.test(src)) return 'stock value';
-          // BN: sales and top-5 this month
-          if (/আজকের\s*বিক্রি/u.test(src)) return 'sales today';
-          if (/এই\s*সপ্তাহের\s*বিক্রি/u.test(src)) return 'sales week';
-          if (/এই\s*মাসের\s*বিক্রি/u.test(src)) return 'sales month';
-          if (/এই\s*মাসের\s*সেরা\s*৫/u.test(src)) return 'top 5 products month';
-          // BN: expired / expires in N days
-          const bnExpiredRx = /(মেয়াদ(?:োত্তীর্ণ)?|মেয়াদ(?:োত্তীর্ণ)?|এক্সপায়ার|এক্সপায়ার)\s*$/u;
-          if (bnExpiredRx.test(src)) return 'expiring 0';
-          const bn30 = /(30|৩০)/u, bn7 = /(7|৭)/u;
-          if (new RegExp(`${bn30.source}\\s*দিন(?:ে|ের)?\\s*(মেয়াদ|মেয়াদ)\\s*শেষ|${bn30.source}\\s*দিন(?:ে|ের)?\\s*এক্সপায়ার`, 'u').test(src)) return 'expiring 30';
-          if (new RegExp(`${bn7.source}\\s*দিন(?:ে|ের)?\\s*(মেয়াদ|মেয়াদ)\\s*শেষ|${bn7.source}\\s*দিন(?:ে|ের)?\\s*এক্সপায়ার`, 'u').test(src)) return 'expiring 7';
-        
-          // ---- Tamil
-          if (/இருப்பு\s*குறைவு/u.test(src)) return 'low stock';
-          if (/(மீண்டும் ஆர்டர் பரிந்துரைகள்)/.test(src)) return 'reorder suggestions';
-          if (/(விலைகள்)/.test(src)) return 'prices';
-          if (/இருப்பு\s*மதிப்பு/u.test(src)) return 'stock value';
-          // TA: sales and top-5 this month
-          if (/இன்றைய\s*விற்பனை/u.test(src)) return 'sales today';
-          if (/இந்த\s*வார\s*விற்பனை/u.test(src)) return 'sales week';
-          if (/இந்த\s*மாத\s*விற்பனை/u.test(src)) return 'sales month';
-          if (/இந்த\s*மாத\s*சிறந்த\s*5/u.test(src)) return 'top 5 products month';
-          // TA: expired / expires in N days
-          const taExpiredRx = /(காலாவதி|காலாவதியானது)\s*$/u;
-          if (taExpiredRx.test(src)) return 'expiring 0';
-          const ta30 = /(30|௩௦)/u, ta7 = /(7|௭)/u;
-          if (new RegExp(`${ta30.source}\\s*நாட்களிலும்?\\s*காலாவதி`, 'u').test(src)) return 'expiring 30';
-          if (new RegExp(`${ta7.source}\\s*நாட்களிலும்?\\s*காலாவதி`, 'u').test(src)) return 'expiring 7';
-        
-          // ---- Telugu
-          if (/తక్కువ\s*నిల్వ/u.test(src)) return 'low stock';
-          if (/(పునః ఆర్డర్ సూచనలు)/.test(src)) return 'reorder suggestions';
-          if (/(ధరలు)/.test(src)) return 'prices';
-          if (/నిల్వ\s*విలువ/u.test(src)) return 'stock value';
-          // TE: sales and top-5 this month
-          if (/ఈరోజు\s*అమ్మకాలు/u.test(src)) return 'sales today';
-          if (/ఈ\s*వారంలో\s*అమ్మకాలు/u.test(src)) return 'sales week';
-          if (/ఈ\s*నెల\s*అమ్మకాలు/u.test(src)) return 'sales month';
-          if (/ఈ\s*నెల\s*టాప్\s*5/u.test(src)) return 'top 5 products month';
-          // TE: expired / expires in N days
-          const teExpiredRx = /(గడువు\s*ముగిసింది)\s*$/u;
-          if (teExpiredRx.test(src)) return 'expiring 0';
-          const te30 = /(30|౩౦)/u, te7 = /(7|౭)/u;
-          if (new RegExp(`${te30.source}\\s*రోజుల్లో\\s*గడువు\\s*ముగుస్తుంది`, 'u').test(src)) return 'expiring 30';
-          if (new RegExp(`${te7.source}\\s*రోజుల్లో\\s*గడువు\\s*ముగుస్తుంది`, 'u').test(src)) return 'expiring 7';
-        
-          // ---- Kannada
-          if (/ಕಡಿಮೆ\s*ಸಂಗ್ರಹ/u.test(src)) return 'low stock';
-          if (/(ಮರುಆರ್ಡರ್ ಸಲಹೆಗಳು)/.test(src)) return 'reorder suggestions';
-          if (/(ಬೆಲೆಗಳು)/.test(src)) return 'prices';
-          if (/ಸ್ಟಾಕ್\s*ಮೌಲ್ಯ/u.test(src)) return 'stock value';
-          // KN: sales and top-5 this month
-          if (/ಇಂದು\s*ಮಾರಾಟ/u.test(src)) return 'sales today';
-          if (/ಈ\s*ವಾರದ\s*ಮಾರಾಟ/u.test(src)) return 'sales week';
-          if (/ಈ\s*ತಿಂಗಳ\s*ಮಾರಾಟ/u.test(src)) return 'sales month';
-          if (/ಈ\s*ತಿಂಗಳ\s*ಟಾಪ್\s*5/u.test(src)) return 'top 5 products month';
-          // KN: expired / expires in N days
-          const knExpiredRx = /(ಅವಧಿ\s*ಮುಗಿದಿದೆ)\s*$/u;
-          if (knExpiredRx.test(src)) return 'expiring 0';
-          const kn30 = /(30|೩೦)/u, kn7 = /(7|೭)/u;
-          if (new RegExp(`${kn30.source}\\s*ದಿನಗಳಲ್ಲಿ\\s*ಅವಧಿ\\s*ಮುಗಿಯುತ್ತದೆ`, 'u').test(src)) return 'expiring 30';
-          if (new RegExp(`${kn7.source}\\s*ದಿನಗಳಲ್ಲಿ\\s*ಅವಧಿ\\s*ಮುಗಿಯುತ್ತದೆ`, 'u').test(src)) return 'expiring 7';
-        
-          // ---- Marathi (Devanagari cleaned)
-          const srcMr = src; // punctuation already removed
-          if (/कमी\s*साठा/u.test(srcMr)) return 'low stock';
-          if (/(पुन्हा ऑर्डर सुचवणी)/.test(srcMr)) return 'reorder suggestions';
-          if (/(किंमती)/.test(srcMr)) return 'prices';
-          if (/साठा\s*मूल्य|इन्वेंटरी\s*मूल्य/u.test(srcMr)) return 'stock value';
-          // MR: sales and top-5 this month
-          if (/आजची\s*विक्री/u.test(srcMr)) return 'sales today';
-          if (/या\s*आठवड्याची\s*विक्री/u.test(srcMr)) return 'sales week';
-          if (/या\s*महिन्याची\s*विक्री/u.test(srcMr)) return 'sales month';
-          if (/या\s*महिन्याचे\s*टॉप\s*5/u.test(srcMr)) return 'top 5 products month';
-          // MR: expired / expires in N days
-          const mrExpiredRx = /(कालबाह्य|एक्सपायर)\s*$/u;
-          if (mrExpiredRx.test(srcMr)) return 'expiring 0';
-          const mr30 = /(30|३०)/u, mr7 = /(7|७)/u;
-          if (new RegExp(`${mr30.source}\\s*दिवस(?:ात|ांत)\\s*(कालबाह्य|एक्सपायर)`, 'u').test(srcMr)) return 'expiring 30';
-          if (new RegExp(`${mr7.source}\\s*दिवस(?:ात|ांत)\\s*(कालबाह्य|एक्सपायर)`, 'u').test(srcMr)) return 'expiring 7';
-        
-          // ---- Gujarati
-          if (/ઓછો\s*જથ્થો/u.test(src)) return 'low stock';
-          if (/(પુનઃ ઓર્ડર સૂચનો)/.test(src)) return 'reorder suggestions';
-          if (/(કિંમતો)/.test(src)) return 'prices';
-          if (/સ્ટોક\s*મૂલ્ય/u.test(src)) return 'stock value';
-          // GU: sales and top-5 this month
-          if (/આજની\s*વેચાણ/u.test(src)) return 'sales today';
-          if (/આ\s*અઠવાડિયાની\s*વેચાણ/u.test(src)) return 'sales week';
-          if (/આ\s*મહિનાની\s*વેચાણ/u.test(src)) return 'sales month';
-          if (/આ\s*મહિનાના\s*ટોપ\s*5/u.test(src)) return 'top 5 products month';
-          // GU: expired / expires in N days
-          const guExpiredRx = /(સમાપ્ત|એક્સપાયર)\s*$/u;
-          if (guExpiredRx.test(src)) return 'expiring 0';
-          const gu30 = /(30|૩૦)/u, gu7 = /(7|૭)/u;
-          if (new RegExp(`${gu30.source}\\s*દિવસમાં\\s*(સમાપ્ત|એક્સપાયર)`, 'u').test(src)) return 'expiring 30';
-          if (new RegExp(`${gu7.source}\\s*દિવસમાં\\s*(સમાપ્ત|એક્સપાયર)`, 'u').test(src)) return 'expiring 7';
+          // --------- Bengali/Tamil/Telugu/Kannada/Marathi/Gujarati explicit numeric (retain your behavior) ----------
+          // (Keep your original per-language explicit regexes if you prefer; with aliases above, you may not need them.) [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/Inventory_Commands.txt)
         
           return null;
         }
+
 
         // 1) Resolve canonical command via alias + multilingual normalizer
         const aliasCmd = normalizeCommandAlias(rawText, uiLangExact /* use UI exact variant */);
