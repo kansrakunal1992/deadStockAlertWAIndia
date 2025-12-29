@@ -2089,10 +2089,10 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
       }
     }
     // --- END: alias-based command normalization ---
-
-      // --- Topic detection (PRESERVED) ---
-      let topicForced = classifyQuestionTopic(text) || null;
-      if (topicForced) { route.kind = 'question'; }
+          
+    // --- Topic detection (fast-path, local) ---
+      let topicForcedLocal = classifyQuestionTopic(text) ?? null;
+      if (topicForcedLocal) { route.kind = 'question'; }
 
       // --- Language exact variant lock (PRESERVED) ---                       
       const orchestratedLangLocal = ensureLangExact(route.language ?? hintedLang);
@@ -2120,7 +2120,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         // aiTxnLocal = null;
       }
 
-      // --- Pricing flavor: only when pricing; bounded parallel fetches ---            
+      // --- Pricing flavor: only when pricing; bounded parallel fetches ---                        
       let pricingFlavorLocal = null;
       if (topicForcedLocal === 'pricing') {
         let activated = false;
