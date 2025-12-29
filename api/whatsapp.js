@@ -2659,7 +2659,7 @@ async function classifyAndRoute(text, detectedLanguageHint) {
   // Final fallback under gate ON: heuristics (deterministic & fast)
   const user = String(text ?? '').trim();    
   const isGreeting = _isGreeting(user);
-  const normalized = isGreeting ? null : resolveSummaryIntent(user);    
+  let normalized = isGreeting ? null : resolveSummaryIntent(user);    
   // --- BEGIN: alias-based command normalization (heuristics path) ---
     if (!normalized) {
       const aliasCmd = normalizeCommandAlias(user, detectedLanguageHint);
