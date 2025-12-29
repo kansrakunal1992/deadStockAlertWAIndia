@@ -4221,19 +4221,18 @@ const { ensureLangTemplates, getLangSids } = require('./contentCache');
  */
 async function resendInventoryListPicker(From, langHint = 'en') {
   try {        
-    const toNumber = String(From).replace('whatsapp:', '');
-        // Derive user's preferred language if caller omitted or passed a stale hint
-        // Fast, TTL-cached; falls back to the provided hint.
-        let langResolved = await getPreferredLangQuick(From, langHint);
-        // Canonicalize & normalize to base for ContentSid bundle creation
-        langResolved = canonicalizeLang(langResolved);
+    const toNumber = String(From).replace('whatsapp:', '');            
+    // Use the current turn’s detected language; only fall back to pref when hint is missing.
+        let langResolved = canonicalizeLang(langHint || (await getPreferredLangQuick(From, 'en')));
+        // Interactive Content templates are single-script; route roman variants to English.
+        if (String(langResolved).toLowerCase().endsWith('-latn')) langResolved = 'en';
         await ensureLangTemplates(langResolved);
         const sids = getLangSids(langResolved);
 
     if (sids?.listPickerSid) {
       // Re-send the list picker so user can immediately run another query
       await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.listPickerSid });
-      console.log('[list-picker] resurfaced', { to: toNumber, sid: sids.listPickerSid, lang: langResolved });
+      console.log('[list-picker] resurfaced', { to: toNumber, langHint, langResolved, sid: sids.listPickerSid });
     } else {
       console.warn('[list-picker] missing listPickerSid for lang', { lang: langResolved });
     }
