@@ -4448,6 +4448,7 @@ async function sendProcessingAckQuickFromText(From, kind = 'text', sourceText = 
            hint = String(prefLang ?? hint).toLowerCase();
          } catch { /* keep hint as-is */ }
        }
+    console.log(`[ACK-TEXT] about to ack for text from=${From} hint=${hint}`);
     return await sendProcessingAckQuick(From, kind, hint);
   } catch (e) {
     try { console.warn('[ack-fast-wrapper] failed:', e?.message); } catch {}
