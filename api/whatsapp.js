@@ -15544,7 +15544,7 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
     // If the message fits, (conditionally) tag and send
         if (bodyStripped.length <= MAX_LENGTH) {
           console.log('[sendMessageViaAPI] Body (raw before tag):', JSON.stringify(bodyStripped));                    
-          const finalText = noFooter
+          let finalText = noFooter
                       ? bodyStripped                       // do NOT tag footer
                       : await tagWithLocalizedMode(formattedTo, bodyStripped, lang, tagOpts);
                     // LOCAL clamp: localize badge labels + single-script + ASCII numerals
