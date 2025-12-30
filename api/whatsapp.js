@@ -5916,7 +5916,15 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
             })();
        
               const bodyExamples = [header, speakLine, ...bullets].join('\n');
-              const reqId = String(req?.headers?.['x-request-id'] ?? Date.now());
+              const reqId = String(req?.headers?.['x-request-id'] ?? Date.now());                            
+              // NEW: direct localized ACK for Examples, with localized mode/footer
+                try {
+                  let ack0 = await t('Processing your message…', langUi, `${reqId}::examples-ack`);
+                  let ackTagged = await tagWithLocalizedMode(from, ack0, langUi);
+                  ackTagged = enforceSingleScriptSafe(ackTagged, langUi);
+                  ackTagged = normalizeNumeralsToLatin(ackTagged).trim();
+                  await sendMessageViaAPI(from, ackTagged);
+                } catch (_) { /* best-effort only; do not block examples */ }
               const msg0 = await t(bodyExamples, langUi, `${reqId}::qr-examples`);
               let msgFinal = await tagWithLocalizedMode(from, msg0, langUi);
               msgFinal = enforceSingleScriptSafe(msgFinal, langUi);
@@ -7078,11 +7086,13 @@ const saleConfirmTracker = new Set();
 const _confirmHashGuard = new Map(); // shopId -> { at: ms, lastHash: string }
 const CONFIRM_BODY_TTL_MS = Number(process.env.CONFIRM_BODY_TTL_MS ?? (10 * 1000));
 async function _sendConfirmOnceByBody(From, detectedLanguage, requestId, body) {
-  const shopId = String(From).replace('whatsapp:', '');
+  const shopId = String(From).replace('whatsapp:', '');    
   const localized = await t(body, detectedLanguage ?? 'en', `${requestId}::confirm-once`);
-  const final = normalizeNumeralsToLatin(
-    enforceSingleScriptSafe(await appendSupportFooter(localized, From), detectedLanguage)
-  ).trim();
+    // FIX: footer should follow the user's language; use tagWithLocalizedMode (localized)
+    let withFooter = await tagWithLocalizedMode(From, localized, detectedLanguage);
+    const final = normalizeNumeralsToLatin(
+      enforceSingleScriptSafe(withFooter, detectedLanguage)
+    ).trim();
   const h = _hash(final); const prev = _confirmHashGuard.get(shopId); const now = Date.now();
   if (prev && (now - prev.at) < CONFIRM_BODY_TTL_MS && prev.lastHash === h) {
     console.log('[confirm-once] suppressed duplicate', { shopId, requestId });
