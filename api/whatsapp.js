@@ -6020,23 +6020,32 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
         return String(str).replace(/\\n/g, '\n').replace(/\r/g, '').replace(/[ \t]*\.\?\\n/g, '\n');
       }
          
-    // --- NEW: send examples with a localized "Processing your message…" ack + single footer tag
-      async function sendExamplesWithAck(from, lang, examplesText, requestId = 'examples') {
-        try {
-          // Tag examples with the localized footer exactly once          
+    // --- NEW: send examples with a localized "Processing your message…" ack + single footer tag          
+    async function sendExamplesWithAck(from, lang, examplesText, requestId = 'examples') {
+      // NEW: early localized ACK (with localized badge), then examples
+      try {
+        const ack0 = await t('Processing your message…', lang, `${requestId}::ack`);
+        let ackTagged = await tagWithLocalizedMode(from, ack0, lang);
+        ackTagged = renderNativeglishLabels(ackTagged, lang);               // ⇐ localize badge
+        ackTagged = enforceSingleScriptSafe(ackTagged, lang);
+        ackTagged = normalizeNumeralsToLatin(ackTagged).trim();
+        await sendMessageViaAPI(from, ackTagged);
+      } catch (_) { /* best-effort ack; do not block examples */ }
+    
+      try {
         let tagged = await tagWithLocalizedMode(from, fixNewlines(examplesText), lang);
-            // LOCAL CLAMP → Single script; numerals normalization
-            tagged = enforceSingleScriptSafe(tagged, lang);
-            tagged = normalizeNumeralsToLatin(tagged).trim();
-            await sendMessageViaAPI(from, tagged);
-        } catch (e) {
-          // Fallback: still send examples if tagging fails              
+        tagged = renderNativeglishLabels(tagged, lang);                     // ⇐ localize badge
+        tagged = enforceSingleScriptSafe(tagged, lang);
+        tagged = normalizeNumeralsToLatin(tagged).trim();
+        await sendMessageViaAPI(from, tagged);
+      } catch (e) {
+        // Fallback: still send examples if tagging fails
         let ex = fixNewlines(examplesText);
-            ex = enforceSingleScriptSafe(ex, lang);
-            ex = normalizeNumeralsToLatin(ex).trim();
-            await sendMessageViaAPI(from, ex);
-        }
+        ex = enforceSingleScriptSafe(ex, lang);
+        ex = normalizeNumeralsToLatin(ex).trim();
+        await sendMessageViaAPI(from, ex);
       }
+    }
     
     if (!payload && text) {
       const BTN_TEXT_MAP = [
@@ -7086,13 +7095,15 @@ const saleConfirmTracker = new Set();
 const _confirmHashGuard = new Map(); // shopId -> { at: ms, lastHash: string }
 const CONFIRM_BODY_TTL_MS = Number(process.env.CONFIRM_BODY_TTL_MS ?? (10 * 1000));
 async function _sendConfirmOnceByBody(From, detectedLanguage, requestId, body) {
-  const shopId = String(From).replace('whatsapp:', '');    
+  const shopId = String(From).replace('whatsapp:', '');       
   const localized = await t(body, detectedLanguage ?? 'en', `${requestId}::confirm-once`);
-    // FIX: footer should follow the user's language; use tagWithLocalizedMode (localized)
-    let withFooter = await tagWithLocalizedMode(From, localized, detectedLanguage);
-    const final = normalizeNumeralsToLatin(
-      enforceSingleScriptSafe(withFooter, detectedLanguage)
-    ).trim();
+    // RESTORE: Help CTA footer (existing behavior) and THEN add localized mode badge
+    let withHelp = await appendSupportFooter(localized, From);                 // ⇐ brings back help CTA
+    let withTag  = await tagWithLocalizedMode(From, withHelp, detectedLanguage); // ⇐ localized badge
+    withTag      = renderNativeglishLabels(withTag, detectedLanguage);         // ⇐ localize any English label
+    const final  = normalizeNumeralsToLatin(
+                     enforceSingleScriptSafe(withTag, detectedLanguage)
+                   ).trim();
   const h = _hash(final); const prev = _confirmHashGuard.get(shopId); const now = Date.now();
   if (prev && (now - prev.at) < CONFIRM_BODY_TTL_MS && prev.lastHash === h) {
     console.log('[confirm-once] suppressed duplicate', { shopId, requestId });
@@ -13179,7 +13190,11 @@ async function sendSystemMessage(message, from, detectedLanguage, requestId, res
     // Generate multilingual response        
     const formattedMessage = await t(message, userLanguage, requestId);
         // Append localized mode footer
-        const withTag = await tagWithLocalizedMode(from, formattedMessage, userLanguage);
+        const withTag = await tagWithLocalizedMode(from, formattedMessage, userLanguage);          
+        // NEW: localize badge text ("PURCHASE • mode" → native) + single-script clamp + ASCII numerals
+        withTag = renderNativeglishLabels(withTag, userLanguage);
+        withTag = enforceSingleScriptSafe(withTag, userLanguage);
+        withTag = normalizeNumeralsToLatin(withTag).trim();
         // If long, send via API (which auto-splits) and keep TwiML minimal        
     const MAX_LENGTH = 1600;
         if (withTag.length > MAX_LENGTH) {
