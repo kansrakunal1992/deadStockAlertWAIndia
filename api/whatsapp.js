@@ -915,10 +915,10 @@ async function composeLowStockLocalized(shopId, lang, requestId) {
     ? '➡️ कार्रवाई: "पुन: ऑर्डर सुझाव" देखें या "मूल्य" की समीक्षा करें।'
     : '➡️ Action: check "reorder suggestions" or review "prices".';
   const body = [header, resolved, more, '', actionLine].filter(Boolean).join('\n');
-  // Respect your Nativeglish anchors + footer/mode tags    
+  // Respect your Nativeglish anchors + footer/mode tags      
   const msg0 = await tx(body, lang, `whatsapp:${shopId}`, 'low-stock', `lowstock::${shopId}`);
-    // Do NOT add the footer badge again downstream. This line already tags the message safely.
-    const taggedOnce = await tagWithLocalizedMode(`whatsapp:${shopId}`, msg0, lang);
+  // Respect the language of THIS turn; do not flip to DB preference at tag time.
+  const taggedOnce = await tagWithLocalizedMode(`whatsapp:${shopId}`, msg0, lang, { noPrefOverride: true });
     return nativeglishWrap(taggedOnce, lang);
 }
 
@@ -5393,8 +5393,9 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
   examples = examplesLines;
 
   const composed = [header, body, '', guidance].filter(Boolean).join('\n');
-  const msg = await t(composed, lang, requestId + '::peek');    
-  await sendMessageViaAPI(From, await tagWithLocalizedMode(From, msg, lang));
+  const msg = await t(composed, lang, requestId + '::peek');        
+  // Keep peek headers in the turn's language; avoid DB preference override
+  await sendMessageViaAPI(From, await tagWithLocalizedMode(From, msg, lang, { noPrefOverride: true }));
   // Resurface the inventory List-Picker so the user can run the next query immediately.
   await maybeResendListPicker(From, lang, requestId);
 
@@ -5406,8 +5407,9 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
         'Looks like you’re exploring—type “mode” to switch, or send the transaction line to continue.',
         lang,
         requestId + '::peek-nudge'
-      );
-      await sendMessageViaAPI(From, await tagWithLocalizedMode(From, nudge, lang));
+      );            
+      // Nudge should also respect the current-turn language
+      await sendMessageViaAPI(From, await tagWithLocalizedMode(From, nudge, lang, { noPrefOverride: true }));
     }
   } catch (_) {}
 
@@ -7406,8 +7408,9 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
         // NEW: localize quoted commands inside "Next actions" (e.g., "reorder suggestions", "prices", "stock value")
          labeled = localizeQuotedCommands(labeled, lang);
          // Optional: keep English anchors (units/₹) readable inside localized text
-         labeled = nativeglishWrap(labeled, lang);
-         let msg = await tagWithLocalizedMode(From, labeled, lang);
+         labeled = nativeglishWrap(labeled, lang);                   
+         // MIN-FIX: respect THIS TURN'S language; do not override with DB preference at tag time
+             let msg = await tagWithLocalizedMode(From, labeled, lang, { noPrefOverride: true });
         // LOCAL CLAMP → Single script; numerals normalization
         msg = enforceSingleScriptSafe(msg, lang);
         msg = normalizeNumeralsToLatin(msg).trim();
