@@ -229,8 +229,17 @@ async function maybeResendListPicker(From, lang, requestId) {
       const shopKey = shopIdFrom(From); // e.g., "+919013283687"
       const rid = String(requestId ?? Date.now());
       const key = `${shopKey}::${rid}`;
-      if (__sentListPickerFor.has(key)) return false;
-      const ok = await resendInventoryListPicker(From, lang);
+      if (__sentListPickerFor.has(key)) return false;          
+      // --- MIN FIX: choose language deterministically for resurface ---
+      // 1) Prefer user's saved preference (cached); 2) else per-turn hint; 3) fallback 'en'.
+      let langToUse = null;
+      try {
+        const pref = await getUserPrefQuick(shopKey).catch(() => null);
+        langToUse = ensureLangExact(pref?.language ?? lang ?? 'en');
+      } catch (_) {
+        langToUse = ensureLangExact(lang ?? 'en');
+      }
+      const ok = await resendInventoryListPicker(From, langToUse);
       if (ok) __sentListPickerFor.add(key);
       return ok;
 }
@@ -383,6 +392,10 @@ const planCache = new Map();  // shopId -> { value, ts }
 const stateCache = new Map(); // shopId -> { value, ts }
 const PLAN_CACHE_TTL  = 60 * 1000;  // 60s
 const STATE_CACHE_TTL = 30 * 1000;  // 30s
+// --- NEW: quick cache for user preference (language) ---
+const prefCache = new Map(); // shopId -> { value, ts }
+const PREF_CACHE_TTL = 60 * 1000; // 60s
+
 function _cacheGet(map, key, ttl) {
   try {
     const hit = map.get(String(key));
@@ -409,6 +422,16 @@ async function getUserStateQuick(shopId) {
   try { st = await getUserStateFromDB(shopId); } catch {}
   _cachePut(stateCache, shopId, st);
   return st;
+}
+
+// --- NEW: quick preference (language) resolver with TTL ---
+async function getUserPrefQuick(shopId) {
+  const cached = _cacheGet(prefCache, shopId, PREF_CACHE_TTL);
+  if (cached) return cached;
+  let pref = null;
+  try { pref = await getUserPreference(shopId); } catch {}
+  _cachePut(prefCache, shopId, pref);
+  return pref;
 }
 
 // ---------------------------------------------------------------------------
@@ -869,23 +892,34 @@ async function composeLowStockLocalized(shopId, lang, requestId) {
   const count = items.length;
   const header = lang.startsWith('hi')
     ? `🟠 कम स्टॉक — ${count} आइटम`
-    : `🟠 Low Stock — ${count} items`;
-  const lines = (count ? items.slice(0, 10) : []).map(async p => {
-    const nameSrc = p.name ?? p.fields?.Product ?? '—';
-    const nameHi = await translateProductName(nameSrc, `lowstock-${shopId}`);
+    : `🟠 Low Stock — ${count} items`;    
+  // Keep the message under Twilio's 1600-char cap: 20–24 bullets is typically safe.
+    const MAX_BULLETS = 24;
+    const shownItems = Math.min(count, MAX_BULLETS);
+    const lines = (count ? items.slice(0, shownItems) : []).map(async p => {
+    const nameSrc = p.name ?? p.fields?.Product ?? '—';      
+  // Do NOT translate names in English mode; it can produce unexpected scripts (e.g., Chinese).
+    const nameDisp = lang.startsWith('en')
+      ? nameSrc
+      : await translateProductName(nameSrc, `lowstock-${shopId}`);
     const qty = p.quantity ?? p.fields?.Quantity ?? 0;
     const unit = displayUnit(p.unit ?? p.fields?.Units ?? 'pieces', lang);
-    return `• ${nameHi} — ${qty} ${unit}`;
+    return `• ${nameDisp} — ${qty} ${unit}`;
   });
-  const resolved = (await Promise.all(lines)).join('\n');
-  const more = count > 10 ? (lang.startsWith('hi') ? '• +1 और' : '• +1 more') : '';
+  const resolved = (await Promise.all(lines)).join('\n');    
+  const remainder = count - shownItems;
+    const more = remainder > 0
+      ? (lang.startsWith('hi') ? `• +${remainder} और` : `• +${remainder} more`)
+      : '';
   const actionLine = lang.startsWith('hi')
     ? '➡️ कार्रवाई: "पुन: ऑर्डर सुझाव" देखें या "मूल्य" की समीक्षा करें।'
     : '➡️ Action: check "reorder suggestions" or review "prices".';
   const body = [header, resolved, more, '', actionLine].filter(Boolean).join('\n');
-  // Respect your Nativeglish anchors + footer/mode tags
+  // Respect your Nativeglish anchors + footer/mode tags    
   const msg0 = await tx(body, lang, `whatsapp:${shopId}`, 'low-stock', `lowstock::${shopId}`);
-  return nativeglishWrap(await tagWithLocalizedMode(`whatsapp:${shopId}`, msg0, lang), lang);
+    // Do NOT add the footer badge again downstream. This line already tags the message safely.
+    const taggedOnce = await tagWithLocalizedMode(`whatsapp:${shopId}`, msg0, lang);
+    return nativeglishWrap(taggedOnce, lang);
 }
 
 function isSafeAnchor(text) {
