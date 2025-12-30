@@ -15466,11 +15466,20 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
     // Ref: https://www.twilio.com/docs/api/errors/21617, https://help.twilio.com/articles/360033806753
     const MAX_LENGTH = 1600;
     const PART_SUFFIX = (i, n) => `\n\n(Part ${i} of ${n})`;
-
-    // We will append the localized footer ONLY to the final part.
-    // Measure footer length by tagging an empty string once.
-    const emptyTagged = await tagWithLocalizedMode(formattedTo, '', 'en', tagOpts);
-    const footerLen = emptyTagged.length; // e.g., «SALE • mode»
+        
+    // --- Resolve language (prefer DB, fallback to heuristic) ---
+        let lang = 'en';
+        try {
+          const shopIdLang = formattedTo.replace('whatsapp:', '');
+          const prefLang = await getUserPreference(shopIdLang);
+          if (prefLang?.success && prefLang.language) lang = String(prefLang.language).toLowerCase();
+        } catch (_e) {}
+        try { if (!lang || lang === 'en') lang = guessLangFromInput(bodyStripped); } catch (_e) {}
+    
+        // We will append the localized footer ONLY to the final part.
+        // Measure footer length by tagging an empty string once (in the resolved language).
+        const emptyTagged = await tagWithLocalizedMode(formattedTo, '', lang, tagOpts);
+        const footerLen = emptyTagged.length; // e.g., «SALE • mode»
 
     // Smart line-based splitter that respects a given safe limit
     const smartSplit = (text, safeLimit) => {
@@ -15534,10 +15543,14 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
             
     // If the message fits, (conditionally) tag and send
         if (bodyStripped.length <= MAX_LENGTH) {
-          console.log('[sendMessageViaAPI] Body (raw before tag):', JSON.stringify(bodyStripped));
+          console.log('[sendMessageViaAPI] Body (raw before tag):', JSON.stringify(bodyStripped));                    
           const finalText = noFooter
-            ? bodyStripped                       // do NOT tag footer
-            : await tagWithLocalizedMode(formattedTo, bodyStripped, 'en', tagOpts);
+                      ? bodyStripped                       // do NOT tag footer
+                      : await tagWithLocalizedMode(formattedTo, bodyStripped, lang, tagOpts);
+                    // LOCAL clamp: localize badge labels + single-script + ASCII numerals
+                    finalText = renderNativeglishLabels(finalText, lang);
+                    finalText = enforceSingleScriptSafe(finalText, lang);
+                    finalText = normalizeNumeralsToLatin(finalText).trim();
           console.log('[sendMessageViaAPI] Body (final after tag):', JSON.stringify(finalText));
                 
       // [PATCH:TXN-CONFIRM-DEDUP-001] — suppress duplicate confirmations
@@ -15578,10 +15591,14 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
     for (let i = 0; i < final.length; i++) {
       const isLast = i === final.length - 1;
       let text = final[i] + PART_SUFFIX(i + 1, final.length);       
-    // Append footer ONLY on the last part — unless NO_FOOTER was requested
-          if (isLast && !noFooter) {
-            text = await tagWithLocalizedMode(formattedTo, text, 'en', tagOpts);
-          }
+    // Append footer ONLY on the last part — unless NO_FOOTER was requested                  
+        if (isLast && !noFooter) {
+                    text = await tagWithLocalizedMode(formattedTo, text, lang, tagOpts);
+                    // LOCAL clamp per part
+                    text = renderNativeglishLabels(text, lang);
+                    text = enforceSingleScriptSafe(text, lang);
+                    text = normalizeNumeralsToLatin(text).trim();
+                  }
     
     // [PATCH:TXN-CONFIRM-DEDUP-001] — suppress duplicates even in multipart (rare for confirmations)
           try {
