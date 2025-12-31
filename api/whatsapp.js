@@ -2664,14 +2664,35 @@ async function sendMultiPartWithFooter(From, rawText, lang) {
   const L = String(lang ?? 'en').toLowerCase();
   const chunks = splitForWhatsApp(rawText, WA_CHAR_CAP);
   for (let i = 0; i < chunks.length; i++) {
-    const isLast = i === (chunks.length - 1);
+    const isLast = i === (chunks.length - 1);    
+// Always finalize and tag on the last chunk; earlier ones are plain text
     const payload = isLast
-      ? await tagWithLocalizedMode(From, chunks[i], L)
-      : chunks[i];
+      ? await tagWithLocalizedMode(From, finalizeForSend(chunks[i], L), L)
+      : finalizeForSend(chunks[i], L);
     await sendMessageViaAPI(From, payload);
   }
 }
 // ===PATCH ADD END: UNIQ:WA-SPLIT-20251230===
+
+// ===PATCH ADD: UNIQ:LOCALIZED-HEADER-20251230===
+function localizedHeader(key, lang) {
+  const L = String(lang ?? 'en').toLowerCase();
+  const base = L.split('-')[0];
+  if (key === 'full_summary') {
+    switch (base) {
+      case 'hi':  return '📊 पूर्ण सारांश';
+      case 'bn':  return '📊 পূর্ণ সারাংশ';
+      case 'ta':  return '📊 முழு சுருக்கம்';
+      case 'te':  return '📊 పూర్తి సమగ్రం';
+      case 'kn':  return '📊 ಸಂಪೂರ್ಣ ಸಾರಾಂಶ';
+      case 'mr':  return '📊 संपूर्ण सारांश';
+      case 'gu':  return '📊 સંપૂર્ણ સારાંશ';
+      default:    return '📊 Full Summary';
+    }
+  }
+  return '📊 Full Summary';
+}
+// ===PATCH ADD END: UNIQ:LOCALIZED-HEADER-20251230===
 
 // ===PATCH START: UNIQ:DS-CLASSIFIER-ENV-20251219===
 /**
@@ -7677,10 +7698,11 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
           }
         } catch { /* noop */ }
         
-        let insights = await generateFullScaleSummary(shopId, langPref, `qq-full-${shopId}`);
+        let insights = await generateFullScaleSummary(shopId, langPref, `qq-full-${shopId}`);     
         
-        // Ensure final send uses the same preferred language
-        const decorated = insights?.startsWith('📊') ? insights : `📊 Full Summary\n${insights}`;
+      // Ensure final send uses the same preferred language + robust header localization
+      const header = localizedHeader('full_summary', langPref);
+      const decorated = insights?.startsWith('📊') ? insights : `${header}\n${insights}`;
 
           // Optional: decorate common section headers with icons (non-destructive)
           insights = String(insights)
@@ -18350,10 +18372,26 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
                 res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
                 return;
-              }
-         handledRequests.add(requestId);                  
-         await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm`);
-             // B: After normalized command reply, if terminal, resurface List‑Picker
+              }                
+        const normCmd = String(orch.normalizedCommand).trim().toLowerCase();
+           handledRequests.add(requestId);
+           if (normCmd === 'full summary') {
+             // EARLY ACK: heavy command → ack TwiML immediately, send in background
+             const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+             res.type('text/xml'); resp.safeSend(200, twiml.toString());
+             try {
+               inBackground('qq-full-summary', async () => {
+                 await handleQuickQueryEN('full summary', From, langPinned, `${requestId}::ai-norm`);
+                 // Optional: resurface List-Picker after terminal command
+                 try { await maybeResendListPicker(From, langPinned, requestId); } catch (_) {}
+                 try { await maybeShowPaidCTAAfterInteraction(From, langPinned, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
+               });
+             } catch (_) {}
+             safeTrackResponseTime(requestStart, requestId);
+             return;
+           }
+           await handleQuickQueryEN(orch.normalizedCommand, From, langPinned, `${requestId}::ai-norm`);
+           // B: After normalized command reply, if terminal, resurface List‑Picker
              try {
                const cmd = String(orch.normalizedCommand).toLowerCase().trim();
                 if (typeof _isTerminalCommand === 'function' && _isTerminalCommand(cmd)) {
