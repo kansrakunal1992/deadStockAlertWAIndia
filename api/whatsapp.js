@@ -7569,40 +7569,37 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
  
 // Helper no-op: clamp removed, keep numerals-only normalization elsewhere
   const noClamp = (s) => String(s);
-              
-    // -- Early activation gate for ANY inventory command (same defense as summaries)
-      //    This prevents DB lookups for unactivated users and shows the same CTA prompt.
-      try {
-        if (INVENTORY_COMMANDS.has(String(cmd).toLowerCase())) {
-          const planInfo = await getUserPlan(shopId);
-          const plan = String(planInfo?.plan ?? '').toLowerCase();
-          const activated = (plan === 'trial' || plan === 'paid');
-          if (!activated) {                        
-                // Keep EXACT same prompt text you use for summaries, per request.
-                        // (If you prefer a more generic line like "To use inventory queries...",
-                        // you can change only the text below without touching the gating.)
-                        const prompt = await t(
-                          'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
-                          lang,
-                          `cta-summary-${shopId}`
-                        );
-            await sendTagged(prompt);
-            return true;
-          }
-        }
-      } catch (_e) {
-        if (INVENTORY_COMMANDS.has(String(cmd).toLowerCase())) {
-          const prompt = await t(
-            'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
-            lang,
-            `cta-summary-${shopId}`
-          );
-          await sendTagged(prompt);
-          return true;
-        }
+                  
+// -- Granular feature gate for summaries via isFeatureAvailable (ai_summary)
+  try {
+    const lc = String(cmd).toLowerCase().trim();
+    const needsAiSummary = (lc === 'short summary' || lc === 'full summary');
+    if (needsAiSummary) {
+      const allowed = await isFeatureAvailable(shopId, 'ai_summary');
+      if (!allowed) {
+        const prompt = await t(
+          'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+          lang,
+          `cta-summary-${shopId}`
+        );
+        await sendTagged(prompt);
+        return true;
       }
+    }
+  } catch (_e) { /* soft-fail: continue */ }
 
-  if (cmd === 'short summary') {
+  if (cmd === 'short summary') {      
+  // Guard: ai_summary must be available
+      const allowed = await isFeatureAvailable(shopId, 'ai_summary');
+      if (!allowed) {
+        const prompt = await t(
+          'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+          lang,
+          `cta-summary-${shopId}`
+        );
+        await sendTagged(prompt);
+        return true;
+      }
     let hasAny = false;
     try {              
         const today = await getTodaySalesSummary(shopId);
@@ -7701,7 +7698,18 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       }
     return true;
   }
-  if (cmd === 'full summary') {
+  if (cmd === 'full summary') {      
+  // Guard: ai_summary must be available
+      const allowed = await isFeatureAvailable(shopId, 'ai_summary');
+      if (!allowed) {
+        const prompt = await t(
+          'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+          lang,
+          `cta-summary-${shopId}`
+        );
+        await sendTagged(prompt);
+        return true;
+      }
     try {          
         let langPref = lang;
         try {
@@ -16616,9 +16624,27 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                   try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
                   return;
                 }
-            case 'prices':
-            case 'short summary':
-            case 'full summary': {
+            
+              case 'prices':
+              case 'short summary':
+              case 'full summary': {
+                // Voice path feature guard for summaries
+                if (cmd === 'short summary' || cmd === 'full summary') {
+                  try {
+                    const allowed = await isFeatureAvailable(shopId, 'ai_summary');
+                    if (!allowed) {
+                      let prompt = await t(
+                        'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+                        uiLangExact,
+                        `cta-summary-${shopId}`
+                      );
+                      prompt = finalizeForSend(prompt, uiLangExact);
+                      await sendMessageViaAPI(From, prompt);
+                      try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
+                      return;
+                    }
+                  } catch (_) { /* soft-fail: continue */ }
+                }
               const stickyAction = await getStickyActionQuick(From);
               await handleDiagnosticPeek(From, cmd, requestId, stickyAction);
               try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
