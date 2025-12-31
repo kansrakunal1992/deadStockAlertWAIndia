@@ -12556,7 +12556,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           // If we have a price, continue with normal flow
           // Create batch immediately with defaulted expiry (or blank)
           const batchResult = await createBatchRecord({
-            shopId,
+            shopId: shopIdFrom(shopId), // ensure E.164 (+91…) for DB write
             product: productRawForDb,
             quantity: update.quantity,
             unit: update.unit,
@@ -12742,7 +12742,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             console.log(`[Update ${shopId} - ${product}] Using purchasePrice: ${purchasePrice} (productPrice: ${productPrice}, finalPrice: ${finalPrice})`);
             
             const batchResult = await createBatchRecord({
-              shopId,
+              shopId: shopIdFrom(shopId), // ensure E.164 (+91…) for DB write
               product: productRawForDb, 
               quantity: update.quantity,
               unit: update.unit, // Pass the unit
@@ -12789,7 +12789,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 console.log(`[Update ${shopId} - ${product}] Sales record - salePrice: ${salePrice}, saleValue: ${saleValue}`);
                 
                 const salesResult = await createSalesRecord({
-                  shopId,
+                  shopId: shopIdFrom(shopId), // ensure E.164 (+91…) for DB write
                   product: productRawForDb,
                   quantity: -Math.abs(update.quantity),
                   unit: update.unit,
