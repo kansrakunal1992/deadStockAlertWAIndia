@@ -378,7 +378,14 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
               Quantity: newQuantity,
               Units: storageUnit
             } }
-          }, `${context} - Patch`);
+          }, `${context} - Patch`);              
+        // NEW: compute aggregate after update for user messaging
+              const preferUnit = storageUnit || normalizedUnit || 'pieces';
+              const overall = await getProductTotalQuantity(shopId, product, preferUnit);
+              if (overall.success) {
+                console.log(`[${context}] Overall ${product} stock: ${overall.total} ${overall.unit} (rows=${overall.rows})`);
+              }
+              return { success: true, newQuantity, unit: normalizedUnit, aggregate: overall };
         } else {
       // First insert: use caller's normalized unit
       newQuantity = quantityChange;
@@ -397,9 +404,14 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
         method: 'post',
         data: createData
       }, `${context} - Create`);
+      
+      // NEW: compute aggregate after first insert for user messaging
+            const overall = await getProductTotalQuantity(shopId, product, storageUnit || 'pieces');
+            if (overall.success) {
+              console.log(`[${context}] Overall ${product} stock: ${overall.total} ${overall.unit} (rows=${overall.rows})`);
+            }
+            return { success: true, newQuantity, unit: normalizedUnit, aggregate: overall };
     }
-
-    return { success: true, newQuantity, unit: normalizedUnit };
   } catch (error) {
     logError(context, error);
     return { success: false, error: error.message };
@@ -2921,6 +2933,39 @@ async function getProductInventory(shopId, productName) {
   }
 }
 
+// NEW: Get OVERALL quantity for a product (sum across all inventory rows)
+async function getProductTotalQuantity(shopId, productName, preferUnit = 'pieces') {
+  const context = `Get Product Total ${shopId} - ${productName}`;
+  try {
+    const pname = String(productName ?? '').trim().toLowerCase();
+    const filterFormula =
+      `AND(${buildShopIdVariantFilter('ShopID', shopId)}, LOWER(TRIM({Product}))='${pname.replace(/'/g,"''")}' )`;
+    // Fetch ALL rows so we can aggregate
+    const result = await airtableRequest({
+      method: 'get',
+      params: { filterByFormula: filterFormula }
+    }, context);
+    let totalBase = 0;
+    for (const rec of (result.records ?? [])) {
+      const qty  = Number(rec.fields.Quantity ?? 0);
+      const unit = rec.fields.Units ?? 'pieces';
+      totalBase += convertToBaseUnit(qty, unit);
+    }
+    // Convert base sum to preferred display unit
+    const unitOneBase = convertToBaseUnit(1, preferUnit) || 1;
+    const displayQty  = totalBase / unitOneBase;
+    return {
+      success: true,
+      total: Number(displayQty.toFixed(3)),
+      unit: normalizeUnit(preferUnit),
+      rows: (result.records ?? []).length
+    };
+  } catch (error) {
+    logError(context, error);
+    return { success: false, error: error.message, total: 0, unit: preferUnit, rows: 0 };
+  }
+}
+
 // Get items that are out of stock (<= 0)
 async function getStockoutItems(shopId) {
   const context = `Get Stockout Items ${shopId}`;
@@ -3115,15 +3160,19 @@ async function applySaleWithReconciliation(
     const need = Math.max(0, quantity - currentQty);
 
     // Enough stock? Normal sale path
-    if (need === 0) {
-      await updateInventory(shopId, product, -quantity, unit);
-      return { status: 'ok', deficit: 0, selectedBatchCompositeKey: null };
+    if (need === 0) {            
+      const invRes = await updateInventory(shopId, product, -quantity, unit);
+            const overallStock = invRes?.aggregate?.total ?? null;
+            const overallUnit  = invRes?.aggregate?.unit  ?? unit;
+            return { status: 'ok', deficit: 0, selectedBatchCompositeKey: null, overallStock, overallUnit };
     }
 
     // Hard-floor (no negative): auto-create Opening Balance batch then sell
     if (!allowNegative) {
-      if (!autoOpening) {
-        return { status: 'blocked', deficit: need, message: 'Insufficient stock' };
+      if (!autoOpening) {                  
+          // Even if blocked, share current aggregate to user
+                  const overall = await getProductTotalQuantity(shopId, product, normalizeUnit(unit));
+                  return { status: 'blocked', deficit: need, message: 'Insufficient stock', overallStock: overall.total, overallUnit: overall.unit };
       }
       // Opening Balance batch for the deficit
       await createBatchRecord({
@@ -3134,15 +3183,17 @@ async function applySaleWithReconciliation(
         expiryDate: null,
         purchasePrice: openingPrice
       });
-      // Boost then subtract
+      // Boost then subtract            
       await updateInventory(shopId, product, +need, unit);
-      await updateInventory(shopId, product, -quantity, unit);
-      const compKey = `${shopId}\n${product}\n${onboardingISO}`;
-      return { status: 'auto-adjusted', deficit: need, selectedBatchCompositeKey: compKey };
+            const invRes = await updateInventory(shopId, product, -quantity, unit);
+      const compKey = `${shopId}\n${product}\n${onboardingISO}`;            
+      const overallStock = invRes?.aggregate?.total ?? null;
+            const overallUnit  = invRes?.aggregate?.unit  ?? unit;
+            return { status: 'auto-adjusted', deficit: need, selectedBatchCompositeKey: compKey, overallStock, overallUnit };
     }
 
     // Soft-negative path: allow, but log correction task to reconcile later
-    await updateInventory(shopId, product, -quantity, unit); // may go negative
+    const invRes = await updateInventory(shopId, product, -quantity, unit); // may go negative
     try {
       await saveCorrectionState(
         shopId,
@@ -3150,8 +3201,10 @@ async function applySaleWithReconciliation(
         { product, unit, currentQty, saleQty: quantity, deficit: need, saleDate },
         language
       );
-    } catch (_) {}
-    return { status: 'negative', deficit: need, selectedBatchCompositeKey: null };
+    } catch (_) {}        
+    const overallStock = invRes?.aggregate?.total ?? null;
+        const overallUnit  = invRes?.aggregate?.unit  ?? unit;
+        return { status: 'negative', deficit: need, selectedBatchCompositeKey: null, overallStock, overallUnit };
   } catch (e) {
     console.error(`[${ctx}] Error:`, e.message);
     return { status: 'error', error: e.message };
@@ -3307,6 +3360,7 @@ module.exports = {
   getTranslationEntry,
   upsertTranslationEntry,
   getProductInventory,
+  getProductTotalQuantity,
   getStockoutItems,
   getBatchesForProductWithRemaining,
   getPeriodWindow,
