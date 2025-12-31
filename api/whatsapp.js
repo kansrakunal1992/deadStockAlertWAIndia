@@ -1622,11 +1622,9 @@ async function sendDemoTranscriptLocalized(From, lang, rid = 'cta-demo') {
 
   // Keep helpful English anchors like units and ₹ inside localized text
   const wrapped = nativeglishWrap(body0, lang);
-
-  // Append localized mode footer    
-  const tagged = await tagWithLocalizedMode(From, wrapped, lang);
-  // Send immediately, do not block on Airtable cache writes
-  await sendMessageViaAPI(From, tagged);
+  
+  // Send with auto-split; footer only on last chunk
+  await sendMultiPartWithFooter(From, wrapped, lang);
   // Async cache write (non-blocking)
   try {
      upsertTranslationEntry({ key: cacheKey, lang, text: tagged }).catch(e =>
@@ -2621,6 +2619,60 @@ function inBackground(label, fn) {
 }
 // ===PATCH END: UNIQ:PARALLEL-HELPERS-20251219===
 
+// ===PATCH ADD: UNIQ:WA-SPLIT-20251230===
+// WhatsApp safe splitter: keep Indic scripts intact, split at natural boundaries.
+const WA_CHAR_CAP = Number(process.env.WHATSAPP_CHAR_CAP ?? 1600);
+function splitForWhatsApp(text, maxLen = WA_CHAR_CAP) {
+  const s = String(text ?? '');
+  if (s.length <= maxLen) return [s];
+  const parts = [];
+  let remaining = s;
+  // prefer paragraph breaks, then single newlines, then bullet starts; fallback to hard split
+  const boundaryFinders = [
+    (str) => {
+      const idx = str.lastIndexOf('\n\n', maxLen);
+      return idx > 0 ? idx : -1;
+    },
+    (str) => {
+      const idx = str.lastIndexOf('\n', maxLen);
+      return idx > 0 ? idx : -1;
+    },
+    (str) => {
+      // look for "- " or "• " at or before cap (start of a new line)
+      const re = /(^|\n)([-•]\s)/g;
+      let cut = -1, m;
+      while ((m = re.exec(str)) && m.index <= maxLen) cut = m.index;
+      return cut;
+    },
+  ];
+  while (remaining.length > maxLen) {
+    let cut = -1;
+    for (const finder of boundaryFinders) {
+      cut = finder(remaining);
+      if (cut > 0) break;
+    }
+    if (cut < 1) cut = maxLen; // worst-case fallback
+    parts.push(remaining.slice(0, cut).trim());
+    remaining = remaining.slice(cut).trim();
+  }
+  if (remaining) parts.push(remaining);
+  return parts;
+}
+
+// Send long messages by splitting first; append localized footer only on the LAST part.
+async function sendMultiPartWithFooter(From, rawText, lang) {
+  const L = String(lang ?? 'en').toLowerCase();
+  const chunks = splitForWhatsApp(rawText, WA_CHAR_CAP);
+  for (let i = 0; i < chunks.length; i++) {
+    const isLast = i === (chunks.length - 1);
+    const payload = isLast
+      ? await tagWithLocalizedMode(From, chunks[i], L)
+      : chunks[i];
+    await sendMessageViaAPI(From, payload);
+  }
+}
+// ===PATCH ADD END: UNIQ:WA-SPLIT-20251230===
+
 // ===PATCH START: UNIQ:DS-CLASSIFIER-ENV-20251219===
 /**
  * Env-governed Deepseek fast classifier: language + kind + command.normalized + transaction skeleton.
@@ -2800,6 +2852,33 @@ function getStaticLabel(key, lang) {
   const lc = String(lang || 'en').toLowerCase();
   return STATIC_LABELS[key]?.[lc] || STATIC_LABELS[key]?.en || '';
 }
+
+// ===PATCH ADD: UNIQ:VOICE-ACK-20251230===
+// Emit "Transcribing your voice…" immediately when inbound WhatsApp has audio media.
+async function emitVoiceAckIfNeeded(req) {
+  try {
+    const num = Number(req?.body?.NumMedia ?? 0);
+    const isVoice =
+      num > 0 && /\baudio\//i.test(String(req?.body?.MediaContentType0 ?? ''));
+    const From = req?.body?.From;
+    if (!isVoice || !From) return false;
+
+    const shopId = shopIdFrom(From);
+    const pref = await getUserPrefQuick(shopId).catch(() => null);
+    const lang = ensureLangExact(
+      pref?.language
+        ?? (await detectLanguageWithFallback(req?.body?.Body ?? '', From, 'voice-ack'))
+    );
+    const ack = getStaticLabel('ackVoice', lang);
+    const tagged = await tagWithLocalizedMode(From, ack, lang, { kind: 'voice' });
+    await sendMessageViaAPI(From, tagged);
+    return true;
+  } catch (e) {
+    console.warn('[voice-ack] failed:', e?.message);
+    return false;
+  }
+}
+// ===PATCH ADD END: UNIQ:VOICE-ACK-20251230===
 
 // ===== LOCALIZED MODE BADGES & SWITCH WORD (one-word, language-appropriate) =====
 // One-word badge shown for the current mode (Purchase / Sale / Return / None) in user's language.
@@ -7398,24 +7477,19 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       handledRequests.add(String(source || 'qq') + '::terminal'); // suppress late apologies in-cycle
     }
   } catch (_) { /* noop */ }
-  const shopId = shopIdFrom(From);
-
-  const sendTagged = async (body) => {    
-// keep existing per-command cache key (already unique & scoped)            
-        const msg0 = await tx(body, lang, From, cmd, `qq-${cmd}-${shopId}`);
-         // NEW: replace English section headers with native ones to avoid mixed script
-         let labeled = renderNativeglishLabels(msg0, lang);              
-        // NEW: localize quoted commands inside "Next actions" (e.g., "reorder suggestions", "prices", "stock value")
-         labeled = localizeQuotedCommands(labeled, lang);
-         // Optional: keep English anchors (units/₹) readable inside localized text
-         labeled = nativeglishWrap(labeled, lang);                   
-         // MIN-FIX: respect THIS TURN'S language; do not override with DB preference at tag time
-             let msg = await tagWithLocalizedMode(From, labeled, lang, { noPrefOverride: true });
-        // LOCAL CLAMP → Single script; numerals normalization
-        msg = enforceSingleScriptSafe(msg, lang);
-        msg = normalizeNumeralsToLatin(msg).trim();
-        await sendMessageViaAPI(From, msg);
-  };
+  const shopId = shopIdFrom(From);    
+  const sendTagged = async (body) => {
+      // per-command cache key (already unique & scoped)
+      const msg0 = await tx(body, lang, From, cmd, `qq-${cmd}-${shopId}`);
+      // Nativeglish / localization pipeline
+      let labeled = renderNativeglishLabels(msg0, lang);
+      labeled = localizeQuotedCommands(labeled, lang);
+      labeled = nativeglishWrap(labeled, lang);
+      // Numerals-only normalization (and defensive single-script normalization)
+      const normalized = normalizeNumeralsToLatin(enforceSingleScriptSafe(labeled, lang)).trim();
+      // ⬇️ Split long messages for WhatsApp and append the footer ONLY on the last part
+      await sendMultiPartWithFooter(From, normalized, lang);
+    };
    
   // ---- NEW: Expiring / Expired handler ------------------------------------
     try {
@@ -7614,8 +7688,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
             .replace(/^Low Stock\b/m,       '🟠 Low Stock')
             .replace(/^Expiring Soon\b/m,   '⏳ Expiring Soon')
             .replace(/^Insights\b/m,        '💡 Insights');
-          
-          await sendTagged(decorated);
+          await sendTagged(decorated); // now multi-part & footer-on-last via sendTagged()
     } catch (_) {
       await sendTagged('📊 Full Summary — snapshot unavailable. Try: “short summary”.');
     }
@@ -17960,16 +18033,16 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
      console.warn('[router] inventory ack send failed:', e?.message);
    }
  }
-  try {
-      const NumMedia = Number(req.body?.NumMedia ?? 0);
-      const ct0 = String(req.body?.MediaContentType0 ?? '').toLowerCase();
-      const isAudio = NumMedia > 0 && /audio|ogg|opus|m4a|mp3|wav/.test(ct0);
-      if (isAudio) {
-        sendProcessingAckQuickFromText(From, 'voice', Body).catch(() => {});
-      } else {
-        // For plain text and non-audio media, send text ack ultra-early
-        sendProcessingAckQuickFromText(From, 'text', Body).catch(() => {});
-      }
+  try {           
+      // Emit localized "Transcribing your voice…" immediately for audio turns
+        await emitVoiceAckIfNeeded(req);
+        // For plain text and non-audio media, keep the text ack ultra-early
+        const isAudioPost =
+          Number(req.body?.NumMedia ?? 0) > 0 &&
+          /\baudio\//i.test(String(req.body?.MediaContentType0 ?? ''));
+        if (!isAudioPost) {
+          sendProcessingAckQuickFromText(From, 'text', Body).catch(() => {});
+        }
     } catch { /* non-blocking */ }
 
   // (optional) quick log to confirm gate path in prod logs        
