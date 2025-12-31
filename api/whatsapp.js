@@ -96,6 +96,21 @@ function mapLangToSonioxHints(langCode) {
   }
 }
 
+function getShopId(from) {
+  const prefix = 'whatsapp:';
+  return (typeof from === 'string' && from.startsWith(prefix)) ? from.slice(prefix.length) : from;
+}
+
+function queueUpsellIfNeeded(gateObj) {
+  // Avoid ReferenceError if 'gate' is not defined in scope
+  try {
+    if (gateObj && gateObj.upsellReason) {
+      return scheduleUpsell(gateObj.upsellReason);
+    }
+  } catch { /* swallow */ }
+  return Promise.resolve();
+}
+
 /**
  * Resolve Soniox language hints for a given WhatsApp 'From'.
  * Priority:
@@ -11204,7 +11219,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
   
   // Short Summary (on-demand) -- primary: "short summary", keep "summary" as alias
     if (/^\s*((short|quick|mini)\s*(summary|report|overview)|summary)\s*$/i.test(text)) {
-      const shopId = From.replace('whatsapp:', '');
+      const shopId = getShopId(From);
 
        // Check if AI summaries are available for this plan
       const canUseAI = await isFeatureAvailable(shopId, 'ai_summary');
@@ -11221,28 +11236,28 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
         return true;
       }
             
-      const msg = await generateInstantSummary(shopId, detectedLanguage, requestId);
+      const msg = await generateInstantSummary(shopId, detectedLanguage, requestId);            
       await sendMessageQueued(From, msg);
-      await scheduleUpsell(gate?.upsellReason);
+      queueUpsellIfNeeded(gate); // optional: only queues if gate present & has reason
       return true;
     }
   
     // Full Summary (on-demand) -- swapped to non-AI Daily Summary
     if (/^\s*((full|detailed|complete|entire)\s*(summary|report|overview))\s*$/i.test(text)) {
-      const shopId = From.replace('whatsapp:', '');
-
-     // Check if AI summaries are available for this plan
-      const canUseAI = await isFeatureAvailable(shopId, 'ai_summary');
-      if (!canUseAI) {
+      const shopId = getShopId(From);
+     
+// Full Summary now uses non-AI Daily Summary: gate on 'daily_summary'
+      const canUseDaily = await isFeatureAvailable(shopId, 'daily_summary');
+      if (!canUseDaily) {
         const planInfo = await getUserPlan(shopId);
-        let errorMessage = 'Detailed AI summaries are only available on the Enterprise plan.';
+        let errorMessage = 'Detailed daily summaries are only available on the Enterprise plan.';
         
         if (planInfo.plan === 'free_demo_first_50') {
           errorMessage = 'Your trial period has expired. Please upgrade to the Enterprise plan for detailed summaries.';
         }
-        
+                        
         await sendMessageQueued(From, errorMessage);
-        await scheduleUpsell(gate?.upsellReason);
+        queueUpsellIfNeeded(gate);
         return true;
       }
       
@@ -11298,8 +11313,9 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
   
     // 1) Stock for product
     // Guard: don't let "inventory value/valuation/value summary" slip into stock branch  
-    {
-      const m = text.match(/^(?:stock|inventory|qty)\s+(.+)$/i);
+    {      
+// Prevent "inventory value/valuation/value summary" from falling into the stock branch
+      const m = text.match(/^(?:stock|inventory|qty)\s+
       if (m) {
         const raw = m[1].trim();                
         await handleQuickQueryEN(`stock ${raw}`, From, detectedLanguage, `${requestId}::alias-stock`);
