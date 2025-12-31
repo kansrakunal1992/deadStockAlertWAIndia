@@ -108,18 +108,21 @@ function normalizeUnit(unit) {
   if (!unit) {
     return 'pieces'; // Default unit if none is provided
   }
-  
-  const unitMap = {
-    'g': 'kg', 'gram': 'kg', 'grams': 'kg', 'ग्राम': 'kg',
+    
+const unitMap = {
+    // weight
+    'g': 'kg', 'gram': 'kg', 'grams': 'kg', 'ग्राम': 'kg', 'ગ્રામ': 'kg',
+    'kg': 'kg', 'kilogram': 'kg', 'kilograms': 'kg', 'કિલો': 'kg', 'કિગ્રા': 'kg',
+    // volume
     'ml': 'liters', 'milliliter': 'liters', 'milliliters': 'liters',
-    'packet': 'packets', 'पैकेट': 'packets', 'box': 'boxes', 'बॉक्स': 'boxes', 
-    'કિલો': 'kg', 'કિગ્રા': 'kg', 'ગ્રામ': 'kg',
-    'લિટર': 'liters',
-    'પૅકેટ': 'packets', 'પેકેટ': 'packets',
-    'બોક્સ': 'boxes',
+    'liter': 'liters', 'litre': 'liters', 'liters': 'liters', 'litres': 'liters', 'લિટર': 'liters',
+    // countables
+    'packet': 'packets', 'पैकेट': 'packets', 'પૅકેટ': 'packets', 'પેકેટ': 'packets',
+    'box': 'boxes', 'बॉक्स': 'boxes', 'બોક્સ': 'boxes',
+    'piece': 'pieces', 'pieces': 'pieces',
+    'टुकड़ा': 'pieces', 'टुकड़े': 'pieces',
     'ટુકડો': 'pieces', 'ટુકડાઓ': 'pieces', 'નંગ': 'pieces'
   };
-  
   return unitMap[unit.toLowerCase()] || unit;
 }
 
@@ -148,35 +151,31 @@ async function airtableRequest(config, context = 'Airtable Request', maxRetries 
     'Authorization': 'Bearer ' + AIRTABLE_API_KEY,
     'Content-Type': 'application/json'
   };
-  
   let lastError;
+
+  // Always prefer the explicit URL; otherwise default to the table URL
+  const resolvedUrl = config.url ?? airtableBaseURL;
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await axios({
         ...config,
-        url: config.url || airtableBaseURL,
+        url: resolvedUrl,
         headers,
-        timeout: 10000 // 10 second timeout
+        timeout: 10000
       });
       return response.data;
     } catch (error) {
       lastError = error;
       console.warn(`[${context}] Attempt ${attempt} failed:`, error.message);
-      
-      // If this is the last attempt, throw the error
-      if (attempt === maxRetries) {
-        break;
-      }
-      
-      // Wait before retrying (exponential backoff)
-      const delay = Math.pow(2, attempt) * 1000;
-      await new Promise(resolve => setTimeout(resolve, delay));
+      if (attempt === maxRetries) break;
+      await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000));
     }
   }
-  
   logError(context, lastError);
   throw lastError;
 }
+
 
 // Airtable batch request helper with timeout and retry logic
 async function airtableBatchRequest(config, context = 'Airtable Batch Request', maxRetries = 2) {
@@ -186,11 +185,12 @@ async function airtableBatchRequest(config, context = 'Airtable Batch Request', 
   };
   
   let lastError;
+  const resolvedUrl = config.url ?? airtableBatchURL;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await axios({
         ...config,
-        url: config.url || airtableBatchURL,
+        url: resolvedUrl,
         headers,
         timeout: 10000 // 10 second timeout
       });
@@ -222,11 +222,12 @@ async function airtableUserPreferencesRequest(config, context = 'Airtable User P
   };
   
   let lastError;
+  const resolvedUrl = config.url ?? airtableUserPreferencesURL;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await axios({
         ...config,
-        url: config.url || airtableUserPreferencesURL,
+        url: resolvedUrl,
         headers,
         timeout: 10000 // 10 second timeout
       });
@@ -258,11 +259,12 @@ async function airtableSalesRequest(config, context = 'Airtable Sales Request', 
   };
   
   let lastError;
+  const resolvedUrl = config.url ?? airtableSalesURL;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await axios({
         ...config,
-        url: config.url || airtableSalesURL,
+        url: resolvedUrl,
         headers,
         timeout: 10000 // 10 second timeout
       });
@@ -294,11 +296,12 @@ async function airtableProductsRequest(config, context = 'Airtable Products Requ
   };
   
   let lastError;
+  const resolvedUrl = config.url ?? airtableProductsURL;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const response = await axios({
         ...config,
-        url: config.url || airtableProductsURL,
+        url: resolvedUrl,
         headers,
         timeout: 10000 // 10 second timeout
       });
@@ -323,8 +326,10 @@ async function airtableProductsRequest(config, context = 'Airtable Products Requ
 }
 
 // Update inventory using delete and recreate approach with proper unit handling
-async function updateInventory(shopId, product, quantityChange, unit = '') {
-  const context = `Update ${shopId} - ${product}`;
+async function updateInventory(shopId, product, quantityChange, unit = '') {  
+// Robust context (avoid undefined product; normalize ShopID for display)
+  const displayProduct = (String(product ?? '').trim() || '(unknown)');
+  const context = `Update ${normalizeShopIdForWrite(shopId)} - ${displayProduct}`;
   try {
     console.log(`[${context}] Starting update: ${quantityChange} ${unit}`);
 
@@ -344,51 +349,37 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
     }, `${context} - Find`);
 
     let newQuantity;
-
+    
     if (findResult.records.length > 0) {
-      // Delete existing record and create new one (instead of update)
-      const recordId    = findResult.records[0].id;
-      const currentQty  = findResult.records[0].fields.Quantity ?? 0;
-      const currentUnit = findResult.records[0].fields.Units ?? '';
-
-      // Convert both quantities to base unit for proper calculation
-      const currentBaseQty = convertToBaseUnit(currentQty, currentUnit);
-      const changeBaseQty  = convertToBaseUnit(quantityChange, normalizedUnit);
-
-      // Calculate new quantity in base unit
-      const newBaseQty = currentBaseQty + changeBaseQty;
-
-      // Convert back to the existing unit for storage (do NOT flip units)
-      newQuantity = convertToBaseUnit(newBaseQty, currentUnit) / convertToBaseUnit(1, currentUnit);
-
-      // Preserve the inventory's unit; keep display/storage unit consistent
-      const storageUnit = currentUnit || normalizedUnit;
-
-      console.log(
-        `[${context}] Found record ${recordId}, updating: ${currentQty} ${currentUnit} -> ${newQuantity} ${storageUnit} (change: ${quantityChange} ${normalizedUnit})`
-      );
-
-      // Delete the old record
-      await airtableRequest({
-        method: 'delete',
-        url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME + '/' + recordId
-      }, `${context} - Delete`);
-
-      // Create new record with preserved unit (single declaration in this block)
-      const createData = {
-        fields: {
-          ShopID: preferredShopId,
-          Product: product,
-          Quantity: newQuantity,
-          Units: storageUnit
-        }
-      };
-
-      await airtableRequest({
-        method: 'post',
-        data: createData
-      }, `${context} - Recreate`);
-    } else {
+          // PATCH existing record in place (safer than delete+recreate)
+          const recordId = findResult.records[0].id;
+          const currentQty  = findResult.records[0].fields.Quantity ?? 0;
+          const currentUnit = findResult.records[0].fields.Units ?? '';
+          // Base-unit math
+          const currentBaseQty = convertToBaseUnit(currentQty, currentUnit);
+          const changeBaseQty  = convertToBaseUnit(quantityChange, normalizedUnit);
+          const newBaseQty     = currentBaseQty + changeBaseQty;
+          // Preserve the inventory unit for storage
+          const storageUnit = currentUnit || normalizedUnit;
+          newQuantity = convertToBaseUnit(newBaseQty, storageUnit) / convertToBaseUnit(1, storageUnit);
+          // Helpful base-math logs
+          console.log(`[${context}] Units: inv=${currentUnit}, input=${normalizedUnit}`);
+          console.log(`[${context}] Base math: currentBase=${currentBaseQty}, changeBase=${changeBaseQty}, newBase=${newBaseQty}`);
+          console.log(
+            `[${context}] Found record ${recordId}, updating: ${currentQty} ${currentUnit} -> ${newQuantity} ${storageUnit} (change: ${quantityChange} ${normalizedUnit})`
+          );
+          // Patch the same record
+          await airtableRequest({
+            method: 'patch',
+            url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_NAME}/${recordId}`,
+            data: { fields: {
+              ShopID: preferredShopId,
+              Product: product,
+              Quantity: newQuantity,
+              Units: storageUnit
+            } }
+          }, `${context} - Patch`);
+        } else {
       // First insert: use caller's normalized unit
       newQuantity = quantityChange;
       const storageUnit = normalizedUnit;
@@ -1406,7 +1397,7 @@ async function batchUpdateInventory(updates) {
         newQuantity = quantityChange;
         const createData = {
           fields: {
-            ShopID: shopId,
+            ShopID: normalizeShopIdForWrite(shopId),
             Product: product,
             Quantity: newQuantity,
             Units: normalizedUnit
