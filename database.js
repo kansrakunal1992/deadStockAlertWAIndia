@@ -1049,17 +1049,17 @@ const prefRec = await getUserPreferencesRecord(shopId);
 
 // Get user plan information
 async function getUserPlan(shopId) {
-  const context = `Get User Plan ${shopId}`;
+  const context = `Get User Plan ${shopId}`;    
   try {
-    const userPref = await getUserPreference(shopId);
-    
-    if (userPref.success) {
-      return {
-        plan: userPref.plan || 'free_demo',
-        trialEndDate: userPref.trialEndDate ? new Date(userPref.trialEndDate) : null,
-        shopId: shopId
-      };
-    }
+      const userPref = await getUserPreference(shopId);
+      if (userPref.success) {
+        return {
+          // Normalize plan key so downstream feature checks are stable
+          plan: String(userPref.plan ?? 'free_demo').toLowerCase(),
+          trialEndDate: userPref.trialEndDate ? new Date(userPref.trialEndDate) : null,
+          shopId: shopId
+        };
+      }
 
     // Default plan
     return { 
@@ -1108,29 +1108,33 @@ async function isFeatureAvailable(shopId, feature) {
     // Feature availability matrix
     const featureMatrix = {
       // Daily summaries
-      'daily_summary': {
-        'free_demo': true,  // 1 per day
+      'daily_summary': {                
+        'free_demo': true,                 // 1 per day
         'free_demo_first_50': !isTrialExpired, // Unlimited during trial
         'standard': true,
-        'enterprise': true
+        'enterprise': true,
+        'paid': true                       // <-- allow paid users
       },
       // AI summaries
-      'ai_summary': {
+      'ai_summary': {                
         'free_demo': true,
-        'free_demo_first_50': true, //!isTrialExpired, // Full access during trial
+        'free_demo_first_50': true,        // Full access during trial
         'standard': true,
-        'enterprise': true
+        'enterprise': true,
+        'paid': true                       // <-- allow paid users
       },
       // Replies limit
-      'replies': {
-        'free_demo': true, // 50 total
+      'replies': {               
+        'free_demo': true,                 // 50 total
         'free_demo_first_50': !isTrialExpired, // Unlimited during trial
         'standard': true,
-        'enterprise': true
+        'enterprise': true,
+        'paid': true                       // <-- allow paid users
       }
-    };
-    
-    return featureMatrix[feature]?.[plan] || false;
+    };       
+    const allowed = featureMatrix[feature]?.[planKey] ?? false;
+      try { console.info('[features]', { shopId, feature, plan: planKey, allowed, trialEndDate }); } catch (_){}
+      return allowed;
   } catch (error) {
     logError(context, error);
     return false;
