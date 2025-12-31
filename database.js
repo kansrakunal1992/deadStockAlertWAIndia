@@ -327,95 +327,91 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
   const context = `Update ${shopId} - ${product}`;
   try {
     console.log(`[${context}] Starting update: ${quantityChange} ${unit}`);
-    
+
     // Normalize unit before processing
     const normalizedUnit = normalizeUnit(unit);
     const preferredShopId = normalizeShopIdForWrite(shopId);
-            
-    // Find existing record (read-tolerant to legacy formats)        
+
+    // Find existing record (read‑tolerant to legacy formats)
     const pname = String(product ?? '').trim().toLowerCase();
-     const filterFormula = 'AND(' + buildShopIdVariantFilter('ShopID', shopId)
-       + ", LOWER(TRIM({Product})) = '" + pname.replace(/'/g,"''") + "')";
+    const filterFormula =
+      'AND(' + buildShopIdVariantFilter('ShopID', shopId) +
+      ", LOWER(TRIM({Product})) = '" + pname.replace(/'/g, "''") + "')";
 
     const findResult = await airtableRequest({
       method: 'get',
       params: { filterByFormula: filterFormula }
     }, `${context} - Find`);
-    
+
     let newQuantity;
+
     if (findResult.records.length > 0) {
       // Delete existing record and create new one (instead of update)
-      const recordId = findResult.records[0].id;
-      const currentQty = findResult.records[0].fields.Quantity || 0;
-      const currentUnit = findResult.records[0].fields.Units || '';
-      
+      const recordId    = findResult.records[0].id;
+      const currentQty  = findResult.records[0].fields.Quantity ?? 0;
+      const currentUnit = findResult.records[0].fields.Units ?? '';
+
       // Convert both quantities to base unit for proper calculation
       const currentBaseQty = convertToBaseUnit(currentQty, currentUnit);
-      const changeBaseQty = convertToBaseUnit(quantityChange, normalizedUnit);
-      
+      const changeBaseQty  = convertToBaseUnit(quantityChange, normalizedUnit);
+
       // Calculate new quantity in base unit
       const newBaseQty = currentBaseQty + changeBaseQty;
-               
-     // Convert back to the existing unit for storage (do NOT flip units)
-     newQuantity = convertToBaseUnit(newBaseQty, currentUnit) / convertToBaseUnit(1, currentUnit);
-     // Preserve the inventory's unit; keep display/storage unit consistent
-     const storageUnit = currentUnit || normalizedUnit;
-     const createData = {
-       fields: {
-         ShopID: preferredShopId,
-         Product: product,
-         Quantity: newQuantity,
-         Units: storageUnit
-       }
-    };
-      
-      console.log(`[${context}] Found record ${recordId}, updating: ${currentQty} ${currentUnit} -> ${newQuantity} ${normalizedUnit} (change: ${quantityChange})`);
-      
+
+      // Convert back to the existing unit for storage (do NOT flip units)
+      newQuantity = convertToBaseUnit(newBaseQty, currentUnit) / convertToBaseUnit(1, currentUnit);
+
+      // Preserve the inventory's unit; keep display/storage unit consistent
+      const storageUnit = currentUnit || normalizedUnit;
+
+      console.log(
+        `[${context}] Found record ${recordId}, updating: ${currentQty} ${currentUnit} -> ${newQuantity} ${storageUnit} (change: ${quantityChange} ${normalizedUnit})`
+      );
+
       // Delete the old record
       await airtableRequest({
         method: 'delete',
         url: 'https://api.airtable.com/v0/' + AIRTABLE_BASE_ID + '/' + TABLE_NAME + '/' + recordId
       }, `${context} - Delete`);
-      
-      // Create new record with normalized unit
+
+      // Create new record with preserved unit (single declaration in this block)
       const createData = {
         fields: {
           ShopID: preferredShopId,
           Product: product,
           Quantity: newQuantity,
-          Units: normalizedUnit
+          Units: storageUnit
         }
       };
-      
+
       await airtableRequest({
         method: 'post',
         data: createData
       }, `${context} - Recreate`);
     } else {
-      // Create new record with normalized unit
+      // First insert: use caller's normalized unit
       newQuantity = quantityChange;
+      const storageUnit = normalizedUnit;
+
       const createData = {
         fields: {
           ShopID: preferredShopId,
           Product: product,
           Quantity: newQuantity,
-          Units: normalizedUnit
+          Units: storageUnit
         }
       };
-      
+
       await airtableRequest({
         method: 'post',
         data: createData
       }, `${context} - Create`);
     }
-    
+
     return { success: true, newQuantity, unit: normalizedUnit };
   } catch (error) {
     logError(context, error);
-    return {
-      success: false,
-      error: error.message
-    };
+    return { success: false, error: error.message };
   }
 }
 
