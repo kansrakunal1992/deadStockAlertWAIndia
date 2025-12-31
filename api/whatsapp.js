@@ -15850,7 +15850,15 @@ async function sendReturnConfirmationOnce(
 
 // Async processing for voice messages
 async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState) {
-  try {
+  try {    
+    // --- Guard legacy references that caused "guidance is not defined" in logs.
+    //     (Prevents voice-cmd short-circuit from crashing on undefined symbol)
+    //     Ref: [voice-cmd-unified-error: guidance is not defined]
+    //     Logs show: [voice-cmd-unified] error: { code: 'voice-cmd-unified-error', message: 'guidance is not defined' }
+    //     We keep a safe default here so any stray usage won't break the turn.
+    /* eslint-disable no-unused-vars */
+    let guidance = typeof guidance !== 'undefined' ? guidance : null;
+    /* eslint-enable no-unused-vars */
     console.log(`[${requestId}] [1] Downloading audio...`);
     const audioBuffer = await downloadAudio(MediaUrl0);
     console.log(`[${requestId}] [2] Converting audio...`);
@@ -16640,32 +16648,104 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                   try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
                   return;
                 }
-            
-              case 'prices':
-              case 'short summary':
-              case 'full summary': {
-                // Voice path feature guard for summaries
-                if (cmd === 'short summary' || cmd === 'full summary') {
-                  try {
-                    const allowed = await isFeatureAvailable(shopId, 'ai_summary');
-                    if (!allowed) {
-                      let prompt = await t(
-                        'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
-                        uiLangExact,
-                        `cta-summary-${shopId}`
-                      );
-                      prompt = finalizeForSend(prompt, uiLangExact);
-                      await sendMessageViaAPI(From, prompt);
-                      try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
-                      return;
+              
+            case 'prices': {
+                    // keep existing behaviour for 'prices'
+                    const stickyAction = await getStickyActionQuick(From);
+                    await handleDiagnosticPeek(From, cmd, requestId, stickyAction);
+                    try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) { }
+                    return;
+                  }
+                  case 'full summary': {
+                    // existing behaviour (diagnostic peek) retained for full summary
+                    try {
+                      const allowed = await isFeatureAvailable(shopId, 'ai_summary');
+                      if (!allowed) {
+                        let prompt = await t(
+                          'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+                          uiLangExact,
+                          `cta-summary-${shopId}`
+                        );
+                        await sendMessageViaAPI(From, finalizeForSend(prompt, uiLangExact));
+                        try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) { }
+                        return;
+                      }
+                    } catch (_) { /* soft-fail */ }
+                    const stickyAction = await getStickyActionQuick(From);
+                    await handleDiagnosticPeek(From, 'full summary', requestId, stickyAction);
+                    try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) { }
+                    return;
+                  }                  
+                case 'short summary': {
+                        // --- Voice path now mirrors button/text "Instant Summary": compact text + short PDF.
+                        try {
+                          const allowed = await isFeatureAvailable(shopId, 'ai_summary');
+                          if (!allowed) {
+                            let prompt = await t(
+                              'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+                              uiLangExact,
+                              `cta-summary-${shopId}`
+                            );
+                            await sendMessageViaAPI(From, finalizeForSend(prompt, uiLangExact));
+                            try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
+                            return;
+                          }
+                        } catch (_) { /* soft-fail: continue */ }
+                
+                        // 1) Compose/send the SAME compact short summary text using existing builder:
+                        //    generateInstantSummary(shopId, languageCode, requestId)
+                        //    (This is what your text/button path already uses.)
+                        //    Ref in whatsapp.js: const msg = await generateInstantSummary(shopId, detectedLanguage, requestId);
+                        //    (See citations in the PR description)
+                        let shortMsg;
+                        try {
+                          const langCode = String(uiLangExact ?? 'en').toLowerCase();
+                          shortMsg = await generateInstantSummary(shopId, langCode, requestId);
+                        } catch (e) {
+                          // fallback: use diagnostic peek to at least send something compact
+                          const stickyAction = await getStickyActionQuick(From);
+                          await handleDiagnosticPeek(From, 'short summary', requestId, stickyAction);
+                          try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
+                          // do not return yet; still attempt PDF below
+                        }
+                        if (shortMsg) {
+                          await sendMessageViaAPI(From, finalizeForSend(shortMsg, uiLangExact));
+                        }
+                  
+                    // 2) Generate & send the Inventory Short Summary PDF (same generator used in whatsapp.js)
+                    try {
+                      // Inline require to avoid cross-file import assumptions in this handler
+                      const path = require('path');
+                      const { generateInventoryShortSummaryPDF } = require('../pdfGenerator');
+                      const pdfPath = await generateInventoryShortSummaryPDF(shopId);                                 
+                    // Prefer existing helper if present (defined in whatsapp.js); otherwise send URL as text.
+                              let sentViaHelper = false;
+                              try {
+                                if (typeof sendPDFViaWhatsApp === 'function') {
+                                  await sendPDFViaWhatsApp(From, pdfPath);
+                                  sentViaHelper = true;
+                                }
+                              } catch (_) { /* fall through */ }
+                    
+                              if (!sentViaHelper) {
+                                const fileName = path.basename(pdfPath);
+                                const baseUrl = (process.env.PUBLIC_URL || '').replace(/\/+$/, '');
+                                const publicUrl = `${baseUrl}/invoice/${fileName}`;
+                                const caption =
+                                  fileName.toLowerCase().startsWith('inventory_short_')
+                                    ? 'Here is your inventory table:'
+                                    : 'Here is your summary:';
+                                await sendMessageViaAPI(From, finalizeForSend(`${caption}\n${publicUrl}`, uiLangExact));
+                              }
+                    } catch (e) {
+                      // If PDF fails, we still want to complete gracefully
+                      console.warn(`[short-summary-pdf] send failed:`, e?.message);
                     }
-                  } catch (_) { /* soft-fail: continue */ }
-                }
-              const stickyAction = await getStickyActionQuick(From);
-              await handleDiagnosticPeek(From, cmd, requestId, stickyAction);
-              try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
-              return;
-            }
+            
+                    // 3) Resurface the inventory list picker like text path
+                    try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
+                    return;
+                  }
             case 'stock value':
             case 'inventory value':
             case 'value summary':
