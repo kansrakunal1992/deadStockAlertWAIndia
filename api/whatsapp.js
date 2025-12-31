@@ -2660,15 +2660,17 @@ function splitForWhatsApp(text, maxLen = WA_CHAR_CAP) {
 }
 
 // Send long messages by splitting first; append localized footer only on the LAST part.
-async function sendMultiPartWithFooter(From, rawText, lang) {
+async function sendMultiPartWithFooter(From, rawText, lang, opts = {}) {
   const L = String(lang ?? 'en').toLowerCase();
   const chunks = splitForWhatsApp(rawText, WA_CHAR_CAP);
+  const noPrefOverride = !!(opts && opts.noPrefOverride);
   for (let i = 0; i < chunks.length; i++) {
     const isLast = i === (chunks.length - 1);    
-// Always finalize and tag on the last chunk; earlier ones are plain text
-    const payload = isLast
-      ? await tagWithLocalizedMode(From, finalizeForSend(chunks[i], L), L)
-      : finalizeForSend(chunks[i], L);
+// Always finalize and tag on the last chunk; earlier ones are plain text      
+  const payload = isLast
+    // Respect this-turn language for footer when opts.noPrefOverride is true
+    ? await tagWithLocalizedMode(From, finalizeForSend(chunks[i], L), L, { noPrefOverride })
+    : finalizeForSend(chunks[i], L);
     await sendMessageViaAPI(From, payload);
   }
 }
@@ -3005,7 +3007,16 @@ async function detectLanguageWithFallback(text, from, requestId) {
                 console.log(`[${requestId}] Greeting detected; short-circuiting to en`);
                 return 'en';
               }
-        const shopIdX = String(from ?? '').replace('whatsapp:', '');
+        const shopIdX = String(from ?? '').replace('whatsapp:', '');              
+        // --- PATCH: respect list-picker language; don't flip to 'en' on internal slugs
+          const __SLUG_RX = /^\s*list_[a-z0-9_]+$/i;
+          if (__SLUG_RX.test(String(text ?? ''))) {
+            // Prefer user's saved language; fall back to 'en' only if none is set
+            const prefQuick = await getUserPrefQuick(shopIdX).catch(() => null);
+            const langLocked = ensureLangExact(prefQuick?.language ?? 'en');
+            console.log(`[${requestId}] list-slug detected; using pref language: ${langLocked}`);
+            return langLocked;
+          }
               const stX = await getUserStateFromDB(shopIdX).catch(() => null);
               const isOnboarding = stX?.mode === 'onboarding_trial_capture';                            
               // NOTE: For TEXT turns we should NOT retain pinned non-English preference.
@@ -3141,15 +3152,16 @@ async function detectLanguageWithFallback(text, from, requestId) {
 
       console.log(`[${requestId}] Detected language: ${detectedLanguage}`);
 
-      // 3) Persist preference (best effort)
+      // 3) Persist preference (best effort)            
       try {
-        const shopId = String(from || '').replace('whatsapp:', '');
-        if (typeof saveUserPreference === 'function') {
-          await saveUserPreference(shopId, detectedLanguage);
+          const shopId = String(from ?? '').replace('whatsapp:', '');
+          // Do not persist 'en' when the inbound text is an internal list slug
+          if (!__SLUG_RX.test(String(text ?? '')) && typeof saveUserPreference === 'function') {
+            await saveUserPreference(shopId, detectedLanguage);
+          }
+        } catch (e) {
+          console.warn(`[${requestId}] Failed to save language preference: ${e.message}`);
         }
-      } catch (e) {
-        console.warn(`[${requestId}] Failed to save language preference: ${e.message}`);
-      }
 
       // 4) Optional in-memory cache if available in your module
       try {
@@ -7499,7 +7511,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     }
   } catch (_) { /* noop */ }
   const shopId = shopIdFrom(From);    
-  const sendTagged = async (body) => {
+  const sendTagged = async (body, opts = {}) => {
       // per-command cache key (already unique & scoped)
       const msg0 = await tx(body, lang, From, cmd, `qq-${cmd}-${shopId}`);
       // Nativeglish / localization pipeline
@@ -7507,9 +7519,10 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       labeled = localizeQuotedCommands(labeled, lang);
       labeled = nativeglishWrap(labeled, lang);
       // Numerals-only normalization (and defensive single-script normalization)
-      const normalized = normalizeNumeralsToLatin(enforceSingleScriptSafe(labeled, lang)).trim();
+      const normalized = normalizeNumeralsToLatin(enforceSingleScriptSafe(labeled, lang)).trim();            
       // ⬇️ Split long messages for WhatsApp and append the footer ONLY on the last part
-      await sendMultiPartWithFooter(From, normalized, lang);
+      // Thread through any caller-provided opts (e.g., { noPrefOverride: true })
+      await sendMultiPartWithFooter(From, normalized, lang, opts);
     };
    
   // ---- NEW: Expiring / Expired handler ------------------------------------
@@ -8016,18 +8029,12 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
           
               const moreTail = count > LINES_MAX ? `\n• +${count - LINES_MAX} more` : '';
               const header   = `📦 Reorder Suggestions — ${count} ${count === 1 ? 'item' : 'items'}`
-                + ` (based on ${days}d sales, lead ${leadTimeDays}d, safety ${safetyDays}d)`;
-          
+                + ` (based on ${days}d sales, lead ${leadTimeDays}d, safety ${safetyDays}d)`;                                
               // Unify marker with global constant used by clamp/strip logic
               const NO_CLAMP_MARKER = globalThis.NO_CLAMP_MARKER || '<!NO_CLAMP!>';
               const body = `${NO_CLAMP_MARKER}${header}\n${lines}${moreTail}\n\n➡️ Action: place purchase orders for suggested quantities.`;
-          
-              // Optional: localize & append mode badge
-              const detectedLanguage = await detectLanguageWithFallback(body, `whatsapp:${shopId}`, 'reorder-suggestions');
-              const msgLocalized     = await t(body, detectedLanguage, 'reorder-suggestions');
-              const msgFinal         = await tagWithLocalizedMode(`whatsapp:${shopId}`, msgLocalized, detectedLanguage);
-          
-              await sendMessageDedup(shopId, msgFinal);
+              // Use shared pipeline and force footer to respect this-turn language (no preference flip)
+              await sendTagged(body, { noPrefOverride: true });
             } catch (e) {
               await sendTagged('📦 Reorder Suggestions — snapshot unavailable. Try later.');
             }
