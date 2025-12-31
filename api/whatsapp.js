@@ -6150,8 +6150,9 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                 try {
                   const pdfPath = await generateInventoryShortSummaryPDF(shopIdTop);
                   // Optional safety check (mirrors your invoice flow):
-                  if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);
-                  const msg = await sendPDFViaWhatsApp(from, pdfPath);
+                  if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);                                    
+                  // Pass current UI language so caption matches the text summary language
+                  const msg = await sendPDFViaWhatsApp(from, pdfPath, btnLang);
                   console.log(`[interactive] Inventory summary PDF sent. SID: ${msg?.sid}`);
                 } catch (e) {
                   console.warn('[interactive] inventory PDF send failed', e?.message);
@@ -7706,7 +7707,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
         if (typeof fs !== 'undefined' && fs.existsSync && !fs.existsSync(pdfPath)) {
           throw new Error(`Generated PDF file not found: ${pdfPath}`);
         }
-        const msg = await sendPDFViaWhatsApp(From, pdfPath); // From is 'whatsapp:<shopId>'
+        const msg = await sendPDFViaWhatsApp(from, pdfPath, btnLang); // From is 'whatsapp:<shopId>'
         console.log(`[qq] Inventory summary PDF sent. SID: ${msg?.sid}`);
       } catch (e) {
         console.warn('[qq] inventory PDF send failed', e?.message);
@@ -8112,8 +8113,9 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
           try {
                 if (period === 'today' || period === 'week') {
                   const pdfPath = await generateSalesRawTablePDF(shopId, period);
-                  if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);
-                  const msg = await sendPDFViaWhatsApp(From, pdfPath);
+                  if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);                                  
+                  // Pass current turn language so the PDF caption is localized
+                  const msg = await sendPDFViaWhatsApp(From, pdfPath, lang);
                   console.log(`[qq] Sales (${period}) PDF sent. SID: ${msg?.sid}`);
                 }
               } catch (e) {
@@ -13382,11 +13384,10 @@ finally {
 }
 }
 
-
 // Prefer HTTPS public URL for WhatsApp media (data: URLs often fail on WA routing).
 // Set USE_BASE64_PDF=true to force base64 path (not recommended).
 const USE_BASE64_PDF = String(process.env.USE_BASE64_PDF ?? 'false').toLowerCase() === 'true';
-async function sendPDFViaWhatsApp(to, pdfPath) {
+async function sendPDFViaWhatsApp(to, pdfPath, langHint = null) {
   const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
   
   console.log(`[sendPDFViaWhatsApp] Preparing to send PDF: ${pdfPath}`);
@@ -13404,10 +13405,27 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
     // COPILOT-PATCH-PDF-CAPTION-001: dynamic caption based on filename
          const baseName = path.basename(pdfPath).toLowerCase();
          const isInventory = baseName.startsWith('inventory_short_');
-         const isSalesRaw  = baseName.startsWith('sales_raw_');
-         const caption     = isInventory
-           ? 'Here is your inventory table:'
-           : (isSalesRaw ? 'Here is your sales table:' : 'Here is your invoice:');
+         const isSalesRaw  = baseName.startsWith('sales_raw_');                 
+        let captionKey = isInventory
+              ? 'Here is your inventory table:'
+              : (isSalesRaw ? 'Here is your sales table:' : 'Here is your invoice:');
+            // --- NEW: Localize caption to the current turn's language (hint),
+            //          falling back to the user's saved preference, else English.
+            //          Keep single-script output + ASCII numerals.
+            let lang = String(langHint ?? 'en').toLowerCase();
+            try {
+              const shopId = String(to).replace('whatsapp:', '');
+              const pref = await getUserPreference(shopId).catch(() => null);
+              if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
+            } catch (_) { /* noop */ }
+            let captionLocalized;
+            try {
+              captionLocalized = await t(captionKey, lang, 'pdf-caption');
+            } catch (_) {
+              captionLocalized = captionKey; // safe fallback
+            }
+            captionLocalized = enforceSingleScriptSafe(captionLocalized, lang);
+            captionLocalized = normalizeNumeralsToLatin(captionLocalized).trim();
     
     // Prefer public URL flow unless explicitly overridden
         if (!USE_BASE64_PDF) {
@@ -13417,7 +13435,7 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
           const publicUrl = `${normalizedBaseUrl}/invoice/${fileName}`;
           console.log(`[sendPDFViaWhatsApp] Using public URL: ${publicUrl}`);
           const msg = await client.messages.create({
-            body: caption,
+            body: captionLocalized,
             mediaUrl: [publicUrl],
             from: process.env.TWILIO_WHATSAPP_NUMBER,
             to: formattedTo
@@ -13430,7 +13448,7 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
         const pdfBase64 = pdfBuffer.toString('base64');
         console.log(`[sendPDFViaWhatsApp] Sending as base64 by override`);
         const msg64 = await client.messages.create({
-          body: caption,
+          body: captionLocalized,
           mediaUrl: [`data:application/pdf;base64,${pdfBase64}`],
           from: process.env.TWILIO_WHATSAPP_NUMBER,
           to: formattedTo
@@ -13448,19 +13466,14 @@ async function sendPDFViaWhatsApp(to, pdfPath) {
       const baseUrl = process.env.PUBLIC_URL || `https://${process.env.RAILWAY_SERVICE_NAME}.railway.app`;
       const normalizedBaseUrl = baseUrl.replace(/\/$/, '');
       const publicUrl = `${normalizedBaseUrl}/invoice/${fileName}`;
-      console.log(`[sendPDFViaWhatsApp] Trying fallback URL: ${publicUrl}`);
-      const fb = await client.messages.create({             
-        body: (function () {
-                   // COPILOT-PATCH-PDF-CAPTION-001 (fallback path)
-                   const bn = fileName.toLowerCase();
-                   if (bn.startsWith('inventory_short_')) return 'Here is your inventory table:';
-                   if (bn.startsWith('sales_raw_'))      return 'Here is your sales table:';
-                   return 'Here is your invoice:';
-                 })(),
-        mediaUrl: [publicUrl],
-        from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: formattedTo
-      });
+      console.log(`[sendPDFViaWhatsApp] Trying fallback URL: ${publicUrl}`);            
+      // Reuse localized caption for fallback as well
+            const fb = await client.messages.create({
+              body: captionLocalized,
+              mediaUrl: [publicUrl],
+              from: process.env.TWILIO_WHATSAPP_NUMBER,
+              to: formattedTo
+            });
       console.log(`[sendPDFViaWhatsApp] Fallback message sent. SID: ${fb.sid}`);
       return fb;
     } catch (fallbackError) {
@@ -16684,31 +16697,38 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                               'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
                               uiLangExact,
                               `cta-summary-${shopId}`
-                            );
-                            await sendMessageViaAPI(From, finalizeForSend(prompt, uiLangExact));
+                            );                                                        
+                            // Pin this turn's language: do not let saved DB preference override 'uiLangExact'
+                            let promptTagged = await tagWithLocalizedMode(From, prompt, uiLangExact, { noPrefOverride: true });                                                        
+                            promptTagged = renderNativeglishLabels(promptTagged, uiLangExact);
+                            promptTagged = enforceSingleScriptSafe(promptTagged, uiLangExact);
+                            promptTagged = normalizeNumeralsToLatin(promptTagged).trim();
+                            await sendMessageViaAPI(From, promptTagged, uiLangExact);
                             try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
                             return;
                           }
                         } catch (_) { /* soft-fail: continue */ }
-                
-                        // 1) Compose/send the SAME compact short summary text using existing builder:
-                        //    generateInstantSummary(shopId, languageCode, requestId)
-                        //    (This is what your text/button path already uses.)
-                        //    Ref in whatsapp.js: const msg = await generateInstantSummary(shopId, detectedLanguage, requestId);
-                        //    (See citations in the PR description)
-                        let shortMsg;
+                                        
+                      // 1) Compose the SAME compact short summary text using existing builder.
+                      //    (This is what your text/button path already uses.)
+                      let shortMsg, finalMsg;
                         try {
                           const langCode = String(uiLangExact ?? 'en').toLowerCase();
-                          shortMsg = await generateInstantSummary(shopId, langCode, requestId);
+                          shortMsg = await generateInstantSummary(shopId, langCode, requestId);                                                    
+                          // Apply the same tagging/localization pipeline as text path, but pin this turn's language.
+                          finalMsg = await tagWithLocalizedMode(From, shortMsg, uiLangExact, { noPrefOverride: true });
+                          finalMsg = renderNativeglishLabels(finalMsg, uiLangExact);
+                          finalMsg = enforceSingleScriptSafe(finalMsg, uiLangExact);
+                          finalMsg = normalizeNumeralsToLatin(finalMsg).trim();
                         } catch (e) {
                           // fallback: use diagnostic peek to at least send something compact
                           const stickyAction = await getStickyActionQuick(From);
                           await handleDiagnosticPeek(From, 'short summary', requestId, stickyAction);
                           try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
                           // do not return yet; still attempt PDF below
-                        }
-                        if (shortMsg) {
-                          await sendMessageViaAPI(From, finalizeForSend(shortMsg, uiLangExact));
+                        }                                              
+                      if (finalMsg) {
+                      await sendMessageViaAPI(From, finalMsg, uiLangExact);
                         }
                   
                     // 2) Generate & send the Inventory Short Summary PDF (same generator used in whatsapp.js)
@@ -16719,11 +16739,13 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                       const pdfPath = await generateInventoryShortSummaryPDF(shopId);                                 
                     // Prefer existing helper if present (defined in whatsapp.js); otherwise send URL as text.
                               let sentViaHelper = false;
-                              try {
-                                if (typeof sendPDFViaWhatsApp === 'function') {
-                                  await sendPDFViaWhatsApp(From, pdfPath);
-                                  sentViaHelper = true;
-                                }
+                              try {                                                            
+                              if (typeof sendPDFViaWhatsApp === 'function') {
+                                 // Build a clear caption and let the helper localize it to uiLangExact
+                                 const captionBase = 'Here is your inventory table:';
+                                 await sendPDFViaWhatsApp(From, pdfPath, uiLangExact, { caption: captionBase });
+                                 sentViaHelper = true;
+                              }
                               } catch (_) { /* fall through */ }
                     
                               if (!sentViaHelper) {
@@ -16733,8 +16755,12 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                                 const caption =
                                   fileName.toLowerCase().startsWith('inventory_short_')
                                     ? 'Here is your inventory table:'
-                                    : 'Here is your summary:';
-                                await sendMessageViaAPI(From, finalizeForSend(`${caption}\n${publicUrl}`, uiLangExact));
+                                    : 'Here is your summary:';                                                          
+                          // Pin language for the caption as well
+                          let captionTagged = await tagWithLocalizedMode(From, `${caption}\n${publicUrl}`, uiLangExact, { noPrefOverride: true });
+                          captionTagged = enforceSingleScriptSafe(captionTagged, uiLangExact);
+                          captionTagged = normalizeNumeralsToLatin(captionTagged).trim();
+                          await sendMessageViaAPI(From, captionTagged, uiLangExact);
                               }
                     } catch (e) {
                       // If PDF fails, we still want to complete gracefully
