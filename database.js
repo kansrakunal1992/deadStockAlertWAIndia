@@ -44,6 +44,13 @@ function buildCompositeKeyVariantFilter(fieldName, compositeKey) {
   return `OR(${variants.map(v => `{${fieldName}}='${esc(v)}'`).join(', ')})`;
 }
 
+async function inferUnitFromInventory(shopId, product) {
+   try {
+     const inv = await getProductInventory(shopId, product);
+     return normalizeUnit(inv?.unit || '');
+   } catch { return ''; }
+ }
+
 // === NEW: Build tolerant filters for reads (accept legacy variants) ===
 // Usage: buildShopIdVariantFilter('ShopID', shopId)
 function buildShopIdVariantFilter(fieldName, input) {
@@ -348,9 +355,19 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
       
       // Calculate new quantity in base unit
       const newBaseQty = currentBaseQty + changeBaseQty;
-      
-      // Convert back to normalized unit for storage
-      newQuantity = convertToBaseUnit(newBaseQty, normalizedUnit) / convertToBaseUnit(1, normalizedUnit);
+               
+     // Convert back to the existing unit for storage (do NOT flip units)
+     newQuantity = convertToBaseUnit(newBaseQty, currentUnit) / convertToBaseUnit(1, currentUnit);
+     // Preserve the inventory's unit; keep display/storage unit consistent
+     const storageUnit = currentUnit || normalizedUnit;
+     const createData = {
+       fields: {
+         ShopID: preferredShopId,
+         Product: product,
+         Quantity: newQuantity,
+         Units: storageUnit
+       }
+    };
       
       console.log(`[${context}] Found record ${recordId}, updating: ${currentQty} ${currentUnit} -> ${newQuantity} ${normalizedUnit} (change: ${quantityChange})`);
       
@@ -645,7 +662,7 @@ const currentUnit = getResult.fields.Units ?? '';
 
     
     // Normalize units and convert to base unit for calculation
-    const normalizedUnit = normalizeUnit(unit) || currentUnit;
+    const normalizedUnit = unit ? normalizeUnit(unit) : currentUnit || 'pieces';
     const currentBaseQty = convertToBaseUnit(currentQuantity, currentUnit);
     const changeBaseQty = convertToBaseUnit(quantityChange, normalizedUnit);
     
@@ -772,8 +789,14 @@ async function createSalesRecord(salesData) {
 
 async function getBatchByCompositeKey(compositeKey) {
   const context = `Get Batch by Composite Key`;
-  try {
-    const filterFormula = buildCompositeKeyVariantFilter('CompositeKey', compositeKey);
+  try {        
+    const parts = String(compositeKey).split('\n');
+        const [shopIdRaw, product, purchaseDateRaw] = [parts[0] ?? '', parts[1] ?? '', parts[2] ?? ''];
+        const normalizedDate = toAirtableDateTimeUTC(purchaseDateRaw) ?? purchaseDateRaw;
+        const normalizedKey = makeCompositeKey(shopIdRaw, product, normalizedDate);
+        const ff1 = buildCompositeKeyVariantFilter('CompositeKey', compositeKey);
+        const ff2 = buildCompositeKeyVariantFilter('CompositeKey', normalizedKey);
+        const filterFormula = `OR(${ff1}, ${ff2})`;
     const result = await airtableBatchRequest({
       method: 'get',
       params: { filterByFormula: filterFormula }
@@ -857,13 +880,14 @@ async function recreateBatchAndUpdate(compositeKey, quantityChange, unit, contex
   
   try {
     console.log(`[${context}] Creating new batch record...`);
-    // Create a new batch record
-    const recreateResult = await createBatchRecord({
-      shopId,
-      product,
-      quantity: 0, // Start with 0
-      unit,
-      purchaseDate
+    // Create a new batch record        
+    const inferredUnit = unit || await inferUnitFromInventory(shopId, product) || 'pieces';
+     const recreateResult = await createBatchRecord({
+       shopId,
+       product,
+       quantity: 0,
+       unit: inferredUnit,
+       purchaseDate
     });
     
     if (!recreateResult.success) {
@@ -1354,9 +1378,9 @@ async function batchUpdateInventory(updates) {
         
         // Calculate new quantity in base unit
         const newBaseQty = currentBaseQty + changeBaseQty;
-        
-        // Convert back to normalized unit for storage
-        newQuantity = convertToBaseUnit(newBaseQty, normalizedUnit) / convertToBaseUnit(1, normalizedUnit);
+                        
+        // Convert back to the existing record's unit to avoid silent unit flips
+         newQuantity = convertToBaseUnit(newBaseQty, currentUnit) / convertToBaseUnit(1, currentUnit);
         
         // Delete the old record
         await airtableRequest({
@@ -1373,7 +1397,7 @@ async function batchUpdateInventory(updates) {
             ShopID: preferredShopId,
             Product: product,
             Quantity: newQuantity,
-            Units: normalizedUnit
+            Units: currentUnit || normalizedUnit // fall back only if the record had no unit
           }
         };
         
