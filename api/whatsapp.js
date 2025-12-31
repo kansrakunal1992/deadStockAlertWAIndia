@@ -6152,7 +6152,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                   // Optional safety check (mirrors your invoice flow):
                   if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);                                    
                   // Pass current UI language so caption matches the text summary language
-                  const msg = await sendPDFViaWhatsApp(from, pdfPath, btnLang);
+                  const msg = await sendPDFViaWhatsApp(From, pdfPath, btnLang);
                   console.log(`[interactive] Inventory summary PDF sent. SID: ${msg?.sid}`);
                 } catch (e) {
                   console.warn('[interactive] inventory PDF send failed', e?.message);
@@ -7707,7 +7707,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
         if (typeof fs !== 'undefined' && fs.existsSync && !fs.existsSync(pdfPath)) {
           throw new Error(`Generated PDF file not found: ${pdfPath}`);
         }
-        const msg = await sendPDFViaWhatsApp(from, pdfPath, btnLang); // From is 'whatsapp:<shopId>'
+        const msg = await sendPDFViaWhatsApp(From, pdfPath, btnLang); // From is 'whatsapp:<shopId>'
         console.log(`[qq] Inventory summary PDF sent. SID: ${msg?.sid}`);
       } catch (e) {
         console.warn('[qq] inventory PDF send failed', e?.message);
