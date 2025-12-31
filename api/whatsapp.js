@@ -15850,15 +15850,14 @@ async function sendReturnConfirmationOnce(
 
 // Async processing for voice messages
 async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState) {
-  try {    
-    // --- Guard legacy references that caused "guidance is not defined" in logs.
-    //     (Prevents voice-cmd short-circuit from crashing on undefined symbol)
-    //     Ref: [voice-cmd-unified-error: guidance is not defined]
-    //     Logs show: [voice-cmd-unified] error: { code: 'voice-cmd-unified-error', message: 'guidance is not defined' }
-    //     We keep a safe default here so any stray usage won't break the turn.
-    /* eslint-disable no-unused-vars */
-    let guidance = typeof guidance !== 'undefined' ? guidance : null;
-    /* eslint-enable no-unused-vars */
+  try {            
+    // Safe probe for optional global "guidance" without introducing TDZ or shadowing.
+        // If some downstream code accesses globalThis.guidance, it will exist (possibly null).
+        try {
+          if (typeof globalThis !== 'undefined' && typeof globalThis.guidance === 'undefined') {
+            globalThis.guidance = null;
+          }
+        } catch (_) { /* noop */ }
     console.log(`[${requestId}] [1] Downloading audio...`);
     const audioBuffer = await downloadAudio(MediaUrl0);
     console.log(`[${requestId}] [2] Converting audio...`);
