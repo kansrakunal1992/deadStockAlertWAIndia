@@ -7277,18 +7277,22 @@ async function _sendConfirmOnceByBody(From, detectedLanguage, requestId, body) {
   await sendMessageViaAPI(From, final);
 }
 
-function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity }) {
-  const unitText = unit ? ` ${unit}` : '';
+function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity, aggregate, overallStock, overallUnit }) {
+   // Prefer aggregate/overall stock returned by DB helpers; fallback to newQuantity
+   const stockQty  = overallStock ?? (aggregate?.total ?? newQuantity);
+   const stockUnit = overallUnit ?? (aggregate?.unit ?? unit);
+   const unitText  = stockUnit ? ` ${stockUnit}` : '';
 
   const qtyNum = Number(qty);
   const priceNum = Number(pricePerUnit);
 
   const hasPrice = Number.isFinite(priceNum) && priceNum >= 0; // show ₹0.00 if valid zero
-  const perUnitText = unit ? `/${unit}` : '';
-  const priceText = hasPrice ? ` at ₹${priceNum.toFixed(2)}${perUnitText}` : '';
+  const perUnitText = stockUnit ? `/${stockUnit}` : '';
 
-  const hasStock = newQuantity !== undefined && newQuantity !== null;
-  const stockText = hasStock ? ` (Stock: ${newQuantity}${unitText})` : '';
+  const priceText = hasPrice ? ` at ₹${priceNum.toFixed(2)}${perUnitText}` : '';
+  
+  const hasStock = stockQty !== undefined && stockQty !== null;
+  const stockText = hasStock ? ` (Stock: ${stockQty}${unitText})` : '';
 
   const productName =
     (typeof product === 'string' ? product.trim() : '') || 'item';
@@ -12732,16 +12736,23 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           }
           // Keep a success flag similar to old `result` shape
           result = { success: true };          
-          // NEW: fetch post-sale inventory so confirmation shows correct stock
-              try {
-                const invAfter = await getProductInventory(shopId, productRawForDb);
-                if (invAfter && invAfter.quantity !== undefined) {
-                  result.newQuantity = invAfter.quantity;
-                  result.unit = invAfter.unit || update.unit;
-                }
-              } catch (e) {
-                console.warn(`[Update ${shopId} - ${product}] Post-sale inventory fetch failed:`, e.message);
-              }
+                    
+          // Prefer helper's aggregate (overall) stock; keep DB peek as fallback only
+           let overallQty  = saleGuard?.overallStock ?? null;
+           let overallUnit = saleGuard?.overallUnit  ?? null;
+           if (overallQty === null || overallUnit === null) {
+             try {
+               const invAfter = await getProductInventory(shopId, productRawForDb);
+               if (invAfter && invAfter.quantity !== undefined) {
+                 result.newQuantity = invAfter.quantity;
+                 result.unit = invAfter.unit || update.unit;
+                 overallQty  = invAfter.quantity;
+                 overallUnit = invAfter.unit || update.unit;
+               }
+             } catch (e) {
+               console.warn(`[Update ${shopId} - ${productRawForDb}] Post-sale inventory fallback fetch failed:`, e.message);
+             }
+          }
 
           // Prefer the helper's opening-batch key if it created one
           if (!selectedBatchCompositeKey && saleGuard.selectedBatchCompositeKey) {
@@ -12916,19 +12927,22 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             // Add transaction logging
             console.log(`[Transaction] Sale processed - Product: ${product}, Qty: ${Math.abs(update.quantity)}, Price: ${salePrice}, Total: ${saleValue}`);
                                                 
-            // Send a single confirmation (dedup) and append stock if we have it
-              await sendSaleConfirmationOnce(
-                `whatsapp:${shopId}`,
-                lang,
-                'sale-confirmation', // requestId scope for dedupe
-                {
-                  product: productRawForDb,
-                  qty: Math.abs(update.quantity),
-                  unit: update.unit,
-                  pricePerUnit: salePrice,
-                  newQuantity: result?.newQuantity   // ensures "Stock: 5 liters" gets appended
-                }
-              );
+            // Send a single confirmation (dedup) and append stock if we have it                          
+            await sendSaleConfirmationOnce(
+               `whatsapp:${shopId}`,
+               lang,
+               'sale-confirmation', // requestId scope for dedupe
+               {
+                 product: productRawForDb,
+                 qty: Math.abs(update.quantity),
+                 unit: overallUnit ?? update.unit,    // display unit for the line
+                 pricePerUnit: salePrice,
+                 overallStock: overallQty ?? null,    // primary for Patch C composer
+                 overallUnit:  overallUnit ?? update.unit,
+                 // keep legacy fallback if composer needs it
+                 newQuantity: result?.newQuantity
+               }
+             );
                         
             // --- NEW: start a short override window (2 min) only if multiple batches exist ---
              try {
@@ -12974,10 +12988,12 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
             const compactLine = (() => {
               const qty = Math.abs(update.quantity);
-              const pricePart = salePrice > 0 ? ` @ ₹${salePrice}` : ''; // Fixed: Use salePrice
-              const stockPart = (result?.newQuantity !== undefined)
-                ? `. Stock: ${result.newQuantity} ${result?.unit ?? update.unit}`
-                : '';
+              const pricePart = salePrice > 0 ? ` @ ₹${salePrice}` : ''; // Fixed: Use salePrice                            
+              const stockQty  = saleGuard?.overallStock ?? result?.newQuantity;
+               const stockUnit = saleGuard?.overallUnit  ?? result?.unit ?? update.unit;
+               const stockPart = (stockQty !== undefined && stockQty !== null)
+                 ? `. Stock: ${stockQty} ${stockUnit}`
+                 : '';
               return `✅ Sold ${qty} ${update.unit} ${productRawForDb}${pricePart}${stockPart}`;
             })();
 
