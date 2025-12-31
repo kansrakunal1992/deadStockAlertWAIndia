@@ -1101,46 +1101,51 @@ async function isFeatureAvailable(shopId, feature) {
   const context = `Check Feature Availability ${shopId}`;
   try {
     const { plan, trialEndDate } = await getUserPlan(shopId);
-    
-    // Check if trial has expired
-    const isTrialExpired = trialEndDate && new Date() > trialEndDate;
-    
-    // Feature availability matrix
+    const planKey = String(plan ?? 'free_demo').toLowerCase();
+
+    const isTrialExpired =
+      (planKey === 'trial' || planKey === 'free_demo_first_50') &&
+      !!trialEndDate && new Date() > trialEndDate;
+
+    // Add explicit 'trial' behavior
     const featureMatrix = {
-      // Daily summaries
-      'daily_summary': {                
-        'free_demo': true,                 // 1 per day
-        'free_demo_first_50': !isTrialExpired, // Unlimited during trial
+      // Daily summaries: allowed on paid/standard/enterprise; trial allowed until expiry; free_demo limited
+      'daily_summary': {
+        'free_demo': true,                // e.g., one per day if you enforce elsewhere
+        'free_demo_first_50': !isTrialExpired,
+        'trial': !isTrialExpired,
         'standard': true,
         'enterprise': true,
-        'paid': true                       // <-- allow paid users
+        'paid': true
       },
-      // AI summaries
-      'ai_summary': {                
+      // AI summaries: allow on paid/standard/enterprise; trial allowed; tweak free_demo as you want
+      'ai_summary': {
+        'free_demo': true,                // keep your current behavior; change to false if needed
+        'free_demo_first_50': true,
+        'trial': true,
+        'standard': true,
+        'enterprise': true,
+        'paid': true
+      },
+      // Replies: allow broadly; trial allowed until expiry
+      'replies': {
         'free_demo': true,
-        'free_demo_first_50': true,        // Full access during trial
+        'free_demo_first_50': !isTrialExpired,
+        'trial': !isTrialExpired,
         'standard': true,
         'enterprise': true,
-        'paid': true                       // <-- allow paid users
-      },
-      // Replies limit
-      'replies': {               
-        'free_demo': true,                 // 50 total
-        'free_demo_first_50': !isTrialExpired, // Unlimited during trial
-        'standard': true,
-        'enterprise': true,
-        'paid': true                       // <-- allow paid users
+        'paid': true
       }
-    };       
-    const allowed = featureMatrix[feature]?.[planKey] ?? false;
-      try { console.info('[features]', { shopId, feature, plan: planKey, allowed, trialEndDate }); } catch (_){}
-      return allowed;
+    };
+
+    const allowed = !!(featureMatrix[feature]?.[planKey]);
+    try { console.info('[features]', { shopId, feature, plan: planKey, allowed, trialEndDate }); } catch (_) {}
+    return allowed;
   } catch (error) {
     logError(context, error);
     return false;
   }
 }
-
 
 // Get user preference from Airtable
 async function getUserPreference(shopId) {
