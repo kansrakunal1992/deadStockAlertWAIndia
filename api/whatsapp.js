@@ -11315,7 +11315,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
     // Guard: don't let "inventory value/valuation/value summary" slip into stock branch  
     {      
 // Prevent "inventory value/valuation/value summary" from falling into the stock branch
-      const m = text.match(/^(?:stock|inventory|qty)\s+
+      const m = text.match(/^(?:stock|inventory|qty)\s+(?!value(?:\s|$)|valuation(?:\s|$)|value\s*summary\b)(.+)$/i);
       if (m) {
         const raw = m[1].trim();                
         await handleQuickQueryEN(`stock ${raw}`, From, detectedLanguage, `${requestId}::alias-stock`);
