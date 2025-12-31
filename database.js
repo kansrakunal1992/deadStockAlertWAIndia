@@ -21,6 +21,29 @@ function normalizeShopIdForWrite(input) {
   return `+91${canon}`;
 }
 
+// === NEW: canonical CompositeKey builder (ShopID normalized, date ISO-safe) ===
+function makeCompositeKey(shopId, product, purchaseDate) {
+  const preferred = normalizeShopIdForWrite(shopId);
+  // keep date exactly as passed if caller already uses ISO; otherwise toAirtableDateTimeUTC
+  const iso = toAirtableDateTimeUTC(purchaseDate) ?? purchaseDate;
+  return `${preferred}\n${String(product)}\n${String(iso)}`;
+}
+
+// === NEW: tolerant CompositeKey filter (accept legacy ShopID variants) ===
+function buildCompositeKeyVariantFilter(fieldName, compositeKey) {
+  const parts = String(compositeKey).split('\n');
+  const [shopIdRaw, product, purchaseDate] = [parts[0] ?? '', parts[1] ?? '', parts[2] ?? ''];
+  const canon = getCanonicalShopId(shopIdRaw);
+  const variants = Array.from(new Set([
+    `+91${canon}`,
+    `${canon}`,
+    `91${canon}`,
+    `0${canon}`
+  ])).map(v => `${v}\n${product}\n${purchaseDate}`);
+  const esc = s => String(s).replace(/'/g, "''");
+  return `OR(${variants.map(v => `{${fieldName}}='${esc(v)}'`).join(', ')})`;
+}
+
 // === NEW: Build tolerant filters for reads (accept legacy variants) ===
 // Usage: buildShopIdVariantFilter('ShopID', shopId)
 function buildShopIdVariantFilter(fieldName, input) {
@@ -389,11 +412,11 @@ async function createBatchRecord(batchData) {
     const normalizedUnit = batchData.unit ? normalizeUnit(batchData.unit) : 'pieces';
     const preferredShopId = normalizeShopIdForWrite(batchData.shopId);
     
-    // Use provided purchase date or current timestamp
-    const purchaseDate = batchData.purchaseDate || new Date().toISOString();
+    // Use provided purchase date or current timestamp        
+    const purchaseDate = batchData.purchaseDate ?? new Date().toISOString();
     
-    // Generate composite key
-    const compositeKey = `${preferredShopId}\n${batchData.product}\n${purchaseDate}`;
+    // Generate composite key (normalized ShopID, ISO purchase date)
+    const compositeKey = makeCompositeKey(batchData.shopId, batchData.product, purchaseDate);
     
     // Check if batch with same composite key already exists
     const existingBatch = await getBatchByCompositeKey(compositeKey);
@@ -718,9 +741,9 @@ async function createSalesRecord(salesData) {
     const salePrice = salesData.salePrice || 0;
     const saleValue = salePrice * Math.abs(salesData.quantity);
     
-    const createData = {
-      fields: {
-        ShopID: salesData.shopId,
+    const createData = {          
+    fields: {
+        ShopID: normalizeShopIdForWrite(salesData.shopId),
         Product: salesData.product,
         Quantity: salesData.quantity, // This will be negative
         SaleDate: salesData.saleDate,
@@ -750,7 +773,7 @@ async function createSalesRecord(salesData) {
 async function getBatchByCompositeKey(compositeKey) {
   const context = `Get Batch by Composite Key`;
   try {
-    const filterFormula = `{CompositeKey} = '${compositeKey}'`;
+    const filterFormula = buildCompositeKeyVariantFilter('CompositeKey', compositeKey);
     const result = await airtableBatchRequest({
       method: 'get',
       params: { filterByFormula: filterFormula }
@@ -771,8 +794,11 @@ async function updateBatchQuantityByCompositeKey(compositeKey, quantityChange, u
   try {
     console.log(`[${context}] Updating batch ${compositeKey} by ${quantityChange} ${unit}`);
     
-    // Get the batch by composite key
+    // Get the batch by composite key        
     let batch = await getBatchByCompositeKey(compositeKey);
+      if (!batch) {
+        batch = await getBatchByCompositeKey(makeCompositeKey(...String(compositeKey).split('\n')));
+      }
     
     if (!batch) {
       console.log(`[${context}] Batch not found by composite key, recreating...`);
@@ -855,8 +881,10 @@ async function recreateBatchAndUpdate(compositeKey, quantityChange, unit, contex
     await new Promise(resolve => setTimeout(resolve, 500));
     
     // Get the newly created batch
-    console.log(`[${context}] Retrieving newly created batch...`);
-    const newBatch = await getBatchByCompositeKey(compositeKey);
+    console.log(`[${context}] Retrieving newly created batch...`);      
+    const normalizedCompositeKey = makeCompositeKey(shopId, product, purchaseDate);
+    const newBatch = await getBatchByCompositeKey(normalizedCompositeKey);
+
     if (!newBatch) {
       console.error(`[${context}] Could not retrieve recreated batch`);
       return {
@@ -875,7 +903,8 @@ async function recreateBatchAndUpdate(compositeKey, quantityChange, unit, contex
       console.log(`[${context}] Successfully updated recreated batch`);
       return {
         ...updateResult,
-        recreated: true
+        recreated: true,
+        compositeKey: normalizedCompositeKey
       };
     } catch (updateError) {
       console.error(`[${context}] Failed to update recreated batch:`, updateError.message);
@@ -1396,9 +1425,9 @@ async function batchUpdateInventory(updates) {
 async function savePendingTranscription(shopId, transcript, detectedLanguage) {
   const context = `Save Pending Transcription ${shopId}`;
   try {
-    const createData = {
-      fields: {
-        ShopID: shopId,
+    const createData = {         
+    fields: {
+        ShopID: normalizeShopIdForWrite(shopId),
         Transcript: transcript,
         DetectedLanguage: detectedLanguage,
         Timestamp: new Date().toISOString()
@@ -1831,9 +1860,9 @@ async function upsertAuthUserDetails(shopId, { name, gstin = null, address = '',
   const context = `Upsert AuthUser Details ${shopId}`;
   try {
     const nowISO = new Date().toISOString();
-    const record = await getAuthUserRecord(shopId);
+    const record = await getAuthUserRecord(shopId);        
     const fields = {
-      ShopID: shopId,
+      ShopID: normalizeShopIdForWrite(shopId),
       Name: String(name ?? '').trim(),
       Address: String(address ?? '').trim(),
       Phone: String(phone ?? shopId ?? '').trim(),
@@ -1876,9 +1905,9 @@ async function startTrialForAuthUser(shopId, days = TRIAL_DAYS, details = null) 
         }
     const now = new Date();
     const end = new Date(now); end.setDate(end.getDate() + Number(days ?? 3));
-    const existing = await getAuthUserRecord(shopId);
+    const existing = await getAuthUserRecord(shopId);        
     const fields = {
-      ShopID: shopId,
+      ShopID: normalizeShopIdForWrite(shopId),
       StatusUser: 'active',
       LastUsed: now.toISOString()
     };
@@ -1930,9 +1959,9 @@ async function markAuthUserPaid(shopId) {
 async function recordPaymentEvent({ shopId, amount, status, gateway = 'razorpay', payload = {} }) {
   const context = `Record Payment ${shopId}`;
   try {
-    const createData = {
-      fields: {
-        ShopID: String(shopId || '').trim(),
+    const createData = {          
+    fields: {
+        ShopID: normalizeShopIdForWrite(shopId),
         Amount: Number(amount || 0),
         Status: String(status || '').toLowerCase(),
         Gateway: gateway,
@@ -2340,8 +2369,7 @@ async function getExpiringProducts(shopId, daysAhead = 7, { strictExpired = fals
       )`;
     }
 
-    // Ensure no HTML entity leakage in the formula string
-    filterFormula = filterFormula.replace(/&gt;/g, '>').replace(/&lt;/g, '<');
+    // DO NOT escape comparison operators; Airtable formulas expect raw '>' and '<'
     console.info(`[${context}]`, { table: BATCH_TABLE_NAME, filterFormula });
     const result = await airtableBatchRequest({
       method: 'get',
