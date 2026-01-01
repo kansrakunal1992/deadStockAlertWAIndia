@@ -873,65 +873,6 @@ async function sendMultiPriceRequiredNudge(From, items, langHint = 'en') {
    flush(); return out.join('');
  }
 
- // ===== Localized single-product stock query =====
-// NEW: extract product from "stock <product>" / "<product> stock" / "inventory <product>"
-function extractProductFromStockQuery(text) {
-  try {
-    const s = String(text || '').trim();
-    let m = s.match(/^stock\s+([^\n]{1,64})$/i);
-    if (m) return m[1].trim();
-    m = s.match(/^([^\n]{1,64})\s+stock$/i);
-    if (m) return m[1].trim();
-    m = s.match(/^inventory\s+([^\n]{1,64})$/i);
-    if (m) return m[1].trim();
-  } catch (_) {}
-  return null;
-}
-
-// NEW: per-product stock handler (DB-safe name for reads; UI-only translation)
-async function handleProductStockQuery(From, text, langHint = 'en') {
-  try {
-    const productRaw = extractProductFromStockQuery(text);
-    const shopId = shopIdFrom(From);
-    const lang = ensureLangExact(langHint || 'en');
-    if (!productRaw) {
-      const msg = await t('Please type: "stock <product>" e.g., "stock milk".', lang, 'product-stock::hint');
-      const tagged = await tagWithLocalizedMode(From, finalizeForSend(msg, lang), lang, { noPrefOverride: true });
-      await sendMessageViaAPI(From, tagged);
-      return;
-    }
-    // DB read (exact match)
-    const inv = await getProductInventory(shopId, productRaw).catch(() => null);
-    let body;
-    if (inv?.success && Number.isFinite(inv.quantity)) {
-      // UI-friendly display name; DO NOT translate DB keys
-      const displayName = await translateProductName(productRaw, 'product-stock-ui').catch(() => productRaw);
-      const unitDisp = displayUnit(inv.unit || 'pieces', lang);
-      body = `• ${displayName} — ${inv.quantity} ${unitDisp}`;
-    } else {
-      // Fallback with gentle nudge
-      body = await t(`No exact match for “${productRaw}”. Try: "stock milk", "stock Parle-G", or send a voice note.`, lang, `product-stock::nomatch:${productRaw}`);
-    }
-    const tagged = await tagWithLocalizedMode(From, finalizeForSend(nativeglishWrap(body, lang), lang), lang, { noPrefOverride: true });
-    await sendMessageViaAPI(From, tagged);
- } catch (e) {
-    console.warn('[product-stock] failed:', e?.message);
-  }
-}
-
- // (Primary router likely calls specialized operations when no inventory updates)
- // Add a small dispatcher to handle the new terminal command.
-async function dispatchTerminalCommand(From, normalizedCommand, originalText, langHint) {
-  try {
-    const cmd = String(normalizedCommand || '').toLowerCase().trim();
-    if (cmd === 'product stock') {
-      await handleProductStockQuery(From, originalText, langHint);
-      return true;
-    }
-    return false;
-  } catch (_) { return false; }
-}
-
 // ------------------------------------------------------------------------
 // [PATCH] Hindi roman number words -> digits (lightweight normalizer)
 // ------------------------------------------------------------------------
@@ -2201,23 +2142,6 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
       }
     }
       
-  // --- NEW: lightweight stock-<product> detection (if alias not set) ---
-  // Examples: "stock milk", "milk stock", "inventory milk"
-  if (!normalizedCommand) {
-    const t = String(text || '').trim();
-    const rx1 = /^stock\s+([^\n]{1,64})$/i;          // stock <name>
-    const rx2 = /^([^\n]{1,64})\s+stock$/i;          // <name> stock
-    const rx3 = /^inventory\s+([^\n]{1,64})$/i;      // inventory <name>
-    const m = t.match(rx1) || t.match(rx2) || t.match(rx3);
-    if (m) {
-      route.kind = 'command';
-      route.command = { normalized: 'product stock' };
-      normalizedCommand = 'product stock';
-      // Preserve language chosen for this turn
-      route.language = hintedLang;
-      // (product name will be extracted at dispatch time)
-    }
-  }
     // --- END: alias-based command normalization ---
           
     // --- Topic detection (fast-path, local) ---
@@ -3051,8 +2975,7 @@ const TERMINAL_COMMANDS = new Set([
   'inventory value',
   'stock value',
   // Reset (if used)
-  'reset',
-  'product stock'
+  'reset'
 ]);
 
 // Robust alias-depth counter (handles ':alias' and '::ai-norm' forms).
@@ -6935,7 +6858,8 @@ const {
   applySaleWithReconciliation,
   reattributeSaleToBatch,
   upsertAuthUserDetails,
-  refreshUserStateTimestamp
+  refreshUserStateTimestamp,
+  findProductMatches
 } = require('../database');
 
 // ===== ShopID helpers ========================================================
@@ -7608,7 +7532,8 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       handledRequests.add(String(source || 'qq') + '::terminal'); // suppress late apologies in-cycle
     }
   } catch (_) { /* noop */ }
-  const shopId = shopIdFrom(From);    
+  const shopId = shopIdFrom(From);  
+
   const sendTagged = async (body, opts = {}) => {
       // per-command cache key (already unique & scoped)
       const msg0 = await tx(body, lang, From, cmd, `qq-${cmd}-${shopId}`);
@@ -7622,7 +7547,45 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       // Thread through any caller-provided opts (e.g., { noPrefOverride: true })
       await sendMultiPartWithFooter(From, normalized, lang, opts);
     };
-   
+  
+  // ========= [UNIQ:QQ-STOCK-001] Single-product stock query =========
+  // Accepts: "stock <product>" (already routed here by your alias block under // 1) Stock for product)
+  // Returns a localized one-liner: "• Milk — 12 liters"
+  {
+    const m = String(cmd || '').match(/^stock\s+(.{1,64})$/i);
+    if (m) {
+      const productRaw = m[1].trim();
+      // DB read (exact, case-insensitive; your DB layer normalizes product key)
+      let inv = null;
+      try { inv = await getProductInventory(shopId, productRaw); } catch { inv = null; }
+      if (inv?.success && Number.isFinite(inv.quantity)) {
+        // UI-friendly display name; DO NOT translate DB keys for reads
+        const displayName = await translateProductName(productRaw, 'product-stock-ui').catch(() => productRaw);
+        const unitDisp = displayUnit(inv.unit || 'pieces', lang);
+        const line = `• ${displayName} — ${inv.quantity} ${unitDisp}`;
+        await sendTagged(nativeglishWrap(line, lang), { langHint: lang });
+        return; // terminal
+      }
+      // Optional: suggest close matches (top 3) when no exact hit
+      let suggestion = '';
+      try {
+        const matches = await findProductMatches(shopId, productRaw, 3);
+        if (matches?.length) {
+          const bullets = matches.map(x => `• ${x.name}`).join('\n');
+          suggestion = `\nDid you mean:\n${bullets}`;
+        }
+      } catch { /* best effort */ }
+      const msg = await t(
+        `No exact match for “${productRaw}”. Try: "stock milk", "stock Parle-G", or send a voice note.${suggestion}`,
+        lang,
+        `product-stock::nomatch:${productRaw}`
+      );
+      await sendTagged(msg, { langHint: lang });
+      return; // terminal
+    }
+  }
+  // ======== [/UNIQ:QQ-STOCK-001] End single-product stock =========
+ 
   // ---- NEW: Expiring / Expired handler ------------------------------------
     try {
       const cmdLc = String(cmd).trim().toLowerCase();
