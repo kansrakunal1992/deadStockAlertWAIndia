@@ -44,6 +44,36 @@ function buildCompositeKeyVariantFilter(fieldName, compositeKey) {
   return `OR(${variants.map(v => `{${fieldName}}='${esc(v)}'`).join(', ')})`;
 }
 
+// -------- OPTIONAL HELPER: simple fuzzy product matches (top 3) ----------
+// Place near other quick-query helpers; keep after module.exports if your bundler requires hoisting.
+async function findProductMatches(shopId, query, limit = 3) {
+  const context = `Find Matches ${shopId}`;
+  try {
+    const q = String(query || '').toLowerCase().trim();
+    if (!q) return [];
+    const list = await getAllProducts(shopId);
+    // naive score: prefix > substring > Levenshtein-lite
+    const score = (name) => {
+      const n = String(name || '').toLowerCase();
+      if (n.startsWith(q)) return 3;
+      if (n.includes(q)) return 2;
+      // simple diff count (not true Levenshtein, keeps it dependency-free)
+      const a = n.split(' '), b = q.split(' ');
+      const overlap = a.filter(tok => b.includes(tok)).length;
+      return overlap > 0 ? 1 : 0;
+    };
+    const ranked = list
+      .map(p => ({ name: p.name, unit: p.unit ?? 'pieces', s: score(p.name) }))
+      .filter(x => x.s > 0)
+      .sort((x, y) => y.s - x.s)
+      .slice(0, limit);
+    return ranked;
+  } catch (e) {
+    logError(context, e);
+    return [];
+  }
+}
+
 async function inferUnitFromInventory(shopId, product) {
    try {
      const inv = await getProductInventory(shopId, product);
@@ -3380,5 +3410,6 @@ module.exports = {
   isFeatureAvailable,
   upsertAuthUserDetails,
   recordPaymentEvent,
-  refreshUserStateTimestamp
+  refreshUserStateTimestamp,
+  findProductMatches
 };
