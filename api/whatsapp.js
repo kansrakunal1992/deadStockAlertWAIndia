@@ -19993,7 +19993,35 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   }
 
   // ✅ Text branch
-  if (Body) {      
+  if (Body) {            
+  // --- BEGIN: pre-ML deterministic dispatch for stock/batches (text) ---
+      try {
+        // Strip danda/double-danda; normalize to a light, lowercase form
+        const src = String(Body || '').replace(/[\u0964\u0965]/g, '').trim();
+        const t   = safeNormalizeForQuickQuery(src);
+        // Stock/inventory/qty — avoid "inventory value"/"valuation"/"value summary"
+        const mStock = t.match(/^(?:stock|inventory|qty)\s+(?!value(?:\s|$)|valuation(?:\s|$)|value\s*summary\b)(.+)$/i);
+        if (mStock) {
+          const raw = mStock[1].trim().replace(/[।。.!;,:\u0964\u0965]+$/u, '');
+          console.log(`[${requestId}] [HNI-preML] dispatch handleQuickQueryEN("stock ${raw}")`);
+          await handleQuickQueryEN(`stock ${raw}`, From, detectedLanguage, `${requestId}::preml-text`);
+          try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
+          handledRequests.add(requestId);
+          return res.send('<Response></Response>');
+        }
+        // Batches / expiry
+        const mBatch = t.match(/^(?:batches?|expiry)\s+(.+)$/i);
+        if (mBatch) {
+          const raw = mBatch[1].trim().replace(/[।。.!;,:\u0964\u0965]+$/u, '');
+          console.log(`[${requestId}] [HNI-preML] dispatch handleQuickQueryEN("batches ${raw}")`);
+          await handleQuickQueryEN(`batches ${raw}`, From, detectedLanguage, `${requestId}::preml-text`);
+          try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
+          handledRequests.add(requestId);
+          return res.send('<Response></Response>');
+        }
+      } catch (_) { /* best effort */ }
+      // --- END: pre-ML deterministic dispatch for stock/batches (text) ---
+
     // ===== EARLY EXIT: AI orchestrator before any inventory parse =====
     try {
       const orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
@@ -20158,7 +20186,32 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           console.log(`[${requestId}] [HNI] skipping quick-query in sticky/txn turn`);
               }
         } else {                     
-            const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
+            const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');          
+          // --- BEGIN: explicit STOCK/BATCHES specialized-op dispatch (pre-CTA) ---
+          {
+            const mStock = String(normalized).match(
+              /^(?:stock|inventory|qty)\s+(?!value(?:\s|$)|valuation(?:\s|$)|value\s*summary\b)(.+)$/i
+            );
+            if (mStock) {
+              const raw = mStock[1].trim().replace(/[।。.!;,:\u0964\u0965]+$/u, '');
+              console.log(`[${requestId}] [HNI-specops] dispatch handleQuickQueryEN("stock ${raw}")`);
+              await handleQuickQueryEN(`stock ${raw}`, From, detectedLanguage, `${requestId}::alias-stock-hni`);
+              try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
+              handledRequests.add(requestId);
+              return res.send('<Response></Response>'); // stop before CTA
+            }
+            const mBatch = String(normalized).match(/^(?:batches?|expiry)\s+(.+)$/i);
+            if (mBatch) {
+              const raw = mBatch[1].trim().replace(/[।。.!;,:\u0964\u0965]+$/u, '');
+              console.log(`[${requestId}] [HNI-specops] dispatch handleQuickQueryEN("batches ${raw}")`);
+              await handleQuickQueryEN(`batches ${raw}`, From, detectedLanguage, `${requestId}::alias-batches-hni`);
+              try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
+              handledRequests.add(requestId);
+              return res.send('<Response></Response>');
+            }
+          }
+          // --- END: explicit STOCK/BATCHES specialized-op dispatch (pre-CTA) ---
+
             const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
           if (handledQuick) {
               __handled = true;
