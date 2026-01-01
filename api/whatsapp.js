@@ -873,6 +873,65 @@ async function sendMultiPriceRequiredNudge(From, items, langHint = 'en') {
    flush(); return out.join('');
  }
 
+ // ===== Localized single-product stock query =====
+// NEW: extract product from "stock <product>" / "<product> stock" / "inventory <product>"
+function extractProductFromStockQuery(text) {
+  try {
+    const s = String(text || '').trim();
+    let m = s.match(/^stock\s+([^\n]{1,64})$/i);
+    if (m) return m[1].trim();
+    m = s.match(/^([^\n]{1,64})\s+stock$/i);
+    if (m) return m[1].trim();
+    m = s.match(/^inventory\s+([^\n]{1,64})$/i);
+    if (m) return m[1].trim();
+  } catch (_) {}
+  return null;
+}
+
+// NEW: per-product stock handler (DB-safe name for reads; UI-only translation)
+async function handleProductStockQuery(From, text, langHint = 'en') {
+  try {
+    const productRaw = extractProductFromStockQuery(text);
+    const shopId = shopIdFrom(From);
+    const lang = ensureLangExact(langHint || 'en');
+    if (!productRaw) {
+      const msg = await t('Please type: "stock <product>" e.g., "stock milk".', lang, 'product-stock::hint');
+      const tagged = await tagWithLocalizedMode(From, finalizeForSend(msg, lang), lang, { noPrefOverride: true });
+      await sendMessageViaAPI(From, tagged);
+      return;
+    }
+    // DB read (exact match)
+    const inv = await getProductInventory(shopId, productRaw).catch(() => null);
+    let body;
+    if (inv?.success && Number.isFinite(inv.quantity)) {
+      // UI-friendly display name; DO NOT translate DB keys
+      const displayName = await translateProductName(productRaw, 'product-stock-ui').catch(() => productRaw);
+      const unitDisp = displayUnit(inv.unit || 'pieces', lang);
+      body = `• ${displayName} — ${inv.quantity} ${unitDisp}`;
+    } else {
+      // Fallback with gentle nudge
+      body = await t(`No exact match for “${productRaw}”. Try: "stock milk", "stock Parle-G", or send a voice note.`, lang, `product-stock::nomatch:${productRaw}`);
+    }
+    const tagged = await tagWithLocalizedMode(From, finalizeForSend(nativeglishWrap(body, lang), lang), lang, { noPrefOverride: true });
+    await sendMessageViaAPI(From, tagged);
+ } catch (e) {
+    console.warn('[product-stock] failed:', e?.message);
+  }
+}
+
+ // (Primary router likely calls specialized operations when no inventory updates)
+ // Add a small dispatcher to handle the new terminal command.
+async function dispatchTerminalCommand(From, normalizedCommand, originalText, langHint) {
+  try {
+    const cmd = String(normalizedCommand || '').toLowerCase().trim();
+    if (cmd === 'product stock') {
+      await handleProductStockQuery(From, originalText, langHint);
+      return true;
+    }
+    return false;
+  } catch (_) { return false; }
+}
+
 // ------------------------------------------------------------------------
 // [PATCH] Hindi roman number words -> digits (lightweight normalizer)
 // ------------------------------------------------------------------------
@@ -2141,6 +2200,24 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         route.command = { normalized: normalizedCommand };
       }
     }
+      
+  // --- NEW: lightweight stock-<product> detection (if alias not set) ---
+  // Examples: "stock milk", "milk stock", "inventory milk"
+  if (!normalizedCommand) {
+    const t = String(text || '').trim();
+    const rx1 = /^stock\s+([^\n]{1,64})$/i;          // stock <name>
+    const rx2 = /^([^\n]{1,64})\s+stock$/i;          // <name> stock
+    const rx3 = /^inventory\s+([^\n]{1,64})$/i;      // inventory <name>
+    const m = t.match(rx1) || t.match(rx2) || t.match(rx3);
+    if (m) {
+      route.kind = 'command';
+      route.command = { normalized: 'product stock' };
+      normalizedCommand = 'product stock';
+      // Preserve language chosen for this turn
+      route.language = hintedLang;
+      // (product name will be extracted at dispatch time)
+    }
+  }
     // --- END: alias-based command normalization ---
           
     // --- Topic detection (fast-path, local) ---
@@ -2974,7 +3051,8 @@ const TERMINAL_COMMANDS = new Set([
   'inventory value',
   'stock value',
   // Reset (if used)
-  'reset'
+  'reset',
+  'product stock'
 ]);
 
 // Robust alias-depth counter (handles ':alias' and '::ai-norm' forms).
