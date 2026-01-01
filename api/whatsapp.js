@@ -7547,13 +7547,14 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       // Thread through any caller-provided opts (e.g., { noPrefOverride: true })
       await sendMultiPartWithFooter(From, normalized, lang, opts);
     };
-  
+  console.log(`[qq] enter src=${source} cmd="${cmd}" lang=${lang}`);
   // ========= [UNIQ:QQ-STOCK-001] Single-product stock query =========
   // Accepts: "stock <product>" (already routed here by your alias block under // 1) Stock for product)
   // Returns a localized one-liner: "• Milk — 12 liters"
   {
     const m = String(cmd || '').match(/^stock\s+(.{1,64})$/i);
     if (m) {
+      console.log(`[qq-stock] UNIQ path → "${m[1].trim()}"`);
       const productRaw = m[1].trim();
       // DB read (exact, case-insensitive; your DB layer normalizes product key)
       let inv = null;
@@ -7891,6 +7892,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       {
         const mStock = cmd.match(/^(?:stock|inventory|qty)\s+(.+)$/i);
         if (mStock) {
+          console.log(`[qq-stock] generic path → raw="${mStock[1].trim()}"`);
           const rawQuery = mStock[1].trim().replace(/[?।。.!,;:\u0964\u0965]+$/u, '');
           const product = await translateProductName(rawQuery, `qq-stock-${shopId}`);
           try {
@@ -16628,7 +16630,43 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         const aliasCmd = normalizeCommandAlias(rawText, uiLangExact /* use UI exact variant */);
         const extraCmd = _normalizeVoiceCommandAllLang(rawText, uiLangExact);
         const canonCmd = (canon === 'reorder suggestion') ? 'reorder suggestions' : canon;                
-        let cmd = aliasCmd || extraCmd || (TERMINAL_COMMANDS.has(canonCmd) ? canonCmd : null);
+        let cmd = aliasCmd || extraCmd || (TERMINAL_COMMANDS.has(canonCmd) ? canonCmd : null);        
+        // --- BEGIN: multilingual "stock <product>" extractor (voice) ---
+        if (!cmd) {
+          const langHint = String(uiLangExact || 'en').toLowerCase();
+          const srcRaw = String(rawText || '');
+          const src = srcRaw.replace(/[\u0964\u0965]/g, '').trim(); // strip danda/double-danda
+          const t = safeNormalizeForQuickQuery(src);                // lower-case, punctuation-light
+          // Per-language keywords for stock intent
+          const KEY = {
+            en: ['stock','inventory','qty'],
+            'hi': ['स्टॉक','इन्वेंटरी','मात्रा','क्वांटिटी'],           // Devanagari
+            'hi-latn': ['stock','inventory','qty','maal','samaan','quantity'],
+            bn: ['স্টক','ইনভেন্টরি','পরিমাণ','কোয়ান্টিটি'],
+            ta: ['ஸ்டாக்','இன்வெண்டரி','அளவு','க்வான்டிட்டி'],
+            te: ['స్టాక్','ఇన్వెంటరీ','పరిమాణం','క్వాంటిటీ'],
+            kn: ['ಸ್ಟಾಕ್','ಇನ್‌ವೆಂಟರಿ','ಪ್ರಮಾಣ','ಕ್ವಾಂಟಿಟಿ'],
+            mr: ['साठा','इन्वेंटरी','प्रमाण','क्वांटिटी'],
+            gu: ['સ્ટોક','ઇન્વેન્ટરી','જથ્થો','ક્વોન્ટિટી'],
+          };
+          const pack = KEY[langHint] || KEY[langHint.replace(/-latn$/, '')] || KEY['en'];
+          // Build regex that avoids "value/valuation/value summary"
+          const rx = new RegExp(
+            `^(?:${pack.map(x => x.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')})\\s+(?!value(?:\\s|$)|valuation(?:\\s|$)|value\\s*summary\\b)(.+)$`,
+            pack === KEY['en'] ? 'i' : 'u'
+          );
+          const haystack = (/en|hi\-latn/.test(langHint) ? t : src);
+          const m = haystack.match(rx);
+          if (m) {
+            const productRaw = m[1].trim().replace(/[।。.!;,:\u0964\u0965]+$/u, '');
+            console.log(`[${requestId}] [specops-voice] dispatching handleQuickQueryEN("stock ${productRaw}")`);
+            handledRequests.add(requestId); // suppress late apologies
+            await handleQuickQueryEN(`stock ${productRaw}`, From, uiLangExact, `${requestId}::alias-stock-voice`);
+            try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
+            return; // terminal
+          }
+        }
+        // --- END: multilingual "stock <product>" extractor (voice) ---
         
               // Fallback: if still not recognized, leverage your normalizer to get canonical English.
               if (!cmd) {
@@ -18057,7 +18095,33 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               if ((stickyAction && !isDiag) || looksTxn) {
                 console.log(`[${requestId}] Skipping quick-query routing in sticky/txn turn (non-diagnostic)`);
               } else {
-            const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');
+            const normalized = await normalizeCommandText(Body, detectedLanguage, requestId + ':normalize');                
+            // --- BEGIN: explicit STOCK/BATCHES specialized-op dispatch (pre-CTA) ---
+            {
+              // Guard: avoid misrouting "inventory value"/"valuation"/"value summary" into stock.
+              const mStock = String(normalized).match(
+                /^(?:stock|inventory|qty)\s+(?!value(?:\s|$)|valuation(?:\s|$)|value\s*summary\b)(.+)$/i
+              );
+              if (mStock) {
+                const raw = mStock[1].trim().replace(/[।。.!;,:\u0964\u0965]+$/u, '');
+                console.log(`[${requestId}] [specops-text] dispatching handleQuickQueryEN("stock ${raw}")`);
+                await handleQuickQueryEN(`stock ${raw}`, From, detectedLanguage, `${requestId}::alias-stock-text`);
+                try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
+                handledRequests.add(requestId);
+                return; // stop before CTA
+              }
+              const mBatch = String(normalized).match(/^(?:batches?|expiry)\s+(.+)$/i);
+              if (mBatch) {
+                const raw = mBatch[1].trim().replace(/[।。.!;,:\u0964\u0965]+$/u, '');
+                console.log(`[${requestId}] [specops-text] dispatching handleQuickQueryEN("batches ${raw}")`);
+                await handleQuickQueryEN(`batches ${raw}`, From, detectedLanguage, `${requestId}::alias-batches-text`);
+                try { await maybeResendListPicker(From, detectedLanguage, requestId); } catch (_) {}
+                handledRequests.add(requestId);
+                return; // stop before CTA
+              }
+            }
+            // --- END: explicit STOCK/BATCHES specialized-op dispatch (pre-CTA) ---
+                
             // If normalization produced "start trial", do NOT route as a quick query—activate now.
             if (/^start\s+trial$/i.test(String(normalized))) {
               const shopId = fromToShopId(From);
