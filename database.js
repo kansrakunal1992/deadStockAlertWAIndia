@@ -364,6 +364,7 @@ async function airtableProductsRequest(config, context = 'Airtable Products Requ
 // Update inventory using DELETE AND RECREATE approach is REPLACED BY PATCH STRATEGY
 async function updateInventory(shopId, product, quantityChange, unit = '') {
   if (isMissingProductToken(product)) {
+    logMissingProduct(`Update ${normalizeShopIdForWrite(shopId)} - <undefined>`, { quantityChange, unit });
       console.warn(`[Update ${normalizeShopIdForWrite(shopId)} - <undefined>] skipped: missing product`);
       return { success: false, error: 'missing product' };
   }
@@ -485,9 +486,17 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
   }
 }
 
+function logMissingProduct(context, extra = {}) {
+  try {
+    const err = new Error('missing product stack');
+    console.warn(`[${context}] missing product`, extra, '\n', err.stack);
+  } catch (_) {}
+}
+
 // Create a batch record for tracking purchases with expiry dates
 async function createBatchRecord(batchData) {    
   if (isMissingProductToken(batchData?.product)) {
+    logMissingProduct(`Create Batch ${batchData.shopId} - <undefined>`, { batchData });
       console.warn(`[Create Batch ${batchData.shopId} - <undefined>] skipped: missing product`);
       return { success: false, error: 'missing product' };
     }
