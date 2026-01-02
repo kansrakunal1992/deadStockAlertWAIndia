@@ -10,10 +10,13 @@ const STATE_TIMEOUT = Number(process.env.USER_STATE_TTL_MS ?? (60 * 60 * 1000));
 function getCanonicalShopId(fromOrDigits) {
   const raw = String(fromOrDigits ?? '');
   const digits = raw.replace(/^whatsapp:/, '').replace(/\D+/g, '');
-  // Strip leading country code 91 if present
-  const canon = digits.startsWith('91') && digits.length >= 12 ? digits.slice(2) : digits.replace(/^0+/, '');
+  // Strip leading country code 91 if present, else strip leading zeros (trunk prefix)
+  const canon = (digits.startsWith('91') && digits.length >= 12)
+    ? digits.slice(2)
+    : digits.replace(/^0+/, '');
   return canon;
 }
+
 
 // === NEW: Always store ShopID in +91########## format for all writes ===
 function normalizeShopIdForWrite(input) {
@@ -30,13 +33,16 @@ function makeCompositeKey(shopId, product, purchaseDate) {
 }
 
 // === NEW: tolerant composite key splitter (accepts "\n" or "|" separators) ===
-function splitCompositeKey(compositeKey) {
-  const raw = String(compositeKey ?? '');    
-  // Accept CRLF/LF and literal escaped newlines
-    const parts = raw
-      .split(/\r?\n|\\r\\n|\\n|\\r/)
-      .map(p => String(p ?? '').trim());
-    return parts;
+function splitCompositeKey(compositeKey) { 
+const raw = String(compositeKey ?? '').trim();
+  // Split on: CRLF, LF, literal "\n", or "|"
+  const parts = raw.split(/(?:\r?\n|\\n|\|)/).map(p => String(p ?? '').trim()).filter(Boolean);
+  // If we got more than 3 tokens because of accidental extra separators,
+  // collapse the tail into the date to preserve ShopID + Product + Date
+  if (parts.length > 3) {
+    return [parts[0], parts[1], parts.slice(2).join(' ')];
+  }
+  return parts;
 }
 
 // === NEW: sentinel product token guard (treats 'undefined'/'null'/'n/a' as missing) ===
@@ -46,19 +52,21 @@ function isMissingProductToken(p) {
 }
 
 // === NEW: tolerant CompositeKey filter (accept legacy ShopID variants) ===
-function buildCompositeKeyVariantFilter(fieldName, compositeKey) {    
+function buildCompositeKeyVariantFilter(fieldName, compositeKey) {
   const parts = splitCompositeKey(compositeKey);
-  const [shopIdRaw, product, purchaseDate] = [parts[0] ?? '', parts[1] ?? '', parts[2] ?? ''];
+  const [shopIdRaw, product, purchaseDateRaw] = [parts[0] ?? '', parts[1] ?? '', parts[2] ?? ''];
   const canon = getCanonicalShopId(shopIdRaw);
+  const dateIso = toAirtableDateTimeUTC(purchaseDateRaw) ?? String(purchaseDateRaw);
   const variants = Array.from(new Set([
     `+91${canon}`,
     `${canon}`,
     `91${canon}`,
     `0${canon}`
-  ])).map(v => `${v}\n${product}\n${purchaseDate}`);
+  ])).map(v => `${v}\n${product}\n${dateIso}`);
   const esc = s => String(s).replace(/'/g, "''");
   return `OR(${variants.map(v => `{${fieldName}}='${esc(v)}'`).join(', ')})`;
 }
+
 
 // -------- OPTIONAL HELPER: simple fuzzy product matches (top 3) ----------
 // Place near other quick-query helpers; keep after module.exports if your bundler requires hoisting.
@@ -720,16 +728,10 @@ function convertToBaseUnit(quantity, unit) {
 }
 
 // --- FIX: Update batch quantity with proper context and logic ---
-
 async function updateBatchQuantity(batchId, quantityChange, unit = '') {
   const context = `Update Batch Quantity ${batchId}`;
   const normalizedUnit = normalizeUnit(unit);
   try {
-    console.log(`[${context}] Processing batch quantity update`, {
-      batchId, quantityChange, unit: normalizedUnit
-    });
-
-    // 1) Fetch current batch by RECORD ID (not composite key)
     const batch = await airtableBatchRequest({
       method: 'get',
       url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`
@@ -740,55 +742,35 @@ async function updateBatchQuantity(batchId, quantityChange, unit = '') {
       return { success: false, error: 'Batch not found' };
     }
 
-    // Extract
     const currentQty  = Number(batch.fields.Quantity ?? 0);
     const currentUnit = String(batch.fields.Units ?? 'pieces').toLowerCase();
 
-    // 2) Decide unit family correctly (‘l’, ‘kg’, or ‘pieces’) — include plurals
-    const cu = currentUnit;
-    const isLiters = ['l','liter','litre','liters','litres','ltr','ml'].includes(cu);
-    const isKg     = ['kg','kilogram','kilograms'].includes(cu);
-    const targetBaseUnit = isLiters ? 'l' : (isKg ? 'kg' : 'pieces');
-
-    const du = String(normalizedUnit).toLowerCase();
-    const deltaIsLiters = ['l','liter','litre','liters','litres','ltr','ml'].includes(du);
-    const deltaIsKg     = ['kg','kilogram','kilograms'].includes(du);
-    const deltaBaseUnit = deltaIsLiters ? 'l' : (deltaIsKg ? 'kg' : 'pieces');
-
-    // 3) Convert quantities to base numbers and compute
-    const currentBaseQty = convertToBaseUnit(currentQty, targetBaseUnit);
-    const changeBaseQty  = convertToBaseUnit(Number(quantityChange), deltaBaseUnit);
+    // Convert numerically to base and compute
+    const currentBaseQty = convertToBaseUnit(currentQty, currentUnit);
+    const changeBaseQty  = convertToBaseUnit(Number(quantityChange), normalizedUnit);
     const newBaseQty     = Math.max(0, currentBaseQty + changeBaseQty);
 
-    // 4) Convert back to original batch unit safely
-    const unitOneBase    = convertToBaseUnit(1, targetBaseUnit);
-    const newQuantity    = (unitOneBase > 0) ? (newBaseQty / unitOneBase) : newBaseQty;
+    // Convert back to the original batch unit
+    const unitOneBase = convertToBaseUnit(1, currentUnit) || 1;
+    const newQuantity = newBaseQty / unitOneBase;
 
-    console.log(`[${context}] Stock calculation:`, {
-      currentQty, currentUnit, targetBaseUnit, currentBaseQty,
-      deltaBaseUnit, changeBaseQty, newBaseQty, newQuantity
-    });
-
-    // 5) Patch Airtable
     const result = await airtableBatchRequest({
       method: 'patch',
       url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`,
       data: { fields: { Quantity: newQuantity } }
     }, `${context} - Patch`);
 
-    // The Airtable SDK returns the updated record; treat that as success.
     if (result && result.id) {
       console.log(`[${context}] Successfully updated; New Qty:`, newQuantity);
       return { success: true, newQuantity };
     }
-
-    console.error(`[${context}] Unknown response from Airtable:`, result);
     return { success: false, error: 'Unknown Airtable response' };
   } catch (error) {
     console.error(`[${context}] Error updating batch quantity:`, error.message);
     return { success: false, error: error.message };
   }
 }
+
 
 
 // NEW: Update batch purchase price (and derived purchase value)
