@@ -31,9 +31,12 @@ function makeCompositeKey(shopId, product, purchaseDate) {
 
 // === NEW: tolerant composite key splitter (accepts "\n" or "|" separators) ===
 function splitCompositeKey(compositeKey) {
-  const raw = String(compositeKey ?? '');
-  // Accept either newline or pipe separators and trim each part
-  return raw.split(/\n|\|/).map(p => String(p ?? '').trim());
+  const raw = String(compositeKey ?? '');    
+  // Accept CRLF/LF and literal escaped newlines
+    const parts = raw
+      .split(/\r?\n|\\r\\n|\\n|\\r/)
+      .map(p => String(p ?? '').trim());
+    return parts;
 }
 
 // === NEW: sentinel product token guard (treats 'undefined'/'null'/'n/a' as missing) ===
@@ -743,12 +746,12 @@ async function updateBatchQuantity(batchId, quantityChange, unit = '') {
 
     // 2) Decide unit family correctly (‘l’, ‘kg’, or ‘pieces’) — include plurals
     const cu = currentUnit;
-    const isLiters = ['l','liter','litre','liters','litres','ltr'].includes(cu);
+    const isLiters = ['l','liter','litre','liters','litres','ltr','ml'].includes(cu);
     const isKg     = ['kg','kilogram','kilograms'].includes(cu);
     const targetBaseUnit = isLiters ? 'l' : (isKg ? 'kg' : 'pieces');
 
     const du = String(normalizedUnit).toLowerCase();
-    const deltaIsLiters = ['l','liter','litre','liters','litres','ltr'].includes(du);
+    const deltaIsLiters = ['l','liter','litre','liters','litres','ltr','ml'].includes(du);
     const deltaIsKg     = ['kg','kilogram','kilograms'].includes(du);
     const deltaBaseUnit = deltaIsLiters ? 'l' : (deltaIsKg ? 'kg' : 'pieces');
 
