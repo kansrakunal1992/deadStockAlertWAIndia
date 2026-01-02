@@ -29,9 +29,22 @@ function makeCompositeKey(shopId, product, purchaseDate) {
   return `${preferred}\n${String(product)}\n${String(iso)}`;
 }
 
+// === NEW: tolerant composite key splitter (accepts "\n" or "|" separators) ===
+function splitCompositeKey(compositeKey) {
+  const raw = String(compositeKey ?? '');
+  // Accept either newline or pipe separators and trim each part
+  return raw.split(/\n|\|/).map(p => String(p ?? '').trim());
+}
+
+// === NEW: sentinel product token guard (treats 'undefined'/'null'/'n/a' as missing) ===
+function isMissingProductToken(p) {
+  const s = String(p ?? '').trim().toLowerCase();
+  return !s || s === 'undefined' || s === 'null' || s === 'n/a' || s === 'na';
+}
+
 // === NEW: tolerant CompositeKey filter (accept legacy ShopID variants) ===
-function buildCompositeKeyVariantFilter(fieldName, compositeKey) {
-  const parts = String(compositeKey).split('\n');
+function buildCompositeKeyVariantFilter(fieldName, compositeKey) {    
+  const parts = splitCompositeKey(compositeKey);
   const [shopIdRaw, product, purchaseDate] = [parts[0] ?? '', parts[1] ?? '', parts[2] ?? ''];
   const canon = getCanonicalShopId(shopIdRaw);
   const variants = Array.from(new Set([
@@ -358,7 +371,7 @@ async function airtableProductsRequest(config, context = 'Airtable Products Requ
 
 // Update inventory using delete and recreate approach with proper unit handling
 async function updateInventory(shopId, product, quantityChange, unit = '') {      
-  if (!product || !String(product).trim()) {
+  if (isMissingProductToken(product)) {
       console.warn(`[Update ${normalizeShopIdForWrite(shopId)} - <undefined>] skipped: missing product`);
       return { success: false, error: 'missing product' };
     }
@@ -438,7 +451,7 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
 
 // Create a batch record for tracking purchases with expiry dates
 async function createBatchRecord(batchData) {    
-  if (!batchData?.product || !String(batchData.product).trim()) {
+  if (isMissingProductToken(batchData?.product)) {
       console.warn(`[Create Batch ${batchData.shopId} - <undefined>] skipped: missing product`);
       return { success: false, error: 'missing product' };
     }
@@ -684,7 +697,10 @@ async function updateBatchQuantity(batchId, quantityChange, unit = '') {
     const isVolume = (u) => ['liters','liter','litre','ml','ltr','l'].includes(String(u).toLowerCase());
     const isCount  = (u) => ['packet','packets','piece','pieces','box','boxes','bottle','bottles','dozen','roll'].includes(String(u).toLowerCase());
     if (isVolume(normalizedUnit) && isCount(currentUnit)) {
-      console.warn(`[${context}] Unit family mismatch (sale=${normalizedUnit}, batch=${currentUnit}); skipping batch quantity update to avoid wrong math.`);
+      console.warn(
+        `[${context}] Unit family mismatch (sale=${normalizedUnit}, batch=${currentUnit}); ` +
+        `skipping batch quantity update to avoid wrong math.`
+      );
       return { success: true, newQuantity: currentQuantity }; // no-op, do not fail the sale
     }
 
@@ -803,9 +819,10 @@ async function createSalesRecord(salesData) {
 
 async function getBatchByCompositeKey(compositeKey) {
   const context = `Get Batch by Composite Key`;
-  try {        
-    const parts = String(compositeKey).split('\n');
+  try {                    
+        const parts = splitCompositeKey(compositeKey);
         const [shopIdRaw, product, purchaseDateRaw] = [parts[0] ?? '', parts[1] ?? '', parts[2] ?? ''];
+
         const normalizedDate = toAirtableDateTimeUTC(purchaseDateRaw) ?? purchaseDateRaw;
         const normalizedKey = makeCompositeKey(shopIdRaw, product, normalizedDate);                
         // Try exact key (with ShopID variants)
@@ -869,8 +886,9 @@ async function updateBatchQuantityByCompositeKey(compositeKey, quantityChange, u
     
     // Get the batch by composite key        
     let batch = await getBatchByCompositeKey(compositeKey);
-      if (!batch) {
-        batch = await getBatchByCompositeKey(makeCompositeKey(...String(compositeKey).split('\n')));
+      if (!batch) {                     
+            const [sid, prod, dt] = splitCompositeKey(compositeKey);
+            batch = await getBatchByCompositeKey(makeCompositeKey(sid, prod, dt));
       }
     
     if (!batch) {
@@ -916,7 +934,7 @@ async function updateBatchQuantityByCompositeKey(compositeKey, quantityChange, u
 async function recreateBatchAndUpdate(compositeKey, quantityChange, unit, context) {
   console.log(`[${context}] Starting batch recreation for composite key: ${compositeKey}`);
   
-  const parts = compositeKey.split('|');
+  const parts = splitCompositeKey(compositeKey);
   if (parts.length !== 3) {
     console.error(`[${context}] Invalid composite key format: ${compositeKey}`);
     return {
@@ -927,7 +945,7 @@ async function recreateBatchAndUpdate(compositeKey, quantityChange, unit, contex
   }
   
   const [shopId, product, purchaseDate] = parts;    
-  if (!product || !String(product).trim()) {
+  if (isMissingProductToken(product)) {
       console.error(`[${context}] Invalid product in compositeKey: "${compositeKey}"`);
       return { success: false, error: 'missing product', compositeKey };
     }
