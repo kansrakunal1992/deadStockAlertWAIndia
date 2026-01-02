@@ -366,56 +366,39 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
     // Normalize unit before processing
     const normalizedUnit = normalizeUnit(unit);
     const preferredShopId = normalizeShopIdForWrite(shopId);
-
-    // Find existing record (read‑tolerant to legacy formats)
-    const pname = String(product ?? '').trim().toLowerCase();
-    const filterFormula =
-      'AND(' + buildShopIdVariantFilter('ShopID', shopId) +
-      ", LOWER(TRIM({Product})) = '" + pname.replace(/'/g, "''") + "')";
-
-    const findResult = await airtableRequest({
-      method: 'get',
-      params: { filterByFormula: filterFormula }
-    }, `${context} - Find`);
+        
+    // Aggregate all rows for shop+product
+        const agg = await getProductInventoryAggregate(shopId, product);
+        const findResult = await airtableRequest({
+          method: 'get',
+          params: { filterByFormula:
+            "AND(" + buildShopIdVariantFilter('ShopID', shopId) +
+            ", LOWER(TRIM({Product})) = '" + String(product).trim().toLowerCase().replace(/'/g,"''") + "')"
+          }
+        }, `${context} - Find`);
 
     let newQuantity;
-    
+           
     if (findResult.records.length > 0) {
-          // PATCH existing record in place (safer than delete+recreate)
-          const recordId = findResult.records[0].id;
-          const currentQty  = findResult.records[0].fields.Quantity ?? 0;
-          const currentUnit = findResult.records[0].fields.Units ?? '';
-          // Base-unit math
-          const currentBaseQty = convertToBaseUnit(currentQty, currentUnit);
-          const changeBaseQty  = convertToBaseUnit(quantityChange, normalizedUnit);
-          const newBaseQty     = currentBaseQty + changeBaseQty;
-          // Preserve the inventory unit for storage
-          const storageUnit = currentUnit || normalizedUnit;
-          newQuantity = convertToBaseUnit(newBaseQty, storageUnit) / convertToBaseUnit(1, storageUnit);
-          // Helpful base-math logs
-          console.log(`[${context}] Units: inv=${currentUnit}, input=${normalizedUnit}`);
-          console.log(`[${context}] Base math: currentBase=${currentBaseQty}, changeBase=${changeBaseQty}, newBase=${newBaseQty}`);
-          console.log(
-            `[${context}] Found record ${recordId}, updating: ${currentQty} ${currentUnit} -> ${newQuantity} ${storageUnit} (change: ${quantityChange} ${normalizedUnit})`
-          );
-          // Patch the same record
-          await airtableRequest({
-            method: 'patch',
-            url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_NAME}/${recordId}`,
-            data: { fields: {
-              ShopID: preferredShopId,
-              Product: product,
-              Quantity: newQuantity,
-              Units: storageUnit
-            } }
-          }, `${context} - Patch`);              
-        // NEW: compute aggregate after update for user messaging
-              const preferUnit = storageUnit || normalizedUnit || 'pieces';
-              const overall = await getProductTotalQuantity(shopId, product, preferUnit);
-              if (overall.success) {
-                console.log(`[${context}] Overall ${product} stock: ${overall.total} ${overall.unit} (rows=${overall.rows})`);
-              }
-              return { success: true, newQuantity, unit: normalizedUnit, aggregate: overall };
+          // Combine aggregate base + change, then collapse to ONE canonical record
+          const baseBefore = convertToBaseUnit(agg.quantity, agg.unit);
+          const changeBase = convertToBaseUnit(quantityChange, normalizedUnit);
+          const baseAfter = Math.max(0, baseBefore + changeBase);
+          const unitDisplay = agg.unit || normalizedUnit;
+          newQuantity = Math.round(baseAfter / (convertToBaseUnit(1, unitDisplay) || 1));
+    
+          // Delete all existing duplicates
+          for (const rec of findResult.records) {
+            await airtableRequest({
+              method: 'delete',
+              url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_NAME}/${rec.id}`
+            }, `${context} - DeleteDup`);
+          }
+          // Recreate a single canonical record
+          const createData = { fields: {
+            ShopID: preferredShopId, Product: product, Quantity: newQuantity, Units: unitDisplay
+          }};
+          await airtableRequest({ method: 'post', data: createData }, `${context} - RecreateCanonical`);
         } else {
       // First insert: use caller's normalized unit
       newQuantity = quantityChange;
@@ -822,10 +805,16 @@ async function getBatchByCompositeKey(compositeKey) {
     const parts = String(compositeKey).split('\n');
         const [shopIdRaw, product, purchaseDateRaw] = [parts[0] ?? '', parts[1] ?? '', parts[2] ?? ''];
         const normalizedDate = toAirtableDateTimeUTC(purchaseDateRaw) ?? purchaseDateRaw;
-        const normalizedKey = makeCompositeKey(shopIdRaw, product, normalizedDate);
-        const ff1 = buildCompositeKeyVariantFilter('CompositeKey', compositeKey);
-        const ff2 = buildCompositeKeyVariantFilter('CompositeKey', normalizedKey);
-        const filterFormula = `OR(${ff1}, ${ff2})`;
+        const normalizedKey = makeCompositeKey(shopIdRaw, product, normalizedDate);                
+        // Try exact key (with ShopID variants)
+            const ff1 = buildCompositeKeyVariantFilter('CompositeKey', compositeKey);
+            const ff2 = buildCompositeKeyVariantFilter('CompositeKey', normalizedKey);
+            // Fallback: match by ShopID variants + exact PurchaseDate + LOWER(Product)
+            const productLc = String(product).trim().toLowerCase().replace(/'/g, "''");
+            const shopVar = buildShopIdVariantFilter('ShopID', shopIdRaw);
+            const dateIso = toAirtableDateTimeUTC(normalizedDate) ?? normalizedDate;
+            const ff3 = `AND(${shopVar}, {PurchaseDate}='${dateIso.replace(/'/g,"''")}', LOWER(TRIM({Product}))='${productLc}')`;
+            const filterFormula = `OR(${ff1}, ${ff2}, ${ff3})`;
     const result = await airtableBatchRequest({
       method: 'get',
       params: { filterByFormula: filterFormula }
@@ -838,6 +827,36 @@ async function getBatchByCompositeKey(compositeKey) {
   } catch (error) {
     logError(context, error);
     return null;
+  }
+}
+
+// NEW: aggregate all inventory rows for a shop+product (base-unit safe)
+async function getProductInventoryAggregate(shopId, productName) {
+  const context = `Get Product Inventory Aggregate ${shopId} - ${productName}`;
+  try {
+    const pname = String(productName ?? '').trim().toLowerCase();
+    const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)},
+      LOWER(TRIM({Product}))='${pname.replace(/'/g,"''")}' )`;
+    const result = await airtableRequest({ method: 'get', params: { filterByFormula: filterFormula } }, context);
+    let sumBase = 0, unitForDisplay = 'pieces', firstId = null;
+    for (const rec of (result.records ?? [])) {
+      const qty = Number(rec.fields.Quantity ?? 0);
+      const unit = rec.fields.Units ?? 'pieces';
+      sumBase += convertToBaseUnit(qty, unit);
+      if (!firstId) { firstId = rec.id; unitForDisplay = unit; }
+    }
+    // Return in display unit (of first record) for continuity
+    const oneBase = convertToBaseUnit(1, unitForDisplay) || 1;
+    return {
+      success: true,
+      quantity: Math.round(sumBase / oneBase),
+      unit: unitForDisplay,
+      firstRecordId: firstId,
+      rows: (result.records ?? []).length
+    };
+  } catch (e) {
+    logError(context, e);
+    return { success: false, quantity: 0, unit: 'pieces', rows: 0 };
   }
 }
 
@@ -3170,6 +3189,7 @@ async function getReorderSuggestions(shopId, { days = 30, leadTimeDays = 3, safe
 }
 
 // --- New: safe sale helper that never leaves inventory negative ---
+
 async function applySaleWithReconciliation(
   shopId,
   { product, quantity, unit = 'pieces', saleDate = new Date().toISOString(), language = 'en' },
@@ -3181,60 +3201,108 @@ async function applySaleWithReconciliation(
     const pref = await getUserPreference(shopId).catch(() => ({ success: true, language: 'en' }));
     const allowNegative = overrides.allowNegative ?? pref.AllowNegativeInventory ?? false;
     const autoOpening   = overrides.autoOpeningBatch ?? pref.AutoCreateOpeningBatch ?? true;
-    const onboardingISO = overrides.onboardingDate ?? pref.OnboardingDate ?? saleDate;
+    const onboardingISO = toAirtableDateTimeUTC(overrides.onboardingDate ?? pref.OnboardingDate ?? saleDate);
     const openingPrice  = Number(overrides.openingPrice ?? 0) || 0;
 
-    // Current stock
-    const inv = await getProductInventory(shopId, product);
-    const currentQty = Number(inv?.quantity ?? 0);
-    const need = Math.max(0, quantity - currentQty);
+    // Normalize for downstream
+    const productRaw  = String(product).trim();                 // keep exact case used in Airtable "Product"
+    const unitNorm    = normalizeUnit(unit);
+    const shopIdPref  = normalizeShopIdForWrite(shopId);
 
-    // Enough stock? Normal sale path
-    if (need === 0) {            
-      const invRes = await updateInventory(shopId, product, -quantity, unit);
-            const overallStock = invRes?.aggregate?.total ?? null;
-            const overallUnit  = invRes?.aggregate?.unit  ?? unit;
-            return { status: 'ok', deficit: 0, selectedBatchCompositeKey: null, overallStock, overallUnit };
+    // Current stock (aggregate across all inventory rows)
+    const invAgg      = await getProductInventoryAggregate(shopId, productRaw);
+    const currentQty  = Number(invAgg?.quantity ?? 0);
+    const need        = Math.max(0, Number(quantity) - currentQty);
+
+    // ===== CASE 1: Enough stock → sell from FIFO batch with >0 qty =====
+    if (need === 0) {
+      // Pick FIFO batch with remaining > 0
+      const batches  = await getBatchesForProductWithRemaining(shopId, productRaw);
+      const selected = batches[0] || null; // FIFO default
+
+      // Deduct overall inventory
+      await updateInventory(shopId, productRaw, -Number(quantity), unitNorm);
+
+      // Recompute overall after sale for clean confirmation
+      const overallAgg = await getProductInventoryAggregate(shopId, productRaw);
+
+      return {
+        status: 'ok',
+        deficit: 0,
+        selectedBatchCompositeKey: selected ? selected.compositeKey : null,
+        overallStock: Number(overallAgg?.quantity ?? 0),
+        overallUnit: overallAgg?.unit ?? unitNorm
+      };
     }
 
-    // Hard-floor (no negative): auto-create Opening Balance batch then sell
+    // ===== CASE 2: Not enough stock & negative NOT allowed =====
     if (!allowNegative) {
-      if (!autoOpening) {                  
-          // Even if blocked, share current aggregate to user
-                  const overall = await getProductTotalQuantity(shopId, product, normalizeUnit(unit));
-                  return { status: 'blocked', deficit: need, message: 'Insufficient stock', overallStock: overall.total, overallUnit: overall.unit };
+      if (!autoOpening) {
+        // Block and return current aggregate to show real overall
+        return {
+          status: 'blocked',
+          deficit: need,
+          message: 'Insufficient stock',
+          overallStock: currentQty,
+          overallUnit: invAgg?.unit ?? unitNorm
+        };
       }
-      // Opening Balance batch for the deficit
-      await createBatchRecord({
-        shopId, product,
+
+      // Create Opening Balance batch for the deficit
+      const openingDateISO = onboardingISO || new Date().toISOString();
+      const createRes = await createBatchRecord({
+        shopId,
+        product: productRaw,
         quantity: need,
-        unit,
-        purchaseDate: onboardingISO,
+        unit: unitNorm,
+        purchaseDate: openingDateISO,
         expiryDate: null,
         purchasePrice: openingPrice
       });
-      // Boost then subtract            
-      await updateInventory(shopId, product, +need, unit);
-            const invRes = await updateInventory(shopId, product, -quantity, unit);
-      const compKey = `${shopId}\n${product}\n${onboardingISO}`;            
-      const overallStock = invRes?.aggregate?.total ?? null;
-            const overallUnit  = invRes?.aggregate?.unit  ?? unit;
-            return { status: 'auto-adjusted', deficit: need, selectedBatchCompositeKey: compKey, overallStock, overallUnit };
+
+      // Boost then subtract (hard floor respected)
+      await updateInventory(shopId, productRaw, +need, unitNorm);
+      await updateInventory(shopId, productRaw, -Number(quantity), unitNorm);
+
+      // Composite key of the Opening Balance batch we just created
+      const compKey = makeCompositeKey(shopIdPref, productRaw, openingDateISO);
+
+      // Recompute overall after adjustments
+      const overallAgg = await getProductInventoryAggregate(shopId, productRaw);
+
+      return {
+        status: 'auto-adjusted',
+        deficit: need,
+        selectedBatchCompositeKey: compKey,
+        overallStock: Number(overallAgg?.quantity ?? 0),
+        overallUnit: overallAgg?.unit ?? unitNorm
+      };
     }
 
-    // Soft-negative path: allow, but log correction task to reconcile later
-    const invRes = await updateInventory(shopId, product, -quantity, unit); // may go negative
+    // ===== CASE 3: Not enough stock but negative IS allowed =====
+    // Proceed with deduction and record a correction task
+    await updateInventory(shopId, productRaw, -Number(quantity), unitNorm);
+
     try {
       await saveCorrectionState(
         shopId,
         'negativeStock',
-        { product, unit, currentQty, saleQty: quantity, deficit: need, saleDate },
+        { product: productRaw, unit: unitNorm, currentQty, saleQty: Number(quantity), deficit: need, saleDate },
         language
       );
-    } catch (_) {}        
-    const overallStock = invRes?.aggregate?.total ?? null;
-        const overallUnit  = invRes?.aggregate?.unit  ?? unit;
-        return { status: 'negative', deficit: need, selectedBatchCompositeKey: null, overallStock, overallUnit };
+    } catch (_) { /* non-blocking */ }
+
+    // Recompute overall after negative adjustment
+    const overallAgg = await getProductInventoryAggregate(shopId, productRaw);
+
+    return {
+      status: 'negative',
+      deficit: need,
+      selectedBatchCompositeKey: null,
+      overallStock: Number(overallAgg?.quantity ?? 0),
+      overallUnit: overallAgg?.unit ?? unitNorm
+    };
+
   } catch (e) {
     console.error(`[${ctx}] Error:`, e.message);
     return { status: 'error', error: e.message };
@@ -3338,6 +3406,7 @@ async function refreshUserStateTimestamp(shopId) {
 
 module.exports = {
   updateInventory,
+  getProductInventoryAggregate,
   testConnection,
   createBatchRecord,
   getBatchRecords,
