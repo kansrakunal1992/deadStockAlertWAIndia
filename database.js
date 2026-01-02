@@ -381,10 +381,11 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
             method: 'get',
             url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_NAME}/${existingRecordId}`
         }, `${context} - FetchFirstRecord`);
-        
-        if (specificResult.records && specificResult.records.length > 0) {
-            existingRecord = specificResult.records[0];
-        } else {
+                      
+        // Airtable GET-by-ID returns a single record object, not {records:[...]}
+            if (specificResult && specificResult.id && specificResult.fields) {
+              existingRecord = specificResult;
+            } else {
             // Fallback: fetch by formula if specific fetch failed
             const pname = String(product).trim().toLowerCase();
             const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, LOWER(TRIM({Product}))='${pname.replace(/'/g,"''")}')`;
@@ -465,7 +466,7 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
             console.log(`[${context}] Overall ${product} stock: ${overall.total} ${overall.unit} (rows=${overall.rows})`);
         }
         
-        return { success: true, newQuantity, unit: normalizedUnit, aggregate: batchData?.compositeKey || normalizedKey };
+        return { success: true, newQuantity, unit: normalizedUnit, aggregate: overall };
     }
   } catch (error) {
     logError(context, error);
@@ -840,7 +841,11 @@ async function reattributeSaleToBatch({ saleRecordId, shopId, product, qty, unit
 // Create a sales record
 async function createSalesRecord(salesData) {
   const context = `Create Sales ${salesData.shopId} - ${salesData.product}`;
-  try {
+  try {        
+    if (isMissingProductToken(salesData?.product)) {
+          console.warn(`[${context}] skipped: missing product`);
+          return { success: false, error: 'missing product' };
+        }
     console.log(`[${context}] Creating sales record for ${Math.abs(salesData.quantity)} units`);
     
     // Normalize unit before storing
@@ -926,15 +931,18 @@ async function getProductInventoryAggregate(shopId, productName) {
       sumBase += convertToBaseUnit(qty, unit);
       if (!firstId) { firstId = rec.id; unitForDisplay = unit; }
     }
-    // Return in display unit (of first record) for continuity
+    // Return in display unit (of first record) for continuity        
     const oneBase = convertToBaseUnit(1, unitForDisplay) || 1;
-    return {
-      success: true,
-      quantity: Math.round(sumBase / oneBase),
-      unit: unitForDisplay,
-      firstRecordId: firstId,
-      rows: (result.records ?? []).length
-    };
+      const qtyDisplay = sumBase / oneBase;
+      const unitDisp = String(unitForDisplay ?? 'pieces').toLowerCase();
+      const isPieces = unitDisp === 'pieces';
+      return {
+        success: true,
+        quantity: isPieces ? Math.round(qtyDisplay) : Number(qtyDisplay.toFixed(3)),
+        unit: unitForDisplay,
+        firstRecordId: firstId,
+        rows: (result.records ?? []).length
+      };
   } catch (e) {
     logError(context, e);
     return { success: false, quantity: 0, unit: 'pieces', rows: 0 };
@@ -1488,6 +1496,12 @@ async function batchUpdateInventory(updates) {
     const promises = updates.map(async update => {
       const { shopId, product, quantityChange, unit = '' } = update;
       const itemContext = `Update ${shopId} - ${product}`;
+          
+    // Early guard: prevent 'undefined'/blank products in bulk mode
+          if (isMissingProductToken(product)) {
+            console.warn(`[${itemContext}] skipped: missing product`);
+            return { product, success: false, error: 'missing product' };
+          }
       
       // Normalize unit before processing
       const normalizedUnit = normalizeUnit(unit);
