@@ -343,6 +343,23 @@ function _shouldSuppressTxnDuplicate(from, body) {
   } catch {}
   return false;
 }
+
+// === ONE-SHOT CONFIRMATION (per request) ===
+// Prevent multiple variants ("Milk" vs "item") in the same turn.
+const txnConfirmOnce = new Set(); // key = shopId::requestId
+function _txnOnceKey(from, requestId) {
+  const shopId = String(from ?? '').replace('whatsapp:', '');
+  const rid = String(requestId ?? Date.now());
+  return `${shopId}::${rid}`;
+}
+async function sendTxnConfirmationOnce(From, messageText, lang, requestId) {
+  const k = _txnOnceKey(From, requestId);
+  if (txnConfirmOnce.has(k)) return false;
+  txnConfirmOnce.add(k);
+  const tagged = await tagWithLocalizedMode(From, finalizeForSend(messageText, lang), lang);
+  await sendMessageViaAPI(From, tagged);
+  return true;
+}
 // --- [PATCH:TXN-CONFIRM-DEDUP-001] End ---
 
 // --- Defensive shim: provide a safe setUserState if not present (prevents runtime errors)
@@ -7312,13 +7329,18 @@ function composeSaleConfirmation({
   overallStock,      // preferred stock count when caller passes it directly
   overallUnit        // preferred stock unit when caller passes it directly
 }) {
-  // -- STOCK PARTS (fallback order preserved) --
-  const stockQtyBase  = overallStock ?? (aggregate?.total ?? newQuantity);
-  const stockUnitBase = overallUnit ?? (aggregate?.unit ?? unit);
+  
+// -- STOCK PARTS (fallback order preserved) --
+  // Prefer caller's overall stock; else aggregate; else newQuantity.
+  const stockQtyBaseRaw  = overallStock ?? (aggregate?.total ?? newQuantity);
+  // Prefer caller's overall unit; else aggregate's unit; else *sale* unit.
+  const stockUnitBaseRaw = overallUnit ?? (aggregate?.unit ?? unit);
 
-  // Canonicalize both the header's sale unit and the stock unit for display ("ltr", "kg", "pieces", etc.)
-  const unitDispHeader = stockUnitBase ? canonicalizeUnitToken(unit ?? stockUnitBase) : canonicalizeUnitToken(unit ?? '');
-  const unitDispStock  = stockUnitBase ? canonicalizeUnitToken(stockUnitBase) : unitDispHeader;
+  // Canonicalize both the header's sale unit and the stock unit for display ("ltr", "kg", "pieces", etc.)   
+  // Header should prefer the *sale* unit first for consistency (ltr, kg, pieces).
+    const unitDispHeader = canonicalizeUnitToken(unit ?? stockUnitBaseRaw ?? '');
+    // Stock display prefers its own unit if present; else header’s unit.
+    const unitDispStock  = stockUnitBaseRaw ? canonicalizeUnitToken(stockUnitBaseRaw) : unitDispHeader;
 
   // Text fragments
   const unitTextHeader = unitDispHeader ? ` ${unitDispHeader}` : '';
@@ -7332,16 +7354,26 @@ function composeSaleConfirmation({
   // Show ₹0.00 if zero; hide only when NaN or not provided
   const hasPrice  = Number.isFinite(priceNum) && priceNum >= 0;
   const priceText = hasPrice ? ` at ₹${priceNum.toFixed(2)}${perUnitText}` : '';
+   
+  // Stock annotation (best-effort): round to 3 decimals for l/kg, integer for pieces
+    let stockText = '';
+    if (stockQtyBaseRaw !== undefined && stockQtyBaseRaw !== null) {
+      const isPieces = unitDispStock === 'pieces';
+      const stockQtyDisp = isPieces
+        ? Math.round(Number(stockQtyBaseRaw ?? 0))
+        : Number(Number(stockQtyBaseRaw ?? 0).toFixed(3));
+      stockText = ` (Stock: ${stockQtyDisp} ${unitDispStock || ''})`;
+    }
 
-  // Stock annotation (best-effort)
-  const hasStock  = stockQtyBase !== undefined && stockQtyBase !== null;
-  const stockText = hasStock ? ` (Stock: ${stockQtyBase} ${unitDispStock || ''})` : '';
+  // Product display (keep your existing default)    
+  const productNameRaw = (typeof product === 'string' ? product.trim() : '');
+    // Single-variant policy: if product is missing/blank, fall back to 'item' *inside this line* only;
+    // do NOT emit a second confirmation elsewhere with a different body.
+    const productName = productNameRaw || 'item';
 
-  // Product display (keep your existing default)
-  const productName = (typeof product === 'string' ? product.trim() : '') || 'item';
-
-  // Final line
-  return `🛒 Sold ${safeQty}${unitTextHeader} ${productName}${priceText}${stockText}`;
+  // Final line  
+  const line = `🛒 Sold ${safeQty}${unitTextHeader} ${productName}${priceText}${stockText}`;
+  return line;
 }
 
 // === Support link (from environment) ===
