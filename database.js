@@ -142,10 +142,11 @@ function normalizeUnit(unit) {
 const unitMap = {
     // weight
     'g': 'kg', 'gram': 'kg', 'grams': 'kg', 'ग्राम': 'kg', 'ગ્રામ': 'kg',
-    'kg': 'kg', 'kilogram': 'kg', 'kilograms': 'kg', 'કિલો': 'kg', 'કિગ્રા': 'kg',
+    'kg': 'kg', 'kilogram': 'kg', 'kilograms': 'kg', 'કિલો': 'kg', 'કિગ્રા': 'kg',       
     // volume
-    'ml': 'liters', 'milliliter': 'liters', 'milliliters': 'liters',
-    'liter': 'liters', 'litre': 'liters', 'liters': 'liters', 'litres': 'liters', 'લિટર': 'liters',
+      'ml': 'liters', 'milliliter': 'liters', 'milliliters': 'liters',
+      'liter': 'liters', 'litre': 'liters', 'liters': 'liters', 'litres': 'liters', 'લિટર': 'liters',
+      'ltr': 'liters', 'l': 'liters',
     // countables
     'packet': 'packets', 'पैकेट': 'packets', 'પૅકેટ': 'packets', 'પેકેટ': 'packets',
     'box': 'boxes', 'बॉक्स': 'boxes', 'બોક્સ': 'boxes',
@@ -165,7 +166,7 @@ function convertToBaseUnit(quantity, unit) {
 
   // volume
   if (u === 'ml' || u === 'milliliter' || u === 'milliliters') return quantity * 0.001; // -> liters
-  if (u === 'liter' || u === 'liters' || u === 'litre' || u === 'litres' || u === 'લિટર') return quantity;
+  if (u === 'liter' || u === 'liters' || u === 'litre' || u === 'litres' || u === 'લિટર' || u === 'ltr' || u === 'l') return quantity;
 
   // countables
   if (u === 'packet' || u === 'packets' || u === 'पैकेट' || u === 'પૅકેટ' || u === 'પેકેટ') return quantity;
@@ -356,7 +357,11 @@ async function airtableProductsRequest(config, context = 'Airtable Products Requ
 }
 
 // Update inventory using delete and recreate approach with proper unit handling
-async function updateInventory(shopId, product, quantityChange, unit = '') {  
+async function updateInventory(shopId, product, quantityChange, unit = '') {      
+  if (!product || !String(product).trim()) {
+      console.warn(`[Update ${normalizeShopIdForWrite(shopId)} - <undefined>] skipped: missing product`);
+      return { success: false, error: 'missing product' };
+    }
 // Robust context (avoid undefined product; normalize ShopID for display)
   const displayProduct = (String(product ?? '').trim() || '(unknown)');
   const context = `Update ${normalizeShopIdForWrite(shopId)} - ${displayProduct}`;
@@ -432,7 +437,11 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
 }
 
 // Create a batch record for tracking purchases with expiry dates
-async function createBatchRecord(batchData) {
+async function createBatchRecord(batchData) {    
+  if (!batchData?.product || !String(batchData.product).trim()) {
+      console.warn(`[Create Batch ${batchData.shopId} - <undefined>] skipped: missing product`);
+      return { success: false, error: 'missing product' };
+    }
   const context = `Create Batch ${batchData.shopId} - ${batchData.product}`;
   try {
     console.log(`[${context}] Creating batch record for ${batchData.quantity} units`);
@@ -646,7 +655,15 @@ async function updateBatchExpiry(batchId, expiryDate) {
 }
 
 // Update batch quantity when items are sold with proper unit handling
-async function updateBatchQuantity(batchId, quantityChange, unit = '') {
+async function updateBatchQuantity(batchId, quantityChange, unit = '') {  
+// Unit family guard: avoid converting between volume/weight and countable units.
+  const isVolume = (u) => ['liters','liter','litre','ml','ltr','l'].includes(String(u).toLowerCase());
+  const isCount  = (u) => ['packet','packets','piece','pieces','box','boxes','bottle','bottles','dozen','roll'].includes(String(u).toLowerCase());
+  if (isVolume(normalizedUnit) && isCount(currentUnit)) {
+    console.warn(`[${context}] Unit family mismatch (sale=${normalizedUnit}, batch=${currentUnit}); skipping batch quantity update to avoid wrong math.`);
+    return { success: true, newQuantity: currentQuantity }; // no-op, but do not fail the sale
+  }
+
   const context = `Update Batch Quantity ${batchId}`;
   try {
     console.log(`[${context}] Updating batch ${batchId} quantity by ${quantityChange} ${unit}`);
@@ -924,7 +941,11 @@ async function recreateBatchAndUpdate(compositeKey, quantityChange, unit, contex
     };
   }
   
-  const [shopId, product, purchaseDate] = parts;
+  const [shopId, product, purchaseDate] = parts;    
+  if (!product || !String(product).trim()) {
+      console.error(`[${context}] Invalid product in compositeKey: "${compositeKey}"`);
+      return { success: false, error: 'missing product', compositeKey };
+    }
   
   try {
     console.log(`[${context}] Creating new batch record...`);
