@@ -7498,7 +7498,7 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
 
   // Choose display name safely; never translate here.
   const dbProduct  = String(productRawForDb ?? product ?? '').trim();
-  const uiProduct  = String(productDisplay ?? dbProduct || 'item').trim();
+  const uiProduct  = String((productDisplay ?? dbProduct) || 'item').trim();
 
   // Normalize unit for display
   const uNorm      = typeof normalizeUnit === 'function' ? normalizeUnit(unit) : unit;
