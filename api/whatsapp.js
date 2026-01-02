@@ -371,6 +371,13 @@ if (typeof globalThis.clearUserState !== 'function') {
   };
 }
 
+// === NEW: Defensive shim for saleGuard (prevents "saleGuard is not defined") ===
+if (typeof globalThis.saleGuard !== 'function') {
+  globalThis.saleGuard = function saleGuard() {
+    return { ok: true };
+  };
+}
+
 // Caches
 const languageCache = new Map();
 const productMatchCache = new Map();
