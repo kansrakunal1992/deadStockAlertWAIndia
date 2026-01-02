@@ -12538,7 +12538,11 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
     let chosenSalePrice = null;
   // Hoisted: keep a per-update confirmation line available beyond branch scope
     let confirmTextLine;
-    let createdBatchEarly = false;
+    let createdBatchEarly = false;        
+    // ⬆️ HOIST overall stock holders so they exist across all blocks
+        let overallQty = null;
+        let overallUnit = null;
+        const normalize = (u) => normalizeUnit(u || '');
     try {
       
     // === RAW-vs-UI split ===
@@ -12826,23 +12830,27 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           }
           // Keep a success flag similar to old `result` shape
           result = { success: true };          
-                    
+                                        
           // Prefer helper's aggregate (overall) stock; keep DB peek as fallback only
-           let overallQty  = saleGuard?.overallStock ?? null;
-           let overallUnit = saleGuard?.overallUnit  ?? null;
+                overallQty  = saleGuard?.overallStock ?? null;
+                overallUnit = saleGuard?.overallUnit  ?? null;
            if (overallQty === null || overallUnit === null) {
              try {
                const invAfter = await getProductInventory(shopId, productRawForDb);
                if (invAfter && invAfter.quantity !== undefined) {
-                 result.newQuantity = invAfter.quantity;
-                 result.unit = invAfter.unit || update.unit;
+                 result.newQuantity = invAfter.quantity;                                   
+                 result.unit = normalize(invAfter.unit || update.unit);
                  overallQty  = invAfter.quantity;
-                 overallUnit = invAfter.unit || update.unit;
+                 overallUnit = normalize(invAfter.unit || update.unit);
                }
              } catch (e) {
                console.warn(`[Update ${shopId} - ${productRawForDb}] Post-sale inventory fallback fetch failed:`, e.message);
              }
           }
+                    
+          // FINAL GUARANTEE inside the sale block (in case everything above failed)
+                overallQty  = (overallQty  ?? result?.newQuantity ?? null);
+                overallUnit = normalize(overallUnit || result?.unit || update.unit || 'liters');
 
           // Prefer the helper's opening-batch key if it created one
           if (!selectedBatchCompositeKey && saleGuard.selectedBatchCompositeKey) {
@@ -13025,10 +13033,10 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                {
                  product: productRawForDb,
                  qty: Math.abs(update.quantity),
-                 unit: overallUnit ?? update.unit,    // display unit for the line
-                 pricePerUnit: salePrice,
-                 overallStock: overallQty ?? null,    // primary for Patch C composer
-                 overallUnit:  overallUnit ?? update.unit,
+                 unit: normalize(overallUnit ?? update.unit), // display unit for the line
+                 pricePerUnit: salePrice,                                   
+                 overallStock: overallQty ?? null,
+                 overallUnit: normalize(overallUnit ?? update.unit),
                  // keep legacy fallback if composer needs it
                  newQuantity: result?.newQuantity
                }
@@ -13080,7 +13088,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               const qty = Math.abs(update.quantity);
               const pricePart = salePrice > 0 ? ` @ ₹${salePrice}` : ''; // Fixed: Use salePrice                            
               const stockQty  = saleGuard?.overallStock ?? result?.newQuantity;
-               const stockUnit = saleGuard?.overallUnit  ?? result?.unit ?? update.unit;
+               const stockUnit = normalize(saleGuard?.overallUnit ?? result?.unit ?? update.unit);
                const stockPart = (stockQty !== undefined && stockQty !== null)
                  ? `. Stock: ${stockQty} ${stockUnit}`
                  : '';
