@@ -654,73 +654,58 @@ async function updateBatchExpiry(batchId, expiryDate) {
   }
 }
 
-// Update batch quantity when items are sold with proper unit handling
-async function updateBatchQuantity(batchId, quantityChange, unit = '') {  
-// Unit family guard: avoid converting between volume/weight and countable units.
-  const isVolume = (u) => ['liters','liter','litre','ml','ltr','l'].includes(String(u).toLowerCase());
-  const isCount  = (u) => ['packet','packets','piece','pieces','box','boxes','bottle','bottles','dozen','roll'].includes(String(u).toLowerCase());
-  if (isVolume(normalizedUnit) && isCount(currentUnit)) {
-    console.warn(`[${context}] Unit family mismatch (sale=${normalizedUnit}, batch=${currentUnit}); skipping batch quantity update to avoid wrong math.`);
-    return { success: true, newQuantity: currentQuantity }; // no-op, but do not fail the sale
-  }
-
+// FIX: compute context & variables first, then run the unit-family guard
+async function updateBatchQuantity(batchId, quantityChange, unit = '') {
   const context = `Update Batch Quantity ${batchId}`;
   try {
     console.log(`[${context}] Updating batch ${batchId} quantity by ${quantityChange} ${unit}`);
     console.log(`[${context}] Batch ID type: ${typeof batchId}, Value: "${batchId}"`);
-    
-    // First, get the current batch record
-console.log(`[${context}] Attempting to fetch batch with ID: "${batchId}"`);
 
-    
-const getResult = await airtableBatchRequest({
-  method: 'get',
-  url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`
-}, `${context} - Get`);
+    // 1) Fetch current batch
+    console.log(`[${context}] Attempting to fetch batch with ID: "${batchId}"`);
+    const getResult = await airtableBatchRequest({
+      method: 'get',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`
+    }, `${context} - Get`);
 
-console.log(`[${context}] API response status: ${getResult ? 'Success' : 'Failed'}`);
-console.log(`[${context}] Record ID: ${getResult.id ?? 'None'}`);
+    console.log(`[${context}] API response status: ${getResult ? 'Success' : 'Failed'}`);
+    console.log(`[${context}] Record ID: ${getResult.id ?? 'None'}`);
+    if (!getResult || !getResult.fields) {
+      console.error(`[${context}] Batch record not found. Requested ID: "${batchId}"`);
+      throw new Error('Batch record not found');
+    }
 
-if (!getResult || !getResult.fields) {
-  console.error(`[${context}] Batch record not found. Requested ID: "${batchId}"`);
-  throw new Error('Batch record not found');
-}
+    // 2) Establish units/quantities
+    const currentQuantity = getResult.fields.Quantity ?? 0;
+    const currentUnit     = getResult.fields.Units ?? '';
+    const normalizedUnit  = unit ? normalizeUnit(unit) : (currentUnit || 'pieces');
 
-const currentQuantity = getResult.fields.Quantity ?? 0;
-const currentUnit = getResult.fields.Units ?? '';
+    // 3) Unit-family guard (now variables are defined)
+    const isVolume = (u) => ['liters','liter','litre','ml','ltr','l'].includes(String(u).toLowerCase());
+    const isCount  = (u) => ['packet','packets','piece','pieces','box','boxes','bottle','bottles','dozen','roll'].includes(String(u).toLowerCase());
+    if (isVolume(normalizedUnit) && isCount(currentUnit)) {
+      console.warn(`[${context}] Unit family mismatch (sale=${normalizedUnit}, batch=${currentUnit}); skipping batch quantity update to avoid wrong math.`);
+      return { success: true, newQuantity: currentQuantity }; // no-op, do not fail the sale
+    }
 
-    
-    // Normalize units and convert to base unit for calculation
-    const normalizedUnit = unit ? normalizeUnit(unit) : currentUnit || 'pieces';
+    // 4) Convert & patch
     const currentBaseQty = convertToBaseUnit(currentQuantity, currentUnit);
-    const changeBaseQty = convertToBaseUnit(quantityChange, normalizedUnit);
-    
-    // Calculate new quantity in base unit
-    const newBaseQty = Math.max(0, currentBaseQty + changeBaseQty); // Ensure quantity doesn't go negative
-    
-    // Convert back to original unit for storage
-    const newQuantity = convertToBaseUnit(newBaseQty, currentUnit) / convertToBaseUnit(1, currentUnit);
-    
-    const updateData = {
-      fields: {
-        Quantity: newQuantity
-      }
-    };
-    
+    const changeBaseQty  = convertToBaseUnit(quantityChange, normalizedUnit);
+    const newBaseQty     = Math.max(0, currentBaseQty + changeBaseQty);
+    const newQuantity    = convertToBaseUnit(newBaseQty, currentUnit) / convertToBaseUnit(1, currentUnit);
+
+    const updateData = { fields: { Quantity: newQuantity } };
     const result = await airtableBatchRequest({
       method: 'patch',
       url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`,
       data: updateData
     }, context);
-    
+
     console.log(`[${context}] Batch quantity updated from ${currentQuantity} to ${newQuantity} ${currentUnit}`);
     return { success: true, newQuantity };
   } catch (error) {
     logError(context, error);
-    return {
-      success: false,
-      error: error.message
-    };
+    return { success: false, error: error.message };
   }
 }
 
