@@ -403,16 +403,15 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
     let newQuantity;
     if (existingRecord) {
         const currentQuantity = Number(existingRecord.fields.Quantity || 0);
-        const currentUnit = existingRecord.fields.Units || 'pieces';
-        
-        // Convert both to base unit for proper calculation
-        const currentBaseQty = convertToBaseUnit(currentQuantity, currentUnit);
-        const changeBaseQty = convertToBaseUnit(quantityChange, normalizedUnit);
-        const newBaseQty = Math.max(0, currentBaseQty + changeBaseQty);
-        
-        // Convert back to the existing record's unit to avoid silent unit flips
-        const unitOneBase = convertToBaseUnit(1, currentUnit) || 1;
-        newQuantity = convertToBaseUnit(newBaseQty, currentUnit) / unitOneBase;
+        const currentUnit = existingRecord.fields.Units || 'pieces';            
+            
+    // Convert both to base family (numeric) and compute
+         const currentBaseQty = convertToBaseUnit(currentQuantity, currentUnit); // number
+          const changeBaseQty  = convertToBaseUnit(quantityChange, normalizedUnit); // number
+          const newBaseQty     = Math.max(0, currentBaseQty + changeBaseQty);
+          // Convert back to the record's unit
+          const unitOneBase    = convertToBaseUnit(1, currentUnit) || 1;
+          newQuantity          = newBaseQty / unitOneBase;
     } else {
         // First insert: use caller's normalized unit
         newQuantity = quantityChange;
@@ -692,166 +691,101 @@ async function updateBatchExpiry(batchId, expiryDate) {
   }
 }
 
-// --- Helper function to convert quantity to base unit ---
-// Converts a given quantity to a standardized base unit (e.g., kg, pieces, l)
-// Unit conversion factors based on standard retail logic
+// --- Helper: convert *numerically* to base family ('kg', 'l', or 'pieces')
 function convertToBaseUnit(quantity, unit) {
-  // Default to pieces if unit is unknown
-  if (!unit) {
-    console.log(`[Conversion] Unknown unit "${unit}", defaulting to pieces`);
-    return { quantity, baseUnit: 'pieces' };
-  }
-
-  // Normalize unit for comparison (remove plural, whitespace)
-  const normalizedUnit = String(unit).toLowerCase().trim().replace(/s$/, '');
-
-  // Define base units and their conversion factors to a common reference unit
-  // Reference unit: 'kg' (Kilograms) - used as a common base for heavier items
-  const baseUnits = {
-    'kg': { factor: 1, reference: 'kg' },
-    'g': { factor: 0.001, reference: 'kg' }, // 1 gram = 0.001 kg
-    'l': { factor: 1, reference: 'l' }, // Liter
-    'pieces': { factor: 1, reference: 'pieces' }, // Generic pieces/packets
-    'packets': { factor: 1, reference: 'pieces' }, // Treat packets as pieces (approximation)
-    'boxes': { factor: 1, reference: 'pieces' }     // Treat boxes as pieces (approximation)
+  const q = Number(quantity ?? 0);
+  const u = String(unit ?? 'pieces').toLowerCase().trim();
+  // Pick family
+  let family = 'pieces';
+  if (['kg','kilogram','kilograms','g','gram','grams'].includes(u)) family = 'kg';
+  else if (['l','liter','litre','liters','litres','ltr','ml','milliliter','millilitre','milliliters','millilitres'].includes(u)) family = 'l';
+  // Factors per family
+  const factors = {
+    kg: { kg: 1, kilogram: 1, kilograms: 1, g: 0.001, gram: 0.001, grams: 0.001 },
+    l : { l: 1, liter: 1, litre: 1, liters: 1, litres: 1, ltr: 1, ml: 0.001,
+          milliliter: 0.001, millilitre: 0.001, milliliters: 0.001, millilitres: 0.001 },
+    pieces: { pieces: 1, piece: 1, pcs: 1, packet: 1, packets: 1, box: 1, boxes: 1 }
   };
-
-  // Determine the target base unit for this conversion
-  // Strategy: Map common units to specific base units
-  let targetBaseUnit = 'pieces';
-
-  if (normalizedUnit === 'kg' || normalizedUnit === 'kilogram' || normalizedUnit === 'kilograms') {
-    targetBaseUnit = 'kg';
-  } else if (normalizedUnit === 'g' || normalizedUnit === 'gram' || normalizedUnit === 'grams') {
-    targetBaseUnit = 'g';
-  } else if (normalizedUnit === 'l' || normalizedUnit === 'liter' || normalizedUnit === 'litre' || normalizedUnit === 'liters' || normalizedUnit === 'ml') {
-    targetBaseUnit = 'l';
-  } else if (normalizedUnit === 'pieces' || normalizedUnit === 'piece' || normalizedUnit === 'pcs' || normalizedUnit === 'packet' || normalizedUnit === 'packets' || normalizedUnit === 'box' || normalizedUnit === 'boxes') {
-    targetBaseUnit = 'pieces';
-  }
-
-  // Get the conversion factor for the target unit relative to the reference unit
-  // If the unit matches the reference unit directly, factor is 1
-  // If it's a sub-unit of the reference, factor applies (e.g., g to kg)
-  const conversionFactor = baseUnits[targetBaseUnit]?.factor || 1;
-  const referenceUnit = baseUnits[targetBaseUnit]?.reference || targetBaseUnit;
-
-  // If we can't determine a conversion, default to pieces
-  if (!conversionFactor || !referenceUnit) {
-    console.log(`[Conversion] No conversion factor for unit "${unit}", defaulting to pieces`);
-    return { quantity, baseUnit: 'pieces' };
-  }
-
-  // Calculate the quantity in the target base unit
-  const quantityInBaseUnit = quantity * conversionFactor;
-
-  console.log(`[Conversion] Converted ${quantity} ${unit} to ${quantityInBaseUnit} ${referenceUnit}`);
-
-  return {
-    quantity: quantityInBaseUnit,
-    baseUnit: referenceUnit
-  };
+  let factor = 1;
+  if (family === 'kg') factor = factors.kg[u] ?? 1;
+  else if (family === 'l') factor = factors.l[u] ?? 1;
+  else factor = factors.pieces[u] ?? 1;
+  const out = q * factor;
+  console.log(`[Conversion] Converted ${q} ${unit} to ${out} ${family}`);
+  return out; // <--- number
 }
 
 // --- FIX: Update batch quantity with proper context and logic ---
+
 async function updateBatchQuantity(batchId, quantityChange, unit = '') {
   const context = `Update Batch Quantity ${batchId}`;
   const normalizedUnit = normalizeUnit(unit);
-
   try {
     console.log(`[${context}] Processing batch quantity update`, {
-      batchId,
-      quantityChange,
-      unit: normalizedUnit
+      batchId, quantityChange, unit: normalizedUnit
     });
 
-    // 1) Fetch current batch details
-    const batch = await getBatchByCompositeKey(normalizeCompositeKey(batchId));
+    // 1) Fetch current batch by RECORD ID (not composite key)
+    const batch = await airtableBatchRequest({
+      method: 'get',
+      url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`
+    }, `${context} - FetchById`);
+
     if (!batch || !batch.fields) {
       console.error(`[${context}] Batch not found or fields missing for ID:`, batchId);
       return { success: false, error: 'Batch not found' };
     }
 
-    // Extract current values
-    const currentQty = batch.fields.Quantity;
-    const currentUnit = batch.fields.Units;
+    // Extract
+    const currentQty  = Number(batch.fields.Quantity ?? 0);
+    const currentUnit = String(batch.fields.Units ?? 'pieces').toLowerCase();
 
-    // 2) Parse the quantity change
-    const delta = parseFloat(quantityChange);
-    if (isNaN(delta) || delta === 0) {
-      console.log(`[${context}] Invalid or zero quantity change: ${quantityChange}`);
-      return { success: false, error: 'Invalid quantity' };
-    }
+    // 2) Decide unit family correctly (‘l’, ‘kg’, or ‘pieces’) — include plurals
+    const cu = currentUnit;
+    const isLiters = ['l','liter','litre','liters','litres','ltr'].includes(cu);
+    const isKg     = ['kg','kilogram','kilograms'].includes(cu);
+    const targetBaseUnit = isLiters ? 'l' : (isKg ? 'kg' : 'pieces');
 
-    // 3) Convert both current stock and delta to a common base unit
-    // Base Unit Strategy: Use the *current batch's unit* as the target for conversion
-    let targetBaseUnit = (currentUnit === 'l' || currentUnit === 'liter') ? 'l' :
-                          (currentUnit === 'kg' || currentUnit.includes('kg')) ? 'kg' : 'pieces';
+    const du = String(normalizedUnit).toLowerCase();
+    const deltaIsLiters = ['l','liter','litre','liters','litres','ltr'].includes(du);
+    const deltaIsKg     = ['kg','kilogram','kilograms'].includes(du);
+    const deltaBaseUnit = deltaIsLiters ? 'l' : (deltaIsKg ? 'kg' : 'pieces');
 
-    // Determine the base unit for the delta change based on the provided unit
-    let deltaBaseUnit = targetBaseUnit;
-    if (normalizedUnit === 'l' || normalizedUnit === 'liter' || normalizedUnit === 'litre') deltaBaseUnit = 'l';
-    if (normalizedUnit === 'kg' || normalizedUnit === 'kilogram' || normalizedUnit.includes('kg')) deltaBaseUnit = 'kg';
-    if (normalizedUnit === 'pieces' || normalizedUnit === 'piece' || normalizedUnit === 'pcs') deltaBaseUnit = 'pieces';
+    // 3) Convert quantities to base numbers and compute
+    const currentBaseQty = convertToBaseUnit(currentQty, targetBaseUnit);
+    const changeBaseQty  = convertToBaseUnit(Number(quantityChange), deltaBaseUnit);
+    const newBaseQty     = Math.max(0, currentBaseQty + changeBaseQty);
 
-    // Convert current quantity to the chosen target base unit
-    const currentBaseQty = convertToBaseUnit(currentQty, targetBaseUnit).quantity;
-    
-    // Convert delta quantity to the chosen target base unit
-    const changeBaseQty = convertToBaseUnit(delta, deltaBaseUnit).quantity;
-
-    // Calculate new total quantity in the target base unit
-    const newBaseQty = Math.max(0, currentBaseQty + changeBaseQty);
+    // 4) Convert back to original batch unit safely
+    const unitOneBase    = convertToBaseUnit(1, targetBaseUnit);
+    const newQuantity    = (unitOneBase > 0) ? (newBaseQty / unitOneBase) : newBaseQty;
 
     console.log(`[${context}] Stock calculation:`, {
-      currentQty,
-      currentUnit,
-      targetBaseUnit,
-      currentBaseQty,
-      deltaBaseUnit,
-      changeBaseQty,
-      newBaseQty
+      currentQty, currentUnit, targetBaseUnit, currentBaseQty,
+      deltaBaseUnit, changeBaseQty, newBaseQty, newQuantity
     });
 
-    // 5) Convert the new total quantity back to the *original batch's unit* for storage
-    const newQuantity = convertToBaseUnit(newBaseQty, currentUnit).quantity;
-
-    console.log(`[${context}] Final new quantity for batch:`, {
-      newBaseQty,
-      currentUnit,
-      newQuantity
-    });
-
-    // 6) Unit-family guard: prevent mixing volume and count units
-    const isVolume = ['liters','liter','litre','ltr'].includes(String(normalizedUnit).toLowerCase());
-    const isCount = ['pieces','piece','pcs','packet','packets','boxes','bottle','bottles'].includes(String(normalizedUnit).toLowerCase());
-    if (isVolume && isCount) {
-      console.warn(`[${context}] Unit family mismatch detected (unit: "${normalizedUnit}")`);
-      return { success: false, error: 'Unit family mismatch (volume and count)' };
-    }
-
-    // 7) Update the batch in Airtable
-    const updateData = { fields: { Quantity: newQuantity } };
-    
+    // 5) Patch Airtable
     const result = await airtableBatchRequest({
       method: 'patch',
       url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${BATCH_TABLE_NAME}/${batchId}`,
-      data: updateData
-    });
+      data: { fields: { Quantity: newQuantity } }
+    }, `${context} - Patch`);
 
-    if (result.success) {
-      console.log(`[${context}] Successfully updated batch quantity. New Qty:`, newQuantity);
+    // The Airtable SDK returns the updated record; treat that as success.
+    if (result && result.id) {
+      console.log(`[${context}] Successfully updated; New Qty:`, newQuantity);
       return { success: true, newQuantity };
-    } else {
-      console.error(`[${context}] Failed to update batch:`, result.error);
-      return { success: false, error: result.error || 'Unknown error' };
     }
 
+    console.error(`[${context}] Unknown response from Airtable:`, result);
+    return { success: false, error: 'Unknown Airtable response' };
   } catch (error) {
     console.error(`[${context}] Error updating batch quantity:`, error.message);
     return { success: false, error: error.message };
   }
 }
+
 
 // NEW: Update batch purchase price (and derived purchase value)
 async function updateBatchPurchasePrice(batchId, price, quantityForValue = null) {
@@ -1027,11 +961,15 @@ async function updateBatchQuantityByCompositeKey(compositeKey, quantityChange, u
     console.log(`[${context}] Found batch by composite key, ID: ${batch.id}`);
     
     // Try to update the batch
-    try {
+    try {           
       console.log(`[${context}] Attempting to update batch ${batch.id}`);
-      const result = await updateBatchQuantity(batch.id, quantityChange, unit);
-      console.log(`[${context}] Successfully updated batch ${batch.id}`);
-      return result;
+          const result = await updateBatchQuantity(batch.id, quantityChange, unit);
+          if (!result?.success) {
+            console.error(`[${context}] Failed to update batch ${batch.id}:`, result?.error);
+            return result;
+          }
+          console.log(`[${context}] Successfully updated batch ${batch.id}`);
+          return result;
     } catch (updateError) {
       console.error(`[${context}] Failed to update batch ${batch.id}:`, updateError.message);
       
