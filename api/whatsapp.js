@@ -222,11 +222,19 @@ function canonicalizeLang(code) {
 // --- Enrich sale header with stock (tiny helper) ---
 async function enrichSaleHeaderWithStock(From, header, productName, preferUnit = 'liters') {
   try {
-    const shopId = shopIdFrom(From);                   // uses toE164(...) from your file
-    const res = await getProductTotalQuantity(shopId, productName, preferUnit);
+    const shopId = shopIdFrom(From);                   // uses toE164(...) from your file      
+    // Prefer the product's real unit; fall back to inventory inference; last resort: 'pieces'
+    let unitHint = (typeof preferUnit === 'string' && preferUnit.trim()) ? preferUnit : '';
+    if (!unitHint) {
+      try {
+        unitHint = await inferUnitFromInventory(shopId, productName); // 'kg' for sugar, etc.
+      } catch { /* noop */ }
+    }
+    unitHint = unitHint || 'pieces';
+    const res = await getProductTotalQuantity(shopId, productName, unitHint);
     if (res && res.success) {
       // Canonical → display (e.g., "liters" → "ltr")
-      const unitDisp = canonicalizeUnitToken(res.unit || preferUnit);
+      const unitDisp = canonicalizeUnitToken(res.unit ?? unitHint);
       return `${header} (Stock: ${res.total} ${unitDisp})`;
     }
   } catch (_) {
@@ -7472,41 +7480,68 @@ await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
 
 /**
  * NEW: one-liner sale confirmation (language-aware via t()).
- * Mirrors purchase/return format and retains the 🛒:📦 Sale icon.
+ * Uses productRawForDb for identity; productDisplay for text if available.
+ * Single-shot per requestId via _sendConfirmOnceByBody.
  */
-async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, payload) {
+async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, payload = {}) {
   const {
-    product,
+    productRawForDb,          // ← DB-safe
+    productDisplay,           // ← UI-friendly (optional)
+    product,                  // ← legacy; will be ignored if productRawForDb is present
     qty,
     unit = '',
     pricePerUnit = null,
-    newQuantity = null,          // ← Prefer DB aggregate 'overallStock' here when available
-  } = payload || {};
+    newQuantity = null,       // legacy stock fallback
+    overallStock = null,      // preferred stock value (aggregate)
+    overallUnit = null        // preferred stock unit (aggregate)
+  } = payload;
 
-  // Prefer the existing composer if present; else use a safe fallback that keeps the icon & format.
-  const head = (typeof composeSaleConfirmation === 'function')
-    ? composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity })
-    : composeSaleConfirmationFallback({ product, qty, unit, pricePerUnit, newQuantity });
+  // Choose display name safely; never translate here.
+  const dbProduct  = String(productRawForDb ?? product ?? '').trim();
+  const uiProduct  = String(productDisplay ?? dbProduct || 'item').trim();
 
-  const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
-  await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
+  // Normalize unit for display
+  const uNorm      = typeof normalizeUnit === 'function' ? normalizeUnit(unit) : unit;
+  const stockQty   = (overallStock ?? newQuantity);
+  const stockUnit  = typeof normalizeUnit === 'function'
+                       ? normalizeUnit(overallUnit ?? unit)
+                       : (overallUnit ?? unit);
+
+  // Compose the one-liner head (mirrors purchase/return format)
+  const icon       = '🛒:📦';
+  const qtyUnit    = (qty !== undefined && qty !== null)
+                      ? (uNorm ? `${qty} ${uNorm}` : String(qty))
+                      : '';
+  const rateText   = (pricePerUnit !== null && pricePerUnit !== undefined)
+                      ? ` @ ₹${Number(pricePerUnit).toFixed(Number(pricePerUnit) % 1 ? 2 : 0)}${uNorm ? `/${uNorm}` : ''}`
+                      : '';
+  const stockText  = (stockQty !== null && stockQty !== undefined)
+                      ? (stockUnit ? ` (Stock: ${stockQty} ${stockUnit})` : ` (Stock: ${stockQty})`)
+                      : '';
+
+  const head = `${icon} Sold${qtyUnit ? ` ${qtyUnit}` : ''}${uiProduct ? ` ${uiProduct}` : ''}${rateText}${stockText}`;
+
+  // Localize body; keep anchors; send once
+  const bodySrc = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
+  const bodyLoc = await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);
+  await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);
 }
 
 /**
- * Fallback (used only if composeSaleConfirmation is not defined):
- * Format matches your Purchase line order exactly:
- * 🛒:📦 Sold <qty> <unit> <product> @ ₹<rate>/<unit> (Stock: N <unit>)
+ * Fallback composer: prefer productDisplay for text; fallback to raw.
  */
 function composeSaleConfirmationFallback({
+  productRawForDb,
+  productDisplay,
   product = 'item',
   qty,
   unit = '',
   pricePerUnit = null,
   newQuantity = null
 }) {
-  const icon = '🛒:📦';
+  const icon      = '🛒:📦';
+  const uiProduct = String(productDisplay ?? productRawForDb ?? product ?? 'item').trim();
 
-  // Order: Verb → qty/unit → product — same as your Purchase example
   const qtyUnitPart =
     (qty !== undefined && qty !== null)
       ? (unit ? `${qty} ${unit}` : String(qty))
@@ -7522,8 +7557,7 @@ function composeSaleConfirmationFallback({
       ? (unit ? ` (Stock: ${newQuantity} ${unit})` : ` (Stock: ${newQuantity})`)
       : '';
 
-  // Final one-liner head
-  return `${icon} Sold${qtyUnitPart ? ` ${qtyUnitPart}` : ''}${product ? ` ${product}` : ''}${pricePart}${stockPart}`;
+  return `${icon} Sold${qtyUnitPart ? ` ${qtyUnitPart}` : ''}${uiProduct ? ` ${uiProduct}` : ''}${pricePart}${stockPart}`;
 }
 
 function chooseHeader(count, compact = true, isPrice = false) {
@@ -12618,10 +12652,15 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
     try {
       
     // === RAW-vs-UI split ===
-          // RAW for ALL DB writes; UI name only for human-facing messages                
-      const productRawForDb = resolveProductNameForWrite(update); // uses gate DISABLE_PRODUCT_TRANSLATION_FOR_DB=1
-        const productUiName   = update.productDisplay ?? update.product; // for display only
-        const product         = productRawForDb; // MIN PATCH: alias to avoid ReferenceError across branches
+          // RAW for ALL DB writes; UI name only for human-facing messages                          
+    // Always compute the DB-safe name once per update
+      const productRawForDb = resolveProductNameForWrite(update);     // DB writes only
+      const productUiName   = update.productDisplay ?? update.product; // UI display only
+      const product         = productRawForDb;                         // alias for logs
+      if (!productRawForDb || ['undefined','null','n/a','na'].includes(String(productRawForDb).toLowerCase())) {
+        console.warn(`[Update ${shopId} - <undefined>] skipped: missing product`, { update });
+        continue; // hard stop: never write DB with missing product
+      }
           console.log(`[Update ${shopId}] Using RAW product for DB: "${productRawForDb}"`);
                   
       // === Handle customer returns (simple add-back; no batch, no price/expiry) ===
@@ -13230,9 +13269,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         results.push(enriched);
       
     } catch (error) {
-      console.error(`[Update ${shopId} - ${update.product}] Error:`, error.message);
+      console.error(`[Update ${shopId} - ${productRawForDb ?? update.product ?? '<unknown>'}] Error:`, error.message);
       results.push({
-        product: update.product,
+        product: productRawForDb ?? update.product ?? '',
         quantity: update.quantity,
         unit: update.unit,
         action: update.action,
