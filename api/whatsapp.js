@@ -7379,15 +7379,6 @@ async function sendMessageDedup(From, msg) {
   await sendMessageViaAPI(From, finalBody);
 }
 
-async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, info) {
-  // Gate duplicates per request
-  if (saleConfirmTracker.has(requestId)) return;
-  saleConfirmTracker.add(requestId);      
-  const head = composeSaleConfirmation(info);
-  const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
-  await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
-}
-
 /**
  * NEW: one-liner purchase confirmation (language-aware via t())
  * Mirrors the sale confirmation, but for “purchased”.
@@ -7405,6 +7396,62 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
+}
+
+/**
+ * NEW: one-liner sale confirmation (language-aware via t()).
+ * Mirrors purchase/return format and retains the 🛒:📦 Sale icon.
+ */
+async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, payload) {
+  const {
+    product,
+    qty,
+    unit = '',
+    pricePerUnit = null,
+    newQuantity = null,          // ← Prefer DB aggregate 'overallStock' here when available
+  } = payload || {};
+
+  // Prefer the existing composer if present; else use a safe fallback that keeps the icon & format.
+  const head = (typeof composeSaleConfirmation === 'function')
+    ? composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity })
+    : composeSaleConfirmationFallback({ product, qty, unit, pricePerUnit, newQuantity });
+
+  const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
+  await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
+}
+
+/**
+ * Fallback (used only if composeSaleConfirmation is not defined):
+ * Format matches your Purchase line order exactly:
+ * 🛒:📦 Sold <qty> <unit> <product> @ ₹<rate>/<unit> (Stock: N <unit>)
+ */
+function composeSaleConfirmationFallback({
+  product = 'item',
+  qty,
+  unit = '',
+  pricePerUnit = null,
+  newQuantity = null
+}) {
+  const icon = '🛒:📦';
+
+  // Order: Verb → qty/unit → product — same as your Purchase example
+  const qtyUnitPart =
+    (qty !== undefined && qty !== null)
+      ? (unit ? `${qty} ${unit}` : String(qty))
+      : '';
+
+  const pricePart =
+    (pricePerUnit !== null && pricePerUnit !== undefined)
+      ? ` @ ₹${Number(pricePerUnit).toFixed(Number(pricePerUnit) % 1 ? 2 : 0)}${unit ? `/${unit}` : ''}`
+      : '';
+
+  const stockPart =
+    (newQuantity !== null && newQuantity !== undefined)
+      ? (unit ? ` (Stock: ${newQuantity} ${unit})` : ` (Stock: ${newQuantity})`)
+      : '';
+
+  // Final one-liner head
+  return `${icon} Sold${qtyUnitPart ? ` ${qtyUnitPart}` : ''}${product ? ` ${product}` : ''}${pricePart}${stockPart}`;
 }
 
 function chooseHeader(count, compact = true, isPrice = false) {
@@ -15306,7 +15353,17 @@ async function handleBatchSelectionResponse(body, from, response, requestId, lan
           });
         }
       }
-    }
+    }        
+    // Pass through the batch's exact composite key and product as-is for downstream usage.
+    // Avoid rebuilding composite key or lower-casing product here.
+    const selectedBatchKey = selectedBatch?.fields?.CompositeKey ?? selectedBatch?.compositeKey ?? null;
+    const productForWrite = product; // keep original casing/script
+    // Example: persist into a transient state or payload you send to the sale handler
+    globalState.pendingProductUpdates[from] = {
+      ...(globalState.pendingProductUpdates[from] ?? {}),
+      selectedBatchCompositeKey: selectedBatchKey,
+      productForWrite
+    };
     if (!selectedBatch) {
       selectedBatch = batches[batches.length - 1];
     }
@@ -17859,9 +17916,11 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                  // Do not send a confirmation body if price is missing or further input is needed
                  return;
                }                        
-            const unit = u.unit ?? r.unitAfter ?? r.unit ?? '';
-            // PRODUCT-level total stock after update; fall back to old field only if needed
-            const finalStockQty = (r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity);
+              
+            // Prefer DB aggregate for display; fall back to parser/legacy fields
+            const unit = r.overallUnit ?? r.unitAfter ?? r.unit ?? u.unit ?? '';
+            // PRODUCT-level total stock after update; DB aggregate first
+            const finalStockQty = r.overallStock ?? r.newQuantity ?? undefined;
             const stockSuffix = (finalStockQty != null)
               ? ` (Stock: ${finalStockQty} ${unit})`
               : '';
@@ -17998,14 +18057,16 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
      if (!justNudged && processed.length === 1) {
        const x = processed[0];
        const act = String(x.action).toLowerCase();
-       if (x.needsPrice || x.awaiting || x.needsUserInput) return;        
+       if (x.needsPrice || x.awaiting || x.needsUserInput) return;                       
        const common = {
-          product: x.productDisplay ?? x.product ?? x.productName ?? x.name ?? x.item ?? x.title ?? 'item',
-          qty: x.quantity,
-          unit: x.unitAfter ?? x.unit ?? '',
-          pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
-          newQuantity: x.newQuantity
-        };
+           product: x.productDisplay ?? x.product ?? x.productName ?? x.name ?? x.item ?? x.title ?? 'item',
+           qty: x.quantity,
+           // Prefer DB aggregate for display
+           unit: x.overallUnit ?? x.unitAfter ?? x.unit ?? '',
+           pricePerUnit: x.rate ?? x.salePrice ?? x.price ?? null,
+           // Show accurate post-sale stock from DB aggregate
+           newQuantity: x.overallStock ?? x.newQuantity
+         };
        if (act === 'sold')  { await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common); return; }
        if (act === 'purchased' && !x.needsPrice && !x.awaiting && !x.needsUserInput) { await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common); return; }
      }
@@ -20554,26 +20615,27 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
                       if (/\bundefined\b/i.test(rawLine)) {
                         const productName =
                           r.productDisplay ?? r.product ?? r.productName ?? r.name ?? r.item ?? r.title ?? 'item';
-                        rawLine = (String(r.action).toLowerCase() === 'sold'
+                        rawLine = (String(r.action).toLowerCase() === 'sold'                                                    
                           ? composeSaleConfirmation({
-                              product: productName,
-                              qty: r.quantity,
-                              unit: r.unitAfter ?? r.unit ?? '',
-                              pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
-                              newQuantity: r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity
-                            })
+                                product: productName,
+                                qty: r.quantity,
+                                unit: r.overallUnit ?? r.unitAfter ?? r.unit ?? '',
+                                pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
+                                newQuantity: r.overallStock ?? r.newQuantity
+                              })                                                   
                           : composePurchaseConfirmation({
-                              product: productName,
-                              qty: r.quantity,
-                              unit: r.unitAfter ?? r.unit ?? '',
-                              pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
-                              newQuantity: r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity
+                                product: productName,
+                                qty: r.quantity,
+                                unit: r.overallUnit ?? r.unitAfter ?? r.unit ?? '',
+                                pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
+                                newQuantity: r.overallStock ?? r.newQuantity
                             }));
-                      }
-                      // PRODUCT-level total stock for the suffix when compact mode needs it
-                      const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
-                      const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
-                      const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
+                      }                                            
+                      // PRODUCT-level total stock for the suffix when compact mode needs it (prefer DB aggregate)
+                       const finalQty = r.overallStock ?? r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
+                       const finalUnit = r.overallUnit ?? r.unitAfter ?? r.unit ?? '';
+                       const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
+                       const stockPart = needsStock ? ` (Stock: ${finalQty}${finalUnit ? ` ${finalUnit}` : ''})` : '';
                       message += `${rawLine}${stockPart}\n`;
                   if (r.success) successCount++;
                 }
