@@ -219,6 +219,22 @@ function canonicalizeLang(code) {
    return DISPLAY[key] ?? tok;
  }
 
+// --- Enrich sale header with stock (tiny helper) ---
+async function enrichSaleHeaderWithStock(From, header, productName, preferUnit = 'liters') {
+  try {
+    const shopId = shopIdFrom(From);                   // uses toE164(...) from your file
+    const res = await getProductTotalQuantity(shopId, productName, preferUnit);
+    if (res && res.success) {
+      // Canonical → display (e.g., "liters" → "ltr")
+      const unitDisp = canonicalizeUnitToken(res.unit || preferUnit);
+      return `${header} (Stock: ${res.total} ${unitDisp})`;
+    }
+  } catch (_) {
+    // Silent best-effort; do not block confirmations
+  }
+  return header;
+}
+
 // ------------------------------------------------------------------------
 // [UNIFIED PATCH] Roman-Hindi vs Hinglish detection sets + env gate
 // ------------------------------------------------------------------------
@@ -2618,7 +2634,7 @@ const responseTimes = {
 const authCache = new Map();
 const { processShopSummary } = require('../dailySummary');
 const { generateInvoicePDF, generateInventoryShortSummaryPDF, generateSalesRawTablePDF } = require('../pdfGenerator'); // +new generators
-const { getShopDetails } = require('../database');
+const { getShopDetails, getProductTotalQuantity } = require('../database');
 const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS || 4000);
 
 // ===PATCH START: UNIQ:PARALLEL-HELPERS-20251219===
@@ -7286,29 +7302,46 @@ async function _sendConfirmOnceByBody(From, detectedLanguage, requestId, body) {
   await sendMessageViaAPI(From, final);
 }
 
-function composeSaleConfirmation({ product, qty, unit, pricePerUnit, newQuantity, aggregate, overallStock, overallUnit }) {
-   // Prefer aggregate/overall stock returned by DB helpers; fallback to newQuantity
-   const stockQty  = overallStock ?? (aggregate?.total ?? newQuantity);
-   const stockUnit = overallUnit ?? (aggregate?.unit ?? unit);
-   const unitText  = stockUnit ? ` ${stockUnit}` : '';
+function composeSaleConfirmation({
+  product,
+  qty,
+  unit,              // unit used for the sale line (e.g., "litres" → should display as "ltr")
+  pricePerUnit,      // numeric price per unit if available
+  newQuantity,       // new quantity in stock (fallback when aggregate/overall missing)
+  aggregate,         // shape expected: { total, unit } from getProductTotalQuantity(...)
+  overallStock,      // preferred stock count when caller passes it directly
+  overallUnit        // preferred stock unit when caller passes it directly
+}) {
+  // -- STOCK PARTS (fallback order preserved) --
+  const stockQtyBase  = overallStock ?? (aggregate?.total ?? newQuantity);
+  const stockUnitBase = overallUnit ?? (aggregate?.unit ?? unit);
 
-  const qtyNum = Number(qty);
-  const priceNum = Number(pricePerUnit);
+  // Canonicalize both the header's sale unit and the stock unit for display ("ltr", "kg", "pieces", etc.)
+  const unitDispHeader = stockUnitBase ? canonicalizeUnitToken(unit ?? stockUnitBase) : canonicalizeUnitToken(unit ?? '');
+  const unitDispStock  = stockUnitBase ? canonicalizeUnitToken(stockUnitBase) : unitDispHeader;
 
-  const hasPrice = Number.isFinite(priceNum) && priceNum >= 0; // show ₹0.00 if valid zero
-  const perUnitText = stockUnit ? `/${stockUnit}` : '';
+  // Text fragments
+  const unitTextHeader = unitDispHeader ? ` ${unitDispHeader}` : '';
+  const perUnitText    = unitDispHeader ? `/${unitDispHeader}` : '';
 
+  // Numeric coercions
+  const qtyNum    = Number(qty);
+  const priceNum  = Number(pricePerUnit);
+  const safeQty   = Number.isFinite(qtyNum) ? Math.abs(qtyNum) : qty; // keep your original absolute qty behavior
+
+  // Show ₹0.00 if zero; hide only when NaN or not provided
+  const hasPrice  = Number.isFinite(priceNum) && priceNum >= 0;
   const priceText = hasPrice ? ` at ₹${priceNum.toFixed(2)}${perUnitText}` : '';
-  
-  const hasStock = stockQty !== undefined && stockQty !== null;
-  const stockText = hasStock ? ` (Stock: ${stockQty}${unitText})` : '';
 
-  const productName =
-    (typeof product === 'string' ? product.trim() : '') || 'item';
+  // Stock annotation (best-effort)
+  const hasStock  = stockQtyBase !== undefined && stockQtyBase !== null;
+  const stockText = hasStock ? ` (Stock: ${stockQtyBase} ${unitDispStock || ''})` : '';
 
-  const safeQty = Number.isFinite(qtyNum) ? Math.abs(qtyNum) : qty;
+  // Product display (keep your existing default)
+  const productName = (typeof product === 'string' ? product.trim() : '') || 'item';
 
-  return `🛒 Sold ${safeQty}${unitText} ${productName}${priceText}${stockText}`;
+  // Final line
+  return `🛒 Sold ${safeQty}${unitTextHeader} ${productName}${priceText}${stockText}`;
 }
 
 // === Support link (from environment) ===
