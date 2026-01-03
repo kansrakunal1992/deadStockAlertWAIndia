@@ -7465,7 +7465,7 @@ function formatResultLine(r, compact = true, includeStockPart = true) {
   return `• ${r.product}: ${qty} ${unit} ${act}${stockPart} ${tail}`.trim();
 }
 
-async function composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity }) {
+function composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity }) {
   const unitText  = unit ? ` ${unit}` : '';
   const priceText = (Number(pricePerUnit) > 0)
     ? ` at ₹${Number(pricePerUnit).toFixed(2)}/${unit}`
@@ -7474,29 +7474,6 @@ async function composePurchaseConfirmation({ product, qty, unit, pricePerUnit, n
     ? ` (Stock: ${newQuantity}${unitText})`
     : '';
   return `📦 Purchased ${Math.abs(qty)}${unitText} ${product}${priceText}${stockText}`;
-  // --- NEW: 120s correction window + Undo CTA (purchase)
- try {
-   const db = require('./database');
-   // Arm window carrying the last txn details; include compositeKey when available
-   await db.openCorrectionWindow(
-     From.replace('whatsapp:', ''),
-     { action: 'purchase', product, quantity: Number(qty), unit, compositeKey: payload?.batchCompositeKey ?? null },
-     String(detectedLanguage ?? 'en').toLowerCase()
-   ); // uses database.js new helper
-   // Send the Undo quick-reply CTA from the Content bundle
-   const { ensureLangTemplates, getLangSids } = require('./contentCache');
-   const lang = String(detectedLanguage ?? 'en').toLowerCase();
-   await ensureLangTemplates(lang);
-   const sids = getLangSids(lang);
-   console.log('[undo-cta]', { lang, correctionUndoSid: sids?.correctionUndoSid });
-   if (sids?.correctionUndoSid) {
-     await client.messages.create({
-       from: process.env.TWILIO_WHATSAPP_NUMBER,
-       to: From,
-       contentSid: sids.correctionUndoSid
-     });
-   }
- } catch (_) { /* best-effort only; do not block confirmation */ }
 }
 
 // --- Single-sale confirmation (compose & send once) --------------------------
@@ -7523,7 +7500,7 @@ async function _sendConfirmOnceByBody(From, detectedLanguage, requestId, body) {
   await sendMessageViaAPI(From, final);
 }
 
-async function composeSaleConfirmation({
+function composeSaleConfirmation({
   product,
   qty,
   unit,              // unit used for the sale line (e.g., "litres" → should display as "ltr")
@@ -7578,31 +7555,6 @@ async function composeSaleConfirmation({
   // Final line  
   const line = `🛒 Sold ${safeQty}${unitTextHeader} ${productName}${priceText}${stockText}`;
   return line;
-  
-  // --- NEW: 120s correction window + Undo CTA (purchase)
- try {
-   const db = require('./database');
-   // Arm window carrying the last txn details; include compositeKey when available
-   await db.openCorrectionWindow(
-     From.replace('whatsapp:', ''),
-     { action: 'purchase', product, quantity: Number(qty), unit, compositeKey: payload?.batchCompositeKey ?? null },
-     String(detectedLanguage ?? 'en').toLowerCase()
-   ); // uses database.js new helper
-   // Send the Undo quick-reply CTA from the Content bundle
-   const { ensureLangTemplates, getLangSids } = require('./contentCache');
-   const lang = String(detectedLanguage ?? 'en').toLowerCase();
-   await ensureLangTemplates(lang);
-   const sids = getLangSids(lang);
-   console.log('[undo-cta]', { lang, correctionUndoSid: sids?.correctionUndoSid });
-   if (sids?.correctionUndoSid) {
-     await client.messages.create({
-       from: process.env.TWILIO_WHATSAPP_NUMBER,
-       to: From,
-       contentSid: sids.correctionUndoSid
-     });
-   }
- } catch (_) { /* best-effort only; do not block confirmation */ }
-  
 }
 
 // === Support link (from environment) ===
@@ -7694,7 +7646,7 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
   } = payload || {};
 
   // Build the one-line head via composer (emoji + unit/price/stock)  
-const head = await composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
+const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);  
 // --- NEW: 120s correction window + Undo CTA (purchase)
@@ -7711,7 +7663,6 @@ await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
    const lang = String(detectedLanguage ?? 'en').toLowerCase();
    await ensureLangTemplates(lang);
    const sids = getLangSids(lang);
-   console.log('[undo-cta]', { lang, correctionUndoSid: sids?.correctionUndoSid });
    if (sids?.correctionUndoSid) {
      await client.messages.create({
        from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -7787,7 +7738,6 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
      const lang = String(detectedLanguage ?? 'en').toLowerCase();
      await ensureLangTemplates(lang);
      const sids = getLangSids(lang);
-     console.log('[undo-cta]', { lang, correctionUndoSid: sids?.correctionUndoSid });
      if (sids?.correctionUndoSid) {
        await client.messages.create({
          from: process.env.TWILIO_WHATSAPP_NUMBER,
@@ -17660,14 +17610,14 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                  r.productDisplay ?? r.product ?? r.productName ?? r.name ?? r.item ?? r.title ?? 'item';
                rawLine =
                  String(r.action).toLowerCase() === 'sold'
-                   ? await composeSaleConfirmation({
+                   ? composeSaleConfirmation({
                        product: productName,
                        qty: r.quantity,
                        unit: r.unitAfter ?? r.unit ?? '',
                        pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
                        newQuantity: r.newQuantity
                      })
-                   : await composePurchaseConfirmation({
+                   : composePurchaseConfirmation({
                        product: productName,
                        qty: r.quantity,
                        unit: r.unitAfter ?? r.unit ?? '',
@@ -18328,14 +18278,14 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               
                const baseBody =
                  (String(u.action).toLowerCase() === 'sold'
-                   ? await composeSaleConfirmation({
+                   ? composeSaleConfirmation({
                        product: productName,
                        qty: u.quantity,
                        unit: u.unit,
                        pricePerUnit: u.pricePerUnit,
                        newQuantity: undefined
                      })
-                   : await composePurchaseConfirmation({
+                   : composePurchaseConfirmation({
                        product: productName,
                        qty: u.quantity,
                        unit: u.unit,
@@ -18546,14 +18496,14 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
              r.productDisplay ?? r.product ?? r.productName ?? r.name ?? r.item ?? r.title ?? 'item';
            rawLine =
              String(r.action).toLowerCase() === 'sold'
-               ? await composeSaleConfirmation({
+               ? composeSaleConfirmation({
                    product: productName,
                    qty: r.quantity,
                    unit: r.unitAfter ?? r.unit ?? '',
                    pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
                    newQuantity: r.newQuantity
                  })
-               : await composePurchaseConfirmation({
+               : composePurchaseConfirmation({
                    product: productName,
                    qty: r.quantity,
                    unit: r.unitAfter ?? r.unit ?? '',
@@ -21053,14 +21003,14 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
                         const productName =
                           r.productDisplay ?? r.product ?? r.productName ?? r.name ?? r.item ?? r.title ?? 'item';
                         rawLine = (String(r.action).toLowerCase() === 'sold'                                                    
-                          ? await composeSaleConfirmation({
+                          ? composeSaleConfirmation({
                                 product: productName,
                                 qty: r.quantity,
                                 unit: r.overallUnit ?? r.unitAfter ?? r.unit ?? '',
                                 pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
                                 newQuantity: r.overallStock ?? r.newQuantity
                               })                                                   
-                          : await composePurchaseConfirmation({
+                          : composePurchaseConfirmation({
                                 product: productName,
                                 qty: r.quantity,
                                 unit: r.overallUnit ?? r.unitAfter ?? r.unit ?? '',
