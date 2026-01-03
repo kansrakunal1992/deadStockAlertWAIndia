@@ -12917,10 +12917,17 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
       // Update the inventory using translated product name
       let result;
-        if (isSale) {
+        if (isSale) {                    
+          if (!productRawForDb || ['undefined','null','n/a','na'].includes(String(productRawForDb).toLowerCase())) {
+            console.warn('[SaleFlow] Abort: missing product token', { update });
+            // Friendly message to user; do not partially apply a sale
+            await sendMessageViaAPI(`whatsapp:${shopId}`, finalizeForSend(await t('Couldn’t identify the product—please resend with the product name.', languageCode), languageCode));
+            continue;
+          }
+          console.log('[SaleFlow] applySaleWithReconciliation input', { product: productRawForDb, quantity: Math.abs(update.quantity), unit: update.unit });
           const saleGuard = await applySaleWithReconciliation(
             shopId,
-            { productRawForDb, quantity: Math.abs(update.quantity), unit: update.unit, saleDate: new Date().toISOString(), language: languageCode },
+            { product: productRawForDb, quantity: Math.abs(update.quantity), unit: update.unit, saleDate: new Date().toISOString(), language: languageCode },
             {
               // Optional overrides; otherwise read from UserPreferences:
               // allowNegative: false,
