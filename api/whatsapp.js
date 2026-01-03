@@ -6256,11 +6256,12 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
     try {
       if (payload && _isDuplicateTap(shopIdTop, payload)) return true;
     } catch (_) {} 
-     
+     console.log('Entering Undo Block'); 
   // --- Undo (correction) quick-reply (tracker removed; generic undo-last-txn)
     if (payload === 'undo_last_txn') {
       try {
         const db = require('./database');
+        console.log('Inside Undo Block');
         const res = await db.applyUndoLastTxn(shopIdTop);
         // Localize a short ack using user's preference
         let btnLang = 'en';
@@ -7577,9 +7578,11 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
   // Build the one-line head via composer (emoji + unit/price/stock)  
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
-await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);  
+await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
+console.log('Entering Undo Block');
 // --- NEW: 120s correction window + Undo CTA (purchase)
  try {
+   console.log('Inside Undo Block');
    const db = require('./database');
    // Arm window carrying the last txn details; include compositeKey when available
    await db.openCorrectionWindow(
@@ -7649,9 +7652,11 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
   const bodySrc = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
   const bodyLoc = await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);
   await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);  
+  console.log('Entering Undo Block'); 
   // --- NEW: 120s correction window + Undo CTA (sale)
    try {
      const db = require('./database');
+     console.log('Inside Undo Block');
      await db.openCorrectionWindow(
        From.replace('whatsapp:', ''),
        {
@@ -15098,11 +15103,12 @@ async function tryHandleReturnText(transcript, from, detectedLanguage, requestId
   }  
   const msg = await t(message, detectedLanguage, requestId);
   await sendMessageViaAPI(from, msg);
-  
+  console.log('Entering Undo Block'); 
   // [PATCH:UNDO-CTA-RETURN-ONLY-001] Post-confirm CTA: Undo (quick Return; no List-Picker)
     setTimeout(async () => {
       try {
         const { ensureLangTemplates, getLangSids } = require('./contentCache');
+        console.log('Inside Undo Block');
         const lang = String(detectedLanguage ?? 'en').toLowerCase();
         await ensureLangTemplates(lang);
         let sids = getLangSids(lang);
@@ -17572,11 +17578,13 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         const totalCount = Array.isArray(results) ? results.length : processed.length;
         message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;                
         const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-        await sendMessageDedup(From, formattedResponse);          
+        await sendMessageDedup(From, formattedResponse);
+        console.log('Entering Undo Block'); 
         // [PATCH:UNDO-CTA-AGG-ONLY-001] Post-confirm CTA: Undo (aggregated path; no List-Picker)
           setTimeout(async () => {
             try {
               const { ensureLangTemplates, getLangSids } = require('./contentCache');
+              console.log('Inside Undo Block');
               const lang = String(detectedLanguage ?? 'en').toLowerCase();
               await ensureLangTemplates(lang);
               let sids = getLangSids(lang);
@@ -18485,10 +18493,12 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;       
        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
          await sendMessageDedup(From, formattedResponse);
+       console.log('Entering Undo Block'); 
           // [PATCH:UNDO-CTA-AGG-001] Post-confirm CTAs: Undo + List-Picker (aggregated path)
           setTimeout(async () => {
             try {
               const { ensureLangTemplates, getLangSids } = require('./contentCache');
+              console.log('Inside Undo Block');
               const lang = String(detectedLanguage ?? 'en').toLowerCase();
         
               await ensureLangTemplates(lang);
@@ -21260,11 +21270,13 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
                  const header = chooseHeader(successLines.length, COMPACT_MODE, /*isPrice*/ false);
                  const message = [header, ...successLines].join('\n').trim();
                  const formattedResponse = await t(message, detectedLanguage, requestId);
-                 await sendMessageDedup(From, formattedResponse);                 
+                 await sendMessageDedup(From, formattedResponse);        
+                 console.log('Entering Undo Block'); 
                  // [PATCH:UNDO-CTA-AGG-ONLY-001] Post-confirm CTA: Undo (aggregated path; no List-Picker)
                     setTimeout(async () => {
                       try {
                         const { ensureLangTemplates, getLangSids } = require('./contentCache');
+                        console.log('Inside Undo Block');
                         const lang = String(detectedLanguage ?? 'en').toLowerCase();
                         await ensureLangTemplates(lang);
                         let sids = getLangSids(lang);
