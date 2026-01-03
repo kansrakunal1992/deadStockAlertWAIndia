@@ -7465,7 +7465,7 @@ function formatResultLine(r, compact = true, includeStockPart = true) {
   return `• ${r.product}: ${qty} ${unit} ${act}${stockPart} ${tail}`.trim();
 }
 
-function composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity }) {
+async function composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity }) {
   const unitText  = unit ? ` ${unit}` : '';
   const priceText = (Number(pricePerUnit) > 0)
     ? ` at ₹${Number(pricePerUnit).toFixed(2)}/${unit}`
@@ -7523,7 +7523,7 @@ async function _sendConfirmOnceByBody(From, detectedLanguage, requestId, body) {
   await sendMessageViaAPI(From, final);
 }
 
-function composeSaleConfirmation({
+async function composeSaleConfirmation({
   product,
   qty,
   unit,              // unit used for the sale line (e.g., "litres" → should display as "ltr")
@@ -7694,7 +7694,7 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
   } = payload || {};
 
   // Build the one-line head via composer (emoji + unit/price/stock)  
-const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
+const head = await composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);  
 // --- NEW: 120s correction window + Undo CTA (purchase)
@@ -17660,14 +17660,14 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                  r.productDisplay ?? r.product ?? r.productName ?? r.name ?? r.item ?? r.title ?? 'item';
                rawLine =
                  String(r.action).toLowerCase() === 'sold'
-                   ? composeSaleConfirmation({
+                   ? await composeSaleConfirmation({
                        product: productName,
                        qty: r.quantity,
                        unit: r.unitAfter ?? r.unit ?? '',
                        pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
                        newQuantity: r.newQuantity
                      })
-                   : composePurchaseConfirmation({
+                   : await composePurchaseConfirmation({
                        product: productName,
                        qty: r.quantity,
                        unit: r.unitAfter ?? r.unit ?? '',
@@ -18328,14 +18328,14 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               
                const baseBody =
                  (String(u.action).toLowerCase() === 'sold'
-                   ? composeSaleConfirmation({
+                   ? await composeSaleConfirmation({
                        product: productName,
                        qty: u.quantity,
                        unit: u.unit,
                        pricePerUnit: u.pricePerUnit,
                        newQuantity: undefined
                      })
-                   : composePurchaseConfirmation({
+                   : await composePurchaseConfirmation({
                        product: productName,
                        qty: u.quantity,
                        unit: u.unit,
@@ -18546,14 +18546,14 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
              r.productDisplay ?? r.product ?? r.productName ?? r.name ?? r.item ?? r.title ?? 'item';
            rawLine =
              String(r.action).toLowerCase() === 'sold'
-               ? composeSaleConfirmation({
+               ? await composeSaleConfirmation({
                    product: productName,
                    qty: r.quantity,
                    unit: r.unitAfter ?? r.unit ?? '',
                    pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
                    newQuantity: r.newQuantity
                  })
-               : composePurchaseConfirmation({
+               : await composePurchaseConfirmation({
                    product: productName,
                    qty: r.quantity,
                    unit: r.unitAfter ?? r.unit ?? '',
@@ -21053,14 +21053,14 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
                         const productName =
                           r.productDisplay ?? r.product ?? r.productName ?? r.name ?? r.item ?? r.title ?? 'item';
                         rawLine = (String(r.action).toLowerCase() === 'sold'                                                    
-                          ? composeSaleConfirmation({
+                          ? await composeSaleConfirmation({
                                 product: productName,
                                 qty: r.quantity,
                                 unit: r.overallUnit ?? r.unitAfter ?? r.unit ?? '',
                                 pricePerUnit: r.rate ?? r.salePrice ?? r.price ?? null,
                                 newQuantity: r.overallStock ?? r.newQuantity
                               })                                                   
-                          : composePurchaseConfirmation({
+                          : await composePurchaseConfirmation({
                                 product: productName,
                                 qty: r.quantity,
                                 unit: r.overallUnit ?? r.unitAfter ?? r.unit ?? '',
