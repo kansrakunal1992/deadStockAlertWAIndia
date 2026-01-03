@@ -5151,6 +5151,63 @@ function markAckSent(From) {
   try { _recentAcks.set(String(From), { at: Date.now() }); } catch {}
 }
 
+/**
+ * Process‑global Return tracker with TTL.
+ * Tracks latest Return per conversation (thread) and supports undo + periodic GC.
+ * Override TTL via env: RETURN_TTL_MS (default: 5 minutes).
+ */
+(function initReturnTracker(global) {
+  const DEFAULT_TTL_MS = parseInt(process.env.RETURN_TTL_MS || '300000', 10); // 5 min
+  class ReturnTracker {
+    constructor(ttlMs = DEFAULT_TTL_MS) {
+      this.ttlMs = ttlMs;
+      this.items = new Map();     // id -> { id, threadId, payload, ts }
+      this.byThread = new Map();  // threadId -> latest id
+      this._gc = setInterval(() => this.purgeExpired(), Math.min(ttlMs, 60000));
+      try { this._gc.unref?.(); } catch {}
+    }
+    now() { return Date.now(); }
+    record({ id, threadId, payload }) {
+      const ts = this.now();
+      this.items.set(id, { id, threadId, payload, ts });
+      this.byThread.set(threadId, id);
+      return id;
+    }
+    get(id) { return this.items.get(id); }
+    getLatestByThread(threadId) {
+      const id = this.byThread.get(threadId);
+      return id ? this.items.get(id) : undefined;
+    }
+    hasExpired(item) { return !item ? true : (this.now() - item.ts) > this.ttlMs; }
+    purgeExpired() {
+      const now = this.now();
+      for (const [id, item] of this.items) {
+        if ((now - item.ts) > this.ttlMs) {
+          this.items.delete(id);
+          if (this.byThread.get(item.threadId) === id) {
+            this.byThread.delete(item.threadId);
+          }
+        }
+      }
+    }
+    undo(id) {
+      const item = this.items.get(id);
+      if (!item) return false;
+      this.items.delete(id);
+      if (this.byThread.get(item.threadId) === id) {
+        this.byThread.delete(item.threadId);
+      }
+      return item;
+    }
+  }
+  global.__ReturnTracker__ = global.__ReturnTracker__ || new ReturnTracker();
+})(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : global));
+
+// Optional manual purge trigger
+function purgeExpiredReturns() {
+  try { globalThis.__ReturnTracker__?.purgeExpired(); } catch {}
+}
+
 // Fast preference resolver with tiny timeout; never blocks the ack path.
 async function getPreferredLangQuick(From, hint = 'en') {
   const shopId = String(From ?? '').replace('whatsapp:', '');
@@ -6256,7 +6313,47 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
     try {
       if (payload && _isDuplicateTap(shopIdTop, payload)) return true;
     } catch (_) {} 
-
+  
+ // --- NEW: Undo (correction) quick-reply within 120s window
+ if (payload === 'undo_last_txn') {
+   try {           
+      const db = require('./database');
+          // (4) Extend interactive Undo handler — prefer latest tracked Return within TTL
+          const tracker = globalThis.__ReturnTracker__;
+          const latest = tracker?.getLatestByThread(from);
+          let res;
+          if (latest && !tracker.hasExpired(latest)) {
+            // Domain-specific undo: reuse your existing DB undo for last txn
+            // and clear tracker entry afterwards.
+            res = await db.applyUndoLastTxn(shopIdTop);
+            try { tracker.undo(latest.id); } catch {}
+          } else {
+            // Fallback: use legacy undo behavior (may fail if window expired)
+            res = await db.applyUndoLastTxn(shopIdTop);
+          }
+     // Localize a short ack using user's preference
+     let btnLang = 'en';
+     try {
+       const prefLP = await getUserPreference(shopIdTop);
+       if (prefLP?.success && prefLP.language) btnLang = String(prefLP.language).toLowerCase();
+     } catch (_) {}
+     const body = res?.success
+       ? '↩️ Undo done — update reverted.'
+       : '⏱️ Correction window expired. Update is locked.';
+     await client.messages.create({
+       from: process.env.TWILIO_WHATSAPP_NUMBER,
+       to: from,
+       body
+     });
+     // Minimal TwiML ack (we already replied via Messaging API)
+     const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+     resHttp.type('text/xml'); resp.safeSend(200, twiml.toString());
+     safeTrackResponseTime(requestStart, raw.requestId ?? Date.now());
+     return true;
+   } catch (e) {
+     console.warn('[interactive] undo failed:', e?.message);
+   }
+ }
    
   // STEP 13: Summary buttons → route directly
     if (payload === 'instant_summary' || payload === 'full_summary') {
@@ -6980,7 +7077,10 @@ const {
   reattributeSaleToBatch,
   upsertAuthUserDetails,
   refreshUserStateTimestamp,
-  findProductMatches
+  findProductMatches,
+  openCorrectionWindow,
+  applyUndoLastTxn,
+  closeCorrectionWindow
 } = require('../database');
 
 // ===== ShopID helpers ========================================================
@@ -7548,7 +7648,29 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
   // Build the one-line head via composer (emoji + unit/price/stock)  
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
-await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
+await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);  
+// --- NEW: 120s correction window + Undo CTA (purchase)
+ try {
+   const db = require('./database');
+   // Arm window carrying the last txn details; include compositeKey when available
+   await db.openCorrectionWindow(
+     From.replace('whatsapp:', ''),
+     { action: 'purchase', product, quantity: Number(qty), unit, compositeKey: payload?.batchCompositeKey ?? null },
+     String(detectedLanguage ?? 'en').toLowerCase()
+   ); // uses database.js new helper
+   // Send the Undo quick-reply CTA from the Content bundle
+   const { ensureLangTemplates, getLangSids } = require('./contentCache');
+   const lang = String(detectedLanguage ?? 'en').toLowerCase();
+   await ensureLangTemplates(lang);
+   const sids = getLangSids(lang);
+   if (sids?.correctionUndoSid) {
+     await client.messages.create({
+       from: process.env.TWILIO_WHATSAPP_NUMBER,
+       to: From,
+       contentSid: sids.correctionUndoSid
+     });
+   }
+ } catch (_) { /* best-effort only; do not block confirmation */ }
 }
 
 /**
@@ -7597,7 +7719,33 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
   // Localize body; keep anchors; send once
   const bodySrc = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
   const bodyLoc = await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);
-  await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);
+  await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);  
+  // --- NEW: 120s correction window + Undo CTA (sale)
+   try {
+     const db = require('./database');
+     await db.openCorrectionWindow(
+       From.replace('whatsapp:', ''),
+       {
+         action: 'sale',
+         product: dbProduct,                  // DB-safe name already chosen above
+         quantity: Number(qty),
+         unit: unit,
+         compositeKey: payload?.batchCompositeKey ?? null // if your sale routed via a batch
+       },
+       String(detectedLanguage ?? 'en').toLowerCase()
+     );
+     const { ensureLangTemplates, getLangSids } = require('./contentCache');
+     const lang = String(detectedLanguage ?? 'en').toLowerCase();
+     await ensureLangTemplates(lang);
+     const sids = getLangSids(lang);
+     if (sids?.correctionUndoSid) {
+       await client.messages.create({
+         from: process.env.TWILIO_WHATSAPP_NUMBER,
+         to: From,
+         contentSid: sids.correctionUndoSid
+       });
+     }
+   } catch (_) { /* best-effort only */ }
 }
 
 /**
@@ -15018,8 +15166,24 @@ async function tryHandleReturnText(transcript, from, detectedLanguage, requestId
           // PRODUCT-level total after return; fall back to newQuantity if needed
           const finalQty = result.totalQuantityAfter ?? result.quantityAfter ?? result.newQuantity;
           message += ` (Stock: ${finalQty} ${u})`;
-  }
+  }  
   const msg = await t(message, detectedLanguage, requestId);
+  // (2) Hook into the quick text Return path — record in process-global tracker
+  try {
+    const returnId =
+      (typeof generateId === 'function') ? generateId('ret') :
+      `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    globalThis.__ReturnTracker__?.record({
+      id: returnId,
+      threadId: from,
+      payload: {
+        type: 'quick',
+        kind: 'return',
+        product, qty, unit,
+        shopId
+      }
+    });
+  } catch { /* tracking is best-effort; never block send */ }
   await sendMessageViaAPI(from, msg);
   return true;
 }
@@ -17469,7 +17633,20 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         const totalCount = Array.isArray(results) ? results.length : processed.length;
         message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;
         const formattedResponse = await t(message.trim(), uiLangExact, requestId);
-        await sendMessageDedup(From, formattedResponse);
+        await sendMessageDedup(From, formattedResponse);                
+        // (3) Hook into aggregated confirmation flow (single Return)
+        try {
+          if (Array.isArray(processed) && processed.length === 1) {
+            const r0 = processed[0];
+            if (String(r0.action).toLowerCase() === 'returned') {
+              const id =
+                (r0.messageId) ? r0.messageId :
+                (typeof generateId === 'function') ? generateId('ret') :
+                `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+              globalThis.__ReturnTracker__?.record({ id, threadId: From, payload: { type: 'aggregated', kind: 'return', product: r0.product, qty: r0.quantity, unit: r0.unitAfter ?? r0.unit ?? '', shopId: String(From).replace('whatsapp:', '') } });
+            }
+          }
+        } catch { /* non-fatal */ }
       }
       // else → nothing to confirm (nudged or zero success)         
           // CTA gated: only last trial day
