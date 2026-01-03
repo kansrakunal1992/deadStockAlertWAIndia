@@ -12624,8 +12624,8 @@ async function validateTranscript(transcript, requestId, langHint = 'en') {
 }
 
 // Handle multiple inventory updates with batch tracking
-async function updateMultipleInventory(shopId, updates, languageCode) {      
-// Keep script/language stable for this turn (e.g., Hindi from STT)
+async function updateMultipleInventory(shopId, updates, languageCode) {
+  // Keep script/language stable for this turn (e.g., Hindi from STT)
   const lang = String(languageCode ?? 'en').toLowerCase();
 
   // --- NEW: per-shop recent price-nudge marker (global, lightweight) ---
@@ -12638,30 +12638,30 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   const pendingNoPrice = [];   // <– used only to drive nudges; we DO NOT write for these
   const accepted = [];
 
-  for (const update of updates) {  
-  // NEW: lock the chosen sale price for this specific update (prevents ₹0 fallbacks)
+  for (const update of updates) {
+    // NEW: lock the chosen sale price for this specific update (prevents ₹0 fallbacks)
     let chosenSalePrice = null;
-  // Hoisted: keep a per-update confirmation line available beyond branch scope
+    // Hoisted: keep a per-update confirmation line available beyond branch scope
     let confirmTextLine;
-    let createdBatchEarly = false;        
+    let createdBatchEarly = false;
     // ⬆️ HOIST overall stock holders so they exist across all blocks
-        let overallQty = null;
-        let overallUnit = null;
-        const normalize = (u) => normalizeUnit(u || '');
+    let overallQty = null;
+    let overallUnit = null;
+    const normalize = (u) => normalizeUnit(u || '');
     try {
-      
-    // === RAW-vs-UI split ===
-          // RAW for ALL DB writes; UI name only for human-facing messages                          
-    // Always compute the DB-safe name once per update
+
+      // === RAW-vs-UI split ===
+      // RAW for ALL DB writes; UI name only for human-facing messages
+      // Always compute the DB-safe name once per update
       const productRawForDb = resolveProductNameForWrite(update);     // DB writes only
-      const productUiName   = update.productDisplay ?? update.product; // UI display only
-      const product         = productRawForDb;                         // alias for logs
-      if (!productRawForDb || ['undefined','null','n/a','na'].includes(String(productRawForDb).toLowerCase())) {
+      const productUiName = update.productDisplay ?? update.product; // UI display only
+      const product = productRawForDb;                         // alias for logs
+      if (!productRawForDb || ['undefined', 'null', 'n/a', 'na'].includes(String(productRawForDb).toLowerCase())) {
         console.warn(`[Update ${shopId} - <undefined>] skipped: missing product`, { update });
         continue; // hard stop: never write DB with missing product
       }
-          console.log(`[Update ${shopId}] Using RAW product for DB: "${productRawForDb}"`);
-                  
+      console.log(`[Update ${shopId}] Using RAW product for DB: "${productRawForDb}"`);
+
       // === Handle customer returns (simple add-back; no batch, no price/expiry) ===
       if (update.action === 'returned') {
         let result;          // hoisted
@@ -12669,21 +12669,21 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         let u = update.unit; // hoisted default
         try {
           // Persist the return (add back to stock)
-                    
+
           // DB ops MUST use RAW name
-                   result = await updateInventory(shopId, productRawForDb, Math.abs(update.quantity), update.unit);
-                   const invAfter = await getProductInventory(shopId, productRawForDb);
+          result = await updateInventory(shopId, productRawForDb, Math.abs(update.quantity), update.unit);
+          const invAfter = await getProductInventory(shopId, productRawForDb);
 
           newQty = invAfter?.quantity ?? result?.newQuantity ?? null;
-          u      = invAfter?.unit     ?? result?.unit       ?? u;
-      
+          u = invAfter?.unit ?? result?.unit ?? u;
+
           // Fallback: second peek if the first didn’t yield usable numbers
           if (newQty === undefined || newQty === null) {
             try {
               const invPeek = await getProductInventory(shopId, product);
               if (invPeek?.success) {
-                const q  = invPeek.quantity ?? invPeek.fields?.Quantity ?? null;
-                const uu = invPeek.unit     ?? invPeek.fields?.Units    ?? null;
+                const q = invPeek.quantity ?? invPeek.fields?.Quantity ?? null;
+                const uu = invPeek.unit ?? invPeek.fields?.Units ?? null;
                 if (q !== undefined && q !== null) {
                   newQty = q;
                   u = uu ?? u;
@@ -12694,14 +12694,14 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         } catch (e) {
           console.warn(`[Update ${shopId} - ${product}] Return failed:`, e.message);
         }
-      
+
         // Build confirmation with the best-known stock numbers
-        const unitText2  = u ? ` ${u}` : '';
+        const unitText2 = u ? ` ${u}` : '';
         const stockText2 = (newQty !== undefined && newQty !== null)
           ? ` (Stock: ${newQty}${unitText2})`
           : '';
-        confirmTextLine = `↩️ Returned ${Math.abs(update.quantity)}${unitText2} ${product}${stockText2}`;                        
-                          
+        confirmTextLine = `↩️ Returned ${Math.abs(update.quantity)}${unitText2} ${product}${stockText2}`;
+
         // SINGLE-ITEM RETURN: do NOT send a separate confirmation here.
         // Keep confirmTextLine so the aggregated confirmation includes it.
 
@@ -12716,187 +12716,187 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           unitAfter: u,
           inlineConfirmText: confirmTextLine,
         });
-      
+
         continue; // Move to next update
       }
       let needsPriceInput = false;
-      // Get product price from database           
+      // Get product price from database
       let productPrice = 0;
-            let productPriceUnit = null;
-            try {
-              const priceResult = await getProductPrice(productRawForDb, shopId);                            
-              if (priceResult?.success && Number(priceResult.price) > 0) {
-                 productPrice = toNumberSafe(priceResult.price);
-                 productPriceUnit = priceResult.unit ?? null;
-              }
-            } catch (error) {
-              console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
-            }
-            
-    // === NEW PURCHASE FLOW: default expiry, price essential; do not block on expiry ===
-        if (update.action === 'purchased') {
-          let autoExpiry = null;
-          let productMeta = null;
-          try {                        
-            // Prefer shop-scoped product meta for expiry hints
-            productMeta = await getProductPrice(productRawForDb, shopId);
-            if (productMeta?.success && productMeta.requiresExpiry) {
-              const sd = Number(productMeta.shelfLifeDays ?? 0);
-              if (sd > 0) {
-                const ts = new Date();
-                ts.setDate(ts.getDate() + sd);
-                autoExpiry = ts.toISOString();
-              } // else requiresExpiry=true but no shelf-life => leave blank
-            }
-          } catch (_) {}
-    
-          const purchaseDateISO = formatDateForAirtable(new Date());
-          const priceFromMsg = Number(update.price ?? 0);
-          const priceFromCatalog = Number(productMeta?.price ?? 0);
-          const finalPrice = priceFromMsg > 0 ? priceFromMsg : (priceFromCatalog > 0 ? priceFromCatalog : 0);
-    
-          // Inline expiry from message (if any); else default/blank.
-          const providedExpiryISO = bumpExpiryYearIfPast(update.expiryISO ?? null, purchaseDateISO);
-          const expiryToUse = providedExpiryISO ?? autoExpiry ?? null;
-                        
-          // STRICT: if price is missing and backend doesn't know it => DO NOT CAPTURE; ask for price
-                if (finalPrice <= 0) {
-                  pendingNoPrice.push({ product: productRawForDb, unit: update.unit });
-                  // Send localized nudges; no DB writes; mark as non-success to suppress purchase acks
-                  try {                                          
-                      if (pendingNoPrice.length === 1) {
-                                  await sendPriceRequiredNudge(`whatsapp:${shopId}`, productRawForDb, update.unit, lang /* keep same script */);
-                                } else {
-                                  await sendMultiPriceRequiredNudge(`whatsapp:${shopId}`, pendingNoPrice.map(p => ({...p, product: productRawForDb})), lang);
-                                }   
-                  // --- NEW: remember we nudged price for this shop right now ---
-                  markNudged();
-                  } catch (_) {}
-                  results.push({
-                    product: productRawForDb,
-                    quantity: update.quantity,
-                    unit: update.unit,
-                    action: update.action,
-                    success: false,           // <— important: prevents “📦 Purchased …” ack lines
-                    needsUserInput: true,
-                    awaiting: 'price',
-                    status: 'pending',
-                    deferredPrice: true,
-                    inlineConfirmText: ''
-                  });
-                  continue; // Move to next update; NO batch, NO inventory, NO state
-                }
-                          
-          // If we have a price, continue with normal flow
-          // Create batch immediately with defaulted expiry (or blank)
-          const batchResult = await createBatchRecord({
-            shopId: shopIdFrom(shopId), // ensure E.164 (+91…) for DB write
-            product: productRawForDb,
-            quantity: update.quantity,
-            unit: update.unit,
-            purchaseDate: purchaseDateISO,
-            expiryDate: expiryToUse,
-            purchasePrice: finalPrice // may be 0 if unknown now
-          });          
-          
-          if (batchResult?.success) createdBatchEarly = true;
-      
-          // Ensure inventory reflects the purchase *and* capture stock for summary lines
-          let invResult;
-          try {
-            invResult = await updateInventory(shopId, productRawForDb, update.quantity, update.unit);
-          } catch (_) {}
-          const stockQty  = invResult?.newQuantity;
-          const stockUnit = invResult?.unit ?? update.unit;
-      
-          // Save price if known now
-          if (finalPrice > 0) {
-            try { await upsertProduct({ shopId, name: productRawForDb, price: finalPrice, unit: update.unit }); } catch (_) {}
-          }
-      
-          const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
-          const edDisplay = expiryToUse ? formatDateForDisplay(expiryToUse) : '—';
-                            
-          // Assign to hoisted holder so we can use it later safely
-                  confirmTextLine = COMPACT_MODE
-                    ? (isPerishable
-                      ? `📦 Purchased ${update.quantity} ${update.unit} ${productRawForDb} @ ₹${finalPrice}. Exp: ${edDisplay}`
-                      : `📦 Purchased ${update.quantity} ${update.unit} ${productRawForDb} @ ₹${finalPrice}`)
-                    : `• ${productRawForDb}: ${update.quantity} ${update.unit} purchased @ ₹${finalPrice}`
-                      + (isPerishable ? `\n Expiry: ${edDisplay}` : `\n Expiry: —`);
+      let productPriceUnit = null;
+      try {
+        const priceResult = await getProductPrice(productRawForDb, shopId);
+        if (priceResult?.success && Number(priceResult.price) > 0) {
+          productPrice = toNumberSafe(priceResult.price);
+          productPriceUnit = priceResult.unit ?? null;
+        }
+      } catch (error) {
+        console.warn(`[Update ${shopId} - ${product}] Could not fetch product price:`, error.message);
+      }
 
-          // Open the 2-min expiry override window
+      // === NEW PURCHASE FLOW: default expiry, price essential; do not block on expiry ===
+      if (update.action === 'purchased') {
+        let autoExpiry = null;
+        let productMeta = null;
+        try {
+          // Prefer shop-scoped product meta for expiry hints
+          productMeta = await getProductPrice(productRawForDb, shopId);
+          if (productMeta?.success && productMeta.requiresExpiry) {
+            const sd = Number(productMeta.shelfLifeDays ?? 0);
+            if (sd > 0) {
+              const ts = new Date();
+              ts.setDate(ts.getDate() + sd);
+              autoExpiry = ts.toISOString();
+            } // else requiresExpiry=true but no shelf-life => leave blank
+          }
+        } catch (_) {}
+
+        const purchaseDateISO = formatDateForAirtable(new Date());
+        const priceFromMsg = Number(update.price ?? 0);
+        const priceFromCatalog = Number(productMeta?.price ?? 0);
+        const finalPrice = priceFromMsg > 0 ? priceFromMsg : (priceFromCatalog > 0 ? priceFromCatalog : 0);
+
+        // Inline expiry from message (if any); else default/blank.
+        const providedExpiryISO = bumpExpiryYearIfPast(update.expiryISO ?? null, purchaseDateISO);
+        const expiryToUse = providedExpiryISO ?? autoExpiry ?? null;
+
+        // STRICT: if price is missing and backend doesn't know it => DO NOT CAPTURE; ask for price
+        if (finalPrice <= 0) {
+          pendingNoPrice.push({ product: productRawForDb, unit: update.unit });
+          // Send localized nudges; no DB writes; mark as non-success to suppress purchase acks
           try {
-            await saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
-              batchId: batchResult?.id ?? null,
-              product: productRawForDb,
-              action: 'purchased',
-              purchaseDateISO,
-              currentExpiryISO: expiryToUse ?? null,
-              createdAtISO: new Date().toISOString(),
-              timeoutSec: 120
-            });
+            if (pendingNoPrice.length === 1) {
+              await sendPriceRequiredNudge(`whatsapp:${shopId}`, productRawForDb, update.unit, lang /* keep same script */);
+            } else {
+              await sendMultiPriceRequiredNudge(`whatsapp:${shopId}`, pendingNoPrice.map(p => ({ ...p, product: productRawForDb })), lang);
+            }
+            // --- NEW: remember we nudged price for this shop right now ---
+            markNudged();
           } catch (_) {}
-      
           results.push({
             product: productRawForDb,
             quantity: update.quantity,
             unit: update.unit,
             action: update.action,
-            success: true,     
-            // ensure the summary has stock figures to avoid "undefined"
-            newQuantity: stockQty,
-            unitAfter: stockUnit,
-            purchasePrice: finalPrice,
-            totalValue: finalPrice * Math.abs(update.quantity),
-            inlineConfirmText: confirmTextLine
+            success: false,           // <— important: prevents “📦 Purchased …” ack lines
+            needsUserInput: true,
+            awaiting: 'price',
+            status: 'pending',
+            deferredPrice: true,
+            inlineConfirmText: ''
           });
-          continue; // done with purchase branch
+          continue; // Move to next update; NO batch, NO inventory, NO state
         }
-        // === END NEW block ===
 
-      // Use provided price or fall back to database price            
-      // NEW: reliable price/value without leaking block-scoped vars            
-      const msgUnitPrice = toNumberSafe(update.price);                  
+        // If we have a price, continue with normal flow
+        // Create batch immediately with defaulted expiry (or blank)
+        const batchResult = await createBatchRecord({
+          shopId: shopIdFrom(shopId), // ensure E.164 (+91…) for DB write
+          product: productRawForDb,
+          quantity: update.quantity,
+          unit: update.unit,
+          purchaseDate: purchaseDateISO,
+          expiryDate: expiryToUse,
+          purchasePrice: finalPrice // may be 0 if unknown now
+        });
+
+        if (batchResult?.success) createdBatchEarly = true;
+
+        // Ensure inventory reflects the purchase *and* capture stock for summary lines
+        let invResult;
+        try {
+          invResult = await updateInventory(shopId, productRawForDb, update.quantity, update.unit);
+        } catch (_) {}
+        const stockQty = invResult?.newQuantity;
+        const stockUnit = invResult?.unit ?? update.unit;
+
+        // Save price if known now
+        if (finalPrice > 0) {
+          try { await upsertProduct({ shopId, name: productRawForDb, price: finalPrice, unit: update.unit }); } catch (_) {}
+        }
+
+        const isPerishable = !!(productMeta?.success && productMeta.requiresExpiry);
+        const edDisplay = expiryToUse ? formatDateForDisplay(expiryToUse) : '—';
+
+        // Assign to hoisted holder so we can use it later safely
+        confirmTextLine = COMPACT_MODE
+          ? (isPerishable
+            ? `📦 Purchased ${update.quantity} ${update.unit} ${productRawForDb} @ ₹${finalPrice}. Exp: ${edDisplay}`
+            : `📦 Purchased ${update.quantity} ${update.unit} ${productRawForDb} @ ₹${finalPrice}`)
+          : `• ${productRawForDb}: ${update.quantity} ${update.unit} purchased @ ₹${finalPrice}`
+          + (isPerishable ? `\n Expiry: ${edDisplay}` : `\n Expiry: —`);
+
+        // Open the 2-min expiry override window
+        try {
+          await saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
+            batchId: batchResult?.id ?? null,
+            product: productRawForDb,
+            action: 'purchased',
+            purchaseDateISO,
+            currentExpiryISO: expiryToUse ?? null,
+            createdAtISO: new Date().toISOString(),
+            timeoutSec: 120
+          });
+        } catch (_) {}
+
+        results.push({
+          product: productRawForDb,
+          quantity: update.quantity,
+          unit: update.unit,
+          action: update.action,
+          success: true,
+          // ensure the summary has stock figures to avoid "undefined"
+          newQuantity: stockQty,
+          unitAfter: stockUnit,
+          purchasePrice: finalPrice,
+          totalValue: finalPrice * Math.abs(update.quantity),
+          inlineConfirmText: confirmTextLine
+        });
+        continue; // done with purchase branch
+      }
+      // === END NEW block ===
+
+      // Use provided price or fall back to database price
+      // NEW: reliable price/value without leaking block-scoped vars
+      const msgUnitPrice = toNumberSafe(update.price);
       const fromU = normalizeUnit(productPriceUnit || update.unit || 'pieces');   // normalize + default
-       const toU   = normalizeUnit(update.unit || fromU);
-       const factor = Number(unitConvFactor?.(fromU, toU));
-       const dbAdjustedUnitPrice = Number.isFinite(factor) ? (productPrice * factor) : productPrice;
-       const unitPriceForCalc = msgUnitPrice > 0 ? msgUnitPrice : dbAdjustedUnitPrice;
+      const toU = normalizeUnit(update.unit || fromU);
+      const factor = Number(unitConvFactor?.(fromU, toU));
+      const dbAdjustedUnitPrice = Number.isFinite(factor) ? (productPrice * factor) : productPrice;
+      const unitPriceForCalc = msgUnitPrice > 0 ? msgUnitPrice : dbAdjustedUnitPrice;
 
       const finalTotalPrice = Number.isFinite(update.totalPrice)
         ? Number(update.totalPrice)
         : (unitPriceForCalc * Math.abs(update.quantity));
 
       // Add validation for zero price
-        if (unitPriceForCalc <= 0 && update.action === 'sold') {
-          console.warn(`[Update ${shopId} - ${product}] Cannot process sale with zero price`);                    
-          const errorMsg = await t(
-                    `Cannot process sale: No valid price found for ${product}. Please set a price first.`,
-                    languageCode,
-                    'zero-price-error'
-                  );
-          await sendMessageViaAPI(`whatsapp:${shopId}`, errorMsg);
-          results.push({
-            product,
-            quantity: update.quantity,
-            unit: update.unit,
-            action: update.action,
-            success: false,
-            error: 'Zero price not allowed for sales'
-          });
-          continue;
-        }
-      
+      if (unitPriceForCalc <= 0 && update.action === 'sold') {
+        console.warn(`[Update ${shopId} - ${product}] Cannot process sale with zero price`);
+        const errorMsg = await t(
+          `Cannot process sale: No valid price found for ${product}. Please set a price first.`,
+          languageCode,
+          'zero-price-error'
+        );
+        await sendMessageViaAPI(`whatsapp:${shopId}`, errorMsg);
+        results.push({
+          product,
+          quantity: update.quantity,
+          unit: update.unit,
+          action: update.action,
+          success: false,
+          error: 'Zero price not allowed for sales'
+        });
+        continue;
+      }
+
       const priceSource = (Number(update.price) > 0)
-         ? 'message'
-         : (productPrice > 0 ? 'db' : null); // only mark db if it's actually > 0
+        ? 'message'
+        : (productPrice > 0 ? 'db' : null); // only mark db if it's actually > 0
 
       // Rest of the function remains the same...
       console.log(`[Update ${shopId} - ${product}] Processing update: ${update.quantity} ${update.unit}`);
       // Check if this is a sale (negative quantity)
       const isSale = update.action === 'sold';
-      
+
       // For sales, determine which batch to use (with hints later; default FIFO oldest)
       let selectedBatchCompositeKey = null;
       if (isSale) {
@@ -12916,161 +12916,161 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
       // Update the inventory using translated product name
       let result;
-        if (isSale) {                    
-          if (!productRawForDb || ['undefined','null','n/a','na'].includes(String(productRawForDb).toLowerCase())) {
-            console.warn('[SaleFlow] Abort: missing product token', { update });
-            // Friendly message to user; do not partially apply a sale
-            await sendMessageViaAPI(`whatsapp:${shopId}`, finalizeForSend(await t('Couldn’t identify the product—please resend with the product name.', languageCode), languageCode));
-            continue;
+      if (isSale) {
+        if (!productRawForDb || ['undefined', 'null', 'n/a', 'na'].includes(String(productRawForDb).toLowerCase())) {
+          console.warn('[SaleFlow] Abort: missing product token', { update });
+          // Friendly message to user; do not partially apply a sale
+          await sendMessageViaAPI(`whatsapp:${shopId}`, finalizeForSend(await t('Couldn’t identify the product—please resend with the product name.', languageCode), languageCode));
+          continue;
+        }
+        console.log('[SaleFlow] applySaleWithReconciliation input', { product: productRawForDb, quantity: Math.abs(update.quantity), unit: update.unit });
+        const saleGuard = await applySaleWithReconciliation(
+          shopId,
+          { product: productRawForDb, quantity: Math.abs(update.quantity), unit: update.unit, saleDate: new Date().toISOString(), language: languageCode },
+          {
+            // Optional overrides; otherwise read from UserPreferences:
+            // allowNegative: false,
+            // autoOpeningBatch: true,
+            // onboardingDate: '2025-08-01T00:00:00.000Z'
           }
-          console.log('[SaleFlow] applySaleWithReconciliation input', { product: productRawForDb, quantity: Math.abs(update.quantity), unit: update.unit });
-          const saleGuard = await applySaleWithReconciliation(
-            shopId,
-            { product: productRawForDb, quantity: Math.abs(update.quantity), unit: update.unit, saleDate: new Date().toISOString(), language: languageCode },
-            {
-              // Optional overrides; otherwise read from UserPreferences:
-              // allowNegative: false,
-              // autoOpeningBatch: true,
-              // onboardingDate: '2025-08-01T00:00:00.000Z'
-            }
+        );
+        if (saleGuard.status === 'blocked' || saleGuard.status === 'error') {
+          const msg = await t(
+            `❌ Not enough stock for ${product}. You tried to sell ${update.quantity} ${update.unit}. ` +
+            `Reply: "opening ${product} ${saleGuard.deficit} ${update.unit}" to set opening stock.`,
+            languageCode,
+            'neg-guard'
           );
-          if (saleGuard.status === 'blocked' || saleGuard.status === 'error') {
-            const msg = await t(
-              `❌ Not enough stock for ${product}. You tried to sell ${update.quantity} ${update.unit}. ` +
-              `Reply: "opening ${product} ${saleGuard.deficit} ${update.unit}" to set opening stock.`,
-              languageCode,
-              'neg-guard'
-            );
-            await sendMessageViaAPI(`whatsapp:${shopId}`, msg);
-            results.push({ product, success: false, error: saleGuard.message ?? 'Insufficient stock', blocked: true, deficit: saleGuard.deficit });
-            continue; // move to next update
-          }
-          // Keep a success flag similar to old `result` shape
-          result = { success: true };          
-                                        
-          // Prefer helper's aggregate (overall) stock; keep DB peek as fallback only
-                overallQty  = saleGuard?.overallStock ?? null;
-                overallUnit = saleGuard?.overallUnit  ?? null;
-           if (overallQty === null || overallUnit === null) {
-             try {
-               const invAfter = await getProductInventory(shopId, productRawForDb);
-               if (invAfter && invAfter.quantity !== undefined) {
-                 result.newQuantity = invAfter.quantity;                                   
-                 result.unit = normalize(invAfter.unit || update.unit);
-                 overallQty  = invAfter.quantity;
-                 overallUnit = normalize(invAfter.unit || update.unit);
-               }
-             } catch (e) {
-               console.warn(`[Update ${shopId} - ${productRawForDb}] Post-sale inventory fallback fetch failed:`, e.message);
-             }
-          }
-                    
-          // FINAL GUARANTEE inside the sale block (in case everything above failed)
-                overallQty  = (overallQty  ?? result?.newQuantity ?? null);
-                overallUnit = normalize(overallUnit || result?.unit || update.unit || 'liters');
+          await sendMessageViaAPI(`whatsapp:${shopId}`, msg);
+          results.push({ product, success: false, error: saleGuard.message ?? 'Insufficient stock', blocked: true, deficit: saleGuard.deficit });
+          continue; // move to next update
+        }
+        // Keep a success flag similar to old `result` shape
+        result = { success: true };
 
-          // Prefer the helper's opening-batch key if it created one
-          if (!selectedBatchCompositeKey && saleGuard.selectedBatchCompositeKey) {
-            selectedBatchCompositeKey = saleGuard.selectedBatchCompositeKey;
+        // Prefer helper's aggregate (overall) stock; keep DB peek as fallback only
+        overallQty = saleGuard?.overallStock ?? null;
+        overallUnit = saleGuard?.overallUnit ?? null;
+        if (overallQty === null || overallUnit === null) {
+          try {
+            const invAfter = await getProductInventory(shopId, productRawForDb);
+            if (invAfter && invAfter.quantity !== undefined) {
+              result.newQuantity = invAfter.quantity;
+              result.unit = normalize(invAfter.unit || update.unit);
+              overallQty = invAfter.quantity;
+              overallUnit = normalize(invAfter.unit || update.unit);
+            }
+          } catch (e) {
+            console.warn(`[Update ${shopId} - ${productRawForDb}] Post-sale inventory fallback fetch failed:`, e.message);
           }
-        } else {
-          // not a sale: keep original purchase/increase path
-          result = await updateInventory(shopId, productRawForDb, update.quantity, update.unit);
         }
 
-          
-        // Create batch record for purchases only (skip if we already created above)
-            if (!createdBatchEarly && update.action === 'purchased' && result.success && Number(finalPrice) > 0) {
-            console.log(`[Update ${shopId} - ${product}] Creating batch record for purchase`);
-            // Format current date with time for Airtable
-            const formattedPurchaseDate = formatDateForAirtable(new Date());
-            console.log(`[Update ${shopId} - ${product}] Using timestamp: ${formattedPurchaseDate}`);
-            
-            // Use database price (productPrice) or provided price
-            const purchasePrice = productPrice > 0 ? productPrice : (finalPrice || 0);                          
-            if (!(purchasePrice > 0)) {
-                    console.warn(`[Update ${shopId} - ${product}] STRICT gate: skipping batch creation due to missing price`);
-                  } else {
-            console.log(`[Update ${shopId} - ${product}] Using purchasePrice: ${purchasePrice} (productPrice: ${productPrice}, finalPrice: ${finalPrice})`);
-            
-            const batchResult = await createBatchRecord({
-              shopId: shopIdFrom(shopId), // ensure E.164 (+91…) for DB write
-              product: productRawForDb, 
-              quantity: update.quantity,
-              unit: update.unit, // Pass the unit
-              purchaseDate: formattedPurchaseDate,
-              expiryDate: null, // Will be updated later
-              purchasePrice: purchasePrice // Pass the purchase price
-            });
-        if (batchResult.success) {
-          console.log(`[Update ${shopId} - ${product}] Batch record created with ID: ${batchResult.id}`);
-          // Add batch date to result for display
-          result.batchDate = formattedPurchaseDate;
-        } 
-        else {
-          console.error(`[update] Failed to create batch record: ${batchResult.error}`);
-        }
+        // FINAL GUARANTEE inside the sale block (in case everything above failed)
+        overallQty = (overallQty ?? result?.newQuantity ?? null);
+        overallUnit = normalize(overallUnit || result?.unit || update.unit || 'liters');
 
-      // ✅ Update product price in DB after purchase — only if we have a positive rate
-      if (productPrice > 0) {
-        try {          
-          await upsertProduct({
-                    shopId,
-                    name: product,
-                    price: productPrice,
-                    unit: update.unit
-                  });
-          console.log(`[Update ${shopId} - ${product}] Product price updated in DB: ₹${productPrice}/${update.unit}`);
-        } catch (err) {
-          console.warn(`[Update ${shopId} - ${product}] Failed to update product price in DB:`, err.message);
+        // Prefer the helper's opening-batch key if it created one
+        if (!selectedBatchCompositeKey && saleGuard.selectedBatchCompositeKey) {
+          selectedBatchCompositeKey = saleGuard.selectedBatchCompositeKey;
         }
       } else {
-        console.log(`[Update ${shopId} - ${product}] Skipped DB price update (no price provided).`);
+        // not a sale: keep original purchase/increase path
+        result = await updateInventory(shopId, productRawForDb, update.quantity, update.unit);
       }
+
+
+      // Create batch record for purchases only (skip if we already created above)
+      if (!createdBatchEarly && update.action === 'purchased' && result.success && Number(finalPrice) > 0) {
+        console.log(`[Update ${shopId} - ${product}] Creating batch record for purchase`);
+        // Format current date with time for Airtable
+        const formattedPurchaseDate = formatDateForAirtable(new Date());
+        console.log(`[Update ${shopId} - ${product}] Using timestamp: ${formattedPurchaseDate}`);
+
+        // Use database price (productPrice) or provided price
+        const purchasePrice = productPrice > 0 ? productPrice : (finalPrice || 0);
+        if (!(purchasePrice > 0)) {
+          console.warn(`[Update ${shopId} - ${product}] STRICT gate: skipping batch creation due to missing price`);
+        } else {
+          console.log(`[Update ${shopId} - ${product}] Using purchasePrice: ${purchasePrice} (productPrice: ${productPrice}, finalPrice: ${finalPrice})`);
+
+          const batchResult = await createBatchRecord({
+            shopId: shopIdFrom(shopId), // ensure E.164 (+91…) for DB write
+            product: productRawForDb,
+            quantity: update.quantity,
+            unit: update.unit, // Pass the unit
+            purchaseDate: formattedPurchaseDate,
+            expiryDate: null, // Will be updated later
+            purchasePrice: purchasePrice // Pass the purchase price
+          });
+          if (batchResult.success) {
+            console.log(`[Update ${shopId} - ${product}] Batch record created with ID: ${batchResult.id}`);
+            // Add batch date to result for display
+            result.batchDate = formattedPurchaseDate;
+          }
+          else {
+            console.error(`[update] Failed to create batch record: ${batchResult.error}`);
+          }
+
+          // ✅ Update product price in DB after purchase — only if we have a positive rate
+          if (productPrice > 0) {
+            try {
+              await upsertProduct({
+                shopId,
+                name: product,
+                price: productPrice,
+                unit: update.unit
+              });
+              console.log(`[Update ${shopId} - ${product}] Product price updated in DB: ₹${productPrice}/${update.unit}`);
+            } catch (err) {
+              console.warn(`[Update ${shopId} - ${product}] Failed to update product price in DB:`, err.message);
             }
+          } else {
+            console.log(`[Update ${shopId} - ${product}] Skipped DB price update (no price provided).`);
+          }
+        }
       }
-            // Create sales record for sales only
-            if (isSale && result.success) {
-              console.log(`[Update ${shopId} - ${product}] Creating sales record`);
-              try {
-                // Use database price (productPrice) if available, then fallback to finalPrice                      
-                const salePrice = unitPriceForCalc; // Use pre-calculated unit price
-                          // NEW: remember the actual sale price used for this transaction
-                          chosenSalePrice = salePrice;
-                const saleValue = salePrice * Math.abs(update.quantity);
-                console.log(`[Update ${shopId} - ${product}] Sales record - salePrice: ${salePrice}, saleValue: ${saleValue}`);
-                
-                const salesResult = await createSalesRecord({
-                  shopId: shopIdFrom(shopId), // ensure E.164 (+91…) for DB write
-                  product: productRawForDb,
-                  quantity: -Math.abs(update.quantity),
-                  unit: update.unit,
-                  saleDate: new Date().toISOString(),
-                  batchCompositeKey: selectedBatchCompositeKey, // Uses composite key
-                  salePrice: salePrice, // Fixed: Use salePrice instead of finalPrice
-                  saleValue: saleValue
-                });
- 
-                // Add validation for zero price
-                if (salePrice <= 0) {
-                  console.warn(`[Update ${shopId} - ${product}] Invalid sale price: ${salePrice}`);                                    
-                  const errorMsg = await t(
-                              `Cannot process sale: No valid price found for ${product}. Please set a price first.`,
-                              languageCode,
-                              'invalid-price'
-                            );
-                  await sendMessageViaAPI(`whatsapp:${shopId}`, errorMsg);
-                  continue; // Skip this update
-                }
-               
+      // Create sales record for sales only
+      if (isSale && result.success) {
+        console.log(`[Update ${shopId} - ${product}] Creating sales record`);
+        try {
+          // Use database price (productPrice) if available, then fallback to finalPrice
+          const salePrice = unitPriceForCalc; // Use pre-calculated unit price
+          // NEW: remember the actual sale price used for this transaction
+          chosenSalePrice = salePrice;
+          const saleValue = salePrice * Math.abs(update.quantity);
+          console.log(`[Update ${shopId} - ${product}] Sales record - salePrice: ${salePrice}, saleValue: ${saleValue}`);
+
+          const salesResult = await createSalesRecord({
+            shopId: shopIdFrom(shopId), // ensure E.164 (+91…) for DB write
+            product: productRawForDb,
+            quantity: -Math.abs(update.quantity),
+            unit: update.unit,
+            saleDate: new Date().toISOString(),
+            batchCompositeKey: selectedBatchCompositeKey, // Uses composite key
+            salePrice: salePrice, // Fixed: Use salePrice instead of finalPrice
+            saleValue: saleValue
+          });
+
+          // Add validation for zero price
+          if (salePrice <= 0) {
+            console.warn(`[Update ${shopId} - ${product}] Invalid sale price: ${salePrice}`);
+            const errorMsg = await t(
+              `Cannot process sale: No valid price found for ${product}. Please set a price first.`,
+              languageCode,
+              'invalid-price'
+            );
+            await sendMessageViaAPI(`whatsapp:${shopId}`, errorMsg);
+            continue; // Skip this update
+          }
+
           if (salesResult.success) {
             console.log(`[Update ${shopId} - ${product}] Sales record created with ID: ${salesResult.id}`);
 
             const startTime = Date.now();
-            
-            // Generate and send invoice (non-blocking)          
+
+            // Generate and send invoice (non-blocking)
             (async () => {
-               try {
+              try {
                 console.log(`[Update ${shopId} - ${product}] Starting invoice generation process`);
                 // Get shop details
                 const shopDetailsResult = await getShopDetails(shopId);
@@ -13078,7 +13078,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                   console.warn(`[Update ${shopId} - ${product}] Could not get shop details: ${shopDetailsResult.error}`);
                   return;
                 }
-                
+
                 // Prepare sale record for invoice
                 const saleRecordForInvoice = {
                   product: product,
@@ -13087,52 +13087,52 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                   rate: salePrice, // Fixed: Use salePrice
                   saleDate: new Date().toISOString()
                 };
-                
+
                 console.log(`[Update ${shopId} - ${product}] Sale record prepared:`, saleRecordForInvoice);
-                
+
                 // Generate invoice PDF
                 const pdfPath = await generateInvoicePDF(shopDetailsResult.shopDetails, saleRecordForInvoice);
                 console.log(`[Update ${shopId} - ${product}] Invoice generated: ${pdfPath}`);
-                
+
                 // Verify PDF file exists
                 if (!fs.existsSync(pdfPath)) {
                   throw new Error(`Generated PDF file not found: ${pdfPath}`);
                 }
-                
+
                 // Send the PDF to the shop owner
                 const message = await sendPDFViaWhatsApp(`whatsapp:${shopId}`, pdfPath);
                 console.log(`[Update ${shopId} - ${product}] Invoice sent to whatsapp:${shopId}. SID: ${message.sid}`);
-                
+
               } catch (invoiceError) {
                 console.error(`[Update ${shopId} - ${product}] Error generating/sending invoice:`, invoiceError.message);
-                console.error(`[Update ${shopId} - ${product}] Stack trace:`, invoiceError.stack);   
-            } finally {
-                  // No local stop; centralized wrapper handles stopping for the whole request.
-                }
+                console.error(`[Update ${shopId} - ${product}] Stack trace:`, invoiceError.stack);
+              } finally {
+                // No local stop; centralized wrapper handles stopping for the whole request.
+              }
             })();
-            
-            // Update batch quantity if a batch was selected                        
+
+            // Update batch quantity if a batch was selected
             // --- BEGIN: guard to avoid double-deduction when DB layer handled batch spreading (2b/2c)
-                    const batchHandledUpstream =
-                      !!saleGuard && (saleGuard.status === 'ok' || saleGuard.status === 'auto-adjusted');
-                    if (batchHandledUpstream) {
-                      console.log(
-                        `[Update ${shopId} - ${product}] Skipping UI-layer batch deduction; handled upstream by applySaleWithReconciliation (status=${saleGuard.status})`
-                      );
-                    }
-                    // Only let WhatsApp deduct a batch if DB layer did NOT already handle it
-                    if (!batchHandledUpstream && selectedBatchCompositeKey) {
-                      // Log the actual delta we will apply (-abs) to avoid confusion
-                      console.log(
-                        `[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${-Math.abs(update.quantity)}`
-                      );        
-            // Log the actual delta we will apply (-abs) to avoid confusion
-            console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${-Math.abs(update.quantity)}`);
-              try {                                 
+            const batchHandledUpstream =
+              !!saleGuard && (saleGuard.status === 'ok' || saleGuard.status === 'auto-adjusted');
+            if (batchHandledUpstream) {
+              console.log(
+                `[Update ${shopId} - ${product}] Skipping UI-layer batch deduction; handled upstream by applySaleWithReconciliation (status=${saleGuard.status})`
+              );
+            }
+            // Only let WhatsApp deduct a batch if DB layer did NOT already handle it
+            if (!batchHandledUpstream && selectedBatchCompositeKey) {
+              // Log the actual delta we will apply (-abs) to avoid confusion
+              console.log(
+                `[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${-Math.abs(update.quantity)}`
+              );
+              // Log the actual delta we will apply (-abs) to avoid confusion
+              console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${-Math.abs(update.quantity)}`);
+              try {
                 const batchUpdateResult = await updateBatchQuantityByCompositeKey(
                   normalizeCompositeKey(selectedBatchCompositeKey),
-                   -Math.abs(update.quantity)
-                 );
+                  -Math.abs(update.quantity)
+                );
 
                 if (batchUpdateResult.success) {
                   console.log(`[Update ${shopId} - ${product}] Updated batch quantity successfully`);
@@ -13150,143 +13150,142 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 result.batchIssue = true;
                 result.batchError = batchError.message;
               }
-                    }
             }
-
-            // Add transaction logging
-            console.log(`[Transaction] Sale processed - Product: ${product}, Qty: ${Math.abs(update.quantity)}, Price: ${salePrice}, Total: ${saleValue}`);
-                                                
-            // Send a single confirmation (dedup) and append stock if we have it                          
-            await sendSaleConfirmationOnce(
-               `whatsapp:${shopId}`,
-               lang,
-               'sale-confirmation', // requestId scope for dedupe
-               {
-                 product: productRawForDb,
-                 qty: Math.abs(update.quantity),
-                 unit: normalize(overallUnit ?? update.unit), // display unit for the line
-                 pricePerUnit: salePrice,                                   
-                 overallStock: overallQty ?? null,
-                 overallUnit: normalize(overallUnit ?? update.unit),
-                 // keep legacy fallback if composer needs it
-                 newQuantity: result?.newQuantity
-               }
-             );
-                        
-            // --- NEW: start a short override window (2 min) only if multiple batches exist ---
-             try {
-               if (await shouldOfferBatchOverride(shopId, productRawForDb)) {
-                 await saveUserStateToDB(shopId, 'awaitingBatchOverride', {
-                   saleRecordId: salesResult.id,
-                   product,
-                   action: 'purchased',
-                   unit: update.unit,
-                   quantity: Math.abs(update.quantity),
-                   oldCompositeKey: selectedBatchCompositeKey,
-                   createdAtISO: new Date().toISOString(),
-                   timeoutSec: 120
-                 });
-               }
-             } catch (_) {}
-
-            // Compose confirmation message with used batch and up to N alternatives
-            let altLines = '';
-            try {
-              const list = await getBatchesForProductWithRemaining(shopId, productRawForDb); // asc by PurchaseDate
-              const used = selectedBatchCompositeKey;
-              const alts = (list || []).filter(b => b.compositeKey !== used).slice(0, SHOW_BATCH_SUGGESTIONS_COUNT);
-              if (alts.length) {
-                const render = b => {
-                  const pd = formatDateForDisplay(b.purchaseDate);
-                  const ed = b.expiryDate ? formatDateForDisplay(b.expiryDate) : '—';
-                  return `• ${pd} (qty ${b.quantity} ${b.unit}, exp ${ed})`;
-                };
-                altLines = '\n\nOther batches:\n' + alts.map(render).join('\n');
-              }
-            } catch (_) {}
-
-            
-// --- BEGIN COMPACT SALE CONFIRMATION ---            
-                        
-          const usedBatch = selectedBatchCompositeKey
-             ? await getBatchByCompositeKey(normalizeCompositeKey(selectedBatchCompositeKey))
-             : null;
-            const pd = usedBatch?.fields?.PurchaseDate ? formatDateForDisplay(usedBatch.fields.PurchaseDate) : '—';
-            const ed = usedBatch?.fields?.ExpiryDate ? formatDateForDisplay(usedBatch.fields.ExpiryDate) : '—';
-            const offerOverride = await shouldOfferBatchOverride(shopId, productRawForDb).catch(() => false);
-
-            const compactLine = (() => {
-              const qty = Math.abs(update.quantity);
-              const pricePart = salePrice > 0 ? ` @ ₹${salePrice}` : ''; // Fixed: Use salePrice                            
-              const stockQty  = saleGuard?.overallStock ?? result?.newQuantity;
-               const stockUnit = normalize(saleGuard?.overallUnit ?? result?.unit ?? update.unit);
-               const stockPart = (stockQty !== undefined && stockQty !== null)
-                 ? `. Stock: ${stockQty} ${stockUnit}`
-                 : '';
-              return `✅ Sold ${qty} ${update.unit} ${productRawForDb}${pricePart}${stockPart}`;
-            })();
-
-            const verboseLines = (() => {
-              const qty = Math.abs(update.quantity);
-              const hdr = `✅ ${productRawForDb} — sold ${qty} ${update.unit}${salePrice > 0 ? ` @ ₹${salePrice}` : ''}`; // Fixed: Use salePrice
-              const batchInfo = usedBatch ? `Used batch: Purchased ${pd} (Expiry ${ed})` : '';
-              const overrideHelp = offerOverride
-                ? `To change batch (within 2 min):\n• batch DD-MM   e.g., batch 12-09\n• exp DD-MM     e.g., exp 20-09\n• batch oldest  |  batch latest`
-                : '';
-              return [hdr, batchInfo, overrideHelp, altLines, `Full list → reply: batches ${product}`]
-                .filter(Boolean)
-                .join('\n');
-            })();
-
-                      
-          // Unify confirmation building – always defined, avoid referencing undeclared vars later.
-          // Assign to hoisted holder so we can use it later safely                   
-          // We already sent a single, correct confirmation above; suppress any secondary summary line.
-            confirmTextLine = '';  // <- prevents the later “Sold ... @ ₹0 ... Stock: ...” message from sending
-        
-          // Buffer and let outer renderer send single merged message
-            // --- END COMPACT/VERBOSE SALE CONFIRMATION ---
-
-          } else {
-            console.error(`[Update ${shopId} - ${product}] Failed to create sales record: ${salesResult.error}`);
           }
-        } catch (salesError) {
-          console.error(`[Update ${shopId} - ${product}] Error creating sales record:`, salesError.message);
-          result.salesError = salesError.message;
+
+          // Add transaction logging
+          console.log(`[Transaction] Sale processed - Product: ${product}, Qty: ${Math.abs(update.quantity)}, Price: ${salePrice}, Total: ${saleValue}`);
+
+          // Send a single confirmation (dedup) and append stock if we have it
+          await sendSaleConfirmationOnce(
+            `whatsapp:${shopId}`,
+            lang,
+            'sale-confirmation', // requestId scope for dedupe
+            {
+              product: productRawForDb,
+              qty: Math.abs(update.quantity),
+              unit: normalize(overallUnit ?? update.unit), // display unit for the line
+              pricePerUnit: salePrice,
+              overallStock: overallQty ?? null,
+              overallUnit: normalize(overallUnit ?? update.unit),
+              // keep legacy fallback if composer needs it
+              newQuantity: result?.newQuantity
+            }
+          );
+
+          // --- NEW: start a short override window (2 min) only if multiple batches exist ---
+          try {
+            if (await shouldOfferBatchOverride(shopId, productRawForDb)) {
+              await saveUserStateToDB(shopId, 'awaitingBatchOverride', {
+                saleRecordId: salesResult.id,
+                product,
+                action: 'purchased',
+                unit: update.unit,
+                quantity: Math.abs(update.quantity),
+                oldCompositeKey: selectedBatchCompositeKey,
+                createdAtISO: new Date().toISOString(),
+                timeoutSec: 120
+              });
+            }
+          } catch (_) {}
+
+          // Compose confirmation message with used batch and up to N alternatives
+          let altLines = '';
+          try {
+            const list = await getBatchesForProductWithRemaining(shopId, productRawForDb); // asc by PurchaseDate
+            const used = selectedBatchCompositeKey;
+            const alts = (list || []).filter(b => b.compositeKey !== used).slice(0, SHOW_BATCH_SUGGESTIONS_COUNT);
+            if (alts.length) {
+              const render = b => {
+                const pd = formatDateForDisplay(b.purchaseDate);
+                const ed = b.expiryDate ? formatDateForDisplay(b.expiryDate) : '—';
+                return `• ${pd} (qty ${b.quantity} ${b.unit}, exp ${ed})`;
+              };
+              altLines = '\n\nOther batches:\n' + alts.map(render).join('\n');
+            }
+          } catch (_) {}
+
+
+          // --- BEGIN COMPACT SALE CONFIRMATION ---
+
+          const usedBatch = selectedBatchCompositeKey
+            ? await getBatchByCompositeKey(normalizeCompositeKey(selectedBatchCompositeKey))
+            : null;
+          const pd = usedBatch?.fields?.PurchaseDate ? formatDateForDisplay(usedBatch.fields.PurchaseDate) : '—';
+          const ed = usedBatch?.fields?.ExpiryDate ? formatDateForDisplay(usedBatch.fields.ExpiryDate) : '—';
+          const offerOverride = await shouldOfferBatchOverride(shopId, productRawForDb).catch(() => false);
+
+          const compactLine = (() => {
+            const qty = Math.abs(update.quantity);
+            const pricePart = salePrice > 0 ? ` @ ₹${salePrice}` : ''; // Fixed: Use salePrice
+            const stockQty = saleGuard?.overallStock ?? result?.newQuantity;
+            const stockUnit = normalize(saleGuard?.overallUnit ?? result?.unit ?? update.unit);
+            const stockPart = (stockQty !== undefined && stockQty !== null)
+              ? `. Stock: ${stockQty} ${stockUnit}`
+              : '';
+            return `✅ Sold ${qty} ${update.unit} ${productRawForDb}${pricePart}${stockPart}`;
+          })();
+
+          const verboseLines = (() => {
+            const qty = Math.abs(update.quantity);
+            const hdr = `✅ ${productRawForDb} — sold ${qty} ${update.unit}${salePrice > 0 ? ` @ ₹${salePrice}` : ''}`; // Fixed: Use salePrice
+            const batchInfo = usedBatch ? `Used batch: Purchased ${pd} (Expiry ${ed})` : '';
+            const overrideHelp = offerOverride
+              ? `To change batch (within 2 min):\n• batch DD-MM   e.g., batch 12-09\n• exp DD-MM     e.g., exp 20-09\n• batch oldest  |  batch latest`
+              : '';
+            return [hdr, batchInfo, overrideHelp, altLines, `Full list → reply: batches ${product}`]
+              .filter(Boolean)
+              .join('\n');
+          })();
+
+
+          // Unify confirmation building – always defined, avoid referencing undeclared vars later.
+          // Assign to hoisted holder so we can use it later safely
+          // We already sent a single, correct confirmation above; suppress any secondary summary line.
+          confirmTextLine = '';  // <- prevents the later “Sold ... @ ₹0 ... Stock: ...” message from sending
+
+          // Buffer and let outer renderer send single merged message
+          // --- END COMPACT/VERBOSE SALE CONFIRMATION ---
+
+        } else {
+          console.error(`[Update ${shopId} - ${product}] Failed to create sales record: ${salesResult.error}`);
         }
-            
-                           
-          // NEW: Enrich outgoing item with price/value so renderer can show them
-            // Use a single effective price everywhere; for *sales*, prefer the locked-in chosenSalePrice.
-            const fallbackEffective = toNumberSafe(update.price ?? productPrice ?? 0);
-            const effectivePrice = (update.action === 'sold')
-              ? (chosenSalePrice ?? fallbackEffective)
-              : fallbackEffective;
-          const enriched = {
-          productRawForDb,
-          quantity: update.quantity,
-          unit: update.unit,
-          action: update.action,
-          ...result,                       
-          purchasePrice: update.action === 'purchased' ? effectivePrice : undefined,
-          salePrice: update.action === 'sold' ? effectivePrice : undefined,
-          totalValue: (update.action === 'purchased' || update.action === 'sold') ? (effectivePrice * Math.abs(update.quantity)): 0,
-          inlineConfirmText: confirmTextLine,   // safe: defined if a purchase/sale branch built it
-          priceSource,        
-// mark updated only when we actually changed it from catalog
-          priceUpdated: update.action === 'purchased'
-            && (Number(update.price) > 0)
-            && (Number(update.price) !== Number(productPrice))
-        };          
+      } catch (salesError) {
+        console.error(`[Update ${shopId} - ${product}] Error creating sales record:`, salesError.message);
+        result.salesError = salesError.message;
+      }
+
+
+      // NEW: Enrich outgoing item with price/value so renderer can show them
+      // Use a single effective price everywhere; for *sales*, prefer the locked-in chosenSalePrice.
+      const fallbackEffective = toNumberSafe(update.price ?? productPrice ?? 0);
+      const effectivePrice = (update.action === 'sold')
+        ? (chosenSalePrice ?? fallbackEffective)
+        : fallbackEffective;
+      const enriched = {
+        productRawForDb,
+        quantity: update.quantity,
+        unit: update.unit,
+        action: update.action,
+        ...result,
+        purchasePrice: update.action === 'purchased' ? effectivePrice : undefined,
+        salePrice: update.action === 'sold' ? effectivePrice : undefined,
+        totalValue: (update.action === 'purchased' || update.action === 'sold') ? (effectivePrice * Math.abs(update.quantity)) : 0,
+        inlineConfirmText: confirmTextLine,   // safe: defined if a purchase/sale branch built it
+        priceSource,
+        // mark updated only when we actually changed it from catalog
+        priceUpdated: update.action === 'purchased'
+          && (Number(update.price) > 0)
+          && (Number(update.price) !== Number(productPrice))
+      };
       // Debug line to verify at runtime (you can remove later)
-        console.log(
-          `[Update ${shopId} - ${product}] priceSource=${priceSource}, `
-          + `purchasePrice=${enriched.purchasePrice ?? '-'}, `
-          + `salePrice=${enriched.salePrice ?? '-'}, `
-          + `totalValue=${enriched.totalValue}`
-        );
-        results.push(enriched);
-  }
+      console.log(
+        `[Update ${shopId} - ${product}] priceSource=${priceSource}, `
+        + `purchasePrice=${enriched.purchasePrice ?? '-'}, `
+        + `salePrice=${enriched.salePrice ?? '-'}, `
+        + `totalValue=${enriched.totalValue}`
+      );
+      results.push(enriched);
     } catch (error) {
       console.error(`[Update ${shopId} - ${productRawForDb ?? update.product ?? '<unknown>'}] Error:`, error.message);
       results.push({
@@ -13297,7 +13296,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         success: false,
         error: error.message
       });
-}
+    }
   }
   return results;
 }
