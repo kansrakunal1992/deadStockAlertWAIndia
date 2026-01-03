@@ -424,13 +424,15 @@ async function updateInventory(shopId, product, quantityChange, unit = '') {
           const newBaseQty     = Math.max(0, currentBaseQty + changeBaseQty);
           // Convert back to the record's unit
           const unitOneBase    = convertToBaseUnit(1, currentUnit) || 1;
-          newQuantity          = newBaseQty / unitOneBase;
-    } else {
-        // First insert: use caller's normalized unit
-        newQuantity = quantityChange;
-        const storageUnit = normalizedUnit;
-    }
-
+          newQuantity          = newBaseQty / unitOneBase;    
+     } else {
+       // First insert: clamp non-negative in base units, then convert to storage unit
+       const changeBaseQty = convertToBaseUnit(quantityChange, normalizedUnit);
+       const newBaseQty = Math.max(0, changeBaseQty);
+       const unitOneBase = convertToBaseUnit(1, normalizedUnit) || 1;
+       newQuantity = newBaseQty / unitOneBase;
+     }
+    
     // 4. Prepare the PATCH data
     const patchData = {
       fields: {
@@ -3158,6 +3160,31 @@ async function getBatchesForProductWithRemaining(shopId, productName) {
   }
 }
 
+// NEW: Deduct across multiple batches (FIFO) for a sale
+async function deductAcrossBatchesFIFO(shopId, productName, quantity, unit = 'pieces') {
+  const context = `Deduct Across Batches ${shopId} - ${productName}`;
+  try {
+    let remaining = Number(quantity) || 0;
+    if (remaining <= 0) return { success: true, remaining: 0, used: [] };
+    const batches = await getBatchesForProductWithRemaining(shopId, productName); // asc by PurchaseDate
+    const used = [];
+    for (const b of batches) {
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, Number(b.quantity || 0));
+      if (take > 0) {
+        const r = await updateBatchQuantity(b.id, -take, unit);
+        if (!r?.success) return { success: false, error: r?.error || 'batch update failed', remaining, used };
+        used.push({ id: b.id, compositeKey: b.compositeKey, taken: take });
+        remaining -= take;
+      }
+    }
+    return { success: remaining === 0, remaining, used };
+  } catch (e) {
+    logError(context, e);
+    return { success: false, error: e.message, remaining: Number(quantity) || 0, used: [] };
+  }
+}
+
 // Rolling period helper (day, week, month)
 function getPeriodWindow(period) {
   const now = new Date();
@@ -3287,7 +3314,6 @@ async function getReorderSuggestions(shopId, { days = 30, leadTimeDays = 3, safe
 }
 
 // --- New: safe sale helper that never leaves inventory negative ---
-
 async function applySaleWithReconciliation(
   shopId,
   { product, quantity, unit = 'pieces', saleDate = new Date().toISOString(), language = 'en' },
@@ -3332,50 +3358,69 @@ async function applySaleWithReconciliation(
         overallUnit: overallAgg?.unit ?? unitNorm
       };
     }
-
-    // ===== CASE 2: Not enough stock & negative NOT allowed =====
-    if (!allowNegative) {
-      if (!autoOpening) {
-        // Block and return current aggregate to show real overall
-        return {
-          status: 'blocked',
-          deficit: need,
-          message: 'Insufficient stock',
-          overallStock: currentQty,
-          overallUnit: invAgg?.unit ?? unitNorm
-        };
-      }
-
-      // Create Opening Balance batch for the deficit
-      const openingDateISO = onboardingISO || new Date().toISOString();
-      const createRes = await createBatchRecord({
-        shopId,
-        product: productRaw,
-        quantity: need,
-        unit: unitNorm,
-        purchaseDate: openingDateISO,
-        expiryDate: null,
-        purchasePrice: openingPrice
-      });
-
-      // Boost then subtract (hard floor respected)
-      await updateInventory(shopId, productRaw, +need, unitNorm);
-      await updateInventory(shopId, productRaw, -Number(quantity), unitNorm);
-
-      // Composite key of the Opening Balance batch we just created
-      const compKey = makeCompositeKey(shopIdPref, productRaw, openingDateISO);
-
-      // Recompute overall after adjustments
-      const overallAgg = await getProductInventoryAggregate(shopId, productRaw);
-
-      return {
-        status: 'auto-adjusted',
-        deficit: need,
-        selectedBatchCompositeKey: compKey,
-        overallStock: Number(overallAgg?.quantity ?? 0),
-        overallUnit: overallAgg?.unit ?? unitNorm
-      };
-    }
+    
+     if (!allowNegative) {
+            if (!autoOpening) {
+              // Block and return current aggregate to show real overall
+              return {
+                status: 'blocked',
+                deficit: need,
+                message: 'Insufficient stock',
+                overallStock: currentQty,
+                overallUnit: invAgg?.unit ?? unitNorm
+              };
+            }
+      
+            // 2b: Try to cover the sale by deducting across batches (FIFO).
+            // NOTE: This adjusts batch quantities; Inventory is mirrored right after.
+            const spread = await deductAcrossBatchesFIFO(shopId, productRaw, Number(quantity), unitNorm);
+            if (spread.success) {
+              // Mirror overall Inventory for the sale quantity
+              await updateInventory(shopId, productRaw, -Number(quantity), unitNorm);
+              const overallAgg = await getProductInventoryAggregate(shopId, productRaw);
+              return {
+                status: 'ok',
+                deficit: 0,
+                // If needed, expose the first batch used (purely informational)
+                selectedBatchCompositeKey: spread.used?.[0]?.compositeKey ?? null,
+                overallStock: Number(overallAgg?.quantity ?? 0),
+                overallUnit: overallAgg?.unit ?? unitNorm
+              };
+            }
+      
+            // 2c: Not enough even across batches → create ONE Opening Balance batch
+            //     only for the remaining deficit, then mirror Inventory & complete the sale.
+            const openingDateISO = onboardingISO || new Date().toISOString();
+            const deficit = Number(spread?.remaining ?? need);
+      
+            await createBatchRecord({
+              shopId,
+              product: productRaw,
+              quantity: deficit,
+              unit: unitNorm,
+              purchaseDate: openingDateISO,
+              expiryDate: null,
+              purchasePrice: openingPrice
+            });
+      
+            // Mirror: bump Inventory by deficit, then subtract full sale
+            await updateInventory(shopId, productRaw, +deficit, unitNorm);
+            await updateInventory(shopId, productRaw, -Number(quantity), unitNorm);
+      
+            // (Optional) If you also want to actually deduct across batches now,
+            // you can re-run the FIFO spread here; omitted for minimal-diff semantics:
+            // await deductAcrossBatchesFIFO(shopId, productRaw, Number(quantity), unitNorm);
+      
+            const compKey = makeCompositeKey(shopIdPref, productRaw, openingDateISO);
+            const overallAgg = await getProductInventoryAggregate(shopId, productRaw);
+            return {
+              status: 'auto-adjusted',
+              deficit,
+              selectedBatchCompositeKey: compKey,
+              overallStock: Number(overallAgg?.quantity ?? 0),
+              overallUnit: overallAgg?.unit ?? unitNorm
+            };
+          }
 
     // ===== CASE 3: Not enough stock but negative IS allowed =====
     // Proceed with deduction and record a correction task
