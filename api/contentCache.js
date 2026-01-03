@@ -47,7 +47,7 @@ async function createUndoCorrectionCTAForLang(lang) {
   const l = UNDO_CORRECTION_LABELS[base] ?? UNDO_CORRECTION_LABELS.en;
   const payload = {
     friendly_name: `saamagrii_undo_correction_${base}_${Date.now()}`,
-    language: 'en',
+    language: base,
     types: {
       'twilio/quick-reply': {
         body: l.body,
@@ -406,10 +406,12 @@ async function createPaidConfirmCTAForLang(lang) {
 const sidsByLang = new Map();
 
 async function ensureLangTemplates(lang) {
+console.log(`[contentCache] ensureLangTemplates(lang=${lang})`);
 const language = normalizeLangForContent(lang);
   // Fast path with TTL
   const cached = sidsByLang.get(language);
   if (cached && (Date.now() - (cached.ts || 0) < TTL_MS)) {
+    console.log(`[contentCache] cache-hit for ${language}`, cached);
     return cached;
   }
   // (Re)create or fetch once
@@ -425,6 +427,7 @@ const language = normalizeLangForContent(lang);
     ts            : Date.now()
   };
   sidsByLang.set(language, bundle);
+  console.log(`[contentCache] cache-set for ${language}`, bundle);
   return bundle;
 }
 
