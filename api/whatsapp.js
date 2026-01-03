@@ -7595,14 +7595,14 @@ console.log('Entering Undo Block');
    const { ensureLangTemplates, getLangSids } = require('./contentCache');
    const lang = String(detectedLanguage ?? 'en').toLowerCase();
    await ensureLangTemplates(lang);
-   const sids = getLangSids(lang);
+   const sids = getLangSids(lang);       
    if (sids?.correctionUndoSid) {
-     await client.messages.create({
-       from: process.env.TWILIO_WHATSAPP_NUMBER,
-       to: From,
-       contentSid: sids.correctionUndoSid
-     });
-   }
+        await sendContentTemplateOnce({
+          toWhatsApp: String(From ?? '').replace('whatsapp:', ''),
+          contentSid: sids.correctionUndoSid,
+          requestId: `${requestId}::undo`
+        });
+      }
  } catch (_) { /* best-effort only; do not block confirmation */ }
 }
 
@@ -7672,14 +7672,14 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
      const { ensureLangTemplates, getLangSids } = require('./contentCache');
      const lang = String(detectedLanguage ?? 'en').toLowerCase();
      await ensureLangTemplates(lang);
-     const sids = getLangSids(lang);
+     const sids = getLangSids(lang);           
      if (sids?.correctionUndoSid) {
-       await client.messages.create({
-         from: process.env.TWILIO_WHATSAPP_NUMBER,
-         to: From,
-         contentSid: sids.correctionUndoSid
-       });
-     }
+          await sendContentTemplateOnce({
+            toWhatsApp: String(From ?? '').replace('whatsapp:', ''),
+            contentSid: sids.correctionUndoSid,
+            requestId: `${requestId}::undo`
+          });
+        }
    } catch (_) { /* best-effort only */ }
 }
 
@@ -15117,14 +15117,16 @@ async function tryHandleReturnText(transcript, from, detectedLanguage, requestId
           console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; falling back to 'en'`);
           sids = getLangSids('en');
         }
+        
         if (sids?.correctionUndoSid) {
-          const msg2 = await client.messages.create({
-            from: process.env.TWILIO_WHATSAPP_NUMBER,
-            to: from,
-            contentSid: sids.correctionUndoSid
-          });
-          console.log(`[undo-cta] (return-quick) sent correction quick-reply, SID=${msg2?.sid}, lang=${lang}`);
-        } else {
+                // Replace REST send with Content Template sender
+                await sendContentTemplateOnce({
+                  toWhatsApp: String(from ?? '').replace('whatsapp:', ''),
+                  contentSid: sids.correctionUndoSid,
+                  requestId: `${requestId}::undo-return`
+                });
+                console.log(`[undo-cta] (return-quick) sent correction quick-reply via Content Template, lang=${lang}, sid=${sids.correctionUndoSid}`);
+              } else {
           console.warn(`[undo-cta] (return-quick) correctionUndoSid missing for ${lang} and 'en'`);
         }
       } catch (e) {
@@ -17592,15 +17594,16 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
               if (!sids?.correctionUndoSid) {
                 console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; falling back to 'en'`);
                 sids = getLangSids('en');
-              }
-              if (sids?.correctionUndoSid) {
-                const msg = await client.messages.create({
-                  from: process.env.TWILIO_WHATSAPP_NUMBER,
-                  to: From,
-                  contentSid: sids.correctionUndoSid
-                });
-                console.log(`[undo-cta] sent correction quick-reply, SID=${msg?.sid}, lang=${lang}`);
-              } else {
+              }                          
+            if (sids?.correctionUndoSid) {
+                    // Replace REST send with Content Template sender (keeps parity with List-Picker / Quick-Reply)
+                    await sendContentTemplateOnce({
+                      toWhatsApp: String(From ?? '').replace('whatsapp:', ''),
+                      contentSid: sids.correctionUndoSid,
+                      requestId: `${requestId}::undo-agg`
+                    });
+                    console.log(`[undo-cta] sent correction quick-reply via Content Template, lang=${lang}, sid=${sids.correctionUndoSid}`);
+                  } else {
                 console.warn(`[undo-cta] correctionUndoSid missing for ${lang} and 'en'`);
               }
             } catch (e) {
@@ -18510,23 +18513,17 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                 console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; falling back to 'en'`);
                 sids = getLangSids('en');
               }
-        
+                                   
               if (sids?.correctionUndoSid) {
-                const msg = await client.messages.create({
-                  from: process.env.TWILIO_WHATSAPP_NUMBER,
-                  to: From,
-                  contentSid: sids.correctionUndoSid
-                });
-                console.log(`[undo-cta] sent correction quick-reply, SID=${msg?.sid}, lang=${lang}`);
-              } else {
+                    // Replace REST send with Content Template sender
+                    await sendContentTemplateOnce({
+                      toWhatsApp: String(from ?? '').replace('whatsapp:', ''),
+                      contentSid: sids.correctionUndoSid,
+                      requestId: `${requestId}::undo-return`
+                    });
+                    console.log(`[undo-cta] (return-quick) sent correction quick-reply via Content Template, lang=${lang}, sid=${sids.correctionUndoSid}`);
+                  } else {
                 console.warn(`[undo-cta] correctionUndoSid missing for ${lang} and 'en'`);
-              }
-        
-              // Resurface Inventory List‑Picker right after Undo
-              try {
-                await maybeResendListPicker(From, lang, `${requestId}::agg-undo-cta`);
-              } catch (e2) {
-                console.warn('[undo-cta] maybeResendListPicker failed:', e2?.message);
               }
             } catch (e) {
               console.warn('[undo-cta] send failed:', e?.message);
@@ -21284,15 +21281,16 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
                         if (!sids?.correctionUndoSid) {
                           console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; falling back to 'en'`);
                           sids = getLangSids('en');
-                        }
+                        }                                                
                         if (sids?.correctionUndoSid) {
-                          const msg = await client.messages.create({
-                            from: process.env.TWILIO_WHATSAPP_NUMBER,
-                            to: From,
-                            contentSid: sids.correctionUndoSid
-                          });
-                          console.log(`[undo-cta] sent correction quick-reply, SID=${msg?.sid}, lang=${lang}`);
-                        } else {
+                              // Replace REST send with Content Template sender (consistent with List-Picker / Quick-Reply)
+                              await sendContentTemplateOnce({
+                                toWhatsApp: String(From ?? '').replace('whatsapp:', ''),
+                                contentSid: sids.correctionUndoSid,
+                                requestId: `${requestId}::undo-agg`
+                              });
+                              console.log(`[undo-cta] sent correction quick-reply via Content Template, lang=${lang}, sid=${sids.correctionUndoSid}`);
+                            } else {
                           console.warn(`[undo-cta] correctionUndoSid missing for ${lang} and 'en'`);
                         }
                       } catch (e) {
