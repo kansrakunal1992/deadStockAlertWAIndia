@@ -12639,6 +12639,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   const accepted = [];
 
   for (const update of updates) {
+    try{
     // NEW: lock the chosen sale price for this specific update (prevents ₹0 fallbacks)
     let chosenSalePrice = null;
     // Hoisted: keep a per-update confirmation line available beyond branch scope
@@ -12649,7 +12650,6 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
     let overallUnit = null;
     const normalize = (u) => normalizeUnit(u || '');
     try {
-
       // === RAW-vs-UI split ===
       // RAW for ALL DB writes; UI name only for human-facing messages
       // Always compute the DB-safe name once per update
@@ -13246,7 +13246,6 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
           // Buffer and let outer renderer send single merged message
           // --- END COMPACT/VERBOSE SALE CONFIRMATION ---
-
         } else {
           console.error(`[Update ${shopId} - ${product}] Failed to create sales record: ${salesResult.error}`);
         }
@@ -13254,7 +13253,6 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         console.error(`[Update ${shopId} - ${product}] Error creating sales record:`, salesError.message);
         result.salesError = salesError.message;
       }
-
 
       // NEW: Enrich outgoing item with price/value so renderer can show them
       // Use a single effective price everywhere; for *sales*, prefer the locked-in chosenSalePrice.
