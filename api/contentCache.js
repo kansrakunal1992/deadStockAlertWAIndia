@@ -30,6 +30,40 @@ const PAID_CONFIRM_LABELS = {
   bn: { body: 'পেমেন্ট সম্পন্ন?', button: 'Paid' } 
  }; 
 
+// --- NEW: Undo-correction CTA (single-button quick reply) ---
+const UNDO_CORRECTION_LABELS = {
+  en: { body: 'Mistake? Press Undo within 2 min. Ignore to auto-lock.', button: 'Undo' },
+  hi: { body: 'गलती हुई? 2 मिनट में Undo दबाएँ। Ignore करेंगे तो अपने-आप लॉक हो जाएगा.', button: 'Undo' },
+  gu: { body: 'ભૂલ થઈ? 2 મિનિટમાં Undo દબાવો. Ignore કરશો તો આપમેળે લોક થઈ જશે.', button: 'Undo' },
+  ta: { body: 'தவறா? 2 நிமிடத்தில் Undo அழுத்தவும். கவனிக்காவிட்டால் தானாக பூட்டப்படும்.', button: 'Undo' },
+  te: { body: 'తప్పా? 2 నిమిషాల్లో Undo నొక్కండి. Ignore చేస్తే ఆటో-లాక్ అవుతుంది.', button: 'Undo' },
+  kn: { body: 'ತಪ್ಪಾ? 2 ನಿಮಿಷಗಳಲ್ಲಿ Undo ಒತ್ತಿ. Ignore ಮಾಡಿದರೆ ಸ್ವಯಂ ಲಾಕ್.', button: 'Undo' },
+  mr: { body: 'चूक झाली? 2 मिनिटांत Undo दाबा. Ignore केल्यास आपोआप लॉक होईल.', button: 'Undo' },
+  bn: { body: 'ভুল হয়েছে? ২ মিনিটে Undo চাপুন। Ignore করলে নিজে থেকেই লক হবে।', button: 'Undo' }
+};
+
+async function createUndoCorrectionCTAForLang(lang) {
+  const base = normalizeLangForContent(lang);
+  const l = UNDO_CORRECTION_LABELS[base] ?? UNDO_CORRECTION_LABELS.en;
+  const payload = {
+    friendly_name: `saamagrii_undo_correction_${base}_${Date.now()}`,
+    language: 'en',
+    types: {
+      'twilio/quick-reply': {
+        body: l.body,
+        actions: [
+          { type: 'QUICK_REPLY', title: clampTitle(l.button), id: 'undo_last_txn' }
+        ]
+      }
+    }
+  };
+  const { data } = await axios.post(CONTENT_API_URL, payload, {
+    auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
+  });
+  console.log(`[contentCache] Created Undo-Correction for ${lang}: ContentSid=${data.sid}`);
+  return data.sid;
+}
+
 if (!ACCOUNT_SID || !AUTH_TOKEN) {
    throw new Error('Missing ACCOUNT_SID or AUTH_TOKEN');
  }
@@ -387,6 +421,7 @@ const language = normalizeLangForContent(lang);
     paidCtaSid    : created?.paidCtaSid    || null,
     paidConfirmSid: created?.paidConfirmSid ?? null,
     onboardingQrSid: created?.onboardingQrSid ?? null,
+    correctionUndoSid: created?.correctionUndoSid ?? null, // NEW
     ts            : Date.now()
   };
   sidsByLang.set(language, bundle);
@@ -403,7 +438,8 @@ function getLangSids(lang) {
      trialCtaSid   : null,
      paidCtaSid    : null,
      paidConfirmSid: null,
-     onboardingQrSid: null
+     onboardingQrSid: null,
+     correctionUndoSid: null // NEW
    };
 }
 
@@ -419,6 +455,7 @@ async function actuallyCreateOrFetchTemplates(language) {
   ]);
   // Trial/Paid CTAs and Onboarding QR are independent; errors shouldn't block menus
   let trialCtaSid = null, paidCtaSid = null;
+  let correctionUndoSid = null; // NEW
   let onboardingQrSid = null;
   let paidConfirmSid = null;
   try { trialCtaSid = await createActivateTrialCTAForLang(language); } catch (e) {
@@ -432,7 +469,9 @@ async function actuallyCreateOrFetchTemplates(language) {
     }
   try { onboardingQrSid = await createOnboardingQuickReplyForLang(language); } catch (e) {
       console.warn('[contentCache] Onboarding QR create failed:', e?.response?.data ?? e?.message);
-    }
+    }  
+  // NEW: Undo CTA
+  try { correctionUndoSid = await createUndoCorrectionCTAForLang(language); } catch (e) { console.warn('[contentCache] Undo-Correction CTA create failed:', e?.response?.data ?? e?.message); }
   return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, onboardingQrSid, paidConfirmSid };
 }
 
