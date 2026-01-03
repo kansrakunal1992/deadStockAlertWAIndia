@@ -220,26 +220,23 @@ function canonicalizeLang(code) {
  }
 
 // --- Robust salvage for "<product> <qty> <unit>" noise in AI/rule outputs ---
-// Reuses UNIT_REGEX + canonicalizeUnitToken defined above; no new lexicon.
+// Reuses UNIT_REGEX + canonicalizeUnitToken; no new lexicon.
 function __extractTokensLoose(s) {
   const text = String(s || '').trim();
   if (!text) return null;
 
   // A: "<product> 37 bottles"
   let m = text.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z]+(?:s)?)$/);
-  if (m) {
-    return { product: m[1].trim(), quantity: Number(m[2]), unit: canonicalizeUnitToken(m[3]) };
-  }
+  if (m) return { product: m[1].trim(), quantity: Number(m[2]), unit: canonicalizeUnitToken(m[3]) };
+
   // B: "37 bottles Milton"
   m = text.match(/^(\d+(?:\.\d+)?)\s+([A-Za-z]+(?:s)?)\s+(.+)$/);
-  if (m) {
-    return { product: m[3].trim(), quantity: Number(m[1]), unit: canonicalizeUnitToken(m[2]) };
-  }
+  if (m) return { product: m[3].trim(), quantity: Number(m[1]), unit: canonicalizeUnitToken(m[2]) };
+
   // C: "<product>: 37 bottles" / "<product> - 37 bottles"
   m = text.match(/^(.+?)\s*[-:]\s*(\d+(?:\.\d+)?)\s+([A-Za-z]+(?:s)?)$/);
-  if (m) {
-    return { product: m[1].trim(), quantity: Number(m[2]), unit: canonicalizeUnitToken(m[3]) };
-  }
+  if (m) return { product: m[1].trim(), quantity: Number(m[2]), unit: canonicalizeUnitToken(m[3]) };
+
   // D: generic: if product contains unit + a number anywhere, derive product from prefix
   const u = text.match(UNIT_REGEX);
   const q = text.match(/(\d+(?:\.\d+)?)/);
@@ -260,13 +257,18 @@ function normalizeProductQtyUnit(update) {
   if (hasDigits && hasUnit) {
     const ex = __extractTokensLoose(raw);
     if (ex) {
-      if (!update.quantity || Number(update.quantity) === 0) {
+      // --- key overrides ---
+      // 1) Quantity: override when AI defaulted to 0/1 or when it's clearly inconsistent
+      if (!Number.isFinite(update.quantity) || update.quantity <= 1 || update.quantity !== ex.quantity) {
         update.quantity = ex.quantity;
       }
-      if (!update.unit || String(update.unit).toLowerCase() === 'pieces') {
+      // 2) Unit: override when AI defaulted to "pieces" or differs from extracted
+      const unitLc = String(update.unit || '').toLowerCase();
+      if (!unitLc || unitLc === 'pieces' || unitLc !== ex.unit) {
         update.unit = ex.unit;
       }
-      update.product = ex.product; // always clean product
+      // 3) Product: always clean trailing "qty unit"
+      update.product = ex.product;
     }
   }
   return update;
@@ -12713,6 +12715,7 @@ for (const update of updates) {
    let productRawForDb;            // <-- hoist for catch to see it
    let productForLog;              // <-- stable fallback for logging
    try {
+     let result = { success: false };
      productRawForDb = resolveProductNameForWrite(update);
      productForLog = productRawForDb ?? update.product ?? '<unknown>';
     let chosenSalePrice = null;
@@ -13240,7 +13243,7 @@ for (const update of updates) {
               overallStock: overallQty ?? null,
               overallUnit: normalize(overallUnit ?? update.unit),
               // keep legacy fallback if composer needs it
-              newQuantity: result?.newQuantity
+              newQuantity: result && result.newQuantity
             }
           );
 
