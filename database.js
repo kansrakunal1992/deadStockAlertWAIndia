@@ -5,6 +5,7 @@ const CORRECTION_STATE_TABLE_NAME = process.env.AIRTABLE_CORRECTION_STATE_TABLE_
 const USER_STATE_TABLE_NAME = process.env.AIRTABLE_USER_STATE_TABLE_NAME || 'UserState';
 const TRANSLATIONS_TABLE_NAME = process.env.AIRTABLE_TRANSLATIONS_TABLE_NAME || 'Translations';
 const STATE_TIMEOUT = Number(process.env.USER_STATE_TTL_MS ?? (60 * 60 * 1000)); // 60 minutes
+const CORRECTION_WINDOW_TTL_SEC = Number(process.env.TTL_CORRECTION ?? 120);
 
 // Canonicalize ShopID to digits-only (no whatsapp:, +91, 91, 0 prefixes)
 function getCanonicalShopId(fromOrDigits) {
@@ -17,6 +18,102 @@ function getCanonicalShopId(fromOrDigits) {
   return canon;
 }
 
+/**
+ * Arm a short correction window for the last txn.
+ * lastTxn = { action: 'sale'|'purchase'|'return', product, quantity, unit, compositeKey? }
+ */
+async function openCorrectionWindow(shopId, lastTxn, detectedLanguage = 'en') {
+  const payload = {
+    last: {
+      action: String(lastTxn.action || '').toLowerCase(),       // stable action name
+      product: lastTxn.product,
+      quantity: Number(lastTxn.quantity || 0),
+      unit: normalizeUnit(lastTxn.unit || 'pieces'),
+      compositeKey: lastTxn.compositeKey ?? null                 // for purchase batch, when available
+    },
+    createdAtISO: new Date().toISOString(),
+    ttlSec: CORRECTION_WINDOW_TTL_SEC
+  };
+
+  // Store ephemeral user state (your existing table)
+  await saveUserStateToDB(shopId, 'awaitingCorrection', payload); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
+
+  // Optional: audit trail / rehydration safety
+  try {
+    await saveCorrectionState(normalizeShopIdForWrite(shopId), 'awaitingCorrection', payload, detectedLanguage); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
+  } catch (_) { /* non-blocking */ }
+
+  return { success: true };
+}
+
+function isCorrectionWindowActive(state) {
+  if (!state || state.mode !== 'awaitingCorrection') return false;
+  const created = new Date(state.data?.createdAtISO || 0).getTime();
+  const ttlMs = Number(state.data?.ttlSec ?? CORRECTION_WINDOW_TTL_SEC) * 1000;
+  return (Date.now() - created) <= ttlMs;
+}
+
+/**
+ * Apply Undo to the *last* txn stored in awaitingCorrection.
+ * Reverts inventory delta; updates batch qty for purchase where compositeKey is present.
+ */
+async function applyUndoLastTxn(shopId) {
+  const state = await getUserStateFromDB(shopId); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
+  if (!isCorrectionWindowActive(state)) {
+    return { success: false, error: 'expired' };
+  }
+  const last = state?.data?.last;
+  if (!last || isMissingProductToken(last.product)) {
+    return { success: false, error: 'no-last' };
+  }
+
+  const qty  = Number(last.quantity || 0);
+  const unit = normalizeUnit(last.unit || 'pieces');
+
+  let invDelta = 0;
+  switch (String(last.action)) {
+    case 'sale':
+    case 'sold':
+      // Undo sale: add back to stock
+      invDelta = +qty;
+      break;
+
+    case 'purchase':
+    case 'bought':
+      // Undo purchase: subtract from stock and reduce the batch if we know it
+      invDelta = -qty;
+      if (last.compositeKey) {
+        await updateBatchQuantityByCompositeKey(last.compositeKey, -qty, unit); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
+      }
+      break;
+
+    case 'return':
+    case 'returned':
+      // Undo customer return (you added stock earlier): remove it
+      invDelta = -qty;
+      break;
+
+    default:
+      invDelta = 0;
+  }
+
+  if (invDelta !== 0) {
+    await updateInventory(shopId, last.product, invDelta, unit); // ✔ existing PATCH strategy, no record deletes [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
+  }
+
+  // Close window
+  await deleteUserStateFromDB(state.id); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
+  return { success: true, undone: last };
+}
+
+async function closeCorrectionWindow(shopId) {
+  const state = await getUserStateFromDB(shopId); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
+  if (state && state.mode === 'awaitingCorrection') {
+    await deleteUserStateFromDB(state.id); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
+    return { success: true, closed: true };
+  }
+  return { success: true, closed: false };
+}
 
 // === NEW: Always store ShopID in +91########## format for all writes ===
 function normalizeShopIdForWrite(input) {
@@ -3623,5 +3720,8 @@ module.exports = {
   upsertAuthUserDetails,
   recordPaymentEvent,
   refreshUserStateTimestamp,
-  findProductMatches
+  findProductMatches,  
+  openCorrectionWindow,
+  applyUndoLastTxn,
+  closeCorrectionWindow
 };
