@@ -7578,6 +7578,7 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
   // Build the one-line head via composer (emoji + unit/price/stock)  
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
+console.log('I reached here');
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
 console.log('Entering Undo Block');
 // --- NEW: 120s correction window + Undo CTA (purchase)
