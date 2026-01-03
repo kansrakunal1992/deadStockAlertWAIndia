@@ -12639,7 +12639,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   const accepted = [];
 
   for (const update of updates) {
-    try{
+    try {
     // NEW: lock the chosen sale price for this specific update (prevents ₹0 fallbacks)
     let chosenSalePrice = null;
     // Hoisted: keep a per-update confirmation line available beyond branch scope
@@ -13032,7 +13032,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       // Create sales record for sales only
       if (isSale && result.success) {
         console.log(`[Update ${shopId} - ${product}] Creating sales record`);
-        try {
+        //try {
           // Use database price (productPrice) if available, then fallback to finalPrice
           const salePrice = unitPriceForCalc; // Use pre-calculated unit price
           // NEW: remember the actual sale price used for this transaction
