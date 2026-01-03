@@ -13112,8 +13112,21 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 }
             })();
             
-            // Update batch quantity if a batch was selected
-            if (selectedBatchCompositeKey) {                         
+            // Update batch quantity if a batch was selected                        
+            // --- BEGIN: guard to avoid double-deduction when DB layer handled batch spreading (2b/2c)
+                    const batchHandledUpstream =
+                      !!saleGuard && (saleGuard.status === 'ok' || saleGuard.status === 'auto-adjusted');
+                    if (batchHandledUpstream) {
+                      console.log(
+                        `[Update ${shopId} - ${product}] Skipping UI-layer batch deduction; handled upstream by applySaleWithReconciliation (status=${saleGuard.status})`
+                      );
+                    }
+                    // Only let WhatsApp deduct a batch if DB layer did NOT already handle it
+                    if (!batchHandledUpstream && selectedBatchCompositeKey) {
+                      // Log the actual delta we will apply (-abs) to avoid confusion
+                      console.log(
+                        `[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${-Math.abs(update.quantity)}`
+                      );        
             // Log the actual delta we will apply (-abs) to avoid confusion
             console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${-Math.abs(update.quantity)}`);
               try {                                 
@@ -13138,6 +13151,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 result.batchIssue = true;
                 result.batchError = batchError.message;
               }
+                    }
             }
 
             // Add transaction logging
