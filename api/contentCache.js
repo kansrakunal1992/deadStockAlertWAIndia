@@ -472,7 +472,7 @@ async function actuallyCreateOrFetchTemplates(language) {
     }  
   // NEW: Undo CTA
   try { correctionUndoSid = await createUndoCorrectionCTAForLang(language); } catch (e) { console.warn('[contentCache] Undo-Correction CTA create failed:', e?.response?.data ?? e?.message); }
-  return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, onboardingQrSid, paidConfirmSid };
+  return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, onboardingQrSid, paidConfirmSid, correctionUndoSid };
 }
 
 module.exports = { ensureLangTemplates, getLangSids };
