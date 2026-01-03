@@ -219,6 +219,59 @@ function canonicalizeLang(code) {
    return DISPLAY[key] ?? tok;
  }
 
+// --- Robust salvage for "<product> <qty> <unit>" noise in AI/rule outputs ---
+// Reuses UNIT_REGEX + canonicalizeUnitToken defined above; no new lexicon.
+function __extractTokensLoose(s) {
+  const text = String(s || '').trim();
+  if (!text) return null;
+
+  // A: "<product> 37 bottles"
+  let m = text.match(/^(.+?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z]+(?:s)?)$/);
+  if (m) {
+    return { product: m[1].trim(), quantity: Number(m[2]), unit: canonicalizeUnitToken(m[3]) };
+  }
+  // B: "37 bottles Milton"
+  m = text.match(/^(\d+(?:\.\d+)?)\s+([A-Za-z]+(?:s)?)\s+(.+)$/);
+  if (m) {
+    return { product: m[3].trim(), quantity: Number(m[1]), unit: canonicalizeUnitToken(m[2]) };
+  }
+  // C: "<product>: 37 bottles" / "<product> - 37 bottles"
+  m = text.match(/^(.+?)\s*[-:]\s*(\d+(?:\.\d+)?)\s+([A-Za-z]+(?:s)?)$/);
+  if (m) {
+    return { product: m[1].trim(), quantity: Number(m[2]), unit: canonicalizeUnitToken(m[3]) };
+  }
+  // D: generic: if product contains unit + a number anywhere, derive product from prefix
+  const u = text.match(UNIT_REGEX);
+  const q = text.match(/(\d+(?:\.\d+)?)/);
+  if (u && q) {
+    const idxQty = text.indexOf(q[1]);
+    const product = text.slice(0, idxQty).replace(/\bat$/i, '').trim();
+    return { product, quantity: Number(q[1]), unit: canonicalizeUnitToken(u[0]) };
+  }
+  return null;
+}
+
+// Normalize an update object in-place when product holds "name qty unit"
+function normalizeProductQtyUnit(update) {
+  if (!update || !update.product) return update;
+  const raw = String(update.product).trim();
+  const hasDigits = /\d/.test(raw);
+  const hasUnit = UNIT_REGEX.test(raw);
+  if (hasDigits && hasUnit) {
+    const ex = __extractTokensLoose(raw);
+    if (ex) {
+      if (!update.quantity || Number(update.quantity) === 0) {
+        update.quantity = ex.quantity;
+      }
+      if (!update.unit || String(update.unit).toLowerCase() === 'pieces') {
+        update.unit = ex.unit;
+      }
+      update.product = ex.product; // always clean product
+    }
+  }
+  return update;
+}
+
 // --- Enrich sale header with stock (tiny helper) ---
 async function enrichSaleHeaderWithStock(From, header, productName, preferUnit = 'liters') {
   try {
@@ -434,10 +487,23 @@ const DISABLE_PRODUCT_TRANSLATION_FOR_DB =
  * Returns the product name to be persisted to DB/batches.
  * Current policy: always use the raw AI product (no translation/normalization).
  */
-function resolveProductNameForWrite(updateOrName) {
-  const raw = typeof updateOrName === 'string'
-    ? updateOrName
-    : (updateOrName?.product ?? '');
+function resolveProductNameForWrite(updateOrName) {    
+  let raw = typeof updateOrName === 'string'
+      ? updateOrName
+      : (updateOrName?.product ?? '');
+  
+    // Strip trailing "qty unit" if present, e.g., "Milton 37 bottles"
+    try {
+      // Prefer existing UNIT_REGEX and a number before it
+      const hasUnit = UNIT_REGEX.test(raw);
+      const hasNum = /\d/.test(raw);
+      if (hasUnit && hasNum) {
+        const ex = __extractTokensLoose(raw);
+        if (ex && ex.product) {
+          raw = ex.product.trim();
+        }
+      }
+    } catch (_) {}
   // If gate is ON, always trust AI/raw; never translate
   if (DISABLE_PRODUCT_TRANSLATION_FOR_DB) return raw;
   // (If you ever flip the policy, keep raw as default anyway)
@@ -784,6 +850,7 @@ const UNIT_MAP = {
     metre: 'મીટર', metres: 'મીટર'
   }
 };
+
 function displayUnit(unit, lang = 'en') {
   const base = String(lang).toLowerCase().replace(/-latn$/, ''); // hi-latn -> hi
   const u = String(unit ?? '').toLowerCase().trim();
@@ -1326,7 +1393,9 @@ async function parseMultipleUpdates(reqOrText, requestId) {
             console.log(`[AI Parsing] Overriding AI action with normalized state action: ${update.action}`);
           } else {
             console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
-          }
+          }          
+          // NEW: salvage noisy "<product> <qty> <unit>" from AI
+          update = normalizeProductQtyUnit(update);
           return update;
         } catch (error) {
           console.warn(`[AI Parsing] Error processing update:`, error.message);
@@ -1432,7 +1501,9 @@ async function parseMultipleUpdates(reqOrText, requestId) {
         // UI-only: human-friendly name
                   update.productDisplay = await translateProductNameSafeForUI(update.product, 'rule-parsing');
                   // DB-only: raw product per write policy (never translated/normalized)
-                  update.productRawForDb = resolveProductNameForWrite(update.product);                        
+                  update.productRawForDb = resolveProductNameForWrite(update.product);                      
+      // NEW: salvage noisy "<product> <qty> <unit>" in rule outputs
+            update = normalizeProductQtyUnit(update);
             } else if (pendingAction) {
                       // Verb-less fallback: only when sticky mode exists AND AI has already failed
                       const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
@@ -12637,10 +12708,13 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   const results = [];
   const pendingNoPrice = [];   // <– used only to drive nudges; we DO NOT write for these
   const accepted = [];
-
-  for (const update of updates) {
-    try {
-    // NEW: lock the chosen sale price for this specific update (prevents ₹0 fallbacks)
+  
+for (const update of updates) {
+   let productRawForDb;            // <-- hoist for catch to see it
+   let productForLog;              // <-- stable fallback for logging
+   try {
+     productRawForDb = resolveProductNameForWrite(update);
+     productForLog = productRawForDb ?? update.product ?? '<unknown>';
     let chosenSalePrice = null;
     // Hoisted: keep a per-update confirmation line available beyond branch scope
     let confirmTextLine;
@@ -12653,7 +12727,6 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       // === RAW-vs-UI split ===
       // RAW for ALL DB writes; UI name only for human-facing messages
       // Always compute the DB-safe name once per update
-      const productRawForDb = resolveProductNameForWrite(update);     // DB writes only
       const productUiName = update.productDisplay ?? update.product; // UI display only
       const product = productRawForDb;                         // alias for logs
       if (!productRawForDb || ['undefined', 'null', 'n/a', 'na'].includes(String(productRawForDb).toLowerCase())) {
@@ -13126,8 +13199,6 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               console.log(
                 `[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${-Math.abs(update.quantity)}`
               );
-              // Log the actual delta we will apply (-abs) to avoid confusion
-              console.log(`[Update ${shopId} - ${product}] About to update batch quantity. Composite key: "${selectedBatchCompositeKey}", Quantity change: ${-Math.abs(update.quantity)}`);
               try {
                 const batchUpdateResult = await updateBatchQuantityByCompositeKey(
                   normalizeCompositeKey(selectedBatchCompositeKey),
@@ -13179,7 +13250,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               await saveUserStateToDB(shopId, 'awaitingBatchOverride', {
                 saleRecordId: salesResult.id,
                 product,
-                action: 'purchased',
+                action: 'sold',
                 unit: update.unit,
                 quantity: Math.abs(update.quantity),
                 oldCompositeKey: selectedBatchCompositeKey,
@@ -13284,8 +13355,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         + `totalValue=${enriched.totalValue}`
       );
       results.push(enriched);
-    } catch (error) {
-      console.error(`[Update ${shopId} - ${productRawForDb ?? update.product ?? '<unknown>'}] Error:`, error.message);
+    } catch (error) {            
+      const safeName = productForLog ?? update?.product ?? '<unknown>';
+      console.error(`[Update ${shopId} - ${safeName}] Error:`, error.message);
       results.push({
         product: productRawForDb ?? update.product ?? '',
         quantity: update.quantity,
