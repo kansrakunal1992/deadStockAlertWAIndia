@@ -7578,6 +7578,31 @@ function composeSaleConfirmation({
   // Final line  
   const line = `🛒 Sold ${safeQty}${unitTextHeader} ${productName}${priceText}${stockText}`;
   return line;
+  
+  // --- NEW: 120s correction window + Undo CTA (purchase)
+ try {
+   const db = require('./database');
+   // Arm window carrying the last txn details; include compositeKey when available
+   await db.openCorrectionWindow(
+     From.replace('whatsapp:', ''),
+     { action: 'purchase', product, quantity: Number(qty), unit, compositeKey: payload?.batchCompositeKey ?? null },
+     String(detectedLanguage ?? 'en').toLowerCase()
+   ); // uses database.js new helper
+   // Send the Undo quick-reply CTA from the Content bundle
+   const { ensureLangTemplates, getLangSids } = require('./contentCache');
+   const lang = String(detectedLanguage ?? 'en').toLowerCase();
+   await ensureLangTemplates(lang);
+   const sids = getLangSids(lang);
+   console.log('[undo-cta]', { lang, correctionUndoSid: sids?.correctionUndoSid });
+   if (sids?.correctionUndoSid) {
+     await client.messages.create({
+       from: process.env.TWILIO_WHATSAPP_NUMBER,
+       to: From,
+       contentSid: sids.correctionUndoSid
+     });
+   }
+ } catch (_) { /* best-effort only; do not block confirmation */ }
+  
 }
 
 // === Support link (from environment) ===
