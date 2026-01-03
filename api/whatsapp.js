@@ -5151,63 +5151,6 @@ function markAckSent(From) {
   try { _recentAcks.set(String(From), { at: Date.now() }); } catch {}
 }
 
-/**
- * Process‑global Return tracker with TTL.
- * Tracks latest Return per conversation (thread) and supports undo + periodic GC.
- * Override TTL via env: RETURN_TTL_MS (default: 5 minutes).
- */
-(function initReturnTracker(global) {
-  const DEFAULT_TTL_MS = parseInt(process.env.RETURN_TTL_MS || '300000', 10); // 5 min
-  class ReturnTracker {
-    constructor(ttlMs = DEFAULT_TTL_MS) {
-      this.ttlMs = ttlMs;
-      this.items = new Map();     // id -> { id, threadId, payload, ts }
-      this.byThread = new Map();  // threadId -> latest id
-      this._gc = setInterval(() => this.purgeExpired(), Math.min(ttlMs, 60000));
-      try { this._gc.unref?.(); } catch {}
-    }
-    now() { return Date.now(); }
-    record({ id, threadId, payload }) {
-      const ts = this.now();
-      this.items.set(id, { id, threadId, payload, ts });
-      this.byThread.set(threadId, id);
-      return id;
-    }
-    get(id) { return this.items.get(id); }
-    getLatestByThread(threadId) {
-      const id = this.byThread.get(threadId);
-      return id ? this.items.get(id) : undefined;
-    }
-    hasExpired(item) { return !item ? true : (this.now() - item.ts) > this.ttlMs; }
-    purgeExpired() {
-      const now = this.now();
-      for (const [id, item] of this.items) {
-        if ((now - item.ts) > this.ttlMs) {
-          this.items.delete(id);
-          if (this.byThread.get(item.threadId) === id) {
-            this.byThread.delete(item.threadId);
-          }
-        }
-      }
-    }
-    undo(id) {
-      const item = this.items.get(id);
-      if (!item) return false;
-      this.items.delete(id);
-      if (this.byThread.get(item.threadId) === id) {
-        this.byThread.delete(item.threadId);
-      }
-      return item;
-    }
-  }
-  global.__ReturnTracker__ = global.__ReturnTracker__ || new ReturnTracker();
-})(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : global));
-
-// Optional manual purge trigger
-function purgeExpiredReturns() {
-  try { globalThis.__ReturnTracker__?.purgeExpired(); } catch {}
-}
-
 // Fast preference resolver with tiny timeout; never blocks the ack path.
 async function getPreferredLangQuick(From, hint = 'en') {
   const shopId = String(From ?? '').replace('whatsapp:', '');
@@ -6313,47 +6256,33 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
     try {
       if (payload && _isDuplicateTap(shopIdTop, payload)) return true;
     } catch (_) {} 
-  
- // --- NEW: Undo (correction) quick-reply within 120s window
- if (payload === 'undo_last_txn') {
-   try {           
-      const db = require('./database');
-          // (4) Extend interactive Undo handler — prefer latest tracked Return within TTL
-          const tracker = globalThis.__ReturnTracker__;
-          const latest = tracker?.getLatestByThread(from);
-          let res;
-          if (latest && !tracker.hasExpired(latest)) {
-            // Domain-specific undo: reuse your existing DB undo for last txn
-            // and clear tracker entry afterwards.
-            res = await db.applyUndoLastTxn(shopIdTop);
-            try { tracker.undo(latest.id); } catch {}
-          } else {
-            // Fallback: use legacy undo behavior (may fail if window expired)
-            res = await db.applyUndoLastTxn(shopIdTop);
-          }
-     // Localize a short ack using user's preference
-     let btnLang = 'en';
-     try {
-       const prefLP = await getUserPreference(shopIdTop);
-       if (prefLP?.success && prefLP.language) btnLang = String(prefLP.language).toLowerCase();
-     } catch (_) {}
-     const body = res?.success
-       ? '↩️ Undo done — update reverted.'
-       : '⏱️ Correction window expired. Update is locked.';
-     await client.messages.create({
-       from: process.env.TWILIO_WHATSAPP_NUMBER,
-       to: from,
-       body
-     });
-     // Minimal TwiML ack (we already replied via Messaging API)
-     const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
-     resHttp.type('text/xml'); resp.safeSend(200, twiml.toString());
-     safeTrackResponseTime(requestStart, raw.requestId ?? Date.now());
-     return true;
-   } catch (e) {
-     console.warn('[interactive] undo failed:', e?.message);
-   }
- }
+     
+  // --- Undo (correction) quick-reply (tracker removed; generic undo-last-txn)
+    if (payload === 'undo_last_txn') {
+      try {
+        const db = require('./database');
+        const res = await db.applyUndoLastTxn(shopIdTop);
+        // Localize a short ack using user's preference
+        let btnLang = 'en';
+        try {
+          const prefLP = await getUserPreference(shopIdTop);
+          if (prefLP?.success && prefLP.language) btnLang = String(prefLP.language).toLowerCase();
+        } catch { }
+        const body = res?.success
+          ? '↩️ Undo done — update reverted.'
+          : '⏱️ Correction window expired. Update is locked.';
+        await client.messages.create({
+          from: process.env.TWILIO_WHATSAPP_NUMBER,
+          to: from,
+          body
+        });
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message('');
+        return resp.safeSend(200, twiml.toString());
+      } catch (e) {
+        console.warn('[interactive] undo handler failed:', e?.message);
+      }
+    }
    
   // STEP 13: Summary buttons → route directly
     if (payload === 'instant_summary' || payload === 'full_summary') {
@@ -15168,23 +15097,33 @@ async function tryHandleReturnText(transcript, from, detectedLanguage, requestId
           message += ` (Stock: ${finalQty} ${u})`;
   }  
   const msg = await t(message, detectedLanguage, requestId);
-  // (2) Hook into the quick text Return path — record in process-global tracker
-  try {
-    const returnId =
-      (typeof generateId === 'function') ? generateId('ret') :
-      `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    globalThis.__ReturnTracker__?.record({
-      id: returnId,
-      threadId: from,
-      payload: {
-        type: 'quick',
-        kind: 'return',
-        product, qty, unit,
-        shopId
-      }
-    });
-  } catch { /* tracking is best-effort; never block send */ }
   await sendMessageViaAPI(from, msg);
+  
+  // [PATCH:UNDO-CTA-RETURN-ONLY-001] Post-confirm CTA: Undo (quick Return; no List-Picker)
+    setTimeout(async () => {
+      try {
+        const { ensureLangTemplates, getLangSids } = require('./contentCache');
+        const lang = String(detectedLanguage ?? 'en').toLowerCase();
+        await ensureLangTemplates(lang);
+        let sids = getLangSids(lang);
+        if (!sids?.correctionUndoSid) {
+          console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; falling back to 'en'`);
+          sids = getLangSids('en');
+        }
+        if (sids?.correctionUndoSid) {
+          const msg2 = await client.messages.create({
+            from: process.env.TWILIO_WHATSAPP_NUMBER,
+            to: from,
+            contentSid: sids.correctionUndoSid
+          });
+          console.log(`[undo-cta] (return-quick) sent correction quick-reply, SID=${msg2?.sid}, lang=${lang}`);
+        } else {
+          console.warn(`[undo-cta] (return-quick) correctionUndoSid missing for ${lang} and 'en'`);
+        }
+      } catch (e) {
+        console.warn('[undo-cta] (return-quick) send failed:', e?.message);
+      }
+    }, 350);
   return true;
 }
 
@@ -17631,9 +17570,35 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           if (r.success) successCount++;
         }                
         const totalCount = Array.isArray(results) ? results.length : processed.length;
-        message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;
-        const formattedResponse = await t(message.trim(), uiLangExact, requestId);
-        await sendMessageDedup(From, formattedResponse);                
+        message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;                
+        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
+        await sendMessageDedup(From, formattedResponse);          
+        // [PATCH:UNDO-CTA-AGG-ONLY-001] Post-confirm CTA: Undo (aggregated path; no List-Picker)
+          setTimeout(async () => {
+            try {
+              const { ensureLangTemplates, getLangSids } = require('./contentCache');
+              const lang = String(detectedLanguage ?? 'en').toLowerCase();
+              await ensureLangTemplates(lang);
+              let sids = getLangSids(lang);
+              if (!sids?.correctionUndoSid) {
+                console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; falling back to 'en'`);
+                sids = getLangSids('en');
+              }
+              if (sids?.correctionUndoSid) {
+                const msg = await client.messages.create({
+                  from: process.env.TWILIO_WHATSAPP_NUMBER,
+                  to: From,
+                  contentSid: sids.correctionUndoSid
+                });
+                console.log(`[undo-cta] sent correction quick-reply, SID=${msg?.sid}, lang=${lang}`);
+              } else {
+                console.warn(`[undo-cta] correctionUndoSid missing for ${lang} and 'en'`);
+              }
+            } catch (e) {
+              console.warn('[undo-cta] send failed:', e?.message);
+            }
+          }, 350);
+          
         // (3) Hook into aggregated confirmation flow (single Return)
         try {
           if (Array.isArray(processed) && processed.length === 1) {
@@ -18517,9 +18482,45 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
          message += `\n${String(rawLine).trim()}${stockPart}`;
          if (r.success) successCount++;
        }
-       message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+       message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;       
        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-       await sendMessageDedup(From, formattedResponse);
+         await sendMessageDedup(From, formattedResponse);
+          // [PATCH:UNDO-CTA-AGG-001] Post-confirm CTAs: Undo + List-Picker (aggregated path)
+          setTimeout(async () => {
+            try {
+              const { ensureLangTemplates, getLangSids } = require('./contentCache');
+              const lang = String(detectedLanguage ?? 'en').toLowerCase();
+        
+              await ensureLangTemplates(lang);
+              let sids = getLangSids(lang);
+        
+              // Fallback to English if locale lacks Undo SID
+              if (!sids?.correctionUndoSid) {
+                console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; falling back to 'en'`);
+                sids = getLangSids('en');
+              }
+        
+              if (sids?.correctionUndoSid) {
+                const msg = await client.messages.create({
+                  from: process.env.TWILIO_WHATSAPP_NUMBER,
+                  to: From,
+                  contentSid: sids.correctionUndoSid
+                });
+                console.log(`[undo-cta] sent correction quick-reply, SID=${msg?.sid}, lang=${lang}`);
+              } else {
+                console.warn(`[undo-cta] correctionUndoSid missing for ${lang} and 'en'`);
+              }
+        
+              // Resurface Inventory List‑Picker right after Undo
+              try {
+                await maybeResendListPicker(From, lang, `${requestId}::agg-undo-cta`);
+              } catch (e2) {
+                console.warn('[undo-cta] maybeResendListPicker failed:', e2?.message);
+              }
+            } catch (e) {
+              console.warn('[undo-cta] send failed:', e?.message);
+            }
+          }, 350);
      } // else → nothing to confirm (nudged or zero success)
         __handled = true;                
         // CTA gated: only last trial day
@@ -21259,7 +21260,32 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
                  const header = chooseHeader(successLines.length, COMPACT_MODE, /*isPrice*/ false);
                  const message = [header, ...successLines].join('\n').trim();
                  const formattedResponse = await t(message, detectedLanguage, requestId);
-                 await sendMessageDedup(From, formattedResponse);
+                 await sendMessageDedup(From, formattedResponse);                 
+                 // [PATCH:UNDO-CTA-AGG-ONLY-001] Post-confirm CTA: Undo (aggregated path; no List-Picker)
+                    setTimeout(async () => {
+                      try {
+                        const { ensureLangTemplates, getLangSids } = require('./contentCache');
+                        const lang = String(detectedLanguage ?? 'en').toLowerCase();
+                        await ensureLangTemplates(lang);
+                        let sids = getLangSids(lang);
+                        if (!sids?.correctionUndoSid) {
+                          console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; falling back to 'en'`);
+                          sids = getLangSids('en');
+                        }
+                        if (sids?.correctionUndoSid) {
+                          const msg = await client.messages.create({
+                            from: process.env.TWILIO_WHATSAPP_NUMBER,
+                            to: From,
+                            contentSid: sids.correctionUndoSid
+                          });
+                          console.log(`[undo-cta] sent correction quick-reply, SID=${msg?.sid}, lang=${lang}`);
+                        } else {
+                          console.warn(`[undo-cta] correctionUndoSid missing for ${lang} and 'en'`);
+                        }
+                      } catch (e) {
+                        console.warn('[undo-cta] send failed:', e?.message);
+                      }
+                    }, 350);
                }
                 } else {
                   console.log(`[${requestId}] [text-agg-guard] Suppressed aggregated ack (inline confirmations present)`);
