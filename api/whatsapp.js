@@ -12625,7 +12625,6 @@ async function validateTranscript(transcript, requestId, langHint = 'en') {
 
 // Handle multiple inventory updates with batch tracking
 async function updateMultipleInventory(shopId, updates, languageCode) {      
-  
 // Keep script/language stable for this turn (e.g., Hindi from STT)
   const lang = String(languageCode ?? 'en').toLowerCase();
 
@@ -13255,7 +13254,6 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           console.error(`[Update ${shopId} - ${product}] Error creating sales record:`, salesError.message);
           result.salesError = salesError.message;
         }
-      }
             
                            
           // NEW: Enrich outgoing item with price/value so renderer can show them
@@ -13288,7 +13286,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           + `totalValue=${enriched.totalValue}`
         );
         results.push(enriched);
-      
+  }
     } catch (error) {
       console.error(`[Update ${shopId} - ${productRawForDb ?? update.product ?? '<unknown>'}] Error:`, error.message);
       results.push({
@@ -13299,7 +13297,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         success: false,
         error: error.message
       });
-    }
+}
   }
   return results;
 }
