@@ -250,27 +250,74 @@ function __extractTokensLoose(s) {
 
 // --- NEW: centralized Undo CTA sender (minimal & safe) ---
 async function sendUndoCTAOnce(From, langHint = 'en', requestId = 'undo') {
+  
+const lang = String(langHint ?? 'en').toLowerCase();
+  const toE164 = (input) => {
+    const raw = String(input ?? '');
+    const noPrefix = raw.replace(/^whatsapp:/, '');
+    const digits = noPrefix.replace(/\D+/g, '');
+    if (noPrefix.startsWith('+') && digits.length >= 10) return noPrefix;
+    if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
+    if (digits.length === 10) return `+91${digits}`;
+    return noPrefix;
+  };
+
+  const toNumber   = toE164(From);
+  const toWhatsApp = `whatsapp:${toNumber}`; // explicit, for logging only (sender adds prefix too)
+  const t0         = Date.now();
+  console.log('[undo-cta] begin', { requestId, lang, to: toWhatsApp });
   try {
     const { ensureLangTemplates, getLangSids } = require('./contentCache');
-    const lang = String(langHint ?? 'en').toLowerCase();
     await ensureLangTemplates(lang);
     let sids = getLangSids(lang);
+    console.log('[undo-cta] cache', { lang, sids });
     if (!sids?.correctionUndoSid) {
       console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; fallback to 'en'`);
       sids = getLangSids('en');
+      console.log('[undo-cta] fallback cache', { lang: 'en', sids });
     }
-    if (sids?.correctionUndoSid) {
-      await sendContentTemplateOnce({
-        toWhatsApp: String(From ?? '').replace('whatsapp:', ''),
-        contentSid: sids.correctionUndoSid,
-        requestId: `${requestId}::undo`
-      });
-      return true;
+    if (!sids?.correctionUndoSid) {
+      console.warn('[undo-cta] no correctionUndoSid after fallback; abort', { requestId });
+      return false;
     }
+
+    // Resolve sender function: sendContentTemplateOnce OR sendContentTemplate
+    let sendTemplateFn = null;
+    try {
+      const m = require('./whatsappButtons');
+      sendTemplateFn = m.sendContentTemplateOnce ?? m.sendContentTemplate;
+    } catch (e) {
+      console.warn('[undo-cta] resolve sender failed', e?.message);
+    }
+    if (typeof sendTemplateFn !== 'function') {
+      console.warn('[undo-cta] sender function missing; abort', { requestId });
+      return false;
+    }
+
+    console.log('[undo-cta] sending content', {
+      requestId,
+      to: toWhatsApp,
+      contentSid: sids.correctionUndoSid
+    });
+
+    // NOTE: sendContentTemplateOnce/sendContentTemplate expect bare E.164; they prepend 'whatsapp:'
+    const resp = await sendTemplateFn({
+      toWhatsApp: toNumber,
+      contentSid: sids.correctionUndoSid,
+      contentVariables: {}, // none for Undo
+      requestId: `${requestId}::undo`
+    });
+    // Twilio Messages API returns a Message resource. Log SID if available.
+    const sid = resp?.sid ?? resp?.messageSid ?? 'unknown';
+    console.log('[undo-cta] sent ok', { requestId, sid, elapsedMs: Date.now() - t0 });
+    return true;
+
   } catch (e) {
-    console.warn('[undo-cta] send failed:', e?.message);
+    const errBody = e?.response?.data ?? e?.message;
+    console.warn('[undo-cta] send failed', { requestId, err: errBody });
+    return false;
   }
-  return false;
+
 }
 
 // Normalize an update object in-place when product holds "name qty unit"
@@ -7437,22 +7484,44 @@ const saleConfirmTracker = new Set();
 const _confirmHashGuard = new Map(); // shopId -> { at: ms, lastHash: string }
 const CONFIRM_BODY_TTL_MS = Number(process.env.CONFIRM_BODY_TTL_MS ?? (10 * 1000));
 async function _sendConfirmOnceByBody(From, detectedLanguage, requestId, body) {
-  const shopId = String(From).replace('whatsapp:', '');       
-  const localized = await t(body, detectedLanguage ?? 'en', `${requestId}::confirm-once`);
-    // RESTORE: Help CTA footer (existing behavior) and THEN add localized mode badge
-    let withHelp = await appendSupportFooter(localized, From);                 // ⇐ brings back help CTA
-    let withTag  = await tagWithLocalizedMode(From, withHelp, detectedLanguage); // ⇐ localized badge
-    withTag      = renderNativeglishLabels(withTag, detectedLanguage);         // ⇐ localize any English label
-    const final  = normalizeNumeralsToLatin(
-                     enforceSingleScriptSafe(withTag, detectedLanguage)
-                   ).trim();
-  const h = _hash(final); const prev = _confirmHashGuard.get(shopId); const now = Date.now();
+  
+const shopId = String(From).replace('whatsapp:', '');
+  const t0 = Date.now();
+  console.log('[confirm-once] begin', { shopId, requestId, lang: detectedLanguage, len: body?.length ?? 0 });
+  let final;
+  try {
+    const localized = await t(body, detectedLanguage ?? 'en', `${requestId}::confirm-once`);
+    // Restore existing footer, then tag/badge, then labels, then script clamp + numerals.
+    let withHelp = await appendSupportFooter(localized, From);
+    let withTag  = await tagWithLocalizedMode(From, withHelp, detectedLanguage);
+    withTag      = renderNativeglishLabels(withTag, detectedLanguage);
+    final        = normalizeNumeralsToLatin(enforceSingleScriptSafe(withTag, detectedLanguage)).trim();
+  } catch (e) {
+    console.warn('[confirm-once] compose failed', { requestId, message: e?.message });
+    throw e; // keep original behavior (upstream caller can decide)
+  }
+
+  const h   = _hash(final);
+  const prev= _confirmHashGuard.get(shopId);
+  const now = Date.now();
   if (prev && (now - prev.at) < CONFIRM_BODY_TTL_MS && prev.lastHash === h) {
-    console.log('[confirm-once] suppressed duplicate', { shopId, requestId });
+    const ttlLeft = CONFIRM_BODY_TTL_MS - (now - prev.at);
+    console.log('[confirm-once] suppressed duplicate', { shopId, requestId, ttlLeftMs: ttlLeft, hash: h });
     return;
   }
   _confirmHashGuard.set(shopId, { at: now, lastHash: h });
-  await sendMessageViaAPI(From, final);
+
+  console.log('[confirm-once] sending', { shopId, requestId, chars: final.length });
+  try {
+    await sendMessageViaAPI(From, final);
+    console.log('[confirm-once] sent ok', { requestId, elapsedMs: Date.now() - t0 });
+  } catch (e) {
+    // Surface Twilio error body if present
+    const errBody = e?.response?.data ?? e?.message;
+    console.warn('[confirm-once] send failed', { requestId, err: errBody });
+    throw e; // let caller decide whether to continue
+  }
+
 }
 
 function composeSaleConfirmation({
@@ -7603,7 +7672,6 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
   // Build the one-line head via composer (emoji + unit/price/stock)  
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
-console.log('I reached here');
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
 console.log('Entering Undo Block 1');
 // --- NEW: 120s correction window + Undo CTA (purchase)
