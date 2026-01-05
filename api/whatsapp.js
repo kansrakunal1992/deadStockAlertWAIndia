@@ -17502,6 +17502,23 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
               await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: false });
             }
           } catch (_) {}
+          
+console.log('Entering Undo Block 1');
+// --- NEW: 120s correction window + Undo CTA (purchase)
+try {
+  console.log('Inside Undo Block 1 (text single-item purchase)');
+  const db = require('../database');
+  const shopIdLocal = String(From).replace('whatsapp:', '');
+  // If your result object carries a composite key for the batch, prefer that (else null):
+  const compositeKey = x?.batchCompositeKey ?? x?.compositeKey ?? null;
+  await db.openCorrectionWindow(
+    shopIdLocal,
+    { action: 'purchase', product: x.product, quantity: Number(x.quantity), unit: x.unitAfter ?? x.unit ?? '', compositeKey },
+    String(detectedLanguage ?? 'en').toLowerCase()
+  );
+  await sendUndoCTAOnce(From, detectedLanguage, requestId);
+} catch (_) { /* best-effort only; do not block confirmation */ }
+
           return;
         }
       }
@@ -18429,7 +18446,24 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
            newQuantity: x.overallStock ?? x.newQuantity
          };
        if (act === 'sold')  { await sendSaleConfirmationOnce(From, detectedLanguage, requestId, common); return; }
-       if (act === 'purchased' && !x.needsPrice && !x.awaiting && !x.needsUserInput) { await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common); return; }
+       if (act === 'purchased' && !x.needsPrice && !x.awaiting && !x.needsUserInput) { await sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, common); 
+                                                                                      
+console.log('Entering Undo Block 1');
+// --- NEW: 120s correction window + Undo CTA (purchase)
+try {
+  console.log('Inside Undo Block 1 (text single-item purchase)');
+  const db = require('../database');
+  const shopIdLocal = String(From).replace('whatsapp:', '');
+  // If your result object carries a composite key for the batch, prefer that (else null):
+  const compositeKey = x?.batchCompositeKey ?? x?.compositeKey ?? null;
+  await db.openCorrectionWindow(
+    shopIdLocal,
+    { action: 'purchase', product: x.product, quantity: Number(x.quantity), unit: x.unitAfter ?? x.unit ?? '', compositeKey },
+    String(detectedLanguage ?? 'en').toLowerCase()
+  );
+  await sendUndoCTAOnce(From, detectedLanguage, requestId);
+} catch (_) { /* best-effort only; do not block confirmation */ }
+                                                                                      return; }
      }
     
      // Aggregated confirmation (only for successful writes, and not right after a price-nudge)
