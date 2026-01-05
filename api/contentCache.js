@@ -410,8 +410,17 @@ console.log(`[contentCache] ensureLangTemplates(lang=${lang})`);
 const language = normalizeLangForContent(lang);
   // Fast path with TTL
   const cached = sidsByLang.get(language);
-  if (cached && (Date.now() - (cached.ts || 0) < TTL_MS)) {
-    //console.log(`[contentCache] cache-hit for ${language}`, cached);
+  if (cached && (Date.now() - (cached.ts || 0) < TTL_MS)) {      
+  console.log(`[contentCache] cache-hit for ${language}`, {
+        quickReplySid      : !!cached.quickReplySid,
+        listPickerSid      : !!cached.listPickerSid,
+        trialCtaSid        : !!cached.trialCtaSid,
+        paidCtaSid         : !!cached.paidCtaSid,
+        paidConfirmSid     : !!cached.paidConfirmSid,
+        onboardingQrSid    : !!cached.onboardingQrSid,
+        correctionUndoSid  : !!cached.correctionUndoSid,
+        ts                 : cached.ts
+      });
     return cached;
   }
   // (Re)create or fetch once
@@ -427,7 +436,18 @@ const language = normalizeLangForContent(lang);
     ts            : Date.now()
   };
   sidsByLang.set(language, bundle);
-  console.log(`[contentCache] cache-set for ${language}`, bundle);
+    
+  console.log(`[contentCache] cache-set for ${language}`, {
+      quickReplySid      : !!bundle.quickReplySid,
+      listPickerSid      : !!bundle.listPickerSid,
+      trialCtaSid        : !!bundle.trialCtaSid,
+      paidCtaSid         : !!bundle.paidCtaSid,
+      paidConfirmSid     : !!bundle.paidConfirmSid,
+      onboardingQrSid    : !!bundle.onboardingQrSid,
+      correctionUndoSid  : !!bundle.correctionUndoSid,
+      ts                 : bundle.ts
+    });
+
   return bundle;
 }
 
