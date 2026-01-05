@@ -248,69 +248,6 @@ function __extractTokensLoose(s) {
   return null;
 }
 
-// --- NEW: centralized Undo CTA sender (minimal & safe) ---
-async function sendUndoCTAOnce(From, langHint = 'en', requestId = 'undo') {
-  
-const lang = String(langHint ?? 'en').toLowerCase();
-  const rawFrom = String(From ?? '');
-  const bareE164 = rawFrom.replace(/^whatsapp:/, '');
-  const toWhatsApp = `whatsapp:${bareE164}`;
-  const t0 = Date.now();
-  console.log('[undo-cta] begin', { requestId, lang, to: toWhatsApp });
-  try {
-     
-  const { ensureLangTemplates, getLangSids } = require('./contentCache');
-      const tStart = Date.now();
-      await ensureLangTemplates(lang);
-      console.log('[undo-cta] ensureLangTemplates ok', { lang, elapsedMs: Date.now() - tStart });
-  
-      let sids = getLangSids(lang);
-      console.log('[undo-cta] cache', { lang, correctionUndoSid: sids?.correctionUndoSid ?? null });
-      if (!sids?.correctionUndoSid) {
-        console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; fallback to 'en'`);
-        sids = getLangSids('en');
-        console.log('[undo-cta] fallback cache', { lang: 'en', correctionUndoSid: sids?.correctionUndoSid ?? null });
-      }
-      if (!sids?.correctionUndoSid) {
-        console.warn('[undo-cta] no correctionUndoSid after fallback; abort', { requestId });
-        return false;
-      }
-  
-      // Resolve sender gracefully: prefer sendContentTemplateOnce, else sendContentTemplate
-      let sendTemplateFn = null;
-      try {
-        const btn = require('./whatsappButtons');
-        sendTemplateFn = btn.sendContentTemplateOnce ?? btn.sendContentTemplate;
-      } catch (e) {
-        console.warn('[undo-cta] resolve sender failed', e?.message);
-      }
-      if (typeof sendTemplateFn !== 'function') {
-        console.warn('[undo-cta] sender function missing; abort', { requestId });
-        return false;
-      }
-  
-      console.log('[undo-cta] sending', {
-        requestId,
-        toWhatsApp,
-        contentSid: sids.correctionUndoSid
-      });
-      const resp = await sendTemplateFn({
-        toWhatsApp: bareE164,                       // sender adds 'whatsapp:' itself
-        contentSid: sids.correctionUndoSid,
-        contentVariables: {},                       // none for Undo
-        requestId: `${requestId}::undo`
-      });
-      const sid = resp?.sid ?? resp?.messageSid ?? 'unknown';
-      console.log('[undo-cta] sent ok', { requestId, sid, elapsedMs: Date.now() - t0 });
-      return true;
-
-  } catch (e) {
-    const errBody = e?.response?.data ?? e?.message;
-    console.warn('[undo-cta] send failed', { requestId, err: errBody });
-  }
-return false;
-}
-
 // Normalize an update object in-place when product holds "name qty unit"
 function normalizeProductQtyUnit(update) {
   if (!update || !update.product) return update;
@@ -6319,34 +6256,6 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
     try {
       if (payload && _isDuplicateTap(shopIdTop, payload)) return true;
     } catch (_) {} 
-     console.log('Entering Undo Block 7'); 
-  // --- Undo (correction) quick-reply (tracker removed; generic undo-last-txn)
-    if (payload === 'undo_last_txn') {
-      try {
-        const db = require('../database');
-        console.log('Inside Undo Block');
-        const res = await db.applyUndoLastTxn(shopIdTop);
-        // Localize a short ack using user's preference
-        let btnLang = 'en';
-        try {
-          const prefLP = await getUserPreference(shopIdTop);
-          if (prefLP?.success && prefLP.language) btnLang = String(prefLP.language).toLowerCase();
-        } catch { }
-        const body = res?.success
-          ? '↩️ Undo done — update reverted.'
-          : '⏱️ Correction window expired. Update is locked.';
-        await client.messages.create({
-          from: process.env.TWILIO_WHATSAPP_NUMBER,
-          to: from,
-          body
-        });
-        const twiml = new twilio.twiml.MessagingResponse();
-        twiml.message('');
-        return resp.safeSend(200, twiml.toString());
-      } catch (e) {
-        console.warn('[interactive] undo handler failed:', e?.message);
-      }
-    }
    
   // STEP 13: Summary buttons → route directly
     if (payload === 'instant_summary' || payload === 'full_summary') {
@@ -7664,21 +7573,6 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
-console.log('Entering Undo Block 1');
-// --- NEW: 120s correction window + Undo CTA (purchase)
- try {
-   console.log('Inside Undo Block');
-   const db = require('../database');
-   // Arm window carrying the last txn details; include compositeKey when available
-   await db.openCorrectionWindow(
-     From.replace('whatsapp:', ''),
-     { action: 'purchase', product, quantity: Number(qty), unit, compositeKey: payload?.batchCompositeKey ?? null },
-     String(detectedLanguage ?? 'en').toLowerCase()
-   ); // uses database.js new helper     
-  // Send the Undo CTA via the unified helper right after arming window
-   await new Promise(r => setTimeout(r, 350));
-  await sendUndoCTAOnce(From, detectedLanguage, requestId);
- } catch (_) { /* best-effort only; do not block confirmation */ }
 }
 
 /**
@@ -7729,28 +7623,7 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
   const bodyLoc = await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);
   console.log(`[sendSaleConfirmationOnce] start lang=${detectedLanguage} req=${requestId} from=${From}`);
   await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);  
-  console.log(`[sendSaleConfirmationOnce] sent confirmation`);
-  console.log('Entering Undo Block 2'); 
-  // --- NEW: 120s correction window + Undo CTA (sale)
-   try {
-     
-     const db = require('../database');
-     console.log('Inside Undo Block');
-     await db.openCorrectionWindow(
-       From.replace('whatsapp:', ''),
-       {
-         action: 'sale',
-         product: dbProduct,                  // DB-safe name already chosen above
-         quantity: Number(qty),
-         unit: unit,
-         compositeKey: payload?.batchCompositeKey ?? null // if your sale routed via a batch
-       },
-       String(detectedLanguage ?? 'en').toLowerCase()
-     );         
-    // Send the Undo CTA via the unified helper right after arming window
-     await new Promise(r => setTimeout(r, 350));
-    await sendUndoCTAOnce(From, detectedLanguage, requestId);
-   } catch (_) { /* best-effort only */ }
+  console.log(`[sendSaleConfirmationOnce] sent confirmation`);  
 }
 
 /**
@@ -15181,9 +15054,6 @@ async function tryHandleReturnText(transcript, from, detectedLanguage, requestId
   }  
   const msg = await t(message, detectedLanguage, requestId);
   await sendMessageViaAPI(from, msg);
-  console.log('Entering Undo Block 3'); 
-  // [PATCH:UNDO-CTA-RETURN-ONLY-001] Post-confirm CTA: Undo (quick Return; no List-Picker)
-    setTimeout(async () => {await sendUndoCTAOnce(From, detectedLanguage, requestId);}, 350);
   return true;
 }
 
@@ -17633,10 +17503,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;                
         const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
         await sendMessageDedup(From, formattedResponse);
-        console.log('Entering Undo Block 4'); 
-        // [PATCH:UNDO-CTA-AGG-ONLY-001] Post-confirm CTA: Undo (aggregated path; no List-Picker)
-          setTimeout(async () => {await sendUndoCTAOnce(From, detectedLanguage, requestId);}, 350);
-          
+       
         // (3) Hook into aggregated confirmation flow (single Return)
         try {
           if (Array.isArray(processed) && processed.length === 1) {
@@ -18316,45 +18183,6 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               : '';
             const finalBody = `${await translateP}${stockSuffix}`;
               await _sendConfirmOnceByBody(From, langExact, requestId, finalBody);
-                            
-              // --- BEGIN: Undo window + CTA (quick path)
-                try {
-                  console.log('Entering Undo Block QP', { requestId });
-                  const db = require('../database');
-                  const shopId = String(From).replace('whatsapp:', '');
-              
-                  // Per-request de-dupe guard to avoid double Undo if another branch fires it
-                  globalThis.__undoSent = globalThis.__undoSent || new Set();
-                  const undoKey = `${shopId}:${requestId}`;
-              
-                  if (!globalThis.__undoSent.has(undoKey)) {
-                    console.log('Inside Undo Block QP', { undoKey });
-              
-                    // Build the payload used by your correction window
-                    const payloadForWindow = {
-                      action: 'purchase', // keep canonical 'purchase' here (DB expects this)
-                      product: u.productDisplay ?? u.product ?? u.productName ?? u.name ?? u.item ?? u.title ?? 'item',
-                      quantity: Number(u.quantity),
-                      unit: u.unit ?? '',
-                      compositeKey: u.batchCompositeKey ?? r?.batchCompositeKey ?? null,
-                    };
-              
-                    await db.openCorrectionWindow(
-                      shopId,
-                      payloadForWindow,
-                      String(langExact ?? 'en').toLowerCase()
-                    );
-              
-                    await sendUndoCTAOnce(From, langExact, requestId);
-                    globalThis.__undoSent.add(undoKey);
-                  } else {
-                    console.log('[undo-cta-fast] suppressed duplicate', { undoKey });
-                  }
-                } catch (e) {
-                  console.warn('[undo-cta-fast] send failed:', e?.message);
-                }
-                // --- END: Undo window + CTA (quick path)
-
               try { await clearUserState(From); } catch (_){}
               try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_){}
               handledRequests.add(requestId);
@@ -18562,9 +18390,6 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;       
        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
          await sendMessageDedup(From, formattedResponse);
-       console.log('Entering Undo Block 5'); 
-          // [PATCH:UNDO-CTA-AGG-001] Post-confirm CTAs: Undo + List-Picker (aggregated path)
-          setTimeout(async () => {await sendUndoCTAOnce(From, detectedLanguage, requestId);}, 350);
      } // else → nothing to confirm (nudged or zero success)
         __handled = true;                
         // CTA gated: only last trial day
@@ -21305,9 +21130,6 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
                  const message = [header, ...successLines].join('\n').trim();
                  const formattedResponse = await t(message, detectedLanguage, requestId);
                  await sendMessageDedup(From, formattedResponse);        
-                 console.log('Entering Undo Block 6'); 
-                 // [PATCH:UNDO-CTA-AGG-ONLY-001] Post-confirm CTA: Undo (aggregated path; no List-Picker)
-                    setTimeout(async () => {await sendUndoCTAOnce(From, detectedLanguage, requestId);}, 350);
                }
                 } else {
                   console.log(`[${requestId}] [text-agg-guard] Suppressed aggregated ack (inline confirmations present)`);
