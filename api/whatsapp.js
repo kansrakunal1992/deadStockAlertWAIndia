@@ -7604,7 +7604,7 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
 console.log('I reached here');
-
+await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
 console.log('Entering Undo Block 1');
 // --- NEW: 120s correction window + Undo CTA (purchase)
  try {
@@ -7619,7 +7619,6 @@ console.log('Entering Undo Block 1');
   // Send the Undo CTA via the unified helper right after arming window
   await sendUndoCTAOnce(From, detectedLanguage, requestId);
  } catch (_) { /* best-effort only; do not block confirmation */ }
-  await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
 }
 
 /**
