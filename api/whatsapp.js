@@ -6067,6 +6067,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
       const _payloadId = String(
         raw.Body ?? raw.ListId ?? raw.EventId ?? raw.ContentSid ?? ''
       ).toLowerCase();  
+
     // === Intercept QR taps (purchase/sale/return) and send localized examples ===
           try {
             // Resolve UI language from preference; fall back to 'en'
@@ -6281,7 +6282,34 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
               }
       return true;
     }
+  
+// --- NEW: handle Undo quick reply ---
+if (_payloadId === 'undo_last_txn') {
+  const shopId = fromToShopId(From);
 
+  // Pick a UI language—reuse what you already compute for QR taps:
+  let langUi = 'en';
+  try { const pref = await getUserPreference(shopId); if (pref?.success && pref.language) langUi = String(pref.language).toLowerCase(); } catch {}
+
+  const result = await applyUndoLastTxn(shopId); // performs TTL check + revert; deletes the window on success 
+  let msg;
+  if (result?.success) {
+    const last = result.undone || {};
+    const unitDisp = (typeof normalizeUnit === 'function') ? normalizeUnit(last.unit) : (last.unit || 'pieces');
+    msg = await t(`✅ Undo applied — reverted last ${last.action} of ${last.quantity} ${unitDisp} ${last.product}.`, langUi, `${requestId}::undo-ok`);
+  } else if (result?.error === 'expired') {
+    msg = await t('⏳ Undo window expired. Update is locked.', langUi, `${requestId}::undo-expired`);
+  } else {
+    msg = await t('Nothing to undo.', langUi, `${requestId}::undo-none`);
+  }
+  await sendMessageViaAPI(From, finalizeForSend(msg, langUi)); // existing sender with footer/mode tags
+
+  // TwiML ack and early return (pattern matches your other QR handlers)
+  const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
+  res.type('text/xml'); resp.safeSend(200, twiml.toString());
+  safeTrackResponseTime(requestStart, requestId);
+  return;
+}
   // List‑Picker selections across possible fields/shapes
   const lr = (raw.ListResponse || raw.List || raw.Interactive || {});
   const lrId = (lr.Id || lr.id || lr.ListItemId || lr.SelectedItemId)
@@ -7573,6 +7601,15 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
+
+await sendUndoCorrectionCTA(From, detectedLanguage, {
+  action: 'purchase',
+  product: String(product ?? '').trim(),
+  quantity: Number(qty ?? 0),
+  unit: normalizeUnit ? normalizeUnit(unit) : (unit ?? 'pieces'),
+  compositeKey: payload?.batchCompositeKey ?? null // when available (batches) 
+});
+
 }
 
 /**
@@ -7623,7 +7660,47 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
   const bodyLoc = await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);
   console.log(`[sendSaleConfirmationOnce] start lang=${detectedLanguage} req=${requestId} from=${From}`);
   await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);  
+    
+  await sendUndoCorrectionCTA(From, detectedLanguage, {
+    action: 'sale',
+    product: dbProduct,                                // from existing code
+    quantity: Number(qty ?? 0),
+    unit: uNorm || (unit ?? 'pieces'),
+    // compositeKey not relevant for sale; omit or set null
+    compositeKey: null
+  });
+                      
   console.log(`[sendSaleConfirmationOnce] sent confirmation`);  
+}
+
+// Undo CTA + 2-minute auto-lock
+const CORRECTION_TTL_SEC = Number(process.env.TTL_CORRECTION ?? 120); // default 120s, same as DB
+
+async function sendUndoCorrectionCTA(From, lang, lastTxn) {
+  try {
+    const shopId = fromToShopId(From); // existing helper in your file
+    
+    // 1) Ensure language templates (gives us correctionUndoSid)
+    await ensureLangTemplates(lang); // creates if missing
+    const sids = getLangSids(lang);
+    if (sids?.correctionUndoSid) {
+      // 2) Send the quick-reply “Undo” CTA (single button)
+      await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.correctionUndoSid }); // existing sender
+    }
+
+    // 3) Arm DB correction window ONLY when the inventory write was successful
+    //    (keeps behaviour simple: CTA can be shown regardless, but undo only works after a success)
+    if (lastTxn && lastTxn.product && Number(lastTxn.quantity) > 0) {
+      await openCorrectionWindow(shopId, lastTxn, lang); // persists 2-min window in UserState
+
+      // Schedule best-effort auto-lock to clear the ephemeral state after TTL
+      setTimeout(() => {
+        closeCorrectionWindow(shopId).catch(() => {});
+      }, (CORRECTION_TTL_SEC * 1000) + 250); // small buffer
+    }
+  } catch (_) {
+    // non-blocking by design—CTA is a convenience
+  }
 }
 
 /**
