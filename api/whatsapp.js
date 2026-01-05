@@ -252,40 +252,34 @@ function __extractTokensLoose(s) {
 async function sendUndoCTAOnce(From, langHint = 'en', requestId = 'undo') {
   
 const lang = String(langHint ?? 'en').toLowerCase();
-  const toE164 = (input) => {
-    const raw = String(input ?? '');
-    const noPrefix = raw.replace(/^whatsapp:/, '');
-    const digits = noPrefix.replace(/\D+/g, '');
-    if (noPrefix.startsWith('+') && digits.length >= 10) return noPrefix;
-    if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`;
-    if (digits.length === 10) return `+91${digits}`;
-    return noPrefix;
-  };
-
-  const toNumber   = toE164(From);
-  const toWhatsApp = `whatsapp:${toNumber}`; // explicit, for logging only (sender adds prefix too)
-  const t0         = Date.now();
+  const rawFrom = String(From ?? '');
+  const bareE164 = rawFrom.replace(/^whatsapp:/, '');
+  const toWhatsApp = `whatsapp:${bareE164}`;
+  const t0 = Date.now();
   console.log('[undo-cta] begin', { requestId, lang, to: toWhatsApp });
   try {
     const { ensureLangTemplates, getLangSids } = require('./contentCache');
+    const tStart = Date.now();
     await ensureLangTemplates(lang);
+    console.log('[undo-cta] ensureLangTemplates ok', { lang, elapsedMs: Date.now() - tStart });
+
     let sids = getLangSids(lang);
-    console.log('[undo-cta] cache', { lang, sids });
+    console.log('[undo-cta] cache', { lang, correctionUndoSid: sids?.correctionUndoSid ?? null });
     if (!sids?.correctionUndoSid) {
       console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; fallback to 'en'`);
       sids = getLangSids('en');
-      console.log('[undo-cta] fallback cache', { lang: 'en', sids });
+      console.log('[undo-cta] fallback cache', { lang: 'en', correctionUndoSid: sids?.correctionUndoSid ?? null });
     }
     if (!sids?.correctionUndoSid) {
       console.warn('[undo-cta] no correctionUndoSid after fallback; abort', { requestId });
       return false;
     }
 
-    // Resolve sender function: sendContentTemplateOnce OR sendContentTemplate
+    // Resolve sender name gracefully: prefer sendContentTemplateOnce, else sendContentTemplate
     let sendTemplateFn = null;
     try {
-      const m = require('./whatsappButtons');
-      sendTemplateFn = m.sendContentTemplateOnce ?? m.sendContentTemplate;
+      const btn = require('./whatsappButtons');
+      sendTemplateFn = btn.sendContentTemplateOnce ?? btn.sendContentTemplate;
     } catch (e) {
       console.warn('[undo-cta] resolve sender failed', e?.message);
     }
@@ -294,24 +288,20 @@ const lang = String(langHint ?? 'en').toLowerCase();
       return false;
     }
 
-    console.log('[undo-cta] sending content', {
+    console.log('[undo-cta] sending', {
       requestId,
-      to: toWhatsApp,
+      toWhatsApp,
       contentSid: sids.correctionUndoSid
     });
-
-    // NOTE: sendContentTemplateOnce/sendContentTemplate expect bare E.164; they prepend 'whatsapp:'
     const resp = await sendTemplateFn({
-      toWhatsApp: toNumber,
+      toWhatsApp: bareE164,                    // sender adds 'whatsapp:' itself
       contentSid: sids.correctionUndoSid,
-      contentVariables: {}, // none for Undo
+      contentVariables: {},                    // none for Undo
       requestId: `${requestId}::undo`
     });
-    // Twilio Messages API returns a Message resource. Log SID if available.
     const sid = resp?.sid ?? resp?.messageSid ?? 'unknown';
     console.log('[undo-cta] sent ok', { requestId, sid, elapsedMs: Date.now() - t0 });
     return true;
-
   } catch (e) {
     const errBody = e?.response?.data ?? e?.message;
     console.warn('[undo-cta] send failed', { requestId, err: errBody });
