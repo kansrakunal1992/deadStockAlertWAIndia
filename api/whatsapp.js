@@ -9868,11 +9868,18 @@ function scheduleAiAnswer(shopId, From, text, lang, requestId) {
 const _sentTemplatesThisReq = new Set(); // keys: `${requestId}::${contentSid}`
 async function sendContentTemplateOnce({ toWhatsApp, contentSid, requestId }) {
 
-  const key = `${requestId}::${contentSid}`;
-  if (_sentTemplatesThisReq.has(key)) return;
+const key = `${requestId}::${contentSid}`;
+  const seen = _sentTemplatesThisReq.has(key);
+  console.log('[contentTemplateOnce] PRE', { key, seen, setSize: _sentTemplatesThisReq.size });
+  
+if (seen) {
+    console.log('[contentTemplateOnce] SUPPRESS', { key });
+    return;
+  }
   try {
     await sendContentTemplate({ toWhatsApp, contentSid });
     _sentTemplatesThisReq.add(key);
+    console.log('[contentTemplateOnce] OK', { key });
   } catch (e) {
     console.warn('[contentTemplateOnce] send failed', { status: e?.response?.status, data: e?.response?.data });
   }
