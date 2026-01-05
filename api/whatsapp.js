@@ -7589,6 +7589,14 @@ async function sendMessageDedup(From, msg) {
  * Mirrors the sale confirmation, but for “purchased”.
  */
 async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, payload) {
+  await sendUndoCorrectionCTA(From, detectedLanguage, {
+  action: 'purchase',
+  product: String(product ?? '').trim(),
+  quantity: Number(qty ?? 0),
+  unit: normalizeUnit ? normalizeUnit(unit) : (unit ?? 'pieces'),
+  compositeKey: payload?.batchCompositeKey ?? null // when available (batches) 
+});
+
  const {
     product,
     qty,
@@ -7601,7 +7609,6 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
-
 await sendUndoCorrectionCTA(From, detectedLanguage, {
   action: 'purchase',
   product: String(product ?? '').trim(),
