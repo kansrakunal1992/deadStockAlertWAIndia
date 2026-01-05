@@ -6285,7 +6285,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
   // --- Undo (correction) quick-reply (tracker removed; generic undo-last-txn)
     if (payload === 'undo_last_txn') {
       try {
-        const db = require('./database');
+        const db = require('../database');
         console.log('Inside Undo Block');
         const res = await db.applyUndoLastTxn(shopIdTop);
         // Localize a short ack using user's preference
@@ -7609,7 +7609,7 @@ console.log('Entering Undo Block');
 // --- NEW: 120s correction window + Undo CTA (purchase)
  try {
    console.log('Inside Undo Block');
-   const db = require('./database');
+   const db = require('../database');
    // Arm window carrying the last txn details; include compositeKey when available
    await db.openCorrectionWindow(
      From.replace('whatsapp:', ''),
@@ -7667,11 +7667,14 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
   // Localize body; keep anchors; send once
   const bodySrc = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
   const bodyLoc = await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);
+  console.log(`[sendSaleConfirmationOnce] start lang=${detectedLanguage} req=${requestId} from=${From}`);
   await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);  
+  console.log(`[sendSaleConfirmationOnce] sent confirmation`);
   console.log('Entering Undo Block'); 
   // --- NEW: 120s correction window + Undo CTA (sale)
    try {
-     const db = require('./database');
+     
+     const db = require('../database');
      console.log('Inside Undo Block');
      await db.openCorrectionWindow(
        From.replace('whatsapp:', ''),
