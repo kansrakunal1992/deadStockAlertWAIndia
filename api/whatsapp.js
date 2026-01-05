@@ -6281,7 +6281,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
     try {
       if (payload && _isDuplicateTap(shopIdTop, payload)) return true;
     } catch (_) {} 
-     console.log('Entering Undo Block'); 
+     console.log('Entering Undo Block 7'); 
   // --- Undo (correction) quick-reply (tracker removed; generic undo-last-txn)
     if (payload === 'undo_last_txn') {
       try {
@@ -7605,7 +7605,7 @@ const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, new
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
 console.log('I reached here');
 
-console.log('Entering Undo Block');
+console.log('Entering Undo Block 1');
 // --- NEW: 120s correction window + Undo CTA (purchase)
  try {
    console.log('Inside Undo Block');
@@ -7671,7 +7671,7 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
   console.log(`[sendSaleConfirmationOnce] start lang=${detectedLanguage} req=${requestId} from=${From}`);
   await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);  
   console.log(`[sendSaleConfirmationOnce] sent confirmation`);
-  console.log('Entering Undo Block'); 
+  console.log('Entering Undo Block 2'); 
   // --- NEW: 120s correction window + Undo CTA (sale)
    try {
      
@@ -15114,7 +15114,7 @@ async function tryHandleReturnText(transcript, from, detectedLanguage, requestId
   }  
   const msg = await t(message, detectedLanguage, requestId);
   await sendMessageViaAPI(from, msg);
-  console.log('Entering Undo Block'); 
+  console.log('Entering Undo Block 3'); 
   // [PATCH:UNDO-CTA-RETURN-ONLY-001] Post-confirm CTA: Undo (quick Return; no List-Picker)
     setTimeout(async () => {await sendUndoCTAOnce(From, detectedLanguage, requestId);}, 350);
   return true;
@@ -17566,7 +17566,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;                
         const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
         await sendMessageDedup(From, formattedResponse);
-        console.log('Entering Undo Block'); 
+        console.log('Entering Undo Block 4'); 
         // [PATCH:UNDO-CTA-AGG-ONLY-001] Post-confirm CTA: Undo (aggregated path; no List-Picker)
           setTimeout(async () => {await sendUndoCTAOnce(From, detectedLanguage, requestId);}, 350);
           
@@ -18456,7 +18456,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;       
        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
          await sendMessageDedup(From, formattedResponse);
-       console.log('Entering Undo Block'); 
+       console.log('Entering Undo Block 5'); 
           // [PATCH:UNDO-CTA-AGG-001] Post-confirm CTAs: Undo + List-Picker (aggregated path)
           setTimeout(async () => {await sendUndoCTAOnce(From, detectedLanguage, requestId);}, 350);
      } // else → nothing to confirm (nudged or zero success)
@@ -21199,7 +21199,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
                  const message = [header, ...successLines].join('\n').trim();
                  const formattedResponse = await t(message, detectedLanguage, requestId);
                  await sendMessageDedup(From, formattedResponse);        
-                 console.log('Entering Undo Block'); 
+                 console.log('Entering Undo Block 6'); 
                  // [PATCH:UNDO-CTA-AGG-ONLY-001] Post-confirm CTA: Undo (aggregated path; no List-Picker)
                     setTimeout(async () => {await sendUndoCTAOnce(From, detectedLanguage, requestId);}, 350);
                }
