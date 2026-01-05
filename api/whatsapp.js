@@ -248,6 +248,31 @@ function __extractTokensLoose(s) {
   return null;
 }
 
+// --- NEW: centralized Undo CTA sender (minimal & safe) ---
+async function sendUndoCTAOnce(From, langHint = 'en', requestId = 'undo') {
+  try {
+    const { ensureLangTemplates, getLangSids } = require('./contentCache');
+    const lang = String(langHint ?? 'en').toLowerCase();
+    await ensureLangTemplates(lang);
+    let sids = getLangSids(lang);
+    if (!sids?.correctionUndoSid) {
+      console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; fallback to 'en'`);
+      sids = getLangSids('en');
+    }
+    if (sids?.correctionUndoSid) {
+      await sendContentTemplateOnce({
+        toWhatsApp: String(From ?? '').replace('whatsapp:', ''),
+        contentSid: sids.correctionUndoSid,
+        requestId: `${requestId}::undo`
+      });
+      return true;
+    }
+  } catch (e) {
+    console.warn('[undo-cta] send failed:', e?.message);
+  }
+  return false;
+}
+
 // Normalize an update object in-place when product holds "name qty unit"
 function normalizeProductQtyUnit(update) {
   if (!update || !update.product) return update;
@@ -7590,19 +7615,9 @@ console.log('Entering Undo Block');
      From.replace('whatsapp:', ''),
      { action: 'purchase', product, quantity: Number(qty), unit, compositeKey: payload?.batchCompositeKey ?? null },
      String(detectedLanguage ?? 'en').toLowerCase()
-   ); // uses database.js new helper
-   // Send the Undo quick-reply CTA from the Content bundle
-   const { ensureLangTemplates, getLangSids } = require('./contentCache');
-   const lang = String(detectedLanguage ?? 'en').toLowerCase();
-   await ensureLangTemplates(lang);
-   const sids = getLangSids(lang);       
-   if (sids?.correctionUndoSid) {
-        await sendContentTemplateOnce({
-          toWhatsApp: String(From ?? '').replace('whatsapp:', ''),
-          contentSid: sids.correctionUndoSid,
-          requestId: `${requestId}::undo`
-        });
-      }
+   ); // uses database.js new helper     
+  // Send the Undo CTA via the unified helper right after arming window
+  await sendUndoCTAOnce(From, detectedLanguage, requestId);
  } catch (_) { /* best-effort only; do not block confirmation */ }
 }
 
@@ -7636,7 +7651,7 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
                        : (overallUnit ?? unit);
 
   // Compose the one-liner head (mirrors purchase/return format)
-  const icon       = '🛒:📦';
+  const icon       = '🛒';
   const qtyUnit    = (qty !== undefined && qty !== null)
                       ? (uNorm ? `${qty} ${uNorm}` : String(qty))
                       : '';
@@ -7668,18 +7683,9 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
          compositeKey: payload?.batchCompositeKey ?? null // if your sale routed via a batch
        },
        String(detectedLanguage ?? 'en').toLowerCase()
-     );
-     const { ensureLangTemplates, getLangSids } = require('./contentCache');
-     const lang = String(detectedLanguage ?? 'en').toLowerCase();
-     await ensureLangTemplates(lang);
-     const sids = getLangSids(lang);           
-     if (sids?.correctionUndoSid) {
-          await sendContentTemplateOnce({
-            toWhatsApp: String(From ?? '').replace('whatsapp:', ''),
-            contentSid: sids.correctionUndoSid,
-            requestId: `${requestId}::undo`
-          });
-        }
+     );         
+    // Send the Undo CTA via the unified helper right after arming window
+    await sendUndoCTAOnce(From, detectedLanguage, requestId);
    } catch (_) { /* best-effort only */ }
 }
 
@@ -15106,33 +15112,7 @@ async function tryHandleReturnText(transcript, from, detectedLanguage, requestId
   await sendMessageViaAPI(from, msg);
   console.log('Entering Undo Block'); 
   // [PATCH:UNDO-CTA-RETURN-ONLY-001] Post-confirm CTA: Undo (quick Return; no List-Picker)
-    setTimeout(async () => {
-      try {
-        const { ensureLangTemplates, getLangSids } = require('./contentCache');
-        console.log('Inside Undo Block');
-        const lang = String(detectedLanguage ?? 'en').toLowerCase();
-        await ensureLangTemplates(lang);
-        let sids = getLangSids(lang);
-        if (!sids?.correctionUndoSid) {
-          console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; falling back to 'en'`);
-          sids = getLangSids('en');
-        }
-        
-        if (sids?.correctionUndoSid) {
-                // Replace REST send with Content Template sender
-                await sendContentTemplateOnce({
-                  toWhatsApp: String(from ?? '').replace('whatsapp:', ''),
-                  contentSid: sids.correctionUndoSid,
-                  requestId: `${requestId}::undo-return`
-                });
-                console.log(`[undo-cta] (return-quick) sent correction quick-reply via Content Template, lang=${lang}, sid=${sids.correctionUndoSid}`);
-              } else {
-          console.warn(`[undo-cta] (return-quick) correctionUndoSid missing for ${lang} and 'en'`);
-        }
-      } catch (e) {
-        console.warn('[undo-cta] (return-quick) send failed:', e?.message);
-      }
-    }, 350);
+    setTimeout(async () => {await sendUndoCTAOnce(From, detectedLanguage, requestId);}, 350);
   return true;
 }
 
@@ -17584,32 +17564,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         await sendMessageDedup(From, formattedResponse);
         console.log('Entering Undo Block'); 
         // [PATCH:UNDO-CTA-AGG-ONLY-001] Post-confirm CTA: Undo (aggregated path; no List-Picker)
-          setTimeout(async () => {
-            try {
-              const { ensureLangTemplates, getLangSids } = require('./contentCache');
-              console.log('Inside Undo Block');
-              const lang = String(detectedLanguage ?? 'en').toLowerCase();
-              await ensureLangTemplates(lang);
-              let sids = getLangSids(lang);
-              if (!sids?.correctionUndoSid) {
-                console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; falling back to 'en'`);
-                sids = getLangSids('en');
-              }                          
-            if (sids?.correctionUndoSid) {
-                    // Replace REST send with Content Template sender (keeps parity with List-Picker / Quick-Reply)
-                    await sendContentTemplateOnce({
-                      toWhatsApp: String(From ?? '').replace('whatsapp:', ''),
-                      contentSid: sids.correctionUndoSid,
-                      requestId: `${requestId}::undo-agg`
-                    });
-                    console.log(`[undo-cta] sent correction quick-reply via Content Template, lang=${lang}, sid=${sids.correctionUndoSid}`);
-                  } else {
-                console.warn(`[undo-cta] correctionUndoSid missing for ${lang} and 'en'`);
-              }
-            } catch (e) {
-              console.warn('[undo-cta] send failed:', e?.message);
-            }
-          }, 350);
+          setTimeout(async () => {await sendUndoCTAOnce(From, detectedLanguage, requestId);}, 350);
           
         // (3) Hook into aggregated confirmation flow (single Return)
         try {
@@ -18499,36 +18454,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
          await sendMessageDedup(From, formattedResponse);
        console.log('Entering Undo Block'); 
           // [PATCH:UNDO-CTA-AGG-001] Post-confirm CTAs: Undo + List-Picker (aggregated path)
-          setTimeout(async () => {
-            try {
-              const { ensureLangTemplates, getLangSids } = require('./contentCache');
-              console.log('Inside Undo Block');
-              const lang = String(detectedLanguage ?? 'en').toLowerCase();
-        
-              await ensureLangTemplates(lang);
-              let sids = getLangSids(lang);
-        
-              // Fallback to English if locale lacks Undo SID
-              if (!sids?.correctionUndoSid) {
-                console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; falling back to 'en'`);
-                sids = getLangSids('en');
-              }
-                                   
-              if (sids?.correctionUndoSid) {
-                    // Replace REST send with Content Template sender
-                    await sendContentTemplateOnce({
-                      toWhatsApp: String(from ?? '').replace('whatsapp:', ''),
-                      contentSid: sids.correctionUndoSid,
-                      requestId: `${requestId}::undo-return`
-                    });
-                    console.log(`[undo-cta] (return-quick) sent correction quick-reply via Content Template, lang=${lang}, sid=${sids.correctionUndoSid}`);
-                  } else {
-                console.warn(`[undo-cta] correctionUndoSid missing for ${lang} and 'en'`);
-              }
-            } catch (e) {
-              console.warn('[undo-cta] send failed:', e?.message);
-            }
-          }, 350);
+          setTimeout(async () => {await sendUndoCTAOnce(From, detectedLanguage, requestId);}, 350);
      } // else → nothing to confirm (nudged or zero success)
         __handled = true;                
         // CTA gated: only last trial day
@@ -21271,32 +21197,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
                  await sendMessageDedup(From, formattedResponse);        
                  console.log('Entering Undo Block'); 
                  // [PATCH:UNDO-CTA-AGG-ONLY-001] Post-confirm CTA: Undo (aggregated path; no List-Picker)
-                    setTimeout(async () => {
-                      try {
-                        const { ensureLangTemplates, getLangSids } = require('./contentCache');
-                        console.log('Inside Undo Block');
-                        const lang = String(detectedLanguage ?? 'en').toLowerCase();
-                        await ensureLangTemplates(lang);
-                        let sids = getLangSids(lang);
-                        if (!sids?.correctionUndoSid) {
-                          console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; falling back to 'en'`);
-                          sids = getLangSids('en');
-                        }                                                
-                        if (sids?.correctionUndoSid) {
-                              // Replace REST send with Content Template sender (consistent with List-Picker / Quick-Reply)
-                              await sendContentTemplateOnce({
-                                toWhatsApp: String(From ?? '').replace('whatsapp:', ''),
-                                contentSid: sids.correctionUndoSid,
-                                requestId: `${requestId}::undo-agg`
-                              });
-                              console.log(`[undo-cta] sent correction quick-reply via Content Template, lang=${lang}, sid=${sids.correctionUndoSid}`);
-                            } else {
-                          console.warn(`[undo-cta] correctionUndoSid missing for ${lang} and 'en'`);
-                        }
-                      } catch (e) {
-                        console.warn('[undo-cta] send failed:', e?.message);
-                      }
-                    }, 350);
+                    setTimeout(async () => {await sendUndoCTAOnce(From, detectedLanguage, requestId);}, 350);
                }
                 } else {
                   console.log(`[${requestId}] [text-agg-guard] Suppressed aggregated ack (inline confirmations present)`);
