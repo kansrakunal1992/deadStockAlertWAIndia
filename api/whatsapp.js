@@ -7676,6 +7676,7 @@ console.log('Entering Undo Block 1');
      String(detectedLanguage ?? 'en').toLowerCase()
    ); // uses database.js new helper     
   // Send the Undo CTA via the unified helper right after arming window
+   await new Promise(r => setTimeout(r, 350));
   await sendUndoCTAOnce(From, detectedLanguage, requestId);
  } catch (_) { /* best-effort only; do not block confirmation */ }
 }
@@ -7747,6 +7748,7 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
        String(detectedLanguage ?? 'en').toLowerCase()
      );         
     // Send the Undo CTA via the unified helper right after arming window
+     await new Promise(r => setTimeout(r, 350));
     await sendUndoCTAOnce(From, detectedLanguage, requestId);
    } catch (_) { /* best-effort only */ }
 }
