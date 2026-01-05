@@ -1,4 +1,5 @@
 const axios = require('axios');
+const qs = require('querystring');
 // Support both env schemes: ACCOUNT_SID/AUTH_TOKEN or TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN
 const ACCOUNT_SID = process.env.ACCOUNT_SID || process.env.TWILIO_ACCOUNT_SID;
 const AUTH_TOKEN  = process.env.AUTH_TOKEN  || process.env.TWILIO_AUTH_TOKEN;
@@ -74,13 +75,50 @@ const RETRY_STATUSES   = new Set([429, 500, 502, 503, 504]);
  // You can send rich content using ContentSid + MessagingServiceSid or From (WA sender). [3](https://www.twilio.com/docs/content/create-and-send-your-first-content-api-template)
  
 async function sendContentTemplate({ toWhatsApp, contentSid, contentVariables = {} }) {
+  // Normalize recipient: accept bare E.164, 'whatsapp:+E164', or digits
+  const normalizedTo = (() => {
+    const raw = String(toWhatsApp ?? '').trim();
+    const noPrefix = raw.replace(/^whatsapp:/i, '');
+    // If it already has +, keep; else add + for typical E.164 numbers (10–15 digits)
+    const digitsOnly = noPrefix.replace(/[^\d+]/g, '');
+    const e164 = digitsOnly.startsWith('+')
+      ? digitsOnly
+      : (/^\d{10,15}$/.test(digitsOnly) ? `+${digitsOnly}` : noPrefix);
+    return `whatsapp:${e164}`;
+  })();
+
+  // Validate ContentSid early to avoid silent no-op
+  if (!contentSid) {
+    console.warn('[sendContentTemplate] ABORT: missing contentSid', { to: normalizedTo });
+    throw new Error('sendContentTemplate: contentSid is required');
+  }
+
+  // Safe-stringify variables; do not let circular structures break the send
+  let contentVarsStr = '{}';
+  try {
+    contentVarsStr = JSON.stringify(contentVariables ?? {});
+  } catch (e) {
+    console.warn('[sendContentTemplate] ContentVariables stringify failed; using {}', e?.message);
+  }
+
   const params = new URLSearchParams({
-    To: `whatsapp:${toWhatsApp}`,
+    To: normalizedTo,
     ContentSid: contentSid,
-    ContentVariables: JSON.stringify(contentVariables)
+    ContentVariables: contentVarsStr
   });
-  if (MSID) params.append('MessagingServiceSid', MSID);
-  else      params.append('From', FROM_WA);
+  const usingMsid = !!MSID;
+  if (usingMsid) params.append('MessagingServiceSid', MSID);
+  else           params.append('From', FROM_WA);
+
+  // Preflight log (once before any attempt)
+  console.log('[sendContentTemplate] PRE', {
+    to: params.get('To'),
+    contentSid,
+    using: usingMsid ? 'MSID' : 'From',
+    msid: usingMsid ? MSID : null,
+    from: usingMsid ? null : (FROM_WA || null),
+    contentVarsLen: contentVarsStr.length
+  });
 
   let attempt = 0;
   const maxAttempts = 2; // one retry for transient 429/5xx
@@ -95,13 +133,22 @@ async function sendContentTemplate({ toWhatsApp, contentSid, contentVariables = 
           timeout: DEFAULT_TIMEOUT
         }
       );
-      console.log('[sendContentTemplate] OK', { status, sid: data?.sid, to: toWhatsApp, contentSid, msid: MSID || null });
+      console.log('[sendContentTemplate] OK', {
+        status,
+        sid: data?.sid ?? data?.messageSid ?? 'unknown',
+        to: params.get('To'),
+        contentSid,
+        attempt,
+        msid: usingMsid ? MSID : null
+      });
       return data;
     } catch (e) {
       const status = e?.response?.status || 0;
-      const body   = e?.response?.data;
+      const body   = e?.response?.data ?? e?.message;
       console.warn('[sendContentTemplate] FAIL', {
-        status, body, to: toWhatsApp, contentSid, msid: MSID || null, from: FROM_WA || null, attempt
+        status, body, to: params.get('To'), contentSid,
+        msid: usingMsid ? MSID : null, from: usingMsid ? null : (FROM_WA || null),
+        attempt
       });
       if (attempt < maxAttempts && RETRY_STATUSES.has(status)) {
         attempt++;
@@ -112,6 +159,7 @@ async function sendContentTemplate({ toWhatsApp, contentSid, contentVariables = 
     }
   }
 }
+
 
  module.exports = {
    createQuickReplyWelcome,
