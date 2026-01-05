@@ -258,56 +258,57 @@ const lang = String(langHint ?? 'en').toLowerCase();
   const t0 = Date.now();
   console.log('[undo-cta] begin', { requestId, lang, to: toWhatsApp });
   try {
-    const { ensureLangTemplates, getLangSids } = require('./contentCache');
-    const tStart = Date.now();
-    await ensureLangTemplates(lang);
-    console.log('[undo-cta] ensureLangTemplates ok', { lang, elapsedMs: Date.now() - tStart });
+     
+  const { ensureLangTemplates, getLangSids } = require('./contentCache');
+      const tStart = Date.now();
+      await ensureLangTemplates(lang);
+      console.log('[undo-cta] ensureLangTemplates ok', { lang, elapsedMs: Date.now() - tStart });
+  
+      let sids = getLangSids(lang);
+      console.log('[undo-cta] cache', { lang, correctionUndoSid: sids?.correctionUndoSid ?? null });
+      if (!sids?.correctionUndoSid) {
+        console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; fallback to 'en'`);
+        sids = getLangSids('en');
+        console.log('[undo-cta] fallback cache', { lang: 'en', correctionUndoSid: sids?.correctionUndoSid ?? null });
+      }
+      if (!sids?.correctionUndoSid) {
+        console.warn('[undo-cta] no correctionUndoSid after fallback; abort', { requestId });
+        return false;
+      }
+  
+      // Resolve sender gracefully: prefer sendContentTemplateOnce, else sendContentTemplate
+      let sendTemplateFn = null;
+      try {
+        const btn = require('./whatsappButtons');
+        sendTemplateFn = btn.sendContentTemplateOnce ?? btn.sendContentTemplate;
+      } catch (e) {
+        console.warn('[undo-cta] resolve sender failed', e?.message);
+      }
+      if (typeof sendTemplateFn !== 'function') {
+        console.warn('[undo-cta] sender function missing; abort', { requestId });
+        return false;
+      }
+  
+      console.log('[undo-cta] sending', {
+        requestId,
+        toWhatsApp,
+        contentSid: sids.correctionUndoSid
+      });
+      const resp = await sendTemplateFn({
+        toWhatsApp: bareE164,                       // sender adds 'whatsapp:' itself
+        contentSid: sids.correctionUndoSid,
+        contentVariables: {},                       // none for Undo
+        requestId: `${requestId}::undo`
+      });
+      const sid = resp?.sid ?? resp?.messageSid ?? 'unknown';
+      console.log('[undo-cta] sent ok', { requestId, sid, elapsedMs: Date.now() - t0 });
+      return true;
 
-    let sids = getLangSids(lang);
-    console.log('[undo-cta] cache', { lang, correctionUndoSid: sids?.correctionUndoSid ?? null });
-    if (!sids?.correctionUndoSid) {
-      console.warn(`[undo-cta] missing correctionUndoSid for ${lang}; fallback to 'en'`);
-      sids = getLangSids('en');
-      console.log('[undo-cta] fallback cache', { lang: 'en', correctionUndoSid: sids?.correctionUndoSid ?? null });
-    }
-    if (!sids?.correctionUndoSid) {
-      console.warn('[undo-cta] no correctionUndoSid after fallback; abort', { requestId });
-      return false;
-    }
-
-    // Resolve sender name gracefully: prefer sendContentTemplateOnce, else sendContentTemplate
-    let sendTemplateFn = null;
-    try {
-      const btn = require('./whatsappButtons');
-      sendTemplateFn = btn.sendContentTemplateOnce ?? btn.sendContentTemplate;
-    } catch (e) {
-      console.warn('[undo-cta] resolve sender failed', e?.message);
-    }
-    if (typeof sendTemplateFn !== 'function') {
-      console.warn('[undo-cta] sender function missing; abort', { requestId });
-      return false;
-    }
-
-    console.log('[undo-cta] sending', {
-      requestId,
-      toWhatsApp,
-      contentSid: sids.correctionUndoSid
-    });
-    const resp = await sendTemplateFn({
-      toWhatsApp: bareE164,                    // sender adds 'whatsapp:' itself
-      contentSid: sids.correctionUndoSid,
-      contentVariables: {},                    // none for Undo
-      requestId: `${requestId}::undo`
-    });
-    const sid = resp?.sid ?? resp?.messageSid ?? 'unknown';
-    console.log('[undo-cta] sent ok', { requestId, sid, elapsedMs: Date.now() - t0 });
-    return true;
   } catch (e) {
     const errBody = e?.response?.data ?? e?.message;
     console.warn('[undo-cta] send failed', { requestId, err: errBody });
-    return false;
   }
-
+return false;
 }
 
 // Normalize an update object in-place when product holds "name qty unit"
