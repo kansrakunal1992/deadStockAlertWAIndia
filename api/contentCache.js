@@ -411,7 +411,7 @@ const language = normalizeLangForContent(lang);
   // Fast path with TTL
   const cached = sidsByLang.get(language);
   if (cached && (Date.now() - (cached.ts || 0) < TTL_MS)) {
-    console.log(`[contentCache] cache-hit for ${language}`, cached);
+    //console.log(`[contentCache] cache-hit for ${language}`, cached);
     return cached;
   }
   // (Re)create or fetch once
