@@ -18248,6 +18248,45 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
               : '';
             const finalBody = `${await translateP}${stockSuffix}`;
               await _sendConfirmOnceByBody(From, langExact, requestId, finalBody);
+                            
+              // --- BEGIN: Undo window + CTA (quick path)
+                try {
+                  console.log('Entering Undo Block QP', { requestId });
+                  const db = require('../database');
+                  const shopId = String(From).replace('whatsapp:', '');
+              
+                  // Per-request de-dupe guard to avoid double Undo if another branch fires it
+                  globalThis.__undoSent = globalThis.__undoSent || new Set();
+                  const undoKey = `${shopId}:${requestId}`;
+              
+                  if (!globalThis.__undoSent.has(undoKey)) {
+                    console.log('Inside Undo Block QP', { undoKey });
+              
+                    // Build the payload used by your correction window
+                    const payloadForWindow = {
+                      action: 'purchase', // keep canonical 'purchase' here (DB expects this)
+                      product: u.productDisplay ?? u.product ?? u.productName ?? u.name ?? u.item ?? u.title ?? 'item',
+                      quantity: Number(u.quantity),
+                      unit: u.unit ?? '',
+                      compositeKey: u.batchCompositeKey ?? r?.batchCompositeKey ?? null,
+                    };
+              
+                    await db.openCorrectionWindow(
+                      shopId,
+                      payloadForWindow,
+                      String(langExact ?? 'en').toLowerCase()
+                    );
+              
+                    await sendUndoCTAOnce(From, langExact, requestId);
+                    globalThis.__undoSent.add(undoKey);
+                  } else {
+                    console.log('[undo-cta-fast] suppressed duplicate', { undoKey });
+                  }
+                } catch (e) {
+                  console.warn('[undo-cta-fast] send failed:', e?.message);
+                }
+                // --- END: Undo window + CTA (quick path)
+
               try { await clearUserState(From); } catch (_){}
               try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_){}
               handledRequests.add(requestId);
