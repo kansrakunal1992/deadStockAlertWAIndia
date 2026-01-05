@@ -20200,6 +20200,16 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
 
       if (processed.length === 1) {
         const x = processed[0];
+                
+        await db.openCorrectionWindow(
+            From.replace('whatsapp:', ''),
+            { action: String(x.action).toLowerCase(), product: x.product ?? x.productDisplay ?? x.name ?? 'item',
+              quantity: Number(x.quantity), unit: x.unitAfter ?? x.unit ?? '' },
+            String(detectedLanguage ?? 'en').toLowerCase()
+          );
+          await sendUndoCTAOnce(From, detectedLanguage, requestId);
+        }
+
         const act = String(x.action).toLowerCase();
         const common = {
           product: x.product,
