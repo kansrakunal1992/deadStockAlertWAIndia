@@ -130,13 +130,78 @@ async function resolveSonioxLanguageHints(From, detectedLanguageHint = 'en') {
   return mapLangToSonioxHints(lang);
 }
 
-function looksLikeTxnConfirmation(text) {
-  const s = String(text || '');
-  // Anchor on your confirmation phrase
-  const hasAck = /✅\s*Successfully updated/i.test(s);
-  // Secondary signal: transaction icons in the same message
+// === STRONGER: Detect txn confirmations (single and aggregated) ===
+function looksLikeTxnConfirmation(text, opts = {}) {
+  const s = String(text || '').trim();
+  if (!s) return false;
+
+  // 1) Success anchor (English)
+  const hasAck = /✅\s*(Successfully\s+updated|Updated\s+successfully)/i.test(s);
+
+  // 2) Aggregated counts (English)
+  const hasCounts = /✅\s*Successfully\s*updated\s*\d+\s*of\s*\d+\s*items?/i.test(s);
+
+  // 3) Transaction icons
   const hasTxnIcon = /[📦🛒↩️]/.test(s);
-  return hasAck || hasTxnIcon;
+
+  // 4) Stock suffix: e.g., "(Stock: 137 bottles)" or "(Stock: 12 kg)"
+  // Allow any letter unit; keep unicode flag for native scripts
+  const hasStock = /\(stock:\s*\d+(?:[.,]\d+)?(?:\s+\p{L}+)?\)/iu.test(s);
+
+  // 5) Price/rate (₹ line or @ ₹… rate syntax)
+  const hasRupee = /₹\s*\d/.test(s);
+  const hasAtRate = /@\s*₹\s*\d/i.test(s);
+  const hasPriceLine = /(^|\n)\s*💰\s*price:\s*₹\s*\d+/i.test(s);
+
+  // 6) Action tokens (English + native scripts)
+  const actionTokens = [
+    // English with icons
+    /(^|\n)\s*📦.*\b(purchased|purchase|bought)\b/i,
+    /(^|\n)\s*🛒.*\b(sold|sale)\b/i,
+    /(^|\n)\s*↩️.*\b(return|returned)\b/i,
+
+    // Hindi
+    /\bखरीद\b|\bखरीदा\b|\bबिक्री\b|\bबेचा\b|\bरिटर्न\b|\bवापसी\b/u,
+
+    // Gujarati
+    /\bખરીદી\b|\bખરીદ\b|\bવેચાણ\b|\bવેચ્યું\b|\bરિટર્ન\b/u,
+
+    // Tamil
+    /\bகொள்முதல்\b|\bவிற்பனை\b|\bரிட்டர்ன்\b|\bதிருப்பி\b/u,
+
+    // Telugu
+    /\bకొనుగోలు\b|\bఅమ్మకం\b|\bరిటర్న్\b|\bతిరిగి\b/u,
+
+    // Kannada
+    /\bಖರೀದಿ\b|\bಮಾರಾಟ\b|\bರಿಟರ್ನ್\b|\bಹಿಂತಿರುಗಿ\b/u,
+
+    // Marathi
+    /\bखरेदी\b|\bविक्री\b|\bरिटर्न\b|\bपरत\b/u,
+
+    // Bengali
+    /\bক্রয়\b|\bবিক্রি\b|\bরিটার্ন\b|\bফেরত\b/u,
+  ];
+  const hasActionToken = actionTokens.some(rx => rx.test(s));
+
+  // 7) Icon/bullet-leading lines (typical in aggregated confirmations)
+  const iconOrBulletLines = (s.match(/(^|\n)\s*(📦|🛒|↩️|•)\s+/g) || []).length >= 1;
+
+  // Score features
+  let score = 0;
+  if (hasAck) score += 2;
+  if (hasCounts) score += 2;
+  if (hasTxnIcon) score += 1;
+  if (iconOrBulletLines) score += 1;
+  if (hasStock) score += 1;
+  if (hasRupee || hasAtRate || hasPriceLine) score += 1;
+  if (hasActionToken) score += 1;
+
+  // Explicit override
+  if (opts?.isConfirmation === true) return true;
+
+  // Threshold decision
+  const threshold = Number.isFinite(opts?.threshold) ? opts.threshold : 3;
+  return score >= threshold;
 }
 
 // --------------------------------------------------------------------------------
@@ -6996,7 +7061,6 @@ const {
 
 // Minimal helper to send the Undo quick-reply via Twilio
 async function sendUndoCTAQuickReply(From, lang = 'en', requestId = '') {
-  console.log('Entered sendUndoCTAQuickReply');
   try {
     // 1) Normalize the destination to WhatsApp format: 'whatsapp:+<E.164>'
     const toWa = String(From ?? '').startsWith('whatsapp:')
@@ -7641,8 +7705,6 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
-// Always send the Undo QR (Step 1: unconditional)
-await sendUndoCTAQuickReply(From, detectedLanguage, requestId);
 }
 
 /**
@@ -7693,10 +7755,6 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
   const bodyLoc = await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);
   console.log(`[sendSaleConfirmationOnce] start lang=${detectedLanguage} req=${requestId} from=${From}`);
   await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);
-    
-  // Always send the Undo QR (Step 1: unconditional)
-  await sendUndoCTAQuickReply(From, detectedLanguage, requestId);
-
   console.log(`[sendSaleConfirmationOnce] sent confirmation`);  
 }
 
