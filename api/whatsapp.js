@@ -6985,23 +6985,50 @@ const {
   closeCorrectionWindow
 } = require('../database');
 
-// Minimal helper to send the Undo quick-reply via Twilio Content API
-async function sendUndoCTAQuickReply(From, lang = 'en') {
+// Minimal helper to send the Undo quick-reply via Twilio
+async function sendUndoCTAQuickReply(From, lang = 'en', requestId = '') {
   try {
-    // Create/fetch the ContentSid bundle & then send the Undo one
+    // 1) Normalize the destination to WhatsApp format: 'whatsapp:+<E.164>'
+    const toWa = String(From ?? '').startsWith('whatsapp:')
+      ? String(From)
+      : `whatsapp:${String(From).replace(/^whatsapp:/, '')}`;
+
+    // 2) Ensure the Undo content SID exists
     await ensureLangTemplates(lang);
     const { correctionUndoSid } = getLangSids(lang);
     if (!correctionUndoSid) {
       console.warn('[undoCTA] No correctionUndoSid for lang:', lang);
       return false;
     }
-        
-    await client.messages.create({
-         to: From, // e.g. 'whatsapp:+919013283687'
-         messagingServiceSid: process.env.TWILIO_MSG_SERVICE_SID, // same MSID used for other Content sends
-         contentSid: correctionUndoSid,
-       });
 
+    // 3) Load your env vars (exact names you shared)
+    const msid = process.env.MESSAGING_SERVICE_SID;           // MGxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    const fromEnv = process.env.TWILIO_WHATSAPP_NUMBER;       // e.g., 'whatsapp:+14155238886' or '+14155238886'
+
+    // Pick sender route: prefer MSID, else FROM
+    const params = { to: toWa, contentSid: correctionUndoSid };
+    let route = '';
+
+    if (msid) {
+      params.messagingServiceSid = msid;
+      route = 'MSID';
+    } else if (fromEnv) {
+      const fromWa = fromEnv.startsWith('whatsapp:')
+        ? fromEnv
+        : `whatsapp:${fromEnv.replace(/^whatsapp:/, '')}`;
+      params.from = fromWa;
+      route = 'FROM';
+    } else {
+      console.error('[undoCTA] No MESSAGING_SERVICE_SID and no TWILIO_WHATSAPP_NUMBER configured.');
+      return false;
+    }
+
+    // 4) Instrumentation
+    console.log(`[undoCTA] lang=${lang} to=${toWa} route=${route} msid=${msid || '(none)'} from=${fromEnv || '(none)'} contentSid=${correctionUndoSid} req=${requestId}`);
+
+    // 5) Send via Messages API
+    const resp = await client.messages.create(params);
+    console.log(`[undoCTA] sent OK: ${resp?.sid || '(no sid)'} req=${requestId}`);
     return true;
   } catch (e) {
     console.warn('[undoCTA] send failed:', e?.message);
@@ -7599,7 +7626,7 @@ const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
   
 // Always send the Undo QR (Step 1: unconditional)
-await sendUndoCTAQuickReply(From, detectedLanguage);
+await sendUndoCTAQuickReply(From, detectedLanguage, requestId);
 
 }
 
@@ -7653,7 +7680,7 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
   await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);
     
   // Always send the Undo QR (Step 1: unconditional)
-  await sendUndoCTAQuickReply(From, detectedLanguage);
+  await sendUndoCTAQuickReply(From, detectedLanguage, requestId);
 
   console.log(`[sendSaleConfirmationOnce] sent confirmation`);  
 }
