@@ -131,107 +131,97 @@ async function resolveSonioxLanguageHints(From, detectedLanguageHint = 'en') {
 }
 
 /**
- * Detects if a message body is a transaction confirmation.
- * - opts.strict === true → only match canonical confirmation shapes (success only).
- * - default (non-strict) → fall back to your original heuristic.
+ * Detect whether a message body contains a transaction confirmation.
+ * - opts.strict === true → match only canonical confirmation lines (success paths).
+ * - default (non-strict) → fall back to a broader heuristic.
  *
- * Canonical shapes referenced from your composers:
- *  - 🛒 Sold … (compact sale)
- *  - 📦 Purchased … (compact purchase)
- *  - ↩️ Return processed — … (text/voice fallback)
- *  - ✅ Returned … (compact return)
- *  - ✅ {product} — sold {qty} {unit} @ ₹{price} (verbose header)
+ * Canonical heads:
+ *  🛒 sale, 📦 purchase, ↩️ return, ✅ verbose EN sale header (only in EN header form).
+ *
+ * Notes:
+ *  - Checks the FIRST line only (confirmation line), ignoring the later "✅ 1 में से 1 आइटम…" & footers.
+ *  - Supports Hindi price forms: "@ ₹65" and "₹60/लीटर पर".
+ *  - Stock words include localized forms: "Stock/स्टॉक/স্টক/ஸ்டாக்/స్టాక్/ಸ್ಟಾಕ್/સ્ટોક".
  */
 function looksLikeTxnConfirmation(text, opts = {}) {
   const s0 = String(text ?? '').trim();
   if (!s0) return false;
 
-  // Normalize numerals for qty checks; keep original for Unicode verb/script checks
-  let s = s0;
-  try { s = normalizeNumeralsToLatin(s0); } catch (_) {}
+  // Only inspect the first line (actual confirmation)
+  const firstLine = s0.split(/\r?\n/)[0].trim();
 
-  const hasDigit = /\d/.test(s);           // at least one quantity numeral
-  const HEAD = /^(?:\u2705|\u{1F6D2}|\u{1F4E6}|\u21A9\uFE0F)\s*/u; // ✅ 🛒 📦 ↩️
+  // Normalize numerals for digit checks
+  let lineLatin = firstLine;
+  try { lineLatin = normalizeNumeralsToLatin(firstLine); } catch {}
 
-  // --- Multilingual verb tokens found in your code (labels/footers) ---
-  // EN: Sold, Purchased, Returned
-  // HI: खरीद (purchase), बिक्री (sale), रिटर्न (return)
-  // BN: ক্রয় (purchase), বিক্রি (sale), রিটার্ন (return)
-  // TA: கொள்முதல் (purchase), விற்பனை (sale), ரிட்டர்ன் (return)
-  // TE: కొనుగోలు (purchase), అమ్మకం (sale), రిటర్న్ (return)
-  // KN: ಖರೀದಿ (purchase), ಮಾರಾಟ (sale), ರಿಟರ್ನ್ (return)
-  // MR: खरेदी (purchase), विक्री (sale), परत (return)
-  // GU: ખરીદી (purchase), વેચાણ (sale), રિટર્ન (return)
-  const SALE_TOKENS = [
-    'Sold', 'sold',
-    'बिक्री',            // hi
-    'বিক্রি',            // bn
-    'விற்பனை',           // ta
-    'అమ్మకం',            // te
-    'ಮಾರಾಟ',            // kn
-    'विक्री',            // mr
-    'વેચાણ'             // gu
-  ];
-  const PURCHASE_TOKENS = [
-    'Purchased', 'purchased',
-    'खरीद',              // hi
-    'ক্রয়',              // bn
-    'கொள்முதல்',         // ta
-    'కొనుగోలు',          // te
-    'ಖರೀದಿ',            // kn
-    'खरेदी',             // mr
-    'ખરીદી'              // gu
-  ];
-  const RETURN_TOKENS = [
-    'Returned', 'returned',
-    'रिटर्न',            // hi
-    'রিটার্ন',            // bn
-    'ரிட்டர்ன்',          // ta
-    'రిటర్న్',            // te
-    'ರಿಟರ್ನ್',           // kn
-    'परत',               // mr
-    'રિટર્ન'             // gu
-  ];
+  const hasDigit = /\d/.test(lineLatin);
 
-  // Build verb alternations (Unicode aware)
-  const tok = (arr) => arr
-    .map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('|');
+  // Heads
+  const HEAD_SALE     = /^\u{1F6D2}\s*/u;    // 🛒
+  const HEAD_PURCHASE = /^\u{1F4E6}\s*/u;    // 📦
+  const HEAD_RETURN   = /^\u21A9\uFE0F\s*/u; // ↩️
+  const HEAD_VERBOSE  = /^\u2705\s*/u;       // ✅ (EN verbose header only)
 
-  const SALE_VERB = new RegExp(HEAD.source + '(?:' + tok(SALE_TOKENS) + ')\\b', 'u');
-  const PURCHASE_VERB = new RegExp(HEAD.source + '(?:' + tok(PURCHASE_TOKENS) + ')\\b', 'u');
-  const RETURN_VERB = new RegExp(HEAD.source + '(?:' + tok(RETURN_TOKENS) + ')\\b', 'u');
+  // Price markers:
+  //  - English/Generic: "@ ₹..", "@ Rs..", "@ INR.."
+  //  - Hindi: "₹..../<unit> पर" (e.g., "₹60/लीटर पर")
+  //  - Fallback: a plain currency + amount (e.g., "₹65")
+  const PRICE_AT_RX   = /@\s*(?:₹|Rs\.?|INR)\s*\d+(?:\.\d+)?(?:\/[^\s)]+)?/iu;
+  const PRICE_PER_HI  = /(?:₹|Rs\.?|INR)\s*\d+(?:\.\d+)?(?:\/[^\s)]+)?\s*पर\b/iu;
+  const PRICE_ANY_RX  = /(?:₹|Rs\.?|INR)\s*\d+(?:\.\d+)?/iu;
 
-  // Canonical return fallback: "↩️ Return processed — Paracetamol: +2 packets"
-  const RETURN_PROCESSED = /^\u21A9\uFE0F\s*Return processed\s+—\s*.+?:\s*\+\d+(?:\.\d+)?\s+[^\s]+$/u;
+  const hasPrice = PRICE_AT_RX.test(firstLine) || PRICE_PER_HI.test(firstLine) || PRICE_ANY_RX.test(firstLine);
 
-  // Verbose sale header you compose in English: "✅ {product} — sold {qty} {unit} @ ₹{price}"
-  const SALE_VERBOSE_HDR = /^\u2705\s*.+?\s+—\s+sold\s+\d+(?:\.\d+)?\s+[^\s]+(?:\s+@\s+₹\d+(?:\.\d+)?)?$/iu;
+  // Localized "stock" words
+  const STOCK_WORDS = ['Stock','स्टॉक','স্টক','ஸ்டாக்','స్టాక్','ಸ್ಟಾಕ್','સ્ટોક'];
+  const STOCK_RX = new RegExp(
+    String.raw`\(\s*(?:${STOCK_WORDS.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\s*:\s*\d+(?:\.\d+)?\s+[^\)]+\)`,
+    'u'
+  );
+  const hasStock = STOCK_RX.test(firstLine);
 
-  // Strict: require (emoji head + localized verb) OR one of the canonical lines, AND at least one numeral.
+  // Hindi verb variants (morphology)
+  const HI_PURCHASE_VERB = /(खरीद(?:[ाी]|ी)?\s*ग(?:या|ई|ए|ईं)?|खरीदा|खरीदी)/u;        // खरीदी गईं, खरीदा, खरीदी
+  const HI_RETURN_VERB   = /(वापस\s*की\s*ग(?:ई|ए|या|ईं)?|वापसी)/u;                    // वापस की गईं, वापसी
+  const HI_SALE_VERB     = /(बेच(?:[ाी])?\s*ग(?:या|ई|ए|ईं)?|बेचा|बेची|बिक्री)/u;      // बेचा गया/बेची गईं/बिक्री
+
+  // EN verbose sale header (your composer): "✅ product — sold {qty} {unit} @ ₹{price}"
+  const EN_VERBOSE_SALE  = /^\u2705\s*.+?\s+—\s+sold\s+\d+(?:\.\d+)?\s+[^\s]+(?:\s+@\s+(?:₹|Rs\.?|INR)\s*\d+(?:\.\d+)?)?$/iu;
+
+  // STRICT mode: canonical heads + digits + (price or stock),
+  // allowing Hindi verb evidence when price/stock absent (return/sale).
   if (opts.strict === true) {
-    const isMatch =
-      SALE_VERB.test(s0) ||
-      PURCHASE_VERB.test(s0) ||
-      RETURN_VERB.test(s0) ||
-      RETURN_PROCESSED.test(s0) ||
-      SALE_VERBOSE_HDR.test(s0);
-    return isMatch && hasDigit;
+    if (HEAD_PURCHASE.test(firstLine)) {
+      // e.g., "📦 5 बोतलें … खरीदी गईं @ ₹65 (स्टॉक: …)"
+      return hasDigit && (hasPrice || hasStock || HI_PURCHASE_VERB.test(firstLine));
+    }
+    if (HEAD_RETURN.test(firstLine)) {
+      // e.g., "↩️ 3 बोतलें … वापस की गईं (स्टॉक: …)"
+      return hasDigit && (hasPrice || hasStock || HI_RETURN_VERB.test(firstLine));
+    }
+    if (HEAD_SALE.test(firstLine)) {
+      // e.g., "🛒 5 लीटर दूध ₹60/लीटर पर बेचा गया (स्टॉक: …)"
+      return hasDigit && (hasPrice || hasStock || HI_SALE_VERB.test(firstLine));
+    }
+    if (HEAD_VERBOSE.test(firstLine)) {
+      // English verbose sale header only
+      return EN_VERBOSE_SALE.test(firstLine);
+    }
+    return false; // no canonical head
   }
 
-  // --- Default: keep your original heuristic (emoji/bullets + qty/unit anchors) ---
-  // If you have UNIT_REGEX in scope, use it here; else fallback to digits + a loose unit token set.
+  // --- Non-strict fallback: emoji/bullets + qty + "unit-ish" token ---
   try {
-    const unitRx = (typeof UNIT_REGEX === 'object' && UNIT_REGEX)
-      || /\b(kg|kgs|g|gm|gms|l|ltr|ltrs|ml|packet|packets|piece|pieces|लीटर|पैकेट|नंग|லிட்டர்|பாக்கெட்|లీటర్|ప్యాకెట్|ಲೀಟರ್|ಪ್ಯಾಕೆಟ್|लिटर|पॅकेट|લિટર|પેકેટ)\b/iu;
+    const unitRx =
+      (typeof UNIT_REGEX === 'object' && UNIT_REGEX) ||
+      /\b(kg|kgs|g|gm|gms|l|ltr|ltrs|ml|packet|packets|piece|pieces|लीटर|पैकेट|बोतल(?:ें)?|नंग|लिटर|पॅकेट|લિટર|પેકેટ|બોટલ(?:ો)?|லிட்டர்|பாக்கெட்|లీటర్|ప్యాకెట్|ಲೀಟರ್|ಪ್ಯಾಕೆಟ್)\b/iu;
 
-    const hasHead = HEAD.test(s0) || /^[•]/.test(s0); // bullets/emoji
-    const hasUnit = unitRx.test(s0);
+    const hasHead = HEAD_SALE.test(firstLine) || HEAD_PURCHASE.test(firstLine) || HEAD_RETURN.test(firstLine) || /^[•]/.test(firstLine);
+    const hasUnit = unitRx.test(firstLine);
 
     return hasHead && hasDigit && hasUnit;
   } catch {
-    // Last resort: emoji head + digit
-    return HEAD.test(s0) && hasDigit;
+    return (HEAD_SALE.test(firstLine) || HEAD_PURCHASE.test(firstLine) || HEAD_RETURN.test(firstLine) || HEAD_VERBOSE.test(firstLine)) && hasDigit;
   }
 }
 
