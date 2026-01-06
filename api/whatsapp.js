@@ -16321,7 +16321,7 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
       // ---- NEW: Fire Undo CTA right after a txn confirmation ----
             try {
               const reqId = String(tagOpts?.requestId || tagOpts?.req || '').trim();
-              if (looksLikeTxnConfirmation(finalText,{ strict: true }),) {
+              if (looksLikeTxnConfirmation(finalText,{ strict: true })) {
                 console.log(`[confirm->undo] start lang=${lang} req=${reqId}`);
                 await new Promise(r => setTimeout(r, 350));
                 await sendUndoCTAQuickReply(formattedTo, lang, reqId);
