@@ -7620,10 +7620,12 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
     pricePerUnit = null,
     newQuantity = null
   } = payload || {};
-
+console.log('Here 1');
   // Build the one-line head via composer (emoji + unit/price/stock)  
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
+  console.log('Here 2');
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
+console.log('Here 3');
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
 // Always send the Undo QR (Step 1: unconditional)
 await sendUndoCTAQuickReply(From, detectedLanguage, requestId);
