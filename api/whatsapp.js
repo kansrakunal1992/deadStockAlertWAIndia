@@ -130,6 +130,15 @@ async function resolveSonioxLanguageHints(From, detectedLanguageHint = 'en') {
   return mapLangToSonioxHints(lang);
 }
 
+function looksLikeTxnConfirmation(text) {
+  const s = String(text || '');
+  // Anchor on your confirmation phrase
+  const hasAck = /✅\s*Successfully updated/i.test(s);
+  // Secondary signal: transaction icons in the same message
+  const hasTxnIcon = /[📦🛒↩️]/.test(s);
+  return hasAck || hasTxnIcon;
+}
+
 // --------------------------------------------------------------------------------
 // NEW: Canonical language mapper (single source of truth)
 // --------------------------------------------------------------------------------
@@ -7588,7 +7597,7 @@ function _isDuplicateBody(from, msg, windowMs = 3000) {
   } catch (_) {}
   return false;
 }
-async function sendMessageDedup(From, msg) {
+async function sendMessageDedup(From, msg, meta = {}) {
   if (!msg) return;
   // Append language-aware footer; dedupe on the final normalized body          
     const withFooter = await appendSupportFooter(String(msg).trim(), From);
@@ -7605,7 +7614,14 @@ async function sendMessageDedup(From, msg) {
     try { console.log('[dedupe] suppressed duplicate body for', From); } catch (_) {}
     return;
   }
-  await sendMessageViaAPI(From, finalBody);
+  
+  // Forward language/requestId when available; keeps Undo logs correlated
+  const metaForward = {
+    requestId: meta.requestId || meta.req || '',
+    lang: meta.lang || meta.language || langHint
+  };
+  await sendMessageViaAPI(From, finalBody, metaForward);
+  
 }
 
 /**
@@ -10287,7 +10303,7 @@ async function handleAwaitingPriceExpiry(From, Body, detectedLanguage, requestId
               confirmation += `\n\n✅ Successfully updated 1 of 1 items`;
               // ANCHOR: UNIQ:PRICE-EXPIRY-CONFIRM-001
               const confTagged = await tagWithLocalizedMode(From, finalizeForSend(confirmation, detectedLanguage), detectedLanguage);
-    
+              
             // ===== NEW: Finalize — clear price-await state & return to sticky purchase mode =====
                   try {
                     await deleteUserStateFromDB(state.id);
@@ -16161,6 +16177,19 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
         to: formattedTo
       });
       console.log(`[sendMessageViaAPI] Message sent successfully. SID: ${message.sid}`);
+                
+      // ---- NEW: Fire Undo CTA right after a txn confirmation ----
+            try {
+              const reqId = String(tagOpts?.requestId || tagOpts?.req || '').trim();
+              if (looksLikeTxnConfirmation(finalText)) {
+                console.log(`[confirm->undo] start lang=${lang} req=${reqId}`);
+                await sendUndoCTAQuickReply(formattedTo, lang, reqId);
+                console.log(`[confirm->undo] done req=${reqId}`);
+              }
+            } catch (e) {
+              console.warn('[confirm->undo] failed:', e?.message);
+            }
+
       await appendCTA(); // NEW
       return message;
     }
@@ -16210,6 +16239,18 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
       });
       messageSids.push(message.sid);
       console.log(`[sendMessageViaAPI] Part ${i+1} sent successfully. SID: ${message.sid}`);
+            
+      // ---- NEW: Fire Undo CTA if the part contains a txn confirmation (usually last part) ----
+            try {
+              const reqId = String(tagOpts?.requestId || tagOpts?.req || '').trim();
+              if (looksLikeTxnConfirmation(text)) {
+                console.log(`[confirm->undo] start(multi) lang=${lang} req=${reqId}`);
+                await sendUndoCTAQuickReply(formattedTo, lang, reqId);
+                console.log(`[confirm->undo] done(multi) req=${reqId}`);
+              }
+            } catch (e) {
+              console.warn('[confirm->undo] failed (multi):', e?.message);
+            }
 
       // Small delay between parts to avoid rate limiting
       if (i < final.length - 1) {
