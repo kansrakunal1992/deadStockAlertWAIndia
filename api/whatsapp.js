@@ -6985,6 +6985,28 @@ const {
   closeCorrectionWindow
 } = require('../database');
 
+// Minimal helper to send the Undo quick-reply via Twilio Content API
+async function sendUndoCTAQuickReply(From, lang = 'en') {
+  try {
+    // Create/fetch the ContentSid bundle & then send the Undo one
+    await ensureLangTemplates(lang);
+    const { correctionUndoSid } = getLangSids(lang);
+    if (!correctionUndoSid) {
+      console.warn('[undoCTA] No correctionUndoSid for lang:', lang);
+      return false;
+    }
+    await client.messages.create({
+      to: From,
+      from: process.env.TWILIO_WHATSAPP_FROM || process.env.TWILIO_WHATSAPP_NUMBER,
+      contentSid: correctionUndoSid,
+    });
+    return true;
+  } catch (e) {
+    console.warn('[undoCTA] send failed:', e?.message);
+    return false;
+  }
+}
+
 // ===== ShopID helpers ========================================================
 // Keep digits-only only for non-DB use (e.g., filenames, local keys).
 function toDigitsOnly(fromOrDigits) {
@@ -7573,6 +7595,10 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
+  
+// Always send the Undo QR (Step 1: unconditional)
+await sendUndoCTAQuickReply(From, lang);
+
 }
 
 /**
@@ -7622,7 +7648,11 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
   const bodySrc = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
   const bodyLoc = await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);
   console.log(`[sendSaleConfirmationOnce] start lang=${detectedLanguage} req=${requestId} from=${From}`);
-  await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);  
+  await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);
+    
+  // Always send the Undo QR (Step 1: unconditional)
+  await sendUndoCTAQuickReply(From, detectedLanguage);
+
   console.log(`[sendSaleConfirmationOnce] sent confirmation`);  
 }
 
