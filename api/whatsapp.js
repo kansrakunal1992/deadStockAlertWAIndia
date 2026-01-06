@@ -130,76 +130,80 @@ async function resolveSonioxLanguageHints(From, detectedLanguageHint = 'en') {
   return mapLangToSonioxHints(lang);
 }
 
-// === STRONGER: Detect txn confirmations (single and aggregated) ===
+// === STRONGER: Detect transaction confirmations (single & aggregated, multi-language) ===
 function looksLikeTxnConfirmation(text, opts = {}) {
-  const s = String(text || '').trim();
+  const s = String(text ?? '').trim();
   if (!s) return false;
 
-  // 1) Success anchor (English)
-  const hasAck = /✅\s*(Successfully\s+updated|Updated\s+successfully)/i.test(s);
+  // Numerals to ASCII to stabilize regexes; lowercase for Latin-only checks
+  let src = s;
+  try { src = normalizeNumeralsToLatin(s); } catch (_) { /* best-effort */ }
+  const lower = src.toLowerCase();
 
-  // 2) Aggregated counts (English)
-  const hasCounts = /✅\s*Successfully\s*updated\s*\d+\s*of\s*\d+\s*items?/i.test(s);
+  // 1) Emoji / bullet heads (language-agnostic)
+  const hasEmojiHead = /^[\u2705\u21a9\ufe0f\ud83d\udce6\ud83d\uded2]/.test(src); // ✅ ↩️ 📦 🛒
+  const hasBulletHead = /(^|\n)\s*(\ud83d\udce6|\ud83d\uded2|\u21a9\ufe0f|•)\s+/.test(src);
 
-  // 3) Transaction icons
-  const hasTxnIcon = /[📦🛒↩️]/.test(s);
+  // 2) Quantity + unit anchors (uses your UNIT_REGEX if available)
+  let hasQtyUnit = false;
+  try {
+    hasQtyUnit = /\d/.test(src) && (typeof UNIT_REGEX === 'object' ? UNIT_REGEX.test(src) : false);
+    if (!hasQtyUnit) {
+      // Fallback: simple "<number> <letters>" to tolerate localized units when UNIT_REGEX misses
+      hasQtyUnit = /\d+\s+\p{L}+/u.test(src);
+    }
+  } catch (_) {
+    hasQtyUnit = /\d+\s+\p{L}+/u.test(src);
+  }
 
-  // 4) Stock suffix: e.g., "(Stock: 137 bottles)" or "(Stock: 12 kg)"
-  // Allow any letter unit; keep unicode flag for native scripts
-  const hasStock = /\(stock:\s*\d+(?:[.,]\d+)?(?:\s+\p{L}+)?\)/iu.test(s);
+  // 3) Price anchors (₹, Rs, INR or "@ 70 / unit")
+  const hasPrice =
+    /(?:₹|rs\.?|inr)\s*\d+(?:[.,]\d+)?/i.test(src) ||
+    /@\s*\d+(?:[.,]\d+)?(?:\s*\/\s*\p{L}+)?/iu.test(src);
 
-  // 5) Price/rate (₹ line or @ ₹… rate syntax)
-  const hasRupee = /₹\s*\d/.test(s);
-  const hasAtRate = /@\s*₹\s*\d/i.test(s);
-  const hasPriceLine = /(^|\n)\s*💰\s*price:\s*₹\s*\d+/i.test(s);
+  // 4) Stock suffix in English or localized “stock” tokens
+  const stockTokens = /(?:\(stock:|\(\s*(?:स्टॉक|স্টক|ஸ்டாக்|స్టాక్|ಸ್ಟಾಕ್|स्टॉक|સ્ટોક)\s*:)/iu;
+  const hasStock = stockTokens.test(src);
 
-  // 6) Action tokens (English + native scripts)
+  // 5) Action tokens across languages + Hinglish (Roman Hindi)
   const actionTokens = [
-    // English with icons
-    /(^|\n)\s*📦.*\b(purchased|purchase|bought)\b/i,
-    /(^|\n)\s*🛒.*\b(sold|sale)\b/i,
-    /(^|\n)\s*↩️.*\b(return|returned)\b/i,
-
-    // Hindi
-    /\bखरीद\b|\bखरीदा\b|\bबिक्री\b|\bबेचा\b|\bरिटर्न\b|\bवापसी\b/u,
-
-    // Gujarati
-    /\bખરીદી\b|\bખરીદ\b|\bવેચાણ\b|\bવેચ્યું\b|\bરિટર્ન\b/u,
-
-    // Tamil
-    /\bகொள்முதல்\b|\bவிற்பனை\b|\bரிட்டர்ன்\b|\bதிருப்பி\b/u,
-
-    // Telugu
-    /\bకొనుగోలు\b|\bఅమ్మకం\b|\bరిటర్న్\b|\bతిరిగి\b/u,
-
-    // Kannada
-    /\bಖರೀದಿ\b|\bಮಾರಾಟ\b|\bರಿಟರ್ನ್\b|\bಹಿಂತಿರುಗಿ\b/u,
-
-    // Marathi
-    /\bखरेदी\b|\bविक्री\b|\bरिटर्न\b|\bपरत\b/u,
-
+    // English
+    /\b(purchased|purchase|bought|sold|sale|return|returned)\b/i,
+    // Hindi (Devanagari)
+    /खरीद|खरीदा|बिक्री|बेचा|रिटर्न|वापसी/u,
     // Bengali
-    /\bক্রয়\b|\bবিক্রি\b|\bরিটার্ন\b|\bফেরত\b/u,
+    /ক্রয়|বিক্রি|ফেরত|রিটার্ন/u,
+    // Tamil
+    /கொள்முதல்|விற்பனை|திருப்பு/u,
+    // Telugu
+    /కొనుగోలు|అమ్మకం|రిటర్న్|తిరిగి/u,
+    // Kannada
+    /ಖರೀದಿ|ಮಾರಾಟ|ರಿಟರ್ನ್|ಹಿಂತಿರುಗಿ/u,
+    // Marathi (Devanagari)
+    /खरेदी|विक्री|रिटर्न|परत/u,
+    // Gujarati
+    /ખરીદી|વેચાણ|રીટર્ન|વાપસી/u,
+    // Hinglish / Roman Hindi
+    /\b(kharid|kharide|khareed|becha|bikri|return|wapis)\b/i
   ];
-  const hasActionToken = actionTokens.some(rx => rx.test(s));
+  const hasAction = actionTokens.some(rx => rx.test(src));
 
-  // 7) Icon/bullet-leading lines (typical in aggregated confirmations)
-  const iconOrBulletLines = (s.match(/(^|\n)\s*(📦|🛒|↩️|•)\s+/g) || []).length >= 1;
+  // 6) “✅ Successfully updated …” (language-agnostic via check-mark + digits)
+  const hasCheck = /✅/.test(src);
+  const hasCounts = /✅\s*.*?\d+\s*.*?\d+/.test(src); // e.g., “✅ … 3 of 4 …”
 
-  // Score features
+  // Score the features (keeps your previous threshold semantics)
   let score = 0;
-  if (hasAck) score += 2;
-  if (hasCounts) score += 2;
-  if (hasTxnIcon) score += 1;
-  if (iconOrBulletLines) score += 1;
+  if (hasEmojiHead) score += 2;
+  if (hasBulletHead) score += 1;
+  if (hasQtyUnit) score += 1;
+  if (hasPrice) score += 1;
   if (hasStock) score += 1;
-  if (hasRupee || hasAtRate || hasPriceLine) score += 1;
-  if (hasActionToken) score += 1;
+  if (hasAction) score += 2;
+  if (hasCheck) score += 1;
+  if (hasCounts) score += 1;
 
-  // Explicit override
   if (opts?.isConfirmation === true) return true;
-
-  // Threshold decision
   const threshold = Number.isFinite(opts?.threshold) ? opts.threshold : 3;
   return score >= threshold;
 }
@@ -16241,6 +16245,7 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
               const reqId = String(tagOpts?.requestId || tagOpts?.req || '').trim();
               if (looksLikeTxnConfirmation(finalText)) {
                 console.log(`[confirm->undo] start lang=${lang} req=${reqId}`);
+                await new Promise(r => setTimeout(r, 350));
                 await sendUndoCTAQuickReply(formattedTo, lang, reqId);
                 console.log(`[confirm->undo] done req=${reqId}`);
               }
