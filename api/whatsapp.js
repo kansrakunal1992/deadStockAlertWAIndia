@@ -131,68 +131,52 @@ async function resolveSonioxLanguageHints(From, detectedLanguageHint = 'en') {
 }
 
 // === STRONGER: Detect transaction confirmations (single & aggregated, multi-language) ===
-function looksLikeTxnConfirmation(text, opts = {}) {
-  const s = String(text ?? '').trim();
-  if (!s) return false;
-
-  // Numerals to ASCII to stabilize regexes; lowercase for Latin-only checks
-  let src = s;
-  try { src = normalizeNumeralsToLatin(s); } catch (_) { /* best-effort */ }
-  const lower = src.toLowerCase();
+function looksLikeTxnConfirmation(text, opts = {}) {  
+const s0 = String(text ?? '').trim();
+  if (!s0) return false;
+  // Stabilize numerals; keep original for Unicode script checks
+  let s = s0;
+  try { s = normalizeNumeralsToLatin(s0); } catch (_) {}
+  const lower = s.toLowerCase();
 
   // 1) Emoji / bullet heads (language-agnostic)
-  const hasEmojiHead = /^[\u2705\u21a9\ufe0f\ud83d\udce6\ud83d\uded2]/.test(src); // ✅ ↩️ 📦 🛒
-  const hasBulletHead = /(^|\n)\s*(\ud83d\udce6|\ud83d\uded2|\u21a9\ufe0f|•)\s+/.test(src);
+  const hasEmojiHead = /^[\u2705\u21a9\ufe0f\ud83d\udce6\ud83d\uded2]/.test(s0); // ✅ ↩️ 📦 🛒
+  const hasBulletHead = /(^|\n)\s*(\ud83d\udce6|\ud83d\uded2|\u21a9\ufe0f|•)\s+/.test(s0);
 
-  // 2) Quantity + unit anchors (uses your UNIT_REGEX if available)
+  // 2) Quantity + unit anchors (prefer UNIT_REGEX when present)
   let hasQtyUnit = false;
   try {
-    hasQtyUnit = /\d/.test(src) && (typeof UNIT_REGEX === 'object' ? UNIT_REGEX.test(src) : false);
-    if (!hasQtyUnit) {
-      // Fallback: simple "<number> <letters>" to tolerate localized units when UNIT_REGEX misses
-      hasQtyUnit = /\d+\s+\p{L}+/u.test(src);
-    }
-  } catch (_) {
-    hasQtyUnit = /\d+\s+\p{L}+/u.test(src);
-  }
+    hasQtyUnit = /\d/.test(s) && (typeof UNIT_REGEX === 'object' ? UNIT_REGEX.test(s0) : false);
+    if (!hasQtyUnit) hasQtyUnit = /\d+\s+\p{L}+/u.test(s0); // fallback for localized units
+  } catch (_) { hasQtyUnit = /\d+\s+\p{L}+/u.test(s0); }
 
   // 3) Price anchors (₹, Rs, INR or "@ 70 / unit")
   const hasPrice =
-    /(?:₹|rs\.?|inr)\s*\d+(?:[.,]\d+)?/i.test(src) ||
-    /@\s*\d+(?:[.,]\d+)?(?:\s*\/\s*\p{L}+)?/iu.test(src);
+    /(?:₹|rs\.?|inr)\s*\d+(?:[.,]\d+)?/i.test(s) ||
+    /@\s*\d+(?:[.,]\d+)?(?:\s*\/\s*\p{L}+)?/iu.test(s0);
 
-  // 4) Stock suffix in English or localized “stock” tokens
+  // 4) Stock suffix (English + localized “stock”)
   const stockTokens = /(?:\(stock:|\(\s*(?:स्टॉक|স্টক|ஸ்டாக்|స్టాక్|ಸ್ಟಾಕ್|स्टॉक|સ્ટોક)\s*:)/iu;
-  const hasStock = stockTokens.test(src);
+  const hasStock = stockTokens.test(s0);
 
-  // 5) Action tokens across languages + Hinglish (Roman Hindi)
+  // 5) Action verbs across Indic scripts + Hinglish
   const actionTokens = [
-    // English
-    /\b(purchased|purchase|bought|sold|sale|return|returned)\b/i,
-    // Hindi (Devanagari)
-    /खरीद|खरीदा|बिक्री|बेचा|रिटर्न|वापसी/u,
-    // Bengali
-    /ক্রয়|বিক্রি|ফেরত|রিটার্ন/u,
-    // Tamil
-    /கொள்முதல்|விற்பனை|திருப்பு/u,
-    // Telugu
-    /కొనుగోలు|అమ్మకం|రిటర్న్|తిరిగి/u,
-    // Kannada
-    /ಖರೀದಿ|ಮಾರಾಟ|ರಿಟರ್ನ್|ಹಿಂತಿರುಗಿ/u,
-    // Marathi (Devanagari)
-    /खरेदी|विक्री|रिटर्न|परत/u,
-    // Gujarati
-    /ખરીદી|વેચાણ|રીટર્ન|વાપસી/u,
-    // Hinglish / Roman Hindi
-    /\b(kharid|kharide|khareed|becha|bikri|return|wapis)\b/i
+    /\b(purchased|purchase|bought|sold|sale|return|returned)\b/i,     // English
+    /खरीद|खरीदा|बिक्री|बेचा|रिटर्न|वापसी|खरेदी|विक्री/u,            // Hindi/Marathi
+    /ক্রয়|বিক্রি|ফেরত|রিটার্ন/u,                                    // Bengali
+    /கொள்முதல்|விற்பனை|திருப்பு|ரிட்டர்ன்/u,                        // Tamil
+    /కొనుగోలు|అమ్మకం|తిరిగి|రిటర్న్/u,                              // Telugu
+    /ಖರೀದಿ|ಮಾರಾಟ|ಹಿಂತಿರುಗಿ|ರಿಟರ್ನ್/u,                              // Kannada
+    /ખરીદી|વેચાણ|રીટર્ન|વાપસી/u,                                    // Gujarati
+    /\b(kharid|kharide|khareed|becha|bikri|return|wapis)\b/i          // Hinglish (Roman Hindi)
   ];
-  const hasAction = actionTokens.some(rx => rx.test(src));
+  const hasAction = actionTokens.some(rx => rx.test(s0));
 
-  // 6) “✅ Successfully updated …” (language-agnostic via check-mark + digits)
-  const hasCheck = /✅/.test(src);
-  const hasCounts = /✅\s*.*?\d+\s*.*?\d+/.test(src); // e.g., “✅ … 3 of 4 …”
+  // 6) “✅ … 3 of 4 …”
+  const hasCheck = /✅/.test(s0);
+  const hasCounts = /✅\s*.*?\d+\s*.*?\d+/.test(s0);
 
-  // Score the features (keeps your previous threshold semantics)
+  // Feature scoring
   let score = 0;
   if (hasEmojiHead) score += 2;
   if (hasBulletHead) score += 1;
@@ -6145,6 +6129,10 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
       const _payloadId = String(
         raw.Body ?? raw.ListId ?? raw.EventId ?? raw.ContentSid ?? ''
       ).toLowerCase();  
+            
+          const _payloadTitle = String(raw.ButtonText ?? raw.Body ?? '').toLowerCase();
+          const isUndoTap = /\bundo\b/.test(_payloadId) || /\bundo\b/.test(_payloadTitle);
+
     // === Intercept QR taps (purchase/sale/return) and send localized examples ===
           try {
             // Resolve UI language from preference; fall back to 'en'
@@ -6158,6 +6146,26 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
             const isPurchase = _payloadId === 'qr_purchase';
             const isSale     = _payloadId === 'qr_sale';
             const isReturn   = _payloadId === 'qr_return';
+                        
+            // ---- NEW: Undo CTA ----
+                if (isUndoTap) {
+                  try {
+                    const active = await isUndoWindowActive(shopIdTop); // 2-min guard (DB-side)
+                    if (active) {
+                      const res = await applyUndoLastTxn(shopIdTop);     // revert the last inventory update
+                      const okMsg = await t('↩️ Undo successful. Inventory restored.', langUi);
+                      await sendMessageViaAPI(from, finalizeForSend(okMsg, langUi));
+                    } else {
+                      const expireMsg = await t('⌛ Undo window expired (2 minutes).', langUi);
+                      await sendMessageViaAPI(from, finalizeForSend(expireMsg, langUi));
+                    }
+                  } catch (e) {
+                    const errMsg = await t('⚠️ Unable to run Undo right now. Please try again.', langUi);
+                    await sendMessageViaAPI(from, finalizeForSend(errMsg, langUi));
+                  }
+                  return true; // handled
+                }
+
             if (isPurchase || isSale || isReturn) {
               // Localized header: Example (Purchase|Sale|Return)
               const header = (function () {
@@ -7060,7 +7068,8 @@ const {
   findProductMatches,
   openCorrectionWindow,
   applyUndoLastTxn,
-  closeCorrectionWindow
+  closeCorrectionWindow,
+  isUndoWindowActive
 } = require('../database');
 
 // Minimal helper to send the Undo quick-reply via Twilio
@@ -7708,7 +7717,19 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
   // Build the one-line head via composer (emoji + unit/price/stock)  
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
-await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
+await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body); 
+// Cache sale txn for Undo (best-effort)
+  try {
+    const shopId = shopIdFrom(From);
+    globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
+    globalThis.__lastTxnForShop.set(shopId, {
+      action: 'sold',
+      product: productRawForDb ?? product ?? productDisplay ?? '',
+      quantity: Number(qty ?? 0),
+      unit: normalizeUnit ? normalizeUnit(unit) : unit || 'pieces',
+      compositeKey: null
+    });
+  } catch (_) {}
 }
 
 /**
@@ -7760,6 +7781,20 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
   console.log(`[sendSaleConfirmationOnce] start lang=${detectedLanguage} req=${requestId} from=${From}`);
   await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);
   console.log(`[sendSaleConfirmationOnce] sent confirmation`);  
+    
+  // Cache sale txn for Undo (best-effort)
+    try {
+      const shopId = shopIdFrom(From);
+      globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
+      globalThis.__lastTxnForShop.set(shopId, {
+        action: 'sold',
+        product: productRawForDb ?? product ?? productDisplay ?? '',
+        quantity: Number(qty ?? 0),
+        unit: normalizeUnit ? normalizeUnit(unit) : unit || 'pieces',
+        compositeKey: null
+      });
+    } catch (_) {}
+
 }
 
 /**
@@ -16306,11 +16341,15 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
       // ---- NEW: Fire Undo CTA if the part contains a txn confirmation (usually last part) ----
             try {
               const reqId = String(tagOpts?.requestId || tagOpts?.req || '').trim();
-              if (looksLikeTxnConfirmation(text)) {
-                console.log(`[confirm->undo] start(multi) lang=${lang} req=${reqId}`);
-                await sendUndoCTAQuickReply(formattedTo, lang, reqId);
-                console.log(`[confirm->undo] done(multi) req=${reqId}`);
-              }
+              
+              // Ensure the CTA is sent only after the final bubble and with a small lag
+                    if (isLast && looksLikeTxnConfirmation(text)) {
+                      console.log(`[confirm->undo] start(multi) lang=${lang} req=${reqId}`);
+                      await new Promise(r => setTimeout(r, 350));
+                      await sendUndoCTAQuickReply(formattedTo, lang, reqId);
+                      console.log(`[confirm->undo] done(multi) req=${reqId}`);
+                    }
+
             } catch (e) {
               console.warn('[confirm->undo] failed (multi):', e?.message);
             }
@@ -20052,6 +20091,21 @@ async function handleInventoryState(Body, From, state, requestId, res) {
           message += `${rawLine}${stockPart}\n`;
           if (r.success) successCount++;
         }
+    
+        // Cache the last txn for this shop so Undo can revert precisely
+          try {
+            const lastProcessed = processed[processed.length - 1];
+            if (lastProcessed) {
+              globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
+              globalThis.__lastTxnForShop.set(shopId, {
+                action: String(lastProcessed.action ?? '').toLowerCase(),
+                product: lastProcessed.product,
+                quantity: Number(lastProcessed.quantity ?? 0),
+                unit: lastProcessed.unitAfter ?? lastProcessed.unit ?? 'pieces',
+                compositeKey: lastProcessed.compositeKey ?? null
+              });
+            }
+          } catch (_) { /* non-blocking */ }
 
         message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
 
@@ -20334,6 +20388,22 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           message += `${String(rawLine).trim()}${stockPart}\n`;
           if (r.success) successCount++;
         }
+        
+        // Cache the last txn for this shop so Undo can revert precisely
+          try {
+            const lastProcessed = processed[processed.length - 1];
+            if (lastProcessed) {
+              globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
+              globalThis.__lastTxnForShop.set(shopId, {
+                action: String(lastProcessed.action ?? '').toLowerCase(),
+                product: lastProcessed.product,
+                quantity: Number(lastProcessed.quantity ?? 0),
+                unit: lastProcessed.unitAfter ?? lastProcessed.unit ?? 'pieces',
+                compositeKey: lastProcessed.compositeKey ?? null
+              });
+            }
+          } catch (_) { /* non-blocking */ }
+        
         message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;
         const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
         await sendMessageDedup(From, formattedResponse);
@@ -20647,6 +20717,22 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         message += `${rawLine}${stockPart}\n`;
         if (r.success) successCount++;
       }
+      
+      // Cache the last txn for this shop so Undo can revert precisely
+          try {
+            const lastProcessed = processed[processed.length - 1];
+            if (lastProcessed) {
+              globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
+              globalThis.__lastTxnForShop.set(shopId, {
+                action: String(lastProcessed.action ?? '').toLowerCase(),
+                product: lastProcessed.product,
+                quantity: Number(lastProcessed.quantity ?? 0),
+                unit: lastProcessed.unitAfter ?? lastProcessed.unit ?? 'pieces',
+                compositeKey: lastProcessed.compositeKey ?? null
+              });
+            }
+          } catch (_) { /* non-blocking */ }
+    
       message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;
       const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
       await sendMessageDedup(From, formattedResponse);
