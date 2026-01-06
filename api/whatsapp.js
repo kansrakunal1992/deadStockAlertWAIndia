@@ -20062,6 +20062,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     } catch (e) {
       console.warn(`[${requestId}] New interaction: saveUserPreference failed:`, e?.message);
     }
+  await sendUndoCTAQuickReply(From, detectedLanguage);
   // === NEW: typed "demo" intent (defensive, outside orchestrator) ===
       try {
         const langPinned = String(detectedLanguage ?? 'en').toLowerCase();
