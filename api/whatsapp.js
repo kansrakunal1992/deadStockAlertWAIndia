@@ -6987,6 +6987,7 @@ const {
 
 // Minimal helper to send the Undo quick-reply via Twilio
 async function sendUndoCTAQuickReply(From, lang = 'en', requestId = '') {
+  console.log('Entered sendUndoCTAQuickReply');
   try {
     // 1) Normalize the destination to WhatsApp format: 'whatsapp:+<E.164>'
     const toWa = String(From ?? '').startsWith('whatsapp:')
