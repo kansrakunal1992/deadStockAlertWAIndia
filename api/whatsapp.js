@@ -6995,11 +6995,13 @@ async function sendUndoCTAQuickReply(From, lang = 'en') {
       console.warn('[undoCTA] No correctionUndoSid for lang:', lang);
       return false;
     }
+        
     await client.messages.create({
-      to: From,
-      from: process.env.TWILIO_WHATSAPP_FROM || process.env.TWILIO_WHATSAPP_NUMBER,
-      contentSid: correctionUndoSid,
-    });
+         to: From, // e.g. 'whatsapp:+919013283687'
+         messagingServiceSid: process.env.TWILIO_MSG_SERVICE_SID, // same MSID used for other Content sends
+         contentSid: correctionUndoSid,
+       });
+
     return true;
   } catch (e) {
     console.warn('[undoCTA] send failed:', e?.message);
@@ -7597,7 +7599,7 @@ const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
   
 // Always send the Undo QR (Step 1: unconditional)
-await sendUndoCTAQuickReply(From, lang);
+await sendUndoCTAQuickReply(From, detectedLanguage);
 
 }
 
