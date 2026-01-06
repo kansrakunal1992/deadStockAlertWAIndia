@@ -42,21 +42,29 @@ const UNDO_CORRECTION_LABELS = {
   bn: { body: 'ভুল হয়েছে? ২ মিনিটে Undo চাপুন। Ignore করলে নিজে থেকেই লক হবে।', button: 'Undo' }
 };
 
+if (!ACCOUNT_SID || !AUTH_TOKEN) {
+   throw new Error('Missing ACCOUNT_SID or AUTH_TOKEN');
+ }
+
 async function createUndoCorrectionCTAForLang(lang) {
   const base = normalizeLangForContent(lang);
-  const l = UNDO_CORRECTION_LABELS[base] ?? UNDO_CORRECTION_LABELS.en;
+
+  const undoTitle = getUndoLabelForLang(base);   // localized title: "Undo"/"ठीक करें"/native
+  const bodyLoc   = getUndoBodyForLang(base);    // simple local body referencing the title
+
   const payload = {
     friendly_name: `saamagrii_undo_correction_${base}_${Date.now()}`,
     language: base,
     types: {
       'twilio/quick-reply': {
-        body: l.body,
+        body: bodyLoc,
         actions: [
-          { type: 'QUICK_REPLY', title: clampTitle(l.button), id: 'undo_last_txn' }
+          { type: 'QUICK_REPLY', title: undoTitle, id: 'undo_last_txn' }
         ]
       }
     }
   };
+
   const { data } = await axios.post(CONTENT_API_URL, payload, {
     auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
   });
@@ -64,14 +72,50 @@ async function createUndoCorrectionCTAForLang(lang) {
   return data.sid;
 }
 
-if (!ACCOUNT_SID || !AUTH_TOKEN) {
-   throw new Error('Missing ACCOUNT_SID or AUTH_TOKEN');
- }
-
 // Helper: map script variants (e.g., 'hi-latn') to base language ('hi') for content labels
 function normalizeLangForContent(lang) {
   const L = String(lang || 'en').toLowerCase();
   return L.endsWith('-latn') ? L.split('-')[0] : L;
+}
+
+// 4.a: Localized "Undo" button title (≤ 20 chars)
+// en: "Undo" (English); hi: "ठीक करें" (Devanagari); others: native script equivalents.
+function getUndoLabelForLang(lang) {
+  const L = normalizeLangForContent(lang);
+  const map = {
+    en: 'Undo',          // English
+    hi: 'ठीक करें',       // Hindi (theek karein)
+    gu: 'ઠીક કરો',        // Gujarati
+    ta: 'சரி செய்',       // Tamil
+    te: 'సరిచేయి',        // Telugu
+    kn: 'ಸರಿಪಡಿಸಿ',       // Kannada
+    mr: 'ठीक करा',        // Marathi
+    bn: 'ঠিক করুন',       // Bengali
+    // Optional: add Punjabi if needed
+    // pa: 'ਠੀਕ ਕਰੋ',
+  };
+  const label = map[L] || map.en;
+  return clampTitle(label); // Twilio quick-reply title limit ≤ 20
+}
+
+// 4.b: Simple local body text that references the localized button title
+function getUndoBodyForLang(lang) {
+  const L = normalizeLangForContent(lang);
+  const undo = getUndoLabelForLang(L); // embeds "Undo"/"ठीक करें"/native script
+
+  const map = {
+    en: `Made a mistake? Tap "${undo}" within 2 minutes to revert.`,
+    hi: `गलती हो गई? 2 मिनट के भीतर "${undo}" दबाएँ।`,
+    gu: `ભૂલ થઈ? 2 મિનિટમાં "${undo}" દબાવો.`,
+    ta: `தவறா? 2 நிமிடங்களில் "${undo}" அழுத்தவும்.`,
+    te: `తప్పా? 2 నిమిషాల్లో "${undo}" నొక్కండి.`,
+    kn: `ತಪ್ಪಾ? 2 ನಿಮಿಷಗಳಲ್ಲಿ "${undo}" ಒತ್ತಿ.`,
+    mr: `चूक झाली? 2 मिनिटांत "${undo}" दाबा.`,
+    bn: `ভুল হয়েছে? ২ মিনিটের মধ্যে "${undo}" চাপুন।`,
+    // pa: `ਗਲਤੀ ਹੋ ਗਈ? 2 ਮਿੰਟਾਂ ਵਿੱਚ "${undo}" ਦਬਾਓ।`,
+  };
+
+  return map[L] || map.en;
 }
 
  // ---------- LOCALIZATION DICTS (native script labels) ----------
