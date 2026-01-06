@@ -130,66 +130,109 @@ async function resolveSonioxLanguageHints(From, detectedLanguageHint = 'en') {
   return mapLangToSonioxHints(lang);
 }
 
-// === STRONGER: Detect transaction confirmations (single & aggregated, multi-language) ===
-function looksLikeTxnConfirmation(text, opts = {}) {  
-const s0 = String(text ?? '').trim();
+/**
+ * Detects if a message body is a transaction confirmation.
+ * - opts.strict === true → only match canonical confirmation shapes (success only).
+ * - default (non-strict) → fall back to your original heuristic.
+ *
+ * Canonical shapes referenced from your composers:
+ *  - 🛒 Sold … (compact sale)
+ *  - 📦 Purchased … (compact purchase)
+ *  - ↩️ Return processed — … (text/voice fallback)
+ *  - ✅ Returned … (compact return)
+ *  - ✅ {product} — sold {qty} {unit} @ ₹{price} (verbose header)
+ */
+function looksLikeTxnConfirmation(text, opts = {}) {
+  const s0 = String(text ?? '').trim();
   if (!s0) return false;
-  // Stabilize numerals; keep original for Unicode script checks
+
+  // Normalize numerals for qty checks; keep original for Unicode verb/script checks
   let s = s0;
   try { s = normalizeNumeralsToLatin(s0); } catch (_) {}
-  const lower = s.toLowerCase();
 
-  // 1) Emoji / bullet heads (language-agnostic)
-  const hasEmojiHead = /^[\u2705\u21a9\ufe0f\ud83d\udce6\ud83d\uded2]/.test(s0); // ✅ ↩️ 📦 🛒
-  const hasBulletHead = /(^|\n)\s*(\ud83d\udce6|\ud83d\uded2|\u21a9\ufe0f|•)\s+/.test(s0);
+  const hasDigit = /\d/.test(s);           // at least one quantity numeral
+  const HEAD = /^(?:\u2705|\u{1F6D2}|\u{1F4E6}|\u21A9\uFE0F)\s*/u; // ✅ 🛒 📦 ↩️
 
-  // 2) Quantity + unit anchors (prefer UNIT_REGEX when present)
-  let hasQtyUnit = false;
-  try {
-    hasQtyUnit = /\d/.test(s) && (typeof UNIT_REGEX === 'object' ? UNIT_REGEX.test(s0) : false);
-    if (!hasQtyUnit) hasQtyUnit = /\d+\s+\p{L}+/u.test(s0); // fallback for localized units
-  } catch (_) { hasQtyUnit = /\d+\s+\p{L}+/u.test(s0); }
-
-  // 3) Price anchors (₹, Rs, INR or "@ 70 / unit")
-  const hasPrice =
-    /(?:₹|rs\.?|inr)\s*\d+(?:[.,]\d+)?/i.test(s) ||
-    /@\s*\d+(?:[.,]\d+)?(?:\s*\/\s*\p{L}+)?/iu.test(s0);
-
-  // 4) Stock suffix (English + localized “stock”)
-  const stockTokens = /(?:\(stock:|\(\s*(?:स्टॉक|স্টক|ஸ்டாக்|స్టాక్|ಸ್ಟಾಕ್|स्टॉक|સ્ટોક)\s*:)/iu;
-  const hasStock = stockTokens.test(s0);
-
-  // 5) Action verbs across Indic scripts + Hinglish
-  const actionTokens = [
-    /\b(purchased|purchase|bought|sold|sale|return|returned)\b/i,     // English
-    /खरीद|खरीदा|बिक्री|बेचा|रिटर्न|वापसी|खरेदी|विक्री/u,            // Hindi/Marathi
-    /ক্রয়|বিক্রি|ফেরত|রিটার্ন/u,                                    // Bengali
-    /கொள்முதல்|விற்பனை|திருப்பு|ரிட்டர்ன்/u,                        // Tamil
-    /కొనుగోలు|అమ్మకం|తిరిగి|రిటర్న్/u,                              // Telugu
-    /ಖರೀದಿ|ಮಾರಾಟ|ಹಿಂತಿರುಗಿ|ರಿಟರ್ನ್/u,                              // Kannada
-    /ખરીદી|વેચાણ|રીટર્ન|વાપસી/u,                                    // Gujarati
-    /\b(kharid|kharide|khareed|becha|bikri|return|wapis)\b/i          // Hinglish (Roman Hindi)
+  // --- Multilingual verb tokens found in your code (labels/footers) ---
+  // EN: Sold, Purchased, Returned
+  // HI: खरीद (purchase), बिक्री (sale), रिटर्न (return)
+  // BN: ক্রয় (purchase), বিক্রি (sale), রিটার্ন (return)
+  // TA: கொள்முதல் (purchase), விற்பனை (sale), ரிட்டர்ன் (return)
+  // TE: కొనుగోలు (purchase), అమ్మకం (sale), రిటర్న్ (return)
+  // KN: ಖರೀದಿ (purchase), ಮಾರಾಟ (sale), ರಿಟರ್ನ್ (return)
+  // MR: खरेदी (purchase), विक्री (sale), परत (return)
+  // GU: ખરીદી (purchase), વેચાણ (sale), રિટર્ન (return)
+  const SALE_TOKENS = [
+    'Sold', 'sold',
+    'बिक्री',            // hi
+    'বিক্রি',            // bn
+    'விற்பனை',           // ta
+    'అమ్మకం',            // te
+    'ಮಾರಾಟ',            // kn
+    'विक्री',            // mr
+    'વેચાણ'             // gu
   ];
-  const hasAction = actionTokens.some(rx => rx.test(s0));
+  const PURCHASE_TOKENS = [
+    'Purchased', 'purchased',
+    'खरीद',              // hi
+    'ক্রয়',              // bn
+    'கொள்முதல்',         // ta
+    'కొనుగోలు',          // te
+    'ಖರೀದಿ',            // kn
+    'खरेदी',             // mr
+    'ખરીદી'              // gu
+  ];
+  const RETURN_TOKENS = [
+    'Returned', 'returned',
+    'रिटर्न',            // hi
+    'রিটার্ন',            // bn
+    'ரிட்டர்ன்',          // ta
+    'రిటర్న్',            // te
+    'ರಿಟರ್ನ್',           // kn
+    'परत',               // mr
+    'રિટર્ન'             // gu
+  ];
 
-  // 6) “✅ … 3 of 4 …”
-  const hasCheck = /✅/.test(s0);
-  const hasCounts = /✅\s*.*?\d+\s*.*?\d+/.test(s0);
+  // Build verb alternations (Unicode aware)
+  const tok = (arr) => arr
+    .map(x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
 
-  // Feature scoring
-  let score = 0;
-  if (hasEmojiHead) score += 2;
-  if (hasBulletHead) score += 1;
-  if (hasQtyUnit) score += 1;
-  if (hasPrice) score += 1;
-  if (hasStock) score += 1;
-  if (hasAction) score += 2;
-  if (hasCheck) score += 1;
-  if (hasCounts) score += 1;
+  const SALE_VERB = new RegExp(HEAD.source + '(?:' + tok(SALE_TOKENS) + ')\\b', 'u');
+  const PURCHASE_VERB = new RegExp(HEAD.source + '(?:' + tok(PURCHASE_TOKENS) + ')\\b', 'u');
+  const RETURN_VERB = new RegExp(HEAD.source + '(?:' + tok(RETURN_TOKENS) + ')\\b', 'u');
 
-  if (opts?.isConfirmation === true) return true;
-  const threshold = Number.isFinite(opts?.threshold) ? opts.threshold : 3;
-  return score >= threshold;
+  // Canonical return fallback: "↩️ Return processed — Paracetamol: +2 packets"
+  const RETURN_PROCESSED = /^\u21A9\uFE0F\s*Return processed\s+—\s*.+?:\s*\+\d+(?:\.\d+)?\s+[^\s]+$/u;
+
+  // Verbose sale header you compose in English: "✅ {product} — sold {qty} {unit} @ ₹{price}"
+  const SALE_VERBOSE_HDR = /^\u2705\s*.+?\s+—\s+sold\s+\d+(?:\.\d+)?\s+[^\s]+(?:\s+@\s+₹\d+(?:\.\d+)?)?$/iu;
+
+  // Strict: require (emoji head + localized verb) OR one of the canonical lines, AND at least one numeral.
+  if (opts.strict === true) {
+    const isMatch =
+      SALE_VERB.test(s0) ||
+      PURCHASE_VERB.test(s0) ||
+      RETURN_VERB.test(s0) ||
+      RETURN_PROCESSED.test(s0) ||
+      SALE_VERBOSE_HDR.test(s0);
+    return isMatch && hasDigit;
+  }
+
+  // --- Default: keep your original heuristic (emoji/bullets + qty/unit anchors) ---
+  // If you have UNIT_REGEX in scope, use it here; else fallback to digits + a loose unit token set.
+  try {
+    const unitRx = (typeof UNIT_REGEX === 'object' && UNIT_REGEX)
+      || /\b(kg|kgs|g|gm|gms|l|ltr|ltrs|ml|packet|packets|piece|pieces|लीटर|पैकेट|नंग|லிட்டர்|பாக்கெட்|లీటర్|ప్యాకెట్|ಲೀಟರ್|ಪ್ಯಾಕೆಟ್|लिटर|पॅकेट|લિટર|પેકેટ)\b/iu;
+
+    const hasHead = HEAD.test(s0) || /^[•]/.test(s0); // bullets/emoji
+    const hasUnit = unitRx.test(s0);
+
+    return hasHead && hasDigit && hasUnit;
+  } catch {
+    // Last resort: emoji head + digit
+    return HEAD.test(s0) && hasDigit;
+  }
 }
 
 // --------------------------------------------------------------------------------
@@ -16278,7 +16321,7 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
       // ---- NEW: Fire Undo CTA right after a txn confirmation ----
             try {
               const reqId = String(tagOpts?.requestId || tagOpts?.req || '').trim();
-              if (looksLikeTxnConfirmation(finalText)) {
+              if (looksLikeTxnConfirmation(finalText,{ strict: true }),) {
                 console.log(`[confirm->undo] start lang=${lang} req=${reqId}`);
                 await new Promise(r => setTimeout(r, 350));
                 await sendUndoCTAQuickReply(formattedTo, lang, reqId);
@@ -16343,7 +16386,7 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
               const reqId = String(tagOpts?.requestId || tagOpts?.req || '').trim();
               
               // Ensure the CTA is sent only after the final bubble and with a small lag
-                    if (isLast && looksLikeTxnConfirmation(text)) {
+                    if (isLast && looksLikeTxnConfirmation(text,{ strict: true })) {
                       console.log(`[confirm->undo] start(multi) lang=${lang} req=${reqId}`);
                       await new Promise(r => setTimeout(r, 350));
                       await sendUndoCTAQuickReply(formattedTo, lang, reqId);
