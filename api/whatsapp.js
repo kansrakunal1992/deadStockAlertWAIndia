@@ -7624,10 +7624,8 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
 const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
 const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
-  
 // Always send the Undo QR (Step 1: unconditional)
 await sendUndoCTAQuickReply(From, detectedLanguage, requestId);
-
 }
 
 /**
@@ -20089,7 +20087,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     } catch (e) {
       console.warn(`[${requestId}] New interaction: saveUserPreference failed:`, e?.message);
     }
-  await sendUndoCTAQuickReply(From, detectedLanguage);
+  
   // === NEW: typed "demo" intent (defensive, outside orchestrator) ===
       try {
         const langPinned = String(detectedLanguage ?? 'en').toLowerCase();
