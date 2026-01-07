@@ -13600,7 +13600,7 @@ for (const update of updates) {
         // mark updated only when we actually changed it from catalog
         priceUpdated: update.action === 'purchased'
           && (Number(update.price) > 0)
-          && (Number(update.price) !== Number(productPrice))
+          && (Number(update.price) !== Number(productPrice)),
         compositeKey: selectedBatchCompositeKey ? normalizeCompositeKey(selectedBatchCompositeKey) : null
       };
       // Debug line to verify at runtime (you can remove later)
