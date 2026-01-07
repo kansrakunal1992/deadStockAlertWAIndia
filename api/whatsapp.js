@@ -7562,8 +7562,7 @@ const saleConfirmTracker = new Set();
 
 const _confirmHashGuard = new Map(); // shopId -> { at: ms, lastHash: string }
 const CONFIRM_BODY_TTL_MS = Number(process.env.CONFIRM_BODY_TTL_MS ?? (10 * 1000));
-async function _sendConfirmOnceByBody(From, detectedLanguage, requestId, body) {
-  
+async function _sendConfirmOnceByBody(From, detectedLanguage, requestId, body, lastTxn = null) {
 const shopId = String(From).replace('whatsapp:', '');
   const t0 = Date.now();
   console.log('[confirm-once] begin', { shopId, requestId, lang: detectedLanguage, len: body?.length ?? 0 });
@@ -7592,7 +7591,7 @@ const shopId = String(From).replace('whatsapp:', '');
 
   console.log('[confirm-once] sending', { shopId, requestId, chars: final.length });
   try {
-    await sendMessageViaAPI(From, final);
+    await sendMessageViaAPI(From, final, { requestId, lastTxn });
     console.log('[confirm-once] sent ok', { requestId, elapsedMs: Date.now() - t0 });
   } catch (e) {
     // Surface Twilio error body if present
@@ -7715,31 +7714,39 @@ function _isDuplicateBody(from, msg, windowMs = 3000) {
   } catch (_) {}
   return false;
 }
+
 async function sendMessageDedup(From, msg, meta = {}) {
   if (!msg) return;
-  // Append language-aware footer; dedupe on the final normalized body          
-    const withFooter = await appendSupportFooter(String(msg).trim(), From);
-      // OPTIONAL GLOBAL FINALIZE:
-      // Determine language hint best-effort (you may keep 'en' to avoid extra DB reads)
-      let langHint = 'en';
-      try {
-        const shopId = String(From ?? '').replace('whatsapp:', '');
-        const pref = await getUserPreference(shopId);
-        if (pref?.success && pref.language) langHint = String(pref.language).toLowerCase();
-      } catch {}
-      const finalBody = finalizeForSend(withFooter, langHint);
-      if (_isDuplicateBody(From, finalBody)) {
+
+  // Append language-aware footer; dedupe on the final normalized body
+  const withFooter = await appendSupportFooter(String(msg).trim(), From);
+
+  // Language hint best-effort (keep 'en' if you want to avoid extra DB reads)
+  let langHint = meta.lang || meta.language || 'en';
+  if (!meta.lang && !meta.language) {
+    try {
+      const shopId = String(From ?? '').replace('whatsapp:', '');
+      const pref = await getUserPreference(shopId);
+      if (pref?.success && pref.language) langHint = String(pref.language).toLowerCase();
+    } catch {}
+  }
+
+  const finalBody = finalizeForSend(withFooter, langHint);
+
+  // Your existing dedupe guard
+  if (_isDuplicateBody(From, finalBody)) {
     try { console.log('[dedupe] suppressed duplicate body for', From); } catch (_) {}
     return;
   }
-  
-  // Forward language/requestId when available; keeps Undo logs correlated
+
+  // 🔑 Forward requestId, lang, AND lastTxn (if caller supplied it)
   const metaForward = {
     requestId: meta.requestId || meta.req || '',
-    lang: meta.lang || meta.language || langHint
+    lang: langHint,
+    lastTxn: meta.lastTxn ?? null
   };
+
   await sendMessageViaAPI(From, finalBody, metaForward);
-  
 }
 
 /**
@@ -13594,6 +13601,7 @@ for (const update of updates) {
         priceUpdated: update.action === 'purchased'
           && (Number(update.price) > 0)
           && (Number(update.price) !== Number(productPrice))
+        compositeKey: selectedBatchCompositeKey ? normalizeCompositeKey(selectedBatchCompositeKey) : null
       };
       // Debug line to verify at runtime (you can remove later)
       console.log(
@@ -18942,8 +18950,19 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
 
      if (justNudged || lines.length === 0) return;
 
-     const body = lines.join('\n');
-     await sendMessageViaAPI(toWhatsApp, finalizeForSend(body, languageCode));
+     const body = lines.join('\n');           
+     // Derive lastTxn from the last successful result (arms Undo for the most recent write)
+          const lastSuccess = Array.isArray(results)
+            ? [...results].reverse().find(r => r?.success && r.inlineConfirmText)
+            : null;
+          const lastTxn = lastSuccess ? {
+            action: String(lastSuccess.action || '').toLowerCase(),   // 'purchased' | 'sold' | 'returned'
+            product: lastSuccess.productRawForDb ?? lastSuccess.product ?? '',
+            quantity: Number(lastSuccess.quantity ?? 0),
+            unit: lastSuccess.unit || 'pieces',
+            compositeKey: lastSuccess.compositeKey ?? null
+          } : null;
+          await sendMessageViaAPI(toWhatsApp, finalizeForSend(body, languageCode), { lastTxn });
    } catch (e) {
      console.warn('[router] inventory ack send failed:', e?.message);
    }
@@ -21477,7 +21496,17 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
                  const header = chooseHeader(successLines.length, COMPACT_MODE, /*isPrice*/ false);
                  const message = [header, ...successLines].join('\n').trim();
                  const formattedResponse = await t(message, detectedLanguage, requestId);
-                 await sendMessageDedup(From, formattedResponse);        
+                                   
+                 const lastSuccess = [...results].reverse().find(r => r?.success && r.inlineConfirmText);
+                 const lastTxn = lastSuccess ? {
+                   action: String(lastSuccess.action || '').toLowerCase(),        // 'purchased' | 'sold' | 'returned'
+                   product: lastSuccess.productRawForDb ?? lastSuccess.product ?? '',
+                   quantity: Number(lastSuccess.quantity ?? 0),
+                   unit: lastSuccess.unit || 'pieces',
+                   compositeKey: lastSuccess.compositeKey ?? null
+                 } : null;
+                 
+                 await sendMessageDedup(From, formattedResponse, { requestId, lastTxn });
                }
                 } else {
                   console.log(`[${requestId}] [text-agg-guard] Suppressed aggregated ack (inline confirmations present)`);
