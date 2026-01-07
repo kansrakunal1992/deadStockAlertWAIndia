@@ -149,7 +149,14 @@ function looksLikeTxnConfirmation(text, opts = {}) {
 
   // Only inspect the first line (actual confirmation)
   const firstLine = s0.split(/\r?\n/)[0].trim();
-
+  
+  // NEW: detect "Undone" confirmations and suppress Undo CTA
+    // Allows an optional ↩️ at the start, then "Undone:" (case-insensitive).
+    const HEAD_UNDONE = /^(?:\u21A9\uFE0F\s*)?Undone:/i;
+    if (HEAD_UNDONE.test(firstLine)) {
+      return false;               // treat as final ack; no Undo button
+    }
+  
   // Normalize numerals for digit checks
   let lineLatin = firstLine;
   try { lineLatin = normalizeNumeralsToLatin(firstLine); } catch {}
@@ -298,6 +305,20 @@ function canonicalizeLang(code) {
    return m;
  })();
  
+function generateCompositeKey(shopId, action, product, unit, quantity, writeId) {
+  const parts = [
+    String(shopId || '').trim(),
+    String(action || '').trim(),
+    String(product || '').trim().toLowerCase(),
+    String(unit || 'pieces').trim().toLowerCase(),
+    String(Number(quantity || 0))
+  ];
+  const base = parts.join('::');
+  const suffix = writeId ? String(writeId) : String(Date.now());
+  // Stable, reproducible identifier for undo/revert
+  return `${base}::${suffix}`;
+}
+
  function canonicalizeUnitToken(tok = '') {
    const lc = String(tok).toLowerCase();
    const key = UNIT_CANONICAL_MAP.get(lc);
@@ -7769,14 +7790,23 @@ await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body);
 // Cache sale txn for Undo (best-effort)
   try {
     const shopId = shopIdFrom(From);
+    
     globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
     globalThis.__lastTxnForShop.set(shopId, {
-      action: 'sold',
+      action: 'purchased',
       product: productRawForDb ?? product ?? productDisplay ?? '',
       quantity: Number(qty ?? 0),
-      unit: normalizeUnit ? normalizeUnit(unit) : unit || 'pieces',
-      compositeKey: null
+      unit: normalizeUnit ? normalizeUnit(unit) : (unit ?? 'pieces'),
+      compositeKey: generateCompositeKey(
+        shopId,
+        'purchased',
+        productRawForDb ?? product ?? productDisplay ?? '',
+        normalizeUnit ? normalizeUnit(unit) : (unit ?? 'pieces'),
+        Number(qty ?? 0),
+        /* writeId */ null
+      )
     });
+
   } catch (_) {}
 }
 
@@ -7833,14 +7863,23 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
   // Cache sale txn for Undo (best-effort)
     try {
       const shopId = shopIdFrom(From);
+            
       globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
       globalThis.__lastTxnForShop.set(shopId, {
         action: 'sold',
         product: productRawForDb ?? product ?? productDisplay ?? '',
         quantity: Number(qty ?? 0),
-        unit: normalizeUnit ? normalizeUnit(unit) : unit || 'pieces',
-        compositeKey: null
-      });
+        unit: normalizeUnit ? normalizeUnit(unit) : (unit ?? 'pieces'),
+        compositeKey: generateCompositeKey(
+          shopId,
+          'sold',
+          productRawForDb ?? product ?? productDisplay ?? '',
+          normalizeUnit ? normalizeUnit(unit) : (unit ?? 'pieces'),
+          Number(qty ?? 0),
+          /* writeId */ null
+        )
+      });  
+
     } catch (_) {}
 
 }
@@ -16297,6 +16336,12 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
     const appendCTA = async () => {
       try {
         const shopId = formattedTo.replace('whatsapp:', '');
+                
+        if (meta?.lastTxn) {
+            globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
+            globalThis.__lastTxnForShop.set(shopId, meta.lastTxn);
+          }
+
         // Resolve preferred language
         let lang = 'en';
         try {
@@ -18955,6 +19000,18 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           const lastSuccess = Array.isArray(results)
             ? [...results].reverse().find(r => r?.success && r.inlineConfirmText)
             : null;
+     
+    // NEW: always synthesize a compositeKey if backend didn’t return one
+    const compositeKey =
+      (lastSuccess?.compositeKey) ??
+      generateCompositeKey(
+        shopId,
+        String(lastSuccess?.action ?? '').toLowerCase(),
+        lastSuccess?.productRawForDb ?? lastSuccess?.product ?? '',
+        lastSuccess?.unit ?? 'pieces',
+        Number(lastSuccess?.quantity ?? 0),
+        lastSuccess?.recordId ?? lastSuccess?.writeId
+      );
           const lastTxn = lastSuccess ? {
             action: String(lastSuccess.action || '').toLowerCase(),   // 'purchased' | 'sold' | 'returned'
             product: lastSuccess.productRawForDb ?? lastSuccess.product ?? '',
@@ -18962,6 +19019,13 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
             unit: lastSuccess.unit || 'pieces',
             compositeKey: lastSuccess.compositeKey ?? null
           } : null;
+     
+    // NEW: persist in global cache for the shop (Undo will read this)
+        if (lastTxn) {
+          globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
+          globalThis.__lastTxnForShop.set(shopId, lastTxn);
+        }
+
           await sendMessageViaAPI(toWhatsApp, finalizeForSend(body, languageCode), { lastTxn });
    } catch (e) {
      console.warn('[router] inventory ack send failed:', e?.message);
