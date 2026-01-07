@@ -149,14 +149,39 @@ function looksLikeTxnConfirmation(text, opts = {}) {
 
   // Only inspect the first line (actual confirmation)
   const firstLine = s0.split(/\r?\n/)[0].trim();
-  
-  // NEW: detect "Undone" confirmations and suppress Undo CTA
-    // Allows an optional ↩️ at the start, then "Undone:" (case-insensitive).
-    const HEAD_UNDONE = /^(?:\u21A9\uFE0F\s*)?Undone:/i;
-    if (HEAD_UNDONE.test(firstLine)) {
-      return false;               // treat as final ack; no Undo button
-    }
-  
+
+  // NEW: detect "Undone" confirmations (localized) and suppress Undo CTA
+  // Allows an optional ↩️ at the start, then language-specific token, then ":".
+  // Tokens include: EN "Undone"/"Undo"; hi "रद्द"/"पूर्ववत"/"वापस लिया"; gu "રદ"/"બાતિલ"/"પૂર્વવત";
+  // ta "ரத்து"/"மீளமை(ப்பு)"; te "రద్దు"; kn "ರದ್ದು"; mr "रद्द"/"पूर्ववत"; bn "বাতিল"/"পূর্বাবস্থায় ফেরত"; pa "ਰੱਦ"/"ਪਿਛੇ ਲਿਆ".
+  const HEAD_UNDONE_ANY = new RegExp(
+    String.raw`^(?:\u21A9\uFE0F\s*)?(?:` +
+      // EN
+      `Undone|Undo(?:ne)?|` +
+      // hi
+      `रद्द(?:\\s*किया)?|पूर्ववत|वापस\\s*लिया|` +
+      // gu
+      `રદ|બાતિલ|પૂર્વવત|` +
+      // ta
+      `ரத்து|மீளமை(?:ப்பு)?|` +
+      // te
+      `రద్దు|` +
+      // kn
+      `ರದ್ದು|` +
+      // mr
+      `रद्द|पूर्ववत|` +
+      // bn
+      `বাতিল|পূর্বাবস্থায়(?:\\s*ফেরত)?|` +
+      // pa
+      `ਰੱਦ|ਪਿਛੇ\\s*ਲਿਆ` +
+    `)\\s*:`,
+    'iu'
+  );
+
+  if (HEAD_UNDONE_ANY.test(firstLine)) {
+    return false;               // treat as final ack; no Undo button
+  }
+
   // Normalize numerals for digit checks
   let lineLatin = firstLine;
   try { lineLatin = normalizeNumeralsToLatin(firstLine); } catch {}
@@ -164,15 +189,12 @@ function looksLikeTxnConfirmation(text, opts = {}) {
   const hasDigit = /\d/.test(lineLatin);
 
   // Heads
-  const HEAD_SALE     = /^\u{1F6D2}\s*/u;    // 🛒
-  const HEAD_PURCHASE = /^\u{1F4E6}\s*/u;    // 📦
+  const HEAD_SALE     = /^🛒\s*/u;    // 🛒
+  const HEAD_PURCHASE = /^📦\s*/u;    // 📦
   const HEAD_RETURN   = /^\u21A9\uFE0F\s*/u; // ↩️
   const HEAD_VERBOSE  = /^\u2705\s*/u;       // ✅ (EN verbose header only)
 
   // Price markers:
-  //  - English/Generic: "@ ₹..", "@ Rs..", "@ INR.."
-  //  - Hindi: "₹..../<unit> पर" (e.g., "₹60/लीटर पर")
-  //  - Fallback: a plain currency + amount (e.g., "₹65")
   const PRICE_AT_RX   = /@\s*(?:₹|Rs\.?|INR)\s*\d+(?:\.\d+)?(?:\/[^\s)]+)?/iu;
   const PRICE_PER_HI  = /(?:₹|Rs\.?|INR)\s*\d+(?:\.\d+)?(?:\/[^\s)]+)?\s*पर\b/iu;
   const PRICE_ANY_RX  = /(?:₹|Rs\.?|INR)\s*\d+(?:\.\d+)?/iu;
@@ -188,33 +210,27 @@ function looksLikeTxnConfirmation(text, opts = {}) {
   const hasStock = STOCK_RX.test(firstLine);
 
   // Hindi verb variants (morphology)
-  const HI_PURCHASE_VERB = /(खरीद(?:[ाी]|ी)?\s*ग(?:या|ई|ए|ईं)?|खरीदा|खरीदी)/u;        // खरीदी गईं, खरीदा, खरीदी
-  const HI_RETURN_VERB   = /(वापस\s*की\s*ग(?:ई|ए|या|ईं)?|वापसी)/u;                    // वापस की गईं, वापसी
-  const HI_SALE_VERB     = /(बेच(?:[ाी])?\s*ग(?:या|ई|ए|ईं)?|बेचा|बेची|बिक्री)/u;      // बेचा गया/बेची गईं/बिक्री
+  const HI_PURCHASE_VERB = /(खरीद(?:[ाी]|ी)?\s*ग(?:या|ई|ए|ईं)?|खरीदा|खरीदी)/u;
+  const HI_RETURN_VERB   = /(वापस\s*की\s*ग(?:ई|ए|या|ईं)?|वापसी)/u;
+  const HI_SALE_VERB     = /(बेच(?:[ाी])?\s*ग(?:या|ई|ए|ईं)?|बेचा|बेची|बिक्री)/u;
 
   // EN verbose sale header (your composer): "✅ product — sold {qty} {unit} @ ₹{price}"
   const EN_VERBOSE_SALE  = /^\u2705\s*.+?\s+—\s+sold\s+\d+(?:\.\d+)?\s+[^\s]+(?:\s+@\s+(?:₹|Rs\.?|INR)\s*\d+(?:\.\d+)?)?$/iu;
 
-  // STRICT mode: canonical heads + digits + (price or stock),
-  // allowing Hindi verb evidence when price/stock absent (return/sale).
   if (opts.strict === true) {
     if (HEAD_PURCHASE.test(firstLine)) {
-      // e.g., "📦 5 बोतलें … खरीदी गईं @ ₹65 (स्टॉक: …)"
       return hasDigit && (hasPrice || hasStock || HI_PURCHASE_VERB.test(firstLine));
     }
     if (HEAD_RETURN.test(firstLine)) {
-      // e.g., "↩️ 3 बोतलें … वापस की गईं (स्टॉक: …)"
       return hasDigit && (hasPrice || hasStock || HI_RETURN_VERB.test(firstLine));
     }
     if (HEAD_SALE.test(firstLine)) {
-      // e.g., "🛒 5 लीटर दूध ₹60/लीटर पर बेचा गया (स्टॉक: …)"
       return hasDigit && (hasPrice || hasStock || HI_SALE_VERB.test(firstLine));
     }
     if (HEAD_VERBOSE.test(firstLine)) {
-      // English verbose sale header only
       return EN_VERBOSE_SALE.test(firstLine);
     }
-    return false; // no canonical head
+    return false;
   }
 
   // --- Non-strict fallback: emoji/bullets + qty + "unit-ish" token ---
@@ -231,6 +247,7 @@ function looksLikeTxnConfirmation(text, opts = {}) {
     return (HEAD_SALE.test(firstLine) || HEAD_PURCHASE.test(firstLine) || HEAD_RETURN.test(firstLine) || HEAD_VERBOSE.test(firstLine)) && hasDigit;
   }
 }
+
 
 // --------------------------------------------------------------------------------
 // NEW: Canonical language mapper (single source of truth)
