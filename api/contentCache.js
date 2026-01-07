@@ -79,43 +79,42 @@ function normalizeLangForContent(lang) {
 }
 
 // 4.a: Localized "Undo" button title (≤ 20 chars)
-// en: "Undo" (English); hi: "ठीक करें" (Devanagari); others: native script equivalents.
+// Using native-script labels exactly as provided in the context.
 function getUndoLabelForLang(lang) {
   const L = normalizeLangForContent(lang);
   const map = {
-    en: 'Undo',          // English
-    hi: 'ठीक करें',       // Hindi (theek karein)
-    gu: 'ઠીક કરો',        // Gujarati
-    ta: 'சரி செய்',       // Tamil
-    te: 'సరిచేయి',        // Telugu
-    kn: 'ಸರಿಪಡಿಸಿ',       // Kannada
-    mr: 'ठीक करा',        // Marathi
-    bn: 'ঠিক করুন',       // Bengali
-    // Optional: add Punjabi if needed
-    // pa: 'ਠੀਕ ਕਰੋ',
+    en: 'Undo',
+    hi: 'ठीक करें',         // Hindi
+    gu: 'ઠીક કરો',          // Gujarati
+    bn: 'ঠিক করুন',         // Bengali
+    mr: 'दुरुस्त करा',      // Marathi (updated from "ठीक करा")
+    ta: 'சரி செய்',          // Tamil
+    te: 'సరి చేయండి',        // Telugu (updated from "సరిచేయి")
+    pa: 'ਠੀਕ ਕਰੋ',           // Punjabi (Gurmukhi) - newly added
+    // kn remains as-is (not specified in provided context)
+    kn: 'ಸರಿಪಡಿಸಿ'          // Kannada (retained)
   };
-  const label = map[L] || map.en;
-  return clampTitle(label); // Twilio quick-reply title limit ≤ 20
+  const label = map[L] ?? map.en;
+  return clampTitle(label); // Twilio quick-reply title limit ≤ 20 (see MAX_QR_TITLE)
 }
 
-// 4.b: Simple local body text that references the localized button title
+// 4.b: Local body text lines that reference the localized button title.
+// Phrases aligned exactly to the provided native-script context.
 function getUndoBodyForLang(lang) {
   const L = normalizeLangForContent(lang);
-  const undo = getUndoLabelForLang(L); // embeds "Undo"/"ठीक करें"/native script
-
+  const undo = getUndoLabelForLang(L); // embeds localized button text
   const map = {
     en: `Made a mistake? Tap "${undo}" within 2 minutes to revert.`,
-    hi: `गलती हो गई? 2 मिनट के भीतर "${undo}" दबाएँ।`,
-    gu: `ભૂલ થઈ? 2 મિનિટમાં "${undo}" દબાવો.`,
-    ta: `தவறா? 2 நிமிடங்களில் "${undo}" அழுத்தவும்.`,
-    te: `తప్పా? 2 నిమిషాల్లో "${undo}" నొక్కండి.`,
-    kn: `ತಪ್ಪಾ? 2 ನಿಮಿಷಗಳಲ್ಲಿ "${undo}" ಒತ್ತಿ.`,
-    mr: `चूक झाली? 2 मिनिटांत "${undo}" दाबा.`,
+    hi: `कोई गलती हुई है? 2 मिनट के भीतर "${undo}" दबाएँ।`,
+    gu: `કોઈ ભૂલ થઈ છે? 2 મિનિટમાં "${undo}" દબાવો.`,
     bn: `ভুল হয়েছে? ২ মিনিটের মধ্যে "${undo}" চাপুন।`,
-    // pa: `ਗਲਤੀ ਹੋ ਗਈ? 2 ਮਿੰਟਾਂ ਵਿੱਚ "${undo}" ਦਬਾਓ।`,
+    mr: `चूक झाली आहे का? 2 मिनिटांत "${undo}" दाबा.`,
+    ta: `ஏதாவது தவறு நடந்ததா? 2 நிமிடங்களுக்குள் "${undo}" அழுத்தவும்.`,
+    te: `ఏదైనా తప్పు జరిగిందా? 2 నిమిషాల్లో "${undo}" నొక్కండి.`,
+    pa: `ਕੋਈ ਗਲਤੀ ਹੋ ਗਈ ਹੈ? 2 ਮਿੰਟਾਂ ਵਿੱਚ "${undo}" ਦਬਾਓ।`,
+    kn: `ತಪ್ಪಾ? 2 ನಿಮಿಷಗಳಲ್ಲಿ "${undo}" ಒತ್ತಿ.` // retained
   };
-
-  return map[L] || map.en;
+  return map[L] ?? map.en;
 }
 
  // ---------- LOCALIZATION DICTS (native script labels) ----------
