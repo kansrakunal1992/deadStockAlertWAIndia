@@ -6181,21 +6181,29 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
             const isReturn   = _payloadId === 'qr_return';
                         
             // ---- NEW: Undo CTA ----
-                if (isUndoTap) {
-                  try {
-                    const active = await isUndoWindowActive(shopIdTop); // 2-min guard (DB-side)
-                    if (active) {
-                      const res = await applyUndoLastTxn(shopIdTop);     // revert the last inventory update
-                      const okMsg = await t('↩️ Undo successful. Inventory restored.', langUi);
-                      await sendMessageViaAPI(from, finalizeForSend(okMsg, langUi));
-                    } else {
-                      const expireMsg = await t('⌛ Undo window expired (2 minutes).', langUi);
-                      await sendMessageViaAPI(from, finalizeForSend(expireMsg, langUi));
-                    }
-                  } catch (e) {
-                    const errMsg = await t('⚠️ Unable to run Undo right now. Please try again.', langUi);
-                    await sendMessageViaAPI(from, finalizeForSend(errMsg, langUi));
-                  }
+                if (isUndoTap) {                  
+                try {
+                        const res = await applyUndoLastTxn(shopIdTop); // DB helper: checks TTL, reverts stock/batch, clears state
+                        if (res?.success) {
+                          const u = res.undone; // {action, product, quantity, unit}
+                          let body = `↩️ Undone: ${u.action} ${u.quantity} ${u.unit} ${u.product}.`;
+                          try {
+                            const overall = await getProductInventoryAggregate(shopIdTop, u.product);
+                            if (overall?.success) body += ` (Stock: ${overall.quantity} ${overall.unit})`;
+                          } catch (_) {}
+                          const tagged = await tagWithLocalizedMode(from, finalizeForSend(body, langUi), langUi);
+                          await sendMessageViaAPI(from, tagged);
+                        } else {
+                          const msgRaw = (res?.error === 'expired')
+                            ? '⌛ Undo window expired. Please try right after the next update.'
+                            : '⚠️ No recent update to undo.';
+                          const tagged = await tagWithLocalizedMode(from, finalizeForSend(msgRaw, langUi), langUi);
+                          await sendMessageViaAPI(from, tagged);
+                        }
+                      } catch (e) {
+                        const errMsg = await t('⚠️ Unable to run Undo right now. Please try again.', langUi);
+                        await sendMessageViaAPI(from, finalizeForSend(errMsg, langUi));
+                      }
                   return true; // handled
                 }
 
@@ -16195,7 +16203,45 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
 
     console.log(`[sendMessageViaAPI] Preparing to send message to: ${formattedTo}`);
     console.log(`[sendMessageViaAPI] Message length: ${String(body).length} characters`);
-          
+    
+    // --- UNDO: derive the "last transaction" payload from a confirmation line (fallback) ---
+    // Prefer tagOpts.lastTxn if your composer passed it; otherwise parse the header line.
+    function _deriveLastTxnFromConfirmation(text, tagOpts) {
+      try {
+        // Prefer explicit payload
+        if (tagOpts?.lastTxn && tagOpts.lastTxn.product) {
+          const t = tagOpts.lastTxn;
+          return {
+            action: String(t.action || '').toLowerCase(), // 'purchased' | 'sold' | 'returned'
+            product: t.product,
+            quantity: Number(t.quantity || 0),
+            unit: t.unit || 'pieces',
+            compositeKey: t.compositeKey ?? null
+          };
+        }
+        // Parse the first line only
+        const line = String(text || '').split(/\r?\n/)[0];
+        const lc = line.toLowerCase();
+        let action = null;
+        if (/\b(purchased)\b/.test(lc) || /📦/.test(line)) action = 'purchased';
+        else if (/\b(sold)\b/.test(lc) || /🛒/.test(line)) action = 'sold';
+        else if (/\b(returned)\b/.test(lc) || /↩️|⤴|⬅️/.test(line)) action = 'returned';
+        if (!action) return null;
+        // Common pattern: "<emoji> Purchased 5 bottles Milton @ ₹50 ..."
+        const qtyUnit = line.match(/(\d+(?:\.\d+)?)\s+([A-Za-z]+[A-Za-z]*)/);
+        if (!qtyUnit) return null;
+        const quantity = Number(qtyUnit[1]);
+        const unit = qtyUnit[2];
+        // Product = text after qty+unit until '@' or '('
+        const idxAfter = line.indexOf(qtyUnit[0]) + qtyUnit[0].length;
+        let product = line.slice(idxAfter).trim();
+        const cutIdx = [product.indexOf('@'), product.indexOf('(')].filter(i => i >= 0).sort()[0];
+        if (Number.isFinite(cutIdx)) product = product.slice(0, cutIdx).trim();
+        if (!product) return null;
+        return { action, product, quantity, unit, compositeKey: tagOpts?.compositeKey ?? null };
+      } catch { return null; }
+    }
+         
     // --- Honor NO_FOOTER sentinel (single and multi-part paths) ---
         const NO_FOOTER_RX = /^\s*(?:!NO_FOOTER!|<!NO_FOOTER!>|&lt;!NO_FOOTER!&gt;)\s*/i;
         const noFooter = NO_FOOTER_RX.test(String(body));
@@ -16308,10 +16354,20 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
       });
       console.log(`[sendMessageViaAPI] Message sent successfully. SID: ${message.sid}`);
                 
-      // ---- NEW: Fire Undo CTA right after a txn confirmation ----
+      // ---- NEW: Arm correction window + Fire Undo CTA right after a txn confirmation ----
             try {
               const reqId = String(tagOpts?.requestId || tagOpts?.req || '').trim();
-              if (looksLikeTxnConfirmation(finalText,{ strict: true })) {
+              if (looksLikeTxnConfirmation(finalText,{ strict: true })) {                                
+                // Arm the correction window (TTL ~120s on DB side) BEFORE showing CTA
+                        try {
+                          if (typeof openCorrectionWindow === 'function') {
+                            const shopIdForDb = shopIdFrom(formattedTo);
+                            const lastTxn = _deriveLastTxnFromConfirmation(finalText, tagOpts);
+                            if (lastTxn && lastTxn.product) {
+                              await openCorrectionWindow(shopIdForDb, lastTxn, lang);
+                            }
+                          }
+                        } catch (eArm) { console.warn('[confirm->undo] arm failed:', eArm?.message); }
                 console.log(`[confirm->undo] start lang=${lang} req=${reqId}`);
                 await new Promise(r => setTimeout(r, 350));
                 await sendUndoCTAQuickReply(formattedTo, lang, reqId);
@@ -16371,12 +16427,22 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
       messageSids.push(message.sid);
       console.log(`[sendMessageViaAPI] Part ${i+1} sent successfully. SID: ${message.sid}`);
             
-      // ---- NEW: Fire Undo CTA if the part contains a txn confirmation (usually last part) ----
+      // ---- NEW: Arm correction window + Fire Undo CTA if the part contains a txn confirmation (usually last part) ----
             try {
               const reqId = String(tagOpts?.requestId || tagOpts?.req || '').trim();
               
               // Ensure the CTA is sent only after the final bubble and with a small lag
-                    if (isLast && looksLikeTxnConfirmation(text,{ strict: true })) {
+                    if (isLast && looksLikeTxnConfirmation(text,{ strict: true })) {                                          
+                    // Arm the correction window (TTL ~120s) BEFORE CTA
+                            try {
+                              if (typeof openCorrectionWindow === 'function') {
+                                const shopIdForDb = shopIdFrom(formattedTo);
+                                const lastTxn = _deriveLastTxnFromConfirmation(text, tagOpts);
+                                if (lastTxn && lastTxn.product) {
+                                  await openCorrectionWindow(shopIdForDb, lastTxn, lang);
+                                }
+                              }
+                            } catch (eArm) { console.warn('[confirm->undo] arm(multi) failed:', eArm?.message); }
                       console.log(`[confirm->undo] start(multi) lang=${lang} req=${reqId}`);
                       await new Promise(r => setTimeout(r, 350));
                       await sendUndoCTAQuickReply(formattedTo, lang, reqId);
