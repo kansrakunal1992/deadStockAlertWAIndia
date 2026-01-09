@@ -1217,30 +1217,67 @@ async function composeAndSendExpiringList(From, shopId, lang, requestId, days = 
     // Pull expiring records (variant-aware ShopID, timezone-safe DateTime) from database.js
     const rows = await getExpiringProducts(shopId, days, { strictExpired: Number(days) === 0 });
     const total = rows.length;
-
-    // Canonical header (remove any 'Peek •' diagnostic label)
-    const header = (Number(days) === 0)
-      ? `Expired ≤ 0d — ${total} items`
-      : `Expiring ≤ ${Number(days)}d — ${total} items`;
+    
+    // ===== [UNIQ:LOCALIZED-HEADERS-ALL-LANG-20260109] BEGIN =====
+        const L = String(lang ?? 'en').toLowerCase();
+        const base = L.replace(/-latn$/, ''); // hi-latn -> hi
+        const ITEMS_WORD = {
+          en: 'items',
+          hi: 'आइटम', mr: 'आइटम', bn: 'আইটেম', gu: 'આઇટમ',
+          ta: 'உருப்படிகள்', te: 'వస్తువులు', kn: 'ವಸ್ತುಗಳು'
+        };
+        const EXPIRED_WORD = { // "Expired ≤ 0d — N items"
+          en: 'Expired',
+          hi: 'समाप्त', mr: 'कालबाह्य', bn: 'মেয়াদ শেষ', gu: 'સમાપ્ત',
+          ta: 'காலாவதி', te: 'గడువు ముగిసిన', kn: 'ಗಡುವು ಮುಗಿದ'
+        };
+        const EXPIRING_WORD = { // "Expiring ≤ Nd — N items"
+          en: 'Expiring',
+          hi: 'दिनों में समाप्त', mr: 'दिवसांत समाप्त', bn: 'দিনে শেষ', gu: 'દિવસમાં સમાપ્ત',
+          ta: 'நாளில் காலாவதி', te: 'రోజుల్లో గడువు', kn: 'ದಿನಗಳಲ್ಲಿ ಗಡುವು'
+        };
+        const EXP_LABEL = { // bullet label "(exp YYYY-MM-DD)"
+          en: 'exp',
+          hi: 'समाप्ति', mr: 'कालावधी', bn: 'মেয়াদ', gu: 'સમાપ્તિ',
+          ta: 'காலாவதி', te: 'గడువు', kn: 'ಗಡುವು'
+        };
+    
+        const itemsWord = ITEMS_WORD[base] ?? ITEMS_WORD.en;
+        const header =
+          Number(days) === 0
+            ? `${EXPIRED_WORD[base] ?? EXPIRED_WORD.en} ≤ 0d — ${total} ${itemsWord}`
+            : (base === 'hi'
+                ? `${Number(days)} ${EXPIRING_WORD[base] ?? EXPIRING_WORD.en} — ${total} ${itemsWord}`
+                : `${EXPIRING_WORD[base] ?? EXPIRING_WORD.en} ≤ ${Number(days)}d — ${total} ${itemsWord}`);
+        // ===== [UNIQ:LOCALIZED-HEADERS-ALL-LANG-20260109] END =====
 
     // Build bullets: "• name: qty (unit) (exp YYYY-MM-DD)"
     const bullets = rows.map(r => {
       const qty = Number(r.quantity ?? 0);
-      const unitDisp = canonicalizeUnitToken(r.unit ?? 'pieces'); // helper present in this file
+      const unitDisp = displayUnit(r.unit ?? 'pieces', lang); // localized units
       const d = r.expiryDate
         ? new Date(r.expiryDate).toISOString().split('T')[0]
         : '—';
-      // Keep it compact; avoids hitting Twilio caps
-      return `• ${r.name}: ${qty} (${unitDisp}) (exp ${d})`;
+      // Keep it compact; avoids hitting Twilio caps           
+      const tag = EXP_LABEL[base] ?? EXP_LABEL.en;
+      return `• ${r.name}: ${qty} (${unitDisp}) (${tag} ${d})`;
     });
 
     // Paginate and send
     await sendPaginatedInventoryList(From, header, bullets, lang, pageSize);
 
-    // Follow-up guidance (keyword filter) after pages
-    const guidance = lang.startsWith('hi')
-      ? '👉 सूची बड़ी है। जवाब दें/बोलें: “expired <keyword>”, जैसे “expired milk”।'
-      : '👉 The list is large. Reply or speak: “expired <keyword>”, e.g., “expired milk”.';
+    // Follow-up guidance (keyword filter) after pages        
+    const GUIDANCE = {
+          en: '👉 The list is large. Reply or speak: “expired <keyword>”, e.g., “expired milk”.',
+          hi: '👉 सूची बड़ी है। जवाब दें/बोलें: “expired <keyword>”, जैसे “expired milk”。',
+          bn: '👉 তালিকা বড়। উত্তর দিন বা বলুন: “expired <keyword>”, যেমন “expired milk”。',
+          ta: '👉 பட்டியல் பெரியது. பதிலளிக்க/பேசவும்: “expired <keyword>”, உதா., “expired milk”。',
+          te: '👉 జాబితా పెద్దది. “expired <keyword>” అని టైప్ చేయండి/మాట్లాడండి, ఉదా., “expired milk”。',
+          kn: '👉 ಪಟ್ಟಿಯು ದೊಡ್ಡದು. “expired <keyword>” ಎಂದು ಉತ್ತರಿಸಿ/ಹೇಳಿ, ಉದಾ., “expired milk”。',
+          mr: '👉 यादी मोठी आहे. “expired <keyword>” असे उत्तर द्या/बोला, उदा., “expired milk”。',
+          gu: '👉 યાદી મોટી છે. “expired <keyword>” લખો/બોલો, જેમ કે “expired milk”。'
+        };
+        const guidance = GUIDANCE[base] ?? GUIDANCE.en;
     const tagged = await tagWithLocalizedMode(From, finalizeForSend(guidance, lang), lang);
     await sendMessageViaAPI(From, tagged);
 
@@ -4588,7 +4625,7 @@ const COMMAND_ALIAS_MAP = {
       '7 दिनों में एक्सपायर','सात दिन में समाप्त','सात दिन में एक्सपायर','हफ्ते भर में समाप्त','हफ्ते भर में एक्सपायर'
     ],
     'expiring 30': [
-      '30 दिन में समाप्त','30 दिन में एक्सपायर','एक महीने में समाप्त','एक महीने में एक्सपायर','30 दिनों में समाप्त',
+      '30 दिन में समाप्त','30 दिन में एक्सपायर','एक महीने में समाप्त','एक महीने में एक्सपायर','30 दिनों में समाप्त','तीस दिनों में समाप्त।',
       '30 दिनों में एक्सपायर','तीस दिन में समाप्त','तीस दिन में एक्सपायर','महीने भर में समाप्त','महीने भर में एक्सपायर'
     ],
   },
@@ -16772,6 +16809,48 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           const t = safeNormalizeForQuickQuery(src); // punctuation-light, lower-case (Latin-friendly)
           const L = String(langHint ?? 'en').toLowerCase();
         
+          // ===== [UNIQ:PRECEDENCE-WINDOWED-ALL-LANG-20260109] BEGIN =====
+            // Prefer "expiring 30" / "expiring 7" when the text clearly conveys a windowed intent:
+            // Detect digits "30"/"७०"/native numerals and language-specific words for "day(s)".
+            // This runs BEFORE alias dictionaries to avoid falling into generic "expired" matches.
+            (function () {
+              // Arabic numerals shortcut
+              const has30 = /\b30\b/.test(src);
+              const has7  = /\b7\b/.test(src);
+              // Native numerals (cover common Indic scripts roughly)
+              const has30Native =
+                /[३३०]|[৩০]|[૩૦]|[३०]|[௩௦]|[౩౦]|[೩೦]/u.test(src); // (hi/mr/bn/gu/ta/te/kn rough coverage)
+              const has7Native =
+                /[७]|[৭]|[૭]|[७]|[௭]|[౭]|[೭]/u.test(src);
+          
+              // Per-language day tokens (singular/plural)
+              const DAY_TOKENS = {
+                hi: /दिन(?:ों)?|हफ्त(?:ा|े)|सप्ताह/u,
+                mr: /दिवस(?:ांत)?|आठवडा|सप्ताह/u,
+                bn: /দিন(?:ে|ের)?|সপ্তাহ/u,
+                gu: /દિવસ(?:ો|ોમાં)?|અઠવાડિયું|સપ્તાહ/u,
+                ta: /நாள்(?:கள்)?|வாரம்/u,
+                te: /రోజు(?:లు)?|వారం/u,
+                kn: /ದಿನ(?:ಗಳು)?|ವಾರ/u,
+                en: /\bdays?\b|\bweek\b/u
+              };
+          
+              const langKey = L.replace(/-latn$/, ''); // treat hi-latn as hi, etc.
+              const dayRx = DAY_TOKENS[langKey] ?? DAY_TOKENS.en;
+              const hasDaysWord = dayRx.test(src);
+          
+              // Roman-language numeric words (optional, lightweight)
+              const roman30 = /\b(tees|tis|trish|thirty)\b/i.test(t);
+              const roman7  = /\b(saat|sat|seven)\b/i.test(t);
+              const hasThirty = has30 || has30Native || roman30;
+              const hasSeven  = has7  || has7Native  || roman7;
+          
+              if (hasThirty && hasDaysWord) { return 'expiring 30'; }
+              if (hasSeven  && hasDaysWord) { return 'expiring 7'; }
+              return null;
+            })()?.let?.((canon) => { if (canon) return canon; });
+            // ===== [UNIQ:PRECEDENCE-WINDOWED-ALL-LANG-20260109] END =====
+          
           // --------- Alias dictionaries (≥5 per command & language) ----------
           // NOTE: For Indic scripts we match on `src` (u-flag, no \b); for Latin scripts we match on `t`.
           // Canonicals: low stock, reorder suggestions, prices, stock value, short summary, full summary,
@@ -16884,7 +16963,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
               '7 दिनों में एक्सपायर','सात दिन में समाप्त','सात दिन में एक्सपायर','हफ्ते भर में समाप्त','हफ्ते भर में एक्सपायर'
             ],
             'expiring 30': [
-              '30 दिन में समाप्त','30 दिन में एक्सपायर','एक महीने में समाप्त','एक महीने में एक्सपायर','30 दिनों में समाप्त',
+              '30 दिन में समाप्त','30 दिन में एक्सपायर','एक महीने में समाप्त','एक महीने में एक्सपायर','30 दिनों में समाप्त','तीस दिनों में समाप्त।',
               '30 दिनों में एक्सपायर','तीस दिन में समाप्त','तीस दिन में एक्सपायर','महीने भर में समाप्त','महीने भर में एक्सपायर'
             ],
           };
