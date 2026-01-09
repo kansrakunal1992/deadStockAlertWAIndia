@@ -552,21 +552,9 @@ async function processShopSummary(shopId) {
       const avgInventoryValue = inventorySummary.totalValue / inventorySummary.totalProducts;
       message += `• Average inventory value: ₹${avgInventoryValue.toFixed(2)}\n`;
     }
-
-    // Add plan information
-    message += `\n📋 Plan: ${planInfo.plan === 'free_demo' ? 'Free Demo' : 
-      planInfo.plan === 'free_demo_first_50' ? 'Free Demo (First 50)' :
-      planInfo.plan === 'standard' ? 'Standard' : 'Enterprise'}`;
-
-    if (planInfo.trialEndDate) {
-      const daysLeft = Math.ceil((planInfo.trialEndDate - new Date()) / (1000 * 60 * 60 * 24));
-      if (daysLeft > 0) {
-        message += `\n⏳ Trial days remaining: ${daysLeft}`;
-      } else {
-        message += `\n⚠️ Trial expired. Please upgrade to continue.`;
-      }
-    }
-          
+      
+    // NOTE: Full Summary should not show plan or trial counters.
+         
     message += `\nThank you for using our inventory management system!`;
     
     // Generate multilingual response
