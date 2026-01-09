@@ -17317,8 +17317,10 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
 
         // 1) Resolve canonical command via alias + multilingual normalizer
         const aliasCmd = normalizeCommandAlias(rawText, uiLangExact /* use UI exact variant */);
-        const extraCmd = _normalizeVoiceCommandAllLang(rawText, uiLangExact);
-        const canonCmd = (canon === 'reorder suggestion') ? 'reorder suggestions' : canon;                
+        const extraCmd = _normalizeVoiceCommandAllLang(rawText, uiLangExact);                
+        // Anchor: "const canonCmd = (canon === 'reorder suggestion') ? 'reorder suggestions' : canon;"
+          // Minimal fix: treat bare 'reorder' as the canonical 'reorder suggestions'
+          const canonCmd = (canon === 'reorder suggestion' || canon === 'reorder') ? 'reorder suggestions' : canon;      
         let cmd = aliasCmd || extraCmd || (TERMINAL_COMMANDS.has(canonCmd) ? canonCmd : null);        
         // --- BEGIN: multilingual "stock <product>" extractor (voice) ---
         if (!cmd) {
@@ -17361,8 +17363,11 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
               if (!cmd) {
                 try {
                   const normText = await normalizeCommandText(rawText, uiLangExact, `${requestId}::vc-normalize`);
-                  const normCanon = safeNormalizeForQuickQuery(normText);
-                  if (TERMINAL_COMMANDS.has(normCanon)) cmd = normCanon;
+                  const normCanon = safeNormalizeForQuickQuery(normText);                                   
+                  // Anchor: "[req-...::vc-normalize] Normalized: 'Rio de suggestions.' (en) -> 'reorder'"
+                        // Map bare 'reorder' from vc-normalize to 'reorder suggestions'
+                        if (normCanon === 'reorder') cmd = 'reorder suggestions';
+                        else if (TERMINAL_COMMANDS.has(normCanon)) cmd = normCanon;
                 } catch (_) { /* soft-fail; continue */ }
               }
   
@@ -17667,6 +17672,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
     } else {
       try {
         const orch = await applyAIOrchestration(cleanTranscript, From, detectedLanguage, requestId);
+        const orchestrated = orch;
         const FORCE_INVENTORY = !!orch?.forceInventory;
         /* VOICE_HANDLER_PATCH */
         try {
