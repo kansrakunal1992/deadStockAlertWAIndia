@@ -16372,7 +16372,7 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
     const appendCTA = async () => {
       try {
         const shopId = formattedTo.replace('whatsapp:', '');
-                
+        const meta = meta ?? {}; // ensure defined        
         if (meta?.lastTxn) {
             globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
             globalThis.__lastTxnForShop.set(shopId, meta.lastTxn);
@@ -16685,27 +16685,6 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
             }
           } catch (_) { /* noop */ }
           console.log(`[${requestId}] voice: pinned=${pinnedPref} → detected=${detectedLanguage}`);
-            
-    // ===== [PATCH:HYBRID-VOICE-ROUTE-004] BEGIN =====
-      // Hybrid: allow non‑mutating diagnostic peeks inside sticky mode (no state change)
-      try {
-        const stickyAction =
-          typeof getStickyActionQuick === 'function'
-            ? (getStickyActionQuick.length > 0 ? await getStickyActionQuick(From) : await getStickyActionQuick())
-            : null;
-        const isPeek = !!classifyDiagnosticPeek(cleanTranscript);              
-        if (ALLOW_READONLY_IN_STICKY && stickyAction && isPeek) {
-           const ok = await handleDiagnosticPeek(From, cleanTranscript, requestId, stickyAction);
-           if (ok) {
-             try {
-               const langForUi = String(detectedLanguage ?? 'en').toLowerCase();
-               await maybeResendListPicker(From, langForUi, requestId);
-             } catch (_) { /* best effort */ }
-             return; // reply already sent via API; keep mode; stop voice flow
-           }
-         }
-      } catch (_) { /* best-effort */ }
-      // ===== [PATCH:HYBRID-VOICE-ROUTE-004] END =====
 
       // [UNIQ:VOICE-CMD-UNIFIED-20251227] BEGIN — Multilingual inventory command short-circuit (voice)
       // Purpose: Handle ALL inventory commands (and their localized variants) from voice before update parsing.
@@ -17600,6 +17579,27 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         // Fall through to orchestrator/update parsing on failure
       }
       // [UNIQ:VOICE-CMD-UNIFIED-20251227] END — Multilingual inventory command short-circuit (voice)
+    
+    // ===== [PATCH:HYBRID-VOICE-ROUTE-004] BEGIN =====
+      // Hybrid: allow non‑mutating diagnostic peeks inside sticky mode (no state change)
+      try {
+        const stickyAction =
+          typeof getStickyActionQuick === 'function'
+            ? (getStickyActionQuick.length > 0 ? await getStickyActionQuick(From) : await getStickyActionQuick())
+            : null;
+        const isPeek = !!classifyDiagnosticPeek(cleanTranscript);              
+        if (ALLOW_READONLY_IN_STICKY && stickyAction && isPeek) {
+           const ok = await handleDiagnosticPeek(From, cleanTranscript, requestId, stickyAction);
+           if (ok) {
+             try {
+               const langForUi = String(detectedLanguage ?? 'en').toLowerCase();
+               await maybeResendListPicker(From, langForUi, requestId);
+             } catch (_) { /* best effort */ }
+             return; // reply already sent via API; keep mode; stop voice flow
+           }
+         }
+      } catch (_) { /* best-effort */ }
+      // ===== [PATCH:HYBRID-VOICE-ROUTE-004] END =====
 
     // --- Minimal hook: Activate Paid Plan command (voice path) ---
     const lowerCmd = String(cleanTranscript || '').trim().toLowerCase();
