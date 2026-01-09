@@ -2642,7 +2642,7 @@ async function getExpiringProducts(shopId, daysAhead = 7, { strictExpired = fals
         ),
         IS_BEFORE(
           SET_TIMEZONE({ExpiryDate}, 'Asia/Kolkata'),
-          SET_TIMEZONE(DATEADD(NOW(), ${days}, 'days'), 'Asia/Kolkata')
+          DATEADD(SET_TIMEZONE(NOW(), 'Asia/Kolkata'), ${days}, 'days')
         )
       )`;
     }
