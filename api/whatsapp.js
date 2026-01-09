@@ -5526,7 +5526,6 @@ function classifyDiagnosticPeek(text) {
 // ===== [PATCH:HYBRID-DIAGNOSTIC-HANDLER-003] BEGIN =====
 /**
  * Handle diagnostic "peek" read‑only queries without changing sticky mode.
- * Adds "Peek • <Title>" banner and a guidance line, then keeps footer badge.
  * Optionally refreshes TTL once per sticky session.
  */
 async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
@@ -5570,28 +5569,28 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
     const qty = Number(inv?.quantity ?? 0);
     const unitDisp = displayUnit(inv?.unit ?? 'pieces', lang);
     const name = inv?.product ?? peek.args.product;
-    header = `Peek • Stock — ${name}`;
+    header = `Stock — ${name}`;
     body   = `${qty} ${unitDisp}`;
   } else if (peek.kind === 'price') {
     const res = await getProductPrice(peek.args.product, shopId);
     if (res?.success) {
-      header = `Peek • Price — ${peek.args.product}`;
+      header = `Price — ${peek.args.product}`;
       body   = `₹${res.price} per ${res.unit}`;
     } else {
-      header = `Peek • Price — ${peek.args.product}`;
+      header = `Price — ${peek.args.product}`;
       body   = `Not found for your shop`;
     }
   } else if (peek.kind === 'prices') {
     const items = await getAllProducts(shopId);
-    header = `Peek • Prices — ${items.length} items`;
+    header = `Prices — ${items.length} items`;
     body   = (items.slice(0, 10).map(p => `• ${p.name}: ₹${p.price} / ${p.unit}`)).join('\n') || '—';
   } else if (peek.kind === 'low') {
     const low = await getLowStockProducts(shopId, 5);
-    header = `Peek • Low Stock — ${low.length} items`;
+    header = `Low Stock — ${low.length} items`;
     body   = (low.slice(0, 10).map(p => `• ${p.name}: ${p.quantity} ${displayUnit(p.unit, lang)}`)).join('\n') || '—';
   } else if (peek.kind === 'exp') {
     const exp = await getExpiringProducts(shopId, peek.args.days ?? 7, { strictExpired: true });
-    header = `Peek • Expiring ≤ ${peek.args.days}d — ${exp.length} items`;
+    header = `Expiring ≤ ${peek.args.days}d — ${exp.length} items`;
     body   = (exp.slice(0, 10).map(r => {
       const d = r.expiryDate instanceof Date ? r.expiryDate : new Date(r.expiryDate);
       const dd = d.toISOString().split('T')[0];
@@ -5599,7 +5598,7 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
     }).join('\n')) || '—';
   } else if (peek.kind === 'summary') {    
   // Minimal summaries via existing summary helpers — keep it short
-      header = peek.args.flavor === 'full' ? 'Peek • Full Summary' : 'Peek • Short Summary';
+      header = peek.args.flavor === 'full' ? 'Full Summary' : 'Short Summary';
       try {
         const raw = await processShopSummary?.(shopId, { flavor: peek.args.flavor ?? 'short' });
         // Robust stringify to avoid “[object Object]”
@@ -16372,7 +16371,7 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
     const appendCTA = async () => {
       try {
         const shopId = formattedTo.replace('whatsapp:', '');
-        const meta = meta ?? {}; // ensure defined        
+        const meta = {}; // ensure defined        
         if (meta?.lastTxn) {
             globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
             globalThis.__lastTxnForShop.set(shopId, meta.lastTxn);
