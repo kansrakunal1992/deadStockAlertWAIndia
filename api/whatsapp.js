@@ -1187,6 +1187,71 @@ async function composeLowStockLocalized(shopId, lang, requestId) {
     return nativeglishWrap(taggedOnce, lang);
 }
 
+// ===== [UNIQ:PAGINATE-LISTS-20260109] BEGIN =====
+/**
+ * Send a long inventory list using pagination (20 per WhatsApp message by default).
+ * Reuses tagWithLocalizedMode, finalizeForSend, and sendMessageViaAPI from this file.
+ */
+async function sendPaginatedInventoryList(From, header, bullets, lang, pageSize = 20) {
+  try {
+    const size = Math.max(5, Number(pageSize || 20)); // hard min
+    const total = bullets.length;
+    for (let i = 0, pageNo = 1; i < total; i += size, pageNo++) {
+      const chunk = bullets.slice(i, i + size);
+      const pageHeader = pageNo === 1 ? header : `${header} (cont.)`;
+      const body = [pageHeader, ...chunk].join('\n');
+      const tagged = await tagWithLocalizedMode(From, finalizeForSend(body, lang), lang);
+      await sendMessageViaAPI(From, tagged);
+    }
+  } catch (e) {
+    console.warn('[paginate] failed:', e?.message);
+  }
+}
+
+/**
+ * Compose and send Expiring (or Expired) products with pagination.
+ * days=0 -> "Expired ≤ 0d"; days>0 -> "Expiring ≤ {days}d"
+ */
+async function composeAndSendExpiringList(From, shopId, lang, requestId, days = 0, pageSize = 20) {
+  try {
+    // Pull expiring records (variant-aware ShopID, timezone-safe DateTime) from database.js
+    const rows = await getExpiringProducts(shopId, days, { strictExpired: Number(days) === 0 });
+    const total = rows.length;
+
+    // Canonical header (remove any 'Peek •' diagnostic label)
+    const header = (Number(days) === 0)
+      ? `Expired ≤ 0d — ${total} items`
+      : `Expiring ≤ ${Number(days)}d — ${total} items`;
+
+    // Build bullets: "• name: qty (unit) (exp YYYY-MM-DD)"
+    const bullets = rows.map(r => {
+      const qty = Number(r.quantity ?? 0);
+      const unitDisp = canonicalizeUnitToken(r.unit ?? 'pieces'); // helper present in this file
+      const d = r.expiryDate
+        ? new Date(r.expiryDate).toISOString().split('T')[0]
+        : '—';
+      // Keep it compact; avoids hitting Twilio caps
+      return `• ${r.name}: ${qty} (${unitDisp}) (exp ${d})`;
+    });
+
+    // Paginate and send
+    await sendPaginatedInventoryList(From, header, bullets, lang, pageSize);
+
+    // Follow-up guidance (keyword filter) after pages
+    const guidance = lang.startsWith('hi')
+      ? '👉 सूची बड़ी है। जवाब दें/बोलें: “expired <keyword>”, जैसे “expired milk”।'
+      : '👉 The list is large. Reply or speak: “expired <keyword>”, e.g., “expired milk”.';
+    const tagged = await tagWithLocalizedMode(From, finalizeForSend(guidance, lang), lang);
+    await sendMessageViaAPI(From, tagged);
+
+    // Resurface list-picker for convenience
+    try { await maybeResendListPicker(From, lang, requestId); } catch (_) {}
+  } catch (e) {
+    console.warn('[expiring-compose] failed:', e?.message);
+  }
+}
+// ===== [UNIQ:PAGINATE-LISTS-20260109] END =====
+
 function isSafeAnchor(text) {
     const safePatterns = [
         /start trial/i,
@@ -17291,7 +17356,22 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         
           return null;
         }
-
+                
+        // === Canonical handlers: Expiring / Expired (paginate 20 per message) ===
+          // Resolve E.164 shopId for DB reads (same normalizer you use elsewhere)
+          const shopId = shopIdFrom(From); // e.g., "+919013283687"
+          switch (_normalizeVoiceCommandAllLang(rawText, uiLangExact)) {
+            case 'expiring 0': {
+              // strict expired list (≤ 0d), paginated
+              await composeAndSendExpiringList(From, shopId, uiLangExact, requestId, 0, 20);
+              return;
+            }
+            case 'expiring 30': {
+              // horizon list (≤ 30d), paginated
+              await composeAndSendExpiringList(From, shopId, uiLangExact, requestId, 30, 20);
+              return;
+            }
+          }
 
         // 1) Resolve canonical command via alias + multilingual normalizer
         const aliasCmd = normalizeCommandAlias(rawText, uiLangExact /* use UI exact variant */);
