@@ -5358,7 +5358,6 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
   }
 }
 
-
 // Convenience wrapper (DISABLED for text ACK):
 // We now compute the language hint but DO NOT send any early ACK on the text path.
 async function sendProcessingAckQuickFromText(From, kind = 'text', sourceText = '') {
@@ -5598,15 +5597,35 @@ async function handleDiagnosticPeek(From, text, requestId, stickyAction) {
       const dd = d.toISOString().split('T')[0];
       return `• ${r.name}: ${r.quantity} (exp ${dd})`;
     }).join('\n')) || '—';
-  } else if (peek.kind === 'summary') {
-    // Minimal summaries via existing summary helpers — keep it short
-    header = peek.args.flavor === 'full' ? 'Peek • Full Summary' : 'Peek • Short Summary';
-    try {
-      const summary = await processShopSummary?.(shopId, { flavor: peek.args.flavor ?? 'short' });
-      body = String(summary ?? '').trim() || '—';
-    } catch (_) {
-      body = '—';
-    }
+  } else if (peek.kind === 'summary') {    
+  // Minimal summaries via existing summary helpers — keep it short
+      header = peek.args.flavor === 'full' ? 'Peek • Full Summary' : 'Peek • Short Summary';
+      try {
+        const raw = await processShopSummary?.(shopId, { flavor: peek.args.flavor ?? 'short' });
+        // Robust stringify to avoid “[object Object]”
+        const toText = (x) => {
+          if (!x) return '';
+          if (typeof x === 'string') return x.trim();
+          if (Array.isArray(x)) return x.map(toText).filter(Boolean).join('\n');
+          if (typeof x === 'object') {
+            // Common summary shapes
+            if (typeof x.text === 'string') return x.text.trim();
+            if (typeof x.message === 'string') return x.message.trim();
+            if (typeof x.body === 'string') return x.body.trim();
+            if (Array.isArray(x.lines)) return x.lines.map(toText).join('\n');
+            if (Array.isArray(x.items)) return x.items.map(toText).join('\n');
+            // As a last resort, collect stringy values
+            const strings = Object.values(x).filter(v => typeof v === 'string');
+            if (strings.length) return strings.join('\n').trim();
+            return ''; // never emit “[object Object]”
+          }
+          return String(x).trim();
+        };
+        body = toText(raw);
+        if (!body) body = '—';
+      } catch (_) {
+        body = '—';
+      }
   }
 
   // Guidance line keeps user anchored in sticky action  
@@ -17433,25 +17452,26 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                     try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) { }
                     return;
                   }
-                  case 'full summary': {
-                    // existing behaviour (diagnostic peek) retained for full summary
-                    try {
-                      const allowed = await isFeatureAvailable(shopId, 'ai_summary');
-                      if (!allowed) {
-                        let prompt = await t(
-                          'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
-                          uiLangExact,
-                          `cta-summary-${shopId}`
-                        );
-                        await sendMessageViaAPI(From, finalizeForSend(prompt, uiLangExact));
-                        try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) { }
-                        return;
-                      }
-                    } catch (_) { /* soft-fail */ }
-                    const stickyAction = await getStickyActionQuick(From);
-                    await handleDiagnosticPeek(From, 'full summary', requestId, stickyAction);
+                  case 'full summary': {                                
+            // Align voice path with text path → route via handleQuickQueryEN
+                try {
+                  const allowed = await isFeatureAvailable(shopId, 'ai_summary');
+                  if (!allowed) {
+                    let prompt = await t(
+                      'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+                      uiLangExact,
+                      `cta-summary-${shopId}`
+                    );
+                    await sendMessageViaAPI(From, finalizeForSend(prompt, uiLangExact));
                     try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) { }
                     return;
+                  }
+                } catch (_) { /* soft-fail */ }
+                // Use the same canonical entry as the text path:
+                // processTextMessageAsync → handleQuickQueryEN('full summary', …)
+                await handleQuickQueryEN('full summary', From, uiLangExact, `${requestId}::voice-summary`);
+                try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) { }
+                return;
                   }                  
                 case 'short summary': {
                         // --- Voice path now mirrors button/text "Instant Summary": compact text + short PDF.
