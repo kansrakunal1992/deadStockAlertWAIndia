@@ -2149,7 +2149,7 @@ async function aiDetectLangIntent(text) {
 // ====== NEW: Lightweight AI Orchestrator (strict JSON) ======
 // Purpose: one-pass classification of inbound text into language, kind and normalized command,
 // while keeping business gating and stateful ops deterministic (non-AI).
-// This rides alongside your existing heuristics and never replaces trial/paywall/onboarding gates.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
+// This rides alongside your existing heuristics and never replaces trial/paywall/onboarding gates.
 const USE_AI_ORCHESTRATOR = String(process.env.USE_AI_ORCHESTRATOR ?? 'true').toLowerCase() === 'true';
 
 function _safeJsonExtract(txt) {
@@ -2339,7 +2339,7 @@ function seenDuplicateCorrection(shopId, payload) {
  * - isQuestion: true if kind === 'question'.
  * - normalizedCommand: exact English command if kind === 'command'.
  * - aiTxn: parsed transaction skeleton (NEVER auto-applied; deterministic parser still decides).
- * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
+ * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.
  */
 async function applyAIOrchestration(text, From, detectedLanguageHint, requestId, stickyActionCached) {
   var topicForced = null; // TDZ guard: single binding for the whole function    
@@ -4565,7 +4565,7 @@ function normalizeCommandAlias(text, langHint = 'en') {
   if (!t) return null;
 
   // Guardrails: looks like transaction?
-  if (looksLikeTxnLite?.(t)) return null; // your existing heuristic [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/Inventory_Commands.txt)
+  if (looksLikeTxnLite?.(t)) return null; // your existing heuristic
   if (/\b\d+(\.\d+)?\b/.test(t) && /\b(ltr|l|liter|litre|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes)\b/i.test(t)) {
     return null;
   }
@@ -5103,7 +5103,7 @@ const COMMAND_ALIAS_MAP = {
     if (hit) return hit;
   }
 
-  // Minimal heuristics: keep your fallbacks (expanded a bit) [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/Inventory_Commands.txt)
+  // Minimal heuristics: keep your fallbacks (expanded a bit)
   if (/^re[\- ]?order\b/.test(t)) return 'reorder suggestions';
   if (/^sales\s+this\s+week$/.test(t)) return 'sales week';
   if (/^top\s*5\s+(this\s+month|of\s+the\s+month)$/.test(t)) return 'top 5 products month';
@@ -5117,7 +5117,7 @@ const COMMAND_ALIAS_MAP = {
     if (d >= 30) return 'expiring 30';
   }
 
-  // Hindi fallback you already mentioned (kept) [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/Inventory_Commands.txt)
+  // Hindi fallback you already mentioned (kept)
   if (lang.startsWith('hi') && /(आज\s*की\s*(बिक्री|सेल))\s*$/u.test(t)) {
     return 'sales today';
   }
@@ -11505,7 +11505,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
   }
 
   // Question detection: prefer orchestrator; if null, use legacy detector.
-  // This makes Q&A win BEFORE welcome, while gating (ensureAccessOrOnboard) remains non-AI.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)           
+  // This makes Q&A win BEFORE welcome, while gating (ensureAccessOrOnboard) remains non-AI.          
     let isQuestion = _orch.isQuestion;
      if (isQuestion == null) {
        const languagePinned = (_orch.language ?? (detectedLanguage ?? 'en')).toLowerCase();
@@ -11519,7 +11519,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
           return true;
       }
 
-  // Prevent greeting/onboarding on question turns (AI or legacy).  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
+  // Prevent greeting/onboarding on question turns (AI or legacy).
   try {
     if (isQuestion) {
       cancelAiDebounce(shopId);
@@ -11703,11 +11703,11 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
           
             // ===== NEW: If AI hinted a transaction, DO NOT auto-apply.
               // We keep deterministic transaction parsing/update and state windows.
-              // (aiTxn is advisory; the normal parser continues to parse raw text.)  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
+              // (aiTxn is advisory; the normal parser continues to parse raw text.)
               if (orchestrated.aiTxn && !isQuestion) {
                 console.log('[router] aiTxn hint (advisory)', { requestId, aiTxn: orchestrated.aiTxn });
                 // No action here: fall through to existing deterministic transaction handlers.
-                // Your existing purchase/sale/return parsers and "awaitingPriceExpiry/BatchOverride" flows remain intact.  [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
+                // Your existing purchase/sale/return parsers and "awaitingPriceExpiry/BatchOverride" flows remain intact.
               }
             
             // ====== Welcome/Onboarding WHEN appropriate (first-ever greeting/language, or session-expired greeting) ======
@@ -16481,77 +16481,82 @@ function sanitizeOutboundMessage(text) {
   return s;
 }
 
-// Function to send WhatsApp message via Twilio API (for async responses)
-async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tagWithLocalizedMode */) {
+
+async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWithLocalizedMode */) {
   try {
     const formattedTo = to.startsWith('whatsapp:') ? to : `whatsapp:${to}`;
-
     console.log(`[sendMessageViaAPI] Preparing to send message to: ${formattedTo}`);
     console.log(`[sendMessageViaAPI] Message length: ${String(body).length} characters`);
-    
-    // --- UNDO: derive the "last transaction" payload from a confirmation line (fallback) ---
-    // Prefer tagOpts.lastTxn if your composer passed it; otherwise parse the header line.
+
+    // --- Helper: detect an existing trailing mode footer like «SALE • mode» / «बिक्री • मोड»
+    function hasModeFooter(text) {
+      return /(?:^|\n)«[^»]+»\s*$/u.test(String(text ?? ''));
+    }
+
+    // --- UNDO: derive the "last transaction" payload from a confirmation line (fallback)
     function _deriveLastTxnFromConfirmation(text, tagOpts) {
       try {
-        // Prefer explicit payload
         if (tagOpts?.lastTxn && tagOpts.lastTxn.product) {
           const t = tagOpts.lastTxn;
           return {
-            action: String(t.action || '').toLowerCase(), // 'purchased' | 'sold' | 'returned'
+            action: String(t.action ?? '').toLowerCase(), // 'purchased' | 'sold' | 'returned'
             product: t.product,
-            quantity: Number(t.quantity || 0),
-            unit: t.unit || 'pieces',
+            quantity: Number(t.quantity ?? 0),
+            unit: t.unit ?? 'pieces',
             compositeKey: t.compositeKey ?? null
           };
         }
-        // Parse the first line only
-        const line = String(text || '').split(/\r?\n/)[0];
+        const line = String(text ?? '').split(/\r?\n/)[0];
         const lc = line.toLowerCase();
         let action = null;
         if (/\b(purchased)\b/.test(lc) || /📦/.test(line)) action = 'purchased';
         else if (/\b(sold)\b/.test(lc) || /🛒/.test(line)) action = 'sold';
         else if (/\b(returned)\b/.test(lc) || /↩️|⤴|⬅️/.test(line)) action = 'returned';
         if (!action) return null;
-        // Common pattern: "<emoji> Purchased 5 bottles Milton @ ₹50 ..."
-        const qtyUnit = line.match(/(\d+(?:\.\d+)?)\s+([A-Za-z]+[A-Za-z]*)/);
+        const qtyUnit = line.match(/(\d+(?:\.\d+)?)\s+([A-Za-z][A-Za-z]*)/);
         if (!qtyUnit) return null;
         const quantity = Number(qtyUnit[1]);
         const unit = qtyUnit[2];
-        // Product = text after qty+unit until '@' or '('
         const idxAfter = line.indexOf(qtyUnit[0]) + qtyUnit[0].length;
         let product = line.slice(idxAfter).trim();
         const cutIdx = [product.indexOf('@'), product.indexOf('(')].filter(i => i >= 0).sort()[0];
         if (Number.isFinite(cutIdx)) product = product.slice(0, cutIdx).trim();
         if (!product) return null;
-        return { action, product, quantity, unit, compositeKey: tagOpts?.compositeKey ?? null };
+        return { action, product, quantity, unit, compositeKey: opts?.compositeKey ?? null };
       } catch { return null; }
     }
-         
-    // --- Honor NO_FOOTER sentinel (single and multi-part paths) ---
-        const NO_FOOTER_RX = /^\s*(?:!NO_FOOTER!|<!NO_FOOTER!>|&lt;!NO_FOOTER!&gt;)\s*/i;
-        const noFooter = NO_FOOTER_RX.test(String(body));
-        const bodyStripped = String(body).replace(NO_FOOTER_RX, '');
 
-    // Twilio hard limit for WhatsApp (exceeding returns Error 21617)
-    // Ref: https://www.twilio.com/docs/api/errors/21617, https://help.twilio.com/articles/360033806753
-    const MAX_LENGTH = 1600;
+    // --- Honor NO_FOOTER sentinel (single and multi-part paths)
+    const NO_FOOTER_RX = /^\s*(?:!NO_FOOTER!|<!NO_FOOTER!>|<\!NO_FOOTER\!>)\s*/i;
+    const noFooter = NO_FOOTER_RX.test(String(body));
+    let bodyStripped = String(body).replace(NO_FOOTER_RX, '');
+
+    // --- Resolve language (EXPLICIT lang override wins)
+    let lang = String(opts?.lang ?? '').toLowerCase();
+    if (lang) {
+      console.log(`[sendMessageViaAPI] Using explicit lang override: ${lang}`);
+    } else {
+      lang = 'en';
+      try {
+        const shopIdLang = formattedTo.replace('whatsapp:', '');
+        const prefLang = await getUserPreference(shopIdLang);
+        if (prefLang?.success && prefLang.language) lang = String(prefLang.language).toLowerCase();
+      } catch (_) { /* noop */ }
+      try { if (!lang || lang === 'en') lang = guessLangFromInput(bodyStripped); } catch (_) { /* noop */ }
+    }
+
+    // Detect if message is already tagged to avoid double footer across all paths.
+    const alreadyTagged = hasModeFooter(bodyStripped);
+
+    // Measure footer length by tagging an empty string once (only if we plan to tag)
+    const emptyTagged = (!noFooter && !alreadyTagged)
+      ? await tagWithLocalizedMode(formattedTo, '', lang, opts)
+      : '';
+    const footerLen = emptyTagged.length; // e.g., «SALE • mode»
+
+    // Smart splitter (unchanged)
+    const MAX_LENGTH = 1600; // Twilio Error 21617 if exceeded
     const PART_SUFFIX = (i, n) => `\n\n(Part ${i} of ${n})`;
-        
-    // --- Resolve language (prefer DB, fallback to heuristic) ---
-        let lang = 'en';
-        try {
-          const shopIdLang = formattedTo.replace('whatsapp:', '');
-          const prefLang = await getUserPreference(shopIdLang);
-          if (prefLang?.success && prefLang.language) lang = String(prefLang.language).toLowerCase();
-        } catch (_e) {}
-        try { if (!lang || lang === 'en') lang = guessLangFromInput(bodyStripped); } catch (_e) {}
-    
-        // We will append the localized footer ONLY to the final part.
-        // Measure footer length by tagging an empty string once (in the resolved language).
-        const emptyTagged = await tagWithLocalizedMode(formattedTo, '', lang, tagOpts);
-        const footerLen = emptyTagged.length; // e.g., «SALE • mode»
-
-    // Smart line-based splitter that respects a given safe limit
     const smartSplit = (text, safeLimit) => {
       const out = [];
       let chunk = '';
@@ -16559,7 +16564,6 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
         const add = chunk ? '\n' + line : line;
         if ((chunk + add).length > safeLimit) {
           if (chunk) out.push(chunk);
-          // If a single line itself exceeds the safe limit, clamp it
           chunk = add.slice(0, safeLimit);
         } else {
           chunk += add;
@@ -16569,46 +16573,35 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
       return out;
     };
 
-    
-    // --- NEW: append correct CTA after sending text ---
+    // --- CTA appender (unchanged)
     const appendCTA = async () => {
       try {
         const shopId = formattedTo.replace('whatsapp:', '');
-        const meta = {}; // ensure defined        
+        const meta = {}; // ensure defined
         if (meta?.lastTxn) {
-            globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
-            globalThis.__lastTxnForShop.set(shopId, meta.lastTxn);
-          }
-
-        // Resolve preferred language
-        let lang = 'en';
+          globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
+          globalThis.__lastTxnForShop.set(shopId, meta.lastTxn);
+        }
+        let ctaLang = 'en';
         try {
           const pref = await getUserPreference(shopId);
-          if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-        } catch (_e) {}
-        // Read plan
+          if (pref?.success && pref.language) ctaLang = String(pref.language).toLowerCase();
+        } catch (_) {}
+        await ensureLangTemplates(ctaLang);
+        const sids = getLangSids(ctaLang);
+        if (!sids) return;
         let plan = 'none';
         try {
           const planInfo = await getUserPlan(shopId);
           if (planInfo?.plan) plan = String(planInfo.plan).toLowerCase();
-        } catch (_e) {}
-        // Ensure templates exist
-        await ensureLangTemplates(lang);
-        const sids = getLangSids(lang);
-        if (!sids) return;
-        // Decide CTA:
-        if (plan === 'paid') {
-          // No CTA once paid
-          return;
-        }
+        } catch (_) {}
+        if (plan === 'paid') return;
         if (plan === 'trial') {
-          // Show Paid CTA while on trial
           if (sids.activatePaidSid) {
             await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.activatePaidSid });
           }
           return;
         }
-        // Not on trial/paid -> show Trial CTA
         if (sids.activateTrialSid) {
           await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.activateTrialSid });
         }
@@ -16616,27 +16609,30 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
         console.warn('[activate-cta] failed to append CTA:', ctaErr.message);
       }
     };
-            
-    // If the message fits, (conditionally) tag and send
-        if (bodyStripped.length <= MAX_LENGTH) {
-          console.log('[sendMessageViaAPI] Body (raw before tag):', JSON.stringify(bodyStripped));                    
-          let finalText = noFooter
-                      ? bodyStripped                       // do NOT tag footer
-                      : await tagWithLocalizedMode(formattedTo, bodyStripped, lang, tagOpts);
-                    // LOCAL clamp: localize badge labels + single-script + ASCII numerals
-                    finalText = renderNativeglishLabels(finalText, lang);
-                    finalText = enforceSingleScriptSafe(finalText, lang);
-                    finalText = normalizeNumeralsToLatin(finalText).trim();
-          console.log('[sendMessageViaAPI] Body (final after tag):', JSON.stringify(finalText));
-                
-      // [PATCH:TXN-CONFIRM-DEDUP-001] — suppress duplicate confirmations
-                try {
-                  if (_shouldSuppressTxnDuplicate(formattedTo, finalText)) {
-                    console.log('[sendMessageViaAPI] Suppressed duplicate txn confirmation', { to: formattedTo });
-                    await appendCTA(); // keep CTA behavior consistent
-                    return { suppressed: true };
-                  }
-                } catch (_) {}
+
+    // --- Single-part path
+    if (bodyStripped.length <= MAX_LENGTH) {
+      console.log('[sendMessageViaAPI] Body (raw before tag):', JSON.stringify(bodyStripped));
+
+      let finalText = (noFooter || alreadyTagged)
+        ? bodyStripped // do NOT tag footer again
+        : await tagWithLocalizedMode(formattedTo, bodyStripped, lang, opts);
+
+      // Local clamps (unchanged)
+      finalText = renderNativeglishLabels(finalText, lang);
+      finalText = enforceSingleScriptSafe(finalText, lang);
+      finalText = normalizeNumeralsToLatin(finalText).trim();
+
+      console.log('[sendMessageViaAPI] Body (final after tag):', JSON.stringify(finalText));
+
+      // [PATCH:TXN-CONFIRM-DEDUP-001] (unchanged)
+      try {
+        if (_shouldSuppressTxnDuplicate(formattedTo, finalText)) {
+          console.log('[sendMessageViaAPI] Suppressed duplicate txn confirmation', { to: formattedTo });
+          await appendCTA();
+          return { suppressed: true };
+        }
+      } catch (_) {}
 
       const message = await client.messages.create({
         body: finalText,
@@ -16644,114 +16640,104 @@ async function sendMessageViaAPI(to, body, tagOpts /* optional: forwarded to tag
         to: formattedTo
       });
       console.log(`[sendMessageViaAPI] Message sent successfully. SID: ${message.sid}`);
-                
-      // ---- NEW: Arm correction window + Fire Undo CTA right after a txn confirmation ----
-            try {
-              const reqId = String(tagOpts?.requestId || tagOpts?.req || '').trim();
-              if (looksLikeTxnConfirmation(finalText,{ strict: true })) {                                
-                // Arm the correction window (TTL ~120s on DB side) BEFORE showing CTA
-                        try {
-                          if (typeof openCorrectionWindow === 'function') {
-                            const shopIdForDb = shopIdFrom(formattedTo);
-                            const lastTxn = _deriveLastTxnFromConfirmation(finalText, tagOpts);
-                            if (lastTxn && lastTxn.product) {
-                              await openCorrectionWindow(shopIdForDb, lastTxn, lang);
-                            }
-                          }
-                        } catch (eArm) { console.warn('[confirm->undo] arm failed:', eArm?.message); }
-                console.log(`[confirm->undo] start lang=${lang} req=${reqId}`);
-                await new Promise(r => setTimeout(r, 350));
-                await sendUndoCTAQuickReply(formattedTo, lang, reqId);
-                console.log(`[confirm->undo] done req=${reqId}`);
-              }
-            } catch (e) {
-              console.warn('[confirm->undo] failed:', e?.message);
-            }
 
-      await appendCTA(); // NEW
+      // Arm correction window + Undo CTA (unchanged)
+      try {
+        const reqId = String(opts?.requestId ?? opts?.req ?? '').trim();
+        if (looksLikeTxnConfirmation(finalText, { strict: true })) {
+          try {
+            if (typeof openCorrectionWindow === 'function') {
+              const shopIdForDb = shopIdFrom(formattedTo);
+              const lastTxn = _deriveLastTxnFromConfirmation(finalText, opts);
+              if (lastTxn && lastTxn.product) {
+                await openCorrectionWindow(shopIdForDb, lastTxn, lang);
+              }
+            }
+          } catch (eArm) { console.warn('[confirm->undo] arm failed:', eArm?.message); }
+          console.log(`[confirm->undo] start lang=${lang} req=${reqId}`);
+          await new Promise(r => setTimeout(r, 350));
+          await sendUndoCTAQuickReply(formattedTo, lang, reqId);
+          console.log(`[confirm->undo] done req=${reqId}`);
+        }
+      } catch (e) {
+        console.warn('[confirm->undo] failed:', e?.message);
+      }
+
+      await appendCTA();
       return message;
     }
 
-    // Multi-part path:
-    // First split roughly, then re-split each part with exact room for the
-    // "(Part i of n)" suffix and (only on the last part) the footer.
-    let parts = smartSplit(bodyStripped, MAX_LENGTH - 14); // provisional
+    // --- Multi-part path (footer only on the last part, and only if not already tagged)
+    let parts = smartSplit(bodyStripped, MAX_LENGTH - 14);
     const final = [];
     for (let i = 0; i < parts.length; i++) {
       const isLast = i === parts.length - 1;
       const suffix = PART_SUFFIX(i + 1, parts.length);
-      const reserved = suffix.length + (isLast ? footerLen : 0);
+      const reserved = suffix.length + ((isLast && !noFooter && !alreadyTagged) ? footerLen : 0);
       const safeLimit = MAX_LENGTH - reserved;
       const resplit = smartSplit(parts[i], safeLimit);
       for (const frag of resplit) final.push(frag);
     }
-
     console.log(`[sendMessageViaAPI] Splitting message into ${final.length} chunks`);
+
     const messageSids = [];
     for (let i = 0; i < final.length; i++) {
       const isLast = i === final.length - 1;
-      let text = final[i] + PART_SUFFIX(i + 1, final.length);       
-    // Append footer ONLY on the last part — unless NO_FOOTER was requested                  
-        if (isLast && !noFooter) {
-                    text = await tagWithLocalizedMode(formattedTo, text, lang, tagOpts);
-                    // LOCAL clamp per part
-                    text = renderNativeglishLabels(text, lang);
-                    text = enforceSingleScriptSafe(text, lang);
-                    text = normalizeNumeralsToLatin(text).trim();
-                  }
-    
-    // [PATCH:TXN-CONFIRM-DEDUP-001] — suppress duplicates even in multipart (rare for confirmations)
-          try {
-            if (_shouldSuppressTxnDuplicate(formattedTo, text)) {
-              console.log('[sendMessageViaAPI] Suppressed duplicate txn confirmation (multipart)', { to: formattedTo });
-              await appendCTA();
-              return { suppressed: true };
-            }
-          } catch (_) {}
+      let text = final[i] + PART_SUFFIX(i + 1, final.length);
 
-      console.log(`[sendMessageViaAPI] Sending part ${i+1}/${final.length} (${text.length} chars)`);
+      // Append footer ONLY on the last part — unless NO_FOOTER was requested or body already had a footer
+      if (isLast && !noFooter && !alreadyTagged) {
+        text = await tagWithLocalizedMode(formattedTo, text, lang, opts);
+        text = renderNativeglishLabels(text, lang);
+        text = enforceSingleScriptSafe(text, lang);
+        text = normalizeNumeralsToLatin(text).trim();
+      }
+
+      try {
+        if (_shouldSuppressTxnDuplicate(formattedTo, text)) {
+          console.log('[sendMessageViaAPI] Suppressed duplicate txn confirmation (multipart)', { to: formattedTo });
+          await appendCTA();
+          return { suppressed: true };
+        }
+      } catch (_) {}
+
+      console.log(`[sendMessageViaAPI] Sending part ${i + 1}/${final.length} (${text.length} chars)`);
       const message = await client.messages.create({
         body: text,
         from: process.env.TWILIO_WHATSAPP_NUMBER,
         to: formattedTo
       });
       messageSids.push(message.sid);
-      console.log(`[sendMessageViaAPI] Part ${i+1} sent successfully. SID: ${message.sid}`);
-            
-      // ---- NEW: Arm correction window + Fire Undo CTA if the part contains a txn confirmation (usually last part) ----
-            try {
-              const reqId = String(tagOpts?.requestId || tagOpts?.req || '').trim();
-              
-              // Ensure the CTA is sent only after the final bubble and with a small lag
-                    if (isLast && looksLikeTxnConfirmation(text,{ strict: true })) {                                          
-                    // Arm the correction window (TTL ~120s) BEFORE CTA
-                            try {
-                              if (typeof openCorrectionWindow === 'function') {
-                                const shopIdForDb = shopIdFrom(formattedTo);
-                                const lastTxn = _deriveLastTxnFromConfirmation(text, tagOpts);
-                                if (lastTxn && lastTxn.product) {
-                                  await openCorrectionWindow(shopIdForDb, lastTxn, lang);
-                                }
-                              }
-                            } catch (eArm) { console.warn('[confirm->undo] arm(multi) failed:', eArm?.message); }
-                      console.log(`[confirm->undo] start(multi) lang=${lang} req=${reqId}`);
-                      await new Promise(r => setTimeout(r, 350));
-                      await sendUndoCTAQuickReply(formattedTo, lang, reqId);
-                      console.log(`[confirm->undo] done(multi) req=${reqId}`);
-                    }
+      console.log(`[sendMessageViaAPI] Part ${i + 1} sent successfully. SID: ${message.sid}`);
 
-            } catch (e) {
-              console.warn('[confirm->undo] failed (multi):', e?.message);
+      // Undo CTA for multipart confirmations (unchanged)
+      try {
+        const reqId = String(opts?.requestId ?? opts?.req ?? '').trim();
+        if (isLast && looksLikeTxnConfirmation(text, { strict: true })) {
+          try {
+            if (typeof openCorrectionWindow === 'function') {
+              const shopIdForDb = shopIdFrom(formattedTo);
+              const lastTxn = _deriveLastTxnFromConfirmation(text, opts);
+              if (lastTxn && lastTxn.product) {
+                await openCorrectionWindow(shopIdForDb, lastTxn, lang);
+              }
             }
+          } catch (eArm) { console.warn('[confirm->undo] arm(multi) failed:', eArm?.message); }
+          console.log(`[confirm->undo] start(multi) lang=${lang} req=${reqId}`);
+          await new Promise(r => setTimeout(r, 350));
+          await sendUndoCTAQuickReply(formattedTo, lang, reqId);
+          console.log(`[confirm->undo] done(multi) req=${reqId}`);
+        }
+      } catch (e) {
+        console.warn('[confirm->undo] failed (multi):', e?.message);
+      }
 
-      // Small delay between parts to avoid rate limiting
       if (i < final.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
 
-    await appendCTA(); // NEW
-    // Return the first SID and the list of part SIDs
+    await appendCTA();
     return { sid: messageSids[0], parts: messageSids };
   } catch (error) {
     console.error('Error sending WhatsApp message via API:', error);
@@ -17525,7 +17511,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           }
         
           // --------- Hindi explicit numeric expiries (retain your behavior) ----------
-          // Devanagari numerals & phrasing (already covered above, but keep the explicit rules for safety) [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/Inventory_Commands.txt)
+          // Devanagari numerals & phrasing (already covered above, but keep the explicit rules for safety)
           const hiExpiredRx = /(एक्सपायर|समाप्त|खत्म)\s*$/u;
           if (hiExpiredRx.test(src)) return 'expiring 0';
         
@@ -17534,7 +17520,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           if (new RegExp(`${hi7.source}\\s*दिन(ों)?\\s*(में|मे)\\s*(एक्सपायर|समाप्त)`, 'u').test(src)) return 'expiring 7';
         
           // --------- Bengali/Tamil/Telugu/Kannada/Marathi/Gujarati explicit numeric (retain your behavior) ----------
-          // (Keep your original per-language explicit regexes if you prefer; with aliases above, you may not need them.) [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/Inventory_Commands.txt)
+          // (Keep your original per-language explicit regexes if you prefer; with aliases above, you may not need them.)
         
           return null;
         }
