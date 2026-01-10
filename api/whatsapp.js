@@ -2394,6 +2394,13 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
   }
   function isBenefitQuestion(msg) {
     const t = String(msg ?? '').toLowerCase();
+        
+    // Guard: do not treat the value-family quick commands as benefits questions
+      const normalized = normalizeCommandAlias?.(msg, ensureLangExact('en')) || '';
+      if (_isTerminalCommand(normalized) && /^(inventory value|stock value|value summary)$/.test(normalized)) {
+        return false;
+      }
+
     return /\b(benefit|daily benefit|value|help|use case)\b/.test(t)
         || /(फ़ायदा|लाभ|मदद|दैनिक)/.test(msg)
         || /\b(fayda)\b/.test(t);
@@ -9282,6 +9289,13 @@ const lang = canonicalizeLang(language ?? 'en');
   }
   function isBenefitQuestion(msg) {
     const t = String(msg ?? '').toLowerCase();
+        
+    // Guard: do not treat the value-family quick commands as benefits questions
+      const normalized = normalizeCommandAlias?.(msg, ensureLangExact('en')) || '';
+      if (_isTerminalCommand(normalized) && /^(inventory value|stock value|value summary)$/.test(normalized)) {
+        return false;
+      }
+
     return /\b(benefit|daily benefit|value|help|use case)\b/.test(t)
         || /(फ़ायदा|लाभ|मदद|दैनिक)/.test(msg)
         || /\b(fayda)\b/.test(t);
