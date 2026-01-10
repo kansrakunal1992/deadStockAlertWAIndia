@@ -4497,6 +4497,38 @@ const COMMAND_ALIAS_MAP = {
   }
 };
 
+// ---- Length-aware alias matcher (prefers specific phrases like "इन्वेंटरी मूल्य")
+function pickBestAliasMatch(haystack, aliasPack, lang) {
+  const L = String(lang ?? 'en').toLowerCase();
+  const isLatin = /^(en|hi\-latn|mr\-latn|bn\-latn|ta\-latn|te\-latn|kn\-latn|gu\-latn)$/.test(L);
+  const hits = []; // { canonical, len }
+
+  for (const [canonical, variants] of Object.entries(aliasPack)) {
+    for (const v of variants) {
+      const variant = String(v);
+      const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Latin: soft word boundaries; Indic: emulate word edges with non-letter boundaries
+      const rx = isLatin
+        ? new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`, 'i')
+        : new RegExp(`(?:^|[^\\p{L}])${escaped}(?:$|[^\\p{L}])`, 'iu');
+      if (rx.test(haystack)) {
+        hits.push({ canonical, len: variant.length });
+      }
+    }
+  }
+  if (hits.length === 0) return null;
+  // Prefer longest variant; tie-break: inv value > stock value > value summary > prices
+  hits.sort((a, b) => {
+    if (b.len !== a.len) return b.len - a.len;
+    const rank = (cmd) =>
+      cmd === 'inventory value' ? 4 :
+      cmd === 'stock value'     ? 3 :
+      cmd === 'value summary'   ? 2 :
+      cmd === 'prices'          ? 1 : 0;
+    return rank(b.canonical) - rank(a.canonical);
+  });
+  return hits[0].canonical;
+}
 
 /**
  * normalizeCommandAlias(text, langHint) -> canonical command or null
@@ -5022,19 +5054,28 @@ const COMMAND_ALIAS_MAP = {
     ],
   },
 };
-
+  
+// ---- PATCH: Hindi/Devanagari guardrails for 'value' vs 'prices'
+  // Ensures "इन्वेंटरी मूल्य" => 'stock value' and generic "मूल्य/कीमत/भाव/रेट" => 'prices'
+  if (lang.startsWith('hi')) {
+    const rawDevanagari = raw; // use original script, not Latin-only normalization
+    if (/\bइन्वेंटरी\s*मूल्य\b/u.test(rawDevanagari)) {
+      return 'stock value';
+    }
+    if (/^\s*मूल्य\s*$/u.test(rawDevanagari) || /\b(कीमत|भाव|रेट)\b/u.test(rawDevanagari)) {
+      return 'prices';
+    }
+  }
   const mapsToTry = [
     COMMAND_ALIAS_MAP[lang],
     COMMAND_ALIAS_MAP[base],
     COMMAND_ALIAS_MAP['en'],
   ].filter(Boolean);
 
+  // Prefer the longest matching alias to avoid false positives on short words like "मूल्य"/"भाव"/"रेट"
   for (const map of mapsToTry) {
-    for (const [canonical, variants] of Object.entries(map)) {
-      if (variants.some(v => t.includes(String(v).toLowerCase()))) {
-        return canonical;
-      }
-    }
+    const hit = pickBestAliasMatch(t, map);
+    if (hit) return hit;
   }
 
   // Minimal heuristics: keep your fallbacks (expanded a bit) [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/Inventory_Commands.txt)
