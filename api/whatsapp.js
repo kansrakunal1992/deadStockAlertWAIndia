@@ -5065,10 +5065,10 @@ const COMMAND_ALIAS_MAP = {
 // ---- PATCH: Hindi/Devanagari guardrails for 'value' vs 'prices'
   // Ensures "इन्वेंटरी मूल्य" => 'stock value' and generic "मूल्य/कीमत/भाव/रेट" => 'prices'
   if (lang.startsWith('hi')) {
-    const rawDevanagari = raw; // use original script, not Latin-only normalization
+    const rawDevanagari = raw; // use original script, not Latin-only normalization        
     if (/\bइन्वेंटरी\s*मूल्य\b/u.test(rawDevanagari)) {
-      return 'stock value';
-    }
+          return 'value summary';
+        }
     if (/^\s*मूल्य\s*$/u.test(rawDevanagari) || /\b(कीमत|भाव|रेट)\b/u.test(rawDevanagari)) {
       return 'prices';
     }
@@ -17433,8 +17433,10 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           // --------- natural English buckets (keep your original logic) ----------
           if (/^low stock$/.test(t)) return 'low stock';
           if (/^reorder suggestions?$/.test(t)) return 'reorder suggestions';
-          if (/^prices$/.test(t)) return 'prices';
-          if (/^(stock value|inventory value|value summary)$/.test(t)) return 'stock value';
+          if (/^prices$/.test(t)) return 'prices';                    
+          // Canonicalize to a terminal command that does NOT include the word "stock"
+          // to avoid colliding with the "stock <product>" handler.
+          if (/^(stock value|inventory value|value summary)$/.test(t)) return 'value summary';
         
           const mExp = t.match(/^expiring\s+(0|7|30)$/i); if (mExp) return `expiring ${mExp[1]}`;
           if (/^short summary$/.test(t)) return 'short summary';
@@ -17557,9 +17559,11 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                   const normText = await normalizeCommandText(rawText, uiLangExact, `${requestId}::vc-normalize`);
                   const normCanon = safeNormalizeForQuickQuery(normText);                                   
                   // Anchor: "[req-...::vc-normalize] Normalized: 'Rio de suggestions.' (en) -> 'reorder'"
-                        // Map bare 'reorder' from vc-normalize to 'reorder suggestions'
-                        if (normCanon === 'reorder') cmd = 'reorder suggestions';
-                        else if (TERMINAL_COMMANDS.has(normCanon)) cmd = normCanon;
+                  // Map bare 'reorder' from vc-normalize to 'reorder suggestions'                                    
+                  // Hard canonicalization to avoid 'stock' carrying into routing:
+                  if (normCanon === 'stock value') cmd = 'value summary';
+                  if (normCanon === 'reorder') cmd = 'reorder suggestions';
+                  else if (TERMINAL_COMMANDS.has(normCanon)) cmd = normCanon;
                 } catch (_) { /* soft-fail; continue */ }
               }
   
