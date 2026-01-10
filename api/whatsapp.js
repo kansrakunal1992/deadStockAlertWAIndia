@@ -11457,7 +11457,6 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
             if (/^(?:value\s*summary|inventory\s+value|stock\s+value)$/i.test(cmd0)) {
               handledRequests.add(`${requestId}::terminal-value`);
               await handleQuickQueryEN('value summary', From, _lang, `${requestId}::value-summary`);
-              try { await maybeResendListPicker(From, _lang, requestId); } catch (_) {}
               return true; // terminal
             }
     
