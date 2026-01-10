@@ -438,16 +438,16 @@ async function enrichSaleHeaderWithStock(From, header, productName, preferUnit =
 const ENABLE_ROMAN_HINDI_NATIVE = String(process.env.ENABLE_ROMAN_HINDI_NATIVE ?? '1') === '1';
 
 // Hindi roman number words (extend as needed)
-const HI_ROMAN_NUMBER_WORDS = /\b(ek|do|teen|char|paanch|panch|chhe|cheh|saat|aath|aathh|nau|das|gyarah|gyaarah|barah|baarah|terah|chaudah|pandrah|solah|satrah|atharah|unnis|bis|bees|ikkis|bais|teis|chaubees|pachis|chhabis|sattais|athais|untis|tees|chaalis|chalees|pachaas|saath|sattar|assi|nabbe|sau|hazaar|lakh|crore)\b/i;
+const HI_ROMAN_NUMBER_WORDS = /\b(ek|do|teen|char|chaar|paanch|panch|chhe|cheh|saat|aath|aathh|nau|das|gyarah|gyaarah|barah|baarah|terah|chaudah|pandrah|solah|satrah|atharah|unnis|bis|bees|ikkis|bais|teis|chaubees|pachis|chhabis|sattais|athais|untis|tees|chaalis|chalees|pachaas|saath|sattar|assi|nabbe|sau|hazaar|lakh|crore)\b/i;
 
 // English number words (kept for Hinglish intent)
 const EN_NUMBER_WORDS = /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|lakh|million|crore)\b/i;
 
 // Common Hindi roman nouns/brands (inventory context)
-const HI_ROMAN_NOUNS = /\b(doodh|dudh|atta|aata|tel|chini|chai|paani|namak|biskut|biscuit|sabji|sabzi|dal|daal|chawal|chawal|maggi|amul|parle|parle\-g|frooti|mariegold|goodday|oreo)\b/i;
+const HI_ROMAN_NOUNS = /\b(doodh|dudh|atta|aata|tel|chini|cheeni|chai|paani|namak|biskut|biscuit|sabji|sabzi|dal|daal|chawal|chawal|maggi|amul|parle|parle\-g|frooti|mariegold|goodday|oreo)\b/i;
 
 // English unit tokens (already used elsewhere; redeclare for local checks)
-const UNIT_TOKENS_EN = /\b(ltr|liter|litre|liters|litres|kg|g|gm|gms|ml|packet|packets|piece|pieces|box|boxes|bottle|bottles|dozen)\b/i;
+const UNIT_TOKENS_EN = /\b(ltr|liter|litre|liters|litres|kg|kilo|g|gm|gms|ml|packet|packets|piece|pieces|box|boxes|bottle|bottles|dozen)\b/i;
 
 const __sentListPickerFor = new Set();
 
@@ -1729,14 +1729,18 @@ async function parseMultipleUpdates(reqOrText, requestId) {
           const UI_PRODUCT_DO_NOT_TRANSLATE = new Set([
             'chini','dudh','atta','tel','namak','chai','sabzi','dal','chawal'
           ]);
-          async function translateProductNameSafeForUI(name, tag = 'ui') {
-            const n = String(name).toLowerCase().trim();
-            if (UI_PRODUCT_DO_NOT_TRANSLATE.has(n)) return name; // preserve as spoken
-            try { return await translateProductName(name, tag); } catch { return name; }
-          }
+                    
+          async function translateProductNameSafeForUI(name, tag = 'ui', lang = 'en', context = 'chat') {
+             const n = String(name).toLowerCase().trim();
+             const base = String(lang).toLowerCase().replace(/-latn$/, '');
+             const skipForHinglish = (base === 'en' || lang.endsWith('-latn'));
+             // Only skip translation for Hinglish/English chat; translate for native scripts and PDFs
+             if (skipForHinglish && context === 'chat' && UI_PRODUCT_DO_NOT_TRANSLATE.has(n)) return name;
+             try { return await translateProductName(name, tag); } catch { return name; }
+           }
                   
         // UI-only: human-friendly name
-                  update.productDisplay = await translateProductNameSafeForUI(update.product, 'rule-parsing');
+                  update.productDisplay = await translateProductNameSafeForUI(update.product, 'rule-parsing', detectedLang /* hi or hi-latn */, 'chat');
                   // DB-only: raw product per write policy (never translated/normalized)
                   update.productRawForDb = resolveProductNameForWrite(update.product);                      
       // NEW: salvage noisy "<product> <qty> <unit>" in rule outputs
