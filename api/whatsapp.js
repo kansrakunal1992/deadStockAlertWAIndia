@@ -17542,8 +17542,20 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           );
           const haystack = (/en|hi\-latn/.test(langHint) ? t : src);
           const m = haystack.match(rx);
-          if (m) {
-            const productRaw = m[1].trim().replace(/[।。.!;,:\u0964\u0965]+$/u, '');
+          if (m) {                      
+          const productRaw = m[1].trim().replace(/[।。.!\;,:\u0964\u0965]+$/u, '');
+          
+            // --- GUARD: Don't treat valuation words as product names (voice path) ---
+            // If user said "इन्वेंटरी मूल्य"/"स्टॉक मूल्य"/"value"/"moolya", route to valuation.
+            // This prevents qq-stock from querying a fake product "value".
+            if (/^(value|moolya|मूल्य|भाव|रेट)$/i.test(productRaw)) {
+              console.log(`[${requestId}] [specops-voice] routing valuation command from voice: "${rawText}"`);
+              handledRequests.add(requestId);
+              await handleQuickQueryEN('value summary', From, uiLangExact, `${requestId}::voice-value-summary`);
+              try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
+              return; // terminal
+            }
+          
             console.log(`[${requestId}] [specops-voice] dispatching handleQuickQueryEN("stock ${productRaw}")`);
             handledRequests.add(requestId); // suppress late apologies
             await handleQuickQueryEN(`stock ${productRaw}`, From, uiLangExact, `${requestId}::alias-stock-voice`);
