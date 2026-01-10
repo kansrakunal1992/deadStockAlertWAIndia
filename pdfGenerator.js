@@ -11,25 +11,45 @@ const {
   getCurrentInventory
 } = require('./database'); // +inventory helpers
 
-// --- Font assets (for Hindi/Unicode text) ---
+// --- Font assets & registration (for Unicode / Devanagari) ---
 const devanagariFontPath = path.join(__dirname, 'assets', 'NotoSansDevanagari-Regular.ttf');
+const latinFontPath      = path.join(__dirname, 'assets', 'NotoSans-Regular.ttf'); // optional but recommended
 let devanagariAvailable = false;
-try {
-  devanagariAvailable = fs.existsSync(devanagariFontPath);
-} catch (_) { /* noop */ }
+let latinAvailable = false;
+try { devanagariAvailable = fs.existsSync(devanagariFontPath); } catch (_) {}
+try { latinAvailable      = fs.existsSync(latinFontPath);      } catch (_) {}
+
+// Register fonts once per PDFDocument instance (idempotent)
+function registerFonts(doc) {
+  if (doc.__fontsRegistered) return;
+  if (devanagariAvailable) {
+    doc.registerFont('Deva',  devanagariFontPath);
+  }
+  if (latinAvailable) {
+    doc.registerFont('Latin', latinFontPath);
+  }
+  doc.__fontsRegistered = true;
+}
 
 /**
- * Switch to a font suitable for given text.
- * Uses Devanagari font when Hindi/Marathi/Sanskrit codepoints are detected.
+ * Select an appropriate font for a given text segment.
+ * - If Devanagari or ₹ present → use 'Deva' (Noto Sans Devanagari) for proper shaping.
+ * - Else prefer 'Latin' (Noto Sans); fallback to Helvetica as last resort.
  */
 function applyFontForText(doc, text) {
   const s = String(text ?? '');
-  const hasDevanagari = /[\u0900-\u097F]/.test(s); // fix: correct character class (no literal [ ])
-  if (hasDevanagari && devanagariAvailable) {
-    doc.font(devanagariFontPath);
-  } else {
-    doc.font('Helvetica');
+  registerFonts(doc);
+  const hasDevanagari = /[\u0900-\u097F]/.test(s);
+  const hasRupee      = /\u20B9/.test(s); // ₹
+  if ((hasDevanagari || hasRupee) && devanagariAvailable) {
+    doc.font('Deva');     // Unicode + shaping
+    return;
   }
+  if (latinAvailable) {
+    doc.font('Latin');    // general Latin/English text (also has ₹)
+    return;
+  }
+  doc.font('Helvetica');  // last-resort Base-14
 }
 
 // Create a temporary directory for PDFs if it doesn't exist
@@ -186,8 +206,11 @@ async function generateInventoryShortSummaryPDF(shopId) {
       const timestamp = moment().format('YYYYMMDD_HHmmss');
       const fileName = `inventory_short_${shopId.replace(/\D/g, '')}_${timestamp}.pdf`;            
       // COPILOT-PATCH-PDF-DIR-001: write to invoicesDir so HTTP /invoice route can find it
-            const filePath = path.join(invoicesDir, fileName);
+            const filePath = path.join(invoicesDir, fileName);                       
             const doc = new PDFDocument({ margin: 36, size: 'A4' });
+            registerFonts(doc);
+            // Set a sane default font for the whole doc
+            if (latinAvailable) doc.font('Latin'); else if (devanagariAvailable) doc.font('Deva');
             const stream = fs.createWriteStream(filePath);
             // COPILOT-PATCH-PDF-FINISH-001: resolve only after stream 'finish'
             doc.pipe(stream);
@@ -286,8 +309,10 @@ async function generateSalesRawTablePDF(shopId, period = 'today') {
       const safePeriod = (period === 'week') ? 'week' : 'today';
       const fileName = `sales_raw_${shopId.replace(/\D/g, '')}_${safePeriod}_${timestamp}.pdf`;            
       // COPILOT-PATCH-PDF-DIR-001: standardize to invoicesDir
-            const filePath = path.join(invoicesDir, fileName);
+            const filePath = path.join(invoicesDir, fileName);                        
             const doc = new PDFDocument({ margin: 50, size: 'A4' });
+            registerFonts(doc);
+            if (latinAvailable) doc.font('Latin'); else if (devanagariAvailable) doc.font('Deva');
             const stream = fs.createWriteStream(filePath);
             // COPILOT-PATCH-PDF-FINISH-001
             doc.pipe(stream);
@@ -660,11 +685,13 @@ async function generateSalesPDF(shopId, period = 'today', startDate = null, endD
       // COPILOT-PATCH-PDF-DIR-001: standardize to invoicesDir
       const filePath = path.join(invoicesDir, fileName);
       
-      // Create PDF document
+      // Create PDF document           
       const doc = new PDFDocument({
-        margin: 50,
-        size: 'A4'
-      });            
+              margin: 50,
+              size: 'A4'
+            });
+            registerFonts(doc);
+            if (latinAvailable) doc.font('Latin'); else if (devanagariAvailable) doc.font('Deva');     
             
       // Pipe to file with finish guard
             const stream = fs.createWriteStream(filePath);
@@ -1058,12 +1085,14 @@ async function generateInvoicePDF(shopDetails, saleRecord) {
       
       console.log(`[PDF Generator] File path: ${filePath}`);
       
-      // Create PDF document with single page settings
+      // Create PDF document with single page settings            
       const doc = new PDFDocument({
-        margin: 40,
-        size: 'A4',
-        bufferPages: false // Disable page buffering to ensure single page
-      });
+              margin: 40,
+              size: 'A4',
+              bufferPages: false // Disable page buffering to ensure single page
+            });
+            registerFonts(doc);
+            if (latinAvailable) doc.font('Latin'); else if (devanagariAvailable) doc.font('Deva');
       
       // Ensure the directory exists before writing
       const dir = path.dirname(filePath);
