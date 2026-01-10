@@ -8247,10 +8247,20 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
   // Accepts: "stock <product>" (already routed here by your alias block under // 1) Stock for product)
   // Returns a localized one-liner: "• Milk — 12 liters"
   {
-    const m = String(cmd || '').match(/^stock\s+(.{1,64})$/i);
+    const m = String(cmd || '').match(/^stock\s+(?!value(?:\s|$)|valuation(?:\s|$)|value\s*summary\b)(.{1,64})$/i);
     if (m) {
       console.log(`[qq-stock] UNIQ path → "${m[1].trim()}"`);
       const productRaw = m[1].trim();
+            
+      // NEW: if the “product” is actually a valuation word, bounce to value summary
+            const _rawNoPunct = productRaw.replace(/[।。.!;,:\u0964\u0965]+$/u, '');
+            if (/^(value|moolya|मूल्य|भाव|रेट)$/i.test(_rawNoPunct)) {
+              handledRequests.add(`${source}::stock-bounce-value`);
+              await handleQuickQueryEN('value summary', From, lang, `${source}::qq-stock->value`);
+              try { await maybeResendListPicker(From, lang, `${source}::qq-stock->value`); } catch (_) {}
+              return; // terminal
+            }
+
       // DB read (exact, case-insensitive; your DB layer normalizes product key)
       let inv = null;
       try { inv = await getProductInventory(shopId, productRaw); } catch { inv = null; }
@@ -8585,10 +8595,19 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       // 3) STOCK for product (single-product lookup)
       // Accepts: "stock <product>" | "inventory <product>" | "qty <product>"
       {
-        const mStock = cmd.match(/^(?:stock|inventory|qty)\s+(.+)$/i);
+        const mStock = cmd.match(/^(?:stock|inventory|qty)\s+(?!value(?:\s|$)|valuation(?:\s|$)|value\s*summary\b)(.+)$/i);
         if (mStock) {
           console.log(`[qq-stock] generic path → raw="${mStock[1].trim()}"`);
+                    
           const rawQuery = mStock[1].trim().replace(/[?।。.!,;:\u0964\u0965]+$/u, '');
+                // NEW: valuation word bounce (covers Devanagari + Roman variants already used elsewhere)
+                if (/^(?:value(?:\s|$)|valuation(?:\s|$)|value\s*summary|moolya|मूल्य|भाव|रेट)$/i.test(rawQuery)) {
+                  handledRequests.add(`${source}::stock-bounce-value`);
+                  await handleQuickQueryEN('value summary', From, lang, `${source}::qq-stock->value`);
+                  try { await maybeResendListPicker(From, lang, `${source}::qq-stock->value`); } catch (_) {}
+                  return true; // terminal
+                }
+
           const product = await translateProductName(rawQuery, `qq-stock-${shopId}`);
           try {
             const exact = await getProductInventory(shopId, product);
@@ -11428,9 +11447,19 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
 
   // If AI produced a normalized read-only command (summary/list/etc.), route to canonical and exit.
   if (_orch.normalizedCommand) {   
-    handledRequests.add(requestId);
-        const normalized = String(_orch.normalizedCommand).trim().toLowerCase();
-        const raw = String(text).trim().toLowerCase();
+    handledRequests.add(requestId);           
+    const normalized = String(_orch.normalizedCommand).trim().toLowerCase();
+            const raw = String(text).trim().toLowerCase();
+    
+            // BEFORE you branch to any stock handler:
+            // Universal “terminal value” check so valuation synonyms never get swallowed by stock paths
+            const cmd0 = String(_orch.normalizedCommand ?? text ?? '').toLowerCase().trim();
+            if (/^(?:value\s*summary|inventory\s+value|stock\s+value)$/i.test(cmd0)) {
+              handledRequests.add(`${requestId}::terminal-value`);
+              await handleQuickQueryEN('value summary', From, _lang, `${requestId}::value-summary`);
+              try { await maybeResendListPicker(From, _lang, requestId); } catch (_) {}
+              return true; // terminal
+            }
     
         // Recursion guard #1: if normalizer returns the same command, dispatch inline (no re-orchestration)
         const sameCommand = normalized === raw;           
@@ -12071,8 +12100,8 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
   
     // 1) Stock for product
     // Guard: don't let "inventory value/valuation/value summary" slip into stock branch  
-    {      
-// Prevent "inventory value/valuation/value summary" from falling into the stock branch
+    {            
+      // Prevent "inventory value/valuation/value summary" from falling into the stock branch
       const m = text.match(/^(?:stock|inventory|qty)\s+(?!value(?:\s|$)|valuation(?:\s|$)|value\s*summary\b)(.+)$/i);
       if (m) {
         const raw = m[1].trim();                
