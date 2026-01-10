@@ -17641,7 +17641,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           switch (cmd) {
             case 'low stock': {
               const msg = await composeLowStockLocalized(shopId, uiLangExact, requestId);
-              await sendMessageViaAPI(From, finalizeForSend(msg, uiLangExact));
+              await sendMessageViaAPI(From, finalizeForSend(msg, uiLangExact), { lang: uiLangExact });
               try { await maybeResendListPicker(From, uiLangExact, requestId); } catch (_) {}
               return;
             }            
