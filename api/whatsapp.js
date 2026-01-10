@@ -3863,8 +3863,21 @@ async function setStickyMode(from, actionOrWord) {
       } catch (_) { /* noop */ }
 }
 
+// --- PATCH: make mode-tagging idempotent ---
+function hasModeFooter(body) {
+  // Matches a trailing line like: «SALE • mode», «बिक्री • मोड», etc.
+  return /(?:^|\n)«[^»]+»\s*$/u.test(String(body ?? ''));
+}
+
 // ===== LOCALIZED FOOTER TAG: append «<MODE_BADGE> • <SWITCH_WORD>» to every message =====
 async function tagWithLocalizedMode(from, text, detectedLanguageHint = null, opts = {}) {
+  
+let out = String(text ?? '');
+  // If a footer already exists, return as-is (no duplicate tagging)
+  if (hasModeFooter(out)) {
+    return out;
+  }
+
   try {
     // NOTE: badge will be shown only if the user is activated (paid or trial & not expired)        
         // 🔧 Strip footer-suppressor markers (raw "<>" or escaped) and finalize immediately
