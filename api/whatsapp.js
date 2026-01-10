@@ -3872,9 +3872,10 @@ async function tagWithLocalizedMode(from, text, detectedLanguageHint = null, opt
           const withoutMarker = String(text).replace(/^(?:\s*(?:<>|&lt;&gt;))+/, '');
           return finalizeForSend(withoutMarker, String(detectedLanguageHint ?? 'en').toLowerCase());
         }
-    // Guard: if footer already present, do not append again        
+    // Guard: if footer already present, do not append again                
     if (/«.+\s•\s.+»$/.test(text)) {
-          return finalizeForSend(text, String(detectedLanguageHint ?? 'en').toLowerCase());
+          // Already tagged → avoid second pass that can re-localize body text.
+          return String(text);
         }
 
     const shopId = shopIdFrom(from);
