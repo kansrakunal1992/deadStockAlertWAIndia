@@ -17543,7 +17543,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
           const haystack = (/en|hi\-latn/.test(langHint) ? t : src);
           const m = haystack.match(rx);
           if (m) {                      
-          const productRaw = m[1].trim().replace(/[।。.!\;,:\u0964\u0965]+$/u, '');
+          const productRaw = m[1].trim().replace(/[।。.!;,:\u0964\u0965]+$/u, '');
           
             // --- GUARD: Don't treat valuation words as product names (voice path) ---
             // If user said "इन्वेंटरी मूल्य"/"स्टॉक मूल्य"/"value"/"moolya", route to valuation.
