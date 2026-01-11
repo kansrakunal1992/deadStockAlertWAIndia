@@ -27,7 +27,9 @@ const {
   getCurrentInventory,
   getShopDetails,
   recordPaymentEvent,
-  markAuthUserPaid
+  markAuthUserPaid, 
+  getUserPreference,
+  setUserState
 } = require('./database');
 
 const crypto = require('crypto');          // NEW: HMAC for webhook signature
@@ -231,46 +233,64 @@ app.post(
             // We already ACKed; just stop processing here
             return;
           }
-
-          // Non-blocking WhatsApp confirmation
-          try {
-            const wa = require('./api/whatsapp');
-            if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {
-              await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
-              console.log(
-                `[${requestId}] WhatsApp paid confirm sent to ${fromWhatsApp}`
-              );
-              markConfirmed(shopId, razorEventId);
-            } else {
-              // Fallback: send confirmation directly via Twilio WhatsApp
-              try {
-                const twilio = require('twilio')(
-                  process.env.ACCOUNT_SID,
-                  process.env.AUTH_TOKEN
-                );
-                const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER; // e.g., 'whatsapp:+14155238886'
-                if (!WHATSAPP_NUMBER) {
-                  console.warn(
-                    `[${requestId}] Twilio fallback skipped: WHATSAPP_NUMBER env not set`
-                  );
-                } else {
-                  await twilio.messages.create({
-                    from: WHATSAPP_NUMBER,
-                    to: fromWhatsApp, // already in 'whatsapp:+91XXXXXXXXXX' format
-                    body:
-                      '✅ Your Saamagrii.AI Paid Plan is now active. Enjoy full access!',
-                  });
-                  console.log(
-                    `[${requestId}] Twilio fallback: paid confirm sent to ${fromWhatsApp}`
-                  );
-                  markConfirmed(shopId, razorEventId);
-                }
-              } catch (twErr) {
-                console.warn(
-                  `[${requestId}] Twilio fallback paid confirm failed: ${twErr?.message}`
-                );
-              }
-            }
+                              
+          // Optional: set onboarding state for paid-capture (best effort)
+          try { await setUserState(shopId, 'onboarding_paid_capture'); } catch (_) {}
+          // Non-blocking WhatsApp confirmation (once-only) + name prompt (once-only)
+          try {                                
+          const wa = whatsappHandler; // reuse the module you already required at top
+                    // Resolve user preferred language (fallback to 'en')
+                    let lang = 'en';
+                    try {
+                      const pref = await getUserPreference(shopId);
+                      if (pref?.success && pref.language) {
+                        lang = String(pref.language).toLowerCase();
+                      }
+                    } catch (_) {}
+                    if (wa && typeof wa.sendPaidConfirmationOnce === 'function') {
+                      // Prefer the once-only confirmation sender
+                      await wa.sendPaidConfirmationOnce(
+                        fromWhatsApp,
+                        lang,
+                        r.paidStart ?? new Date().toISOString(),
+                        req.requestId
+                      );
+                      // Then prompt for shop name once-only
+                      if (typeof wa.sendOnboardNamePromptOnce === 'function') {
+                        await wa.sendOnboardNamePromptOnce(fromWhatsApp, lang);
+                      }
+                      markConfirmed(shopId, razorEventId);
+                    } else if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {
+                      // Back-compat: fall back to the older sender if once-only is not exported yet
+                      await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
+                      markConfirmed(shopId, razorEventId);
+                    } else {
+                      // Last-resort fallback: Twilio direct send
+                      try {
+                        const twilio = require('twilio')(
+                          process.env.ACCOUNT_SID,
+                          process.env.AUTH_TOKEN
+                        );
+                        const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER; // e.g., 'whatsapp:+14155238886'
+                        if (!WHATSAPP_NUMBER) {
+                          console.warn(
+                            `[${requestId}] Twilio fallback skipped: WHATSAPP_NUMBER env not set`
+                          );
+                        } else {
+                          await twilio.messages.create({
+                            from: WHATSAPP_NUMBER,
+                            to: fromWhatsApp,
+                            body:
+                              '✅ Your Saamagrii.AI Paid Plan is now active. Enjoy full access!',
+                          });
+                          markConfirmed(shopId, razorEventId);
+                        }
+                      } catch (twErr) {
+                        console.warn(
+                          `[${requestId}] Twilio fallback paid confirm failed: ${twErr?.message}`
+                        );
+                      }
+                    }
           } catch (e) {
             console.warn(
               `[${requestId}] WhatsApp paid confirm (razorpay) failed: ${e?.message}`
