@@ -5771,7 +5771,6 @@ async function sendPaidPlanCTA(From, lang = 'en') {
 
 // Idempotent + deduped paid confirmation (shows "30 days" and expiry date if present)
 const _paidConfirmGuard = new Map(); // shopId -> { at: ms, lastHash: string }
-const PAID_CONFIRM_TTL_MS = Number(process.env.PAID_CONFIRM_TTL_MS ?? (5 * 60 * 1000));
 function _hash(s) { try { return crypto.createHash('sha256').update(String(s ?? '')).digest('hex'); } catch { return String(s ?? '').length.toString(16); } }
 async function sendWhatsAppPaidConfirmation(From) {
   try {
@@ -20108,7 +20107,10 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
 // NOTE: These functions must already be defined above in this file.
 //       e.g., sendWhatsAppPaidConfirmation, sendPaidPlanCTA
 try { whatsappHandler.sendWhatsAppPaidConfirmation = sendWhatsAppPaidConfirmation; } catch (_) {}
-try { whatsappHandler.sendPaidPlanCTA = sendPaidPlanCTA; } catch (_) {}
+try { whatsappHandler.sendPaidPlanCTA = sendPaidPlanCTA; } catch (_) {}  
+// New once-only helpers (export when available)
+try { whatsappHandler.sendPaidConfirmationOnce = sendPaidConfirmationOnce; } catch (_) {}
+try { whatsappHandler.sendOnboardNamePromptOnce = sendOnboardNamePromptOnce; } catch (_) {}
 // If you also want to expose other utilities, attach them similarly:
 // whatsappHandler.generateSummaryInsights = generateSummaryInsights; // (optional)
 
