@@ -6916,7 +6916,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
                : trialExpired
                ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
-               : await t('ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
+               : await t(`ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
                   await sendMessageViaAPI(from, fixNewlines(msgRaw));
                 }
        try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}                    
@@ -6936,7 +6936,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
                : trialExpired
                ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
-               : await t('ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
+               : await t(`ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
                       await sendMessageViaAPI(from, fixNewlines(msgRaw));
                 }
        try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}               
@@ -6956,7 +6956,7 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
                : trialExpired
                ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
-               : await t('ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
+               : await t(`ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
                   await sendMessageViaAPI(from, fixNewlines(msgRaw));
             }
        try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}                    
