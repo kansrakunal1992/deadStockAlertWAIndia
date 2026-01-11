@@ -26,59 +26,6 @@ const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const CAPTURE_SHOP_DETAILS_ON = String(process.env.CAPTURE_SHOP_DETAILS_ON ?? 'paid').toLowerCase();
 // 'paid' → capture after payment; 'trial' → capture during trial onboarding
 
-// ====================================================================
-// [PATCH:PAID-WEBHOOK-IDEMPOTENCY-20260111] Razorpay event dedupe
-// Prevent repeated paid-activation flows when Razorpay retries delivery.
-// Uses x-razorpay-event-id (unique per event). TTL keeps memory bounded.
-// ====================================================================
-const PAID_EVENT_TTL_MS = Number(process.env.PAID_EVENT_TTL_MS ?? 10 * 60 * 1000); // 10 minutes
-const __processedPaidEvents = new Map(); // eventId -> { ts }
-function alreadyProcessedPaidEvent(eventId) {
-  if (!eventId) return false;
-  const hit = __processedPaidEvents.get(eventId);
-  const now = Date.now();
-  if (hit && (now - hit.ts) < PAID_EVENT_TTL_MS) return true;
-  __processedPaidEvents.set(eventId, { ts: now });
-  // cheap sweep when large
-  if (__processedPaidEvents.size > 2000) {
-    for (const [k, v] of __processedPaidEvents) {
-      if (now - v.ts > PAID_EVENT_TTL_MS) __processedPaidEvents.delete(k);
-    }
-  }
-  return false;
-}
-
-// ====================================================================
-// [PATCH:PAID-CONFIRM-ONCE-20260111] Dedupe paid confirmation sends
-// Uses a per-shop key scoped to paidStart ISO timestamp.
-// ====================================================================
-const PAID_CONFIRM_TTL_MS = Number(process.env.PAID_CONFIRM_TTL_MS ?? 60_000); // 60s
-const __paidConfirmSeen = new Map(); // key -> { ts }
-function paidConfirmKey(fromOrShopId, paidStartIso) {
-  const shopId = String(fromOrShopId ?? '').replace('whatsapp:', '');
-  return `${shopId}::paidConfirm::${String(paidStartIso ?? '').slice(0, 19)}`;
-}
-async function sendPaidConfirmationOnce(From, lang, paidStartIso, requestId) {
-  const k = paidConfirmKey(From, paidStartIso);
-  const prev = __paidConfirmSeen.get(k);
-  const now = Date.now();
-  if (prev && (now - prev.ts) < PAID_CONFIRM_TTL_MS) return false;
-  __paidConfirmSeen.set(k, { ts: now });
-  // Prefer approved content template; fallback to text
-  try {
-    await ensureLangTemplates(lang);
-    const sids = getLangSids(lang);
-    if (sids?.paidConfirmSid) {
-      await sendContentTemplate({ toWhatsApp: toE164(From), contentSid: sids.paidConfirmSid });
-      return true;
-    }
-  } catch { /* fallback below */ }
-  const body = await t('✅ Your Saamagrii.AI Paid Plan is now active. Enjoy full access for 30 days!\nExpires on 10 Feb 2026.', lang, requestId);
-  const tagged = await tagWithLocalizedMode(From, finalizeForSend(body, lang), lang);
-  await sendMessageViaAPI(From, tagged);
-  return true;
-}
-
 // ---------------------------------------------------------------------------
 // Ultra‑early ack: micro language hint based on Unicode script and Hinglish ASCII
 // ---------------------------------------------------------------------------
@@ -772,27 +719,6 @@ function toE164(input) {
 
 // Convenience: always prefer E.164 for DB-facing shopId derivations
 const shopIdFrom = (From) => toE164(From);
-
-// ====================================================================
-// [PATCH:ONBOARD-NAME-ONCE-20260111] Dedupe shop-name prompt
-// Keeps users from receiving the same "Please share your *Shop Name*" thrice.
-// ====================================================================
-const ONBOARD_NAME_PROMPT_TTL_MS = Number(process.env.ONBOARD_NAME_PROMPT_TTL_MS ?? 5 * 60_000);
-const __onboardPromptSent = new Map(); // key -> { ts }
-function shouldSendOnboardNamePrompt(fromOrShopId) {
-  const key = `${toE164(fromOrShopId)}::onboard_name::paid`;
-  const prev = __onboardPromptSent.get(key);
-  const now = Date.now();
-  if (prev && (now - prev.ts) < ONBOARD_NAME_PROMPT_TTL_MS) return false;
-  __onboardPromptSent.set(key, { ts: now });
-  return true;
-}
-async function sendOnboardNamePromptOnce(From, lang) {
-  if (!shouldSendOnboardNamePrompt(From)) return false;
-  const msg = await t('<!NO_FOOTER!>Please share your *Shop Name*.', lang, 'paid-onboard-name');
-  await sendMessageViaAPI(From, finalizeForSend(msg, lang));
-  return true;
-}
 
 // ===== Ephemeral overrides (auto-clear only for these modes) ===================
 // We will auto-stamp TTLs, auto-expire on read, and schedule a best-effort timer.
@@ -5771,6 +5697,7 @@ async function sendPaidPlanCTA(From, lang = 'en') {
 
 // Idempotent + deduped paid confirmation (shows "30 days" and expiry date if present)
 const _paidConfirmGuard = new Map(); // shopId -> { at: ms, lastHash: string }
+const PAID_CONFIRM_TTL_MS = Number(process.env.PAID_CONFIRM_TTL_MS ?? (5 * 60 * 1000));
 function _hash(s) { try { return crypto.createHash('sha256').update(String(s ?? '')).digest('hex'); } catch { return String(s ?? '').length.toString(16); } }
 async function sendWhatsAppPaidConfirmation(From) {
   try {
@@ -6413,9 +6340,9 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
 async function beginPaidOnboarding(From, lang = 'en') {
   const shopId = shopIdFrom(From);
   await setUserState(shopId, 'onboarding_paid_capture', { step: 'name', collected: {}, lang });
-  try { await saveUserPreference(shopId, lang); } catch {}    
-  // [PATCH:ONBOARD-NAME-ONCE] Use gated sender to avoid duplicate prompts
-  await sendOnboardNamePromptOnce(From, lang);
+  try { await saveUserPreference(shopId, lang); } catch {}
+  const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `paid-onboard-name-${shopId}`);
+  await sendMessageViaAPI(From, askName);
 }
 
 async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = null) {
@@ -6508,10 +6435,8 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
     let msg0 = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + '✅ Paid Plan activated. Thank you! Your details are saved.', lang, `paid-onboard-done-${shopId}`);
     await sendMessageViaAPI(From, finalizeForSend(msg0, lang));
 
-    // Normal paid confirmation + menus        
-    // [PATCH:PAID-CONFIRM-ONCE] Replace generic with once-only sender
-    try { await sendPaidConfirmationOnce(From, lang, (new Date()).toISOString(), requestId);
-   
+    // Normal paid confirmation + menus
+    try { await sendWhatsAppPaidConfirmation(From); } catch {}
     try {
       await ensureLangTemplates(lang);
       const sids = getLangSids(lang);
@@ -6521,7 +6446,7 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
 
     try { if (requestId) handledRequests.add(requestId); } catch {}
     return true;
-  } catch {}
+  }
 
   return false;
 }
@@ -20107,10 +20032,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
 // NOTE: These functions must already be defined above in this file.
 //       e.g., sendWhatsAppPaidConfirmation, sendPaidPlanCTA
 try { whatsappHandler.sendWhatsAppPaidConfirmation = sendWhatsAppPaidConfirmation; } catch (_) {}
-try { whatsappHandler.sendPaidPlanCTA = sendPaidPlanCTA; } catch (_) {}  
-// New once-only helpers (export when available)
-try { whatsappHandler.sendPaidConfirmationOnce = sendPaidConfirmationOnce; } catch (_) {}
-try { whatsappHandler.sendOnboardNamePromptOnce = sendOnboardNamePromptOnce; } catch (_) {}
+try { whatsappHandler.sendPaidPlanCTA = sendPaidPlanCTA; } catch (_) {}
 // If you also want to expose other utilities, attach them similarly:
 // whatsappHandler.generateSummaryInsights = generateSummaryInsights; // (optional)
 
