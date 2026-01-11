@@ -9289,11 +9289,12 @@ function ensureBrandEcho(question, answer) {
       .map(s => s.trim())
       .filter(s => /[A-Za-z]/.test(s) && s.length >= 2);
     let out = aRaw;
-    for (const b of brandTokens) {
-      const rx = new RegExp(`\\b${escapeRegExp(b)}\\b`);
-      if (!rx.test(out)) {
-        // Prepend once—keeps single script; nativeglishWrap will handle anchors later
-        out = `${b}: ${out}`;
+    for (const b of brandTokens) {     
+    // Match even with dots/hyphens; avoid word-boundary which splits on '.'
+    const rx = new RegExp(`${escapeRegExp(b)}`);
+      if (!rx.test(out)) {                
+        // Prepend once—use an em dash to avoid narrow script filters
+        out = `${b} — ${out}`;
         break;
       }
     }
@@ -9482,8 +9483,9 @@ const lang = canonicalizeLang(language ?? 'en');
    You are a helpful WhatsApp assistant. ${targetScriptNote}
    Be concise (3–5 short sentences, ~1000 chars max). Use ONLY MANIFEST facts; never invent features or numbers.
    ROUTING: If the question is a canonical quick command (sales today/week/month, top 5 products month, value summary, prices),
-   reply ONLY with \`ROUTE:<canonical>\` (no extra text).
+   reply ONLY with \`ROUTE:<canonical>\` (no extra text).       
    BRANDS: Keep brand/product/tool names EXACTLY as in the question; do NOT translate brand names. Echo at least once.
+   MUST INCLUDE: Always include the literal “Saamagrii.AI” in Latin script exactly as spelled; never omit, translate, or transliterate it.
    If pricing/cost is asked, include: Saamagrii.AI offers free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month.
    Answer directly to the user's question topic; do not repeat onboarding slogans.
    ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''}
@@ -9670,8 +9672,12 @@ const lang = canonicalizeLang(language ?? 'en');
             out = out + line;
           }
         } catch (_) { /* no-op */ }    
-    // Final single-script guard for any residual mixed content
-      const finalOut = enforceSingleScript(out, lang);
+    // Final single-script guard for any residual mixed content          
+      let finalOut = enforceSingleScriptSafe(out, lang);
+      // Final brand guard: ensure Saamagrii.AI literal appears unchanged
+      if (!/Saamagrii\.AI/.test(finalOut)) {
+        finalOut = `Saamagrii.AI — ${finalOut}`;
+      }
       console.log('AI_AGENT_POST_CALL', { kind: 'sales-qa', ok: !!out, length: out?.length ?? 0, topic, pricingFlavor });
       return finalOut;
   } catch {
