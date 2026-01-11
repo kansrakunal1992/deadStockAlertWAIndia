@@ -6911,12 +6911,12 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
               const examples = getStickyExamplesLocalized('purchased', lang);
               await sendExamplesWithAck(from, lang, examples, `qr-purchase-${shopIdTop}`);                        
             } else {
-                  // NEW: Prompt for activation when plan not active (new or expired trial)                              
+                  // NEW: Prompt for activation when plan not active (new or expired trial)                                                      
             const msgRaw = isNewUser
-                    ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
-                    : trialExpired
-                      ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nOr pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
-                      : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
+               ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
+               : trialExpired
+               ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+               : await t('ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
                   await sendMessageViaAPI(from, fixNewlines(msgRaw));
                 }
        try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}                    
@@ -6931,12 +6931,12 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                   } catch (_) {}
               const examples = getStickyExamplesLocalized('sold', lang);
               await sendExamplesWithAck(from, lang, examples, `qr-sale-${shopIdTop}`);              
-            } else {                                  
-                const msgRaw = isNewUser
-                        ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
-                        : trialExpired
-                          ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nOr pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
-                          : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
+            } else {                                                 
+            const msgRaw = isNewUser
+               ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
+               : trialExpired
+               ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+               : await t('ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
                       await sendMessageViaAPI(from, fixNewlines(msgRaw));
                 }
        try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}               
@@ -6951,12 +6951,12 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                   } catch (_) {}
                 const examples = getStickyExamplesLocalized('returned', lang);
                 await sendExamplesWithAck(from, lang, examples, `qr-return-${shopIdTop}`);
-        } else {                          
+        } else {                                 
             const msgRaw = isNewUser
-                    ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
-                    : trialExpired
-                      ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nOr pay at: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
-                      : await t('ℹ️ Please activate your plan to record transactions.', lang, `qr-generic-prompt-${shopId}`);
+               ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
+               : trialExpired
+               ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+               : await t('ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
                   await sendMessageViaAPI(from, fixNewlines(msgRaw));
             }
        try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}                    
@@ -9128,13 +9128,13 @@ const SALES_AI_MANIFEST = Object.freeze({
     'value summary',
     'batches <product>',
     'stock <product>'
-  ],
+  ],    
   plans: {
-    trialDays: TRIAL_DAYS,
-    pricePerMonthINR: PAID_PRICE_INR,
-    equalFeaturesNote: 'Trial has all features of the paid plan; trial is time-limited.',
-    paidCTA: `Pay ₹${PAID_PRICE_INR} via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME}) or ${PAYMENT_LINK}`
-  },
+     trialDays: TRIAL_DAYS,
+     pricePerMonthINR: PAID_PRICE_INR,
+     equalFeaturesNote: 'Trial has all features of the paid plan; trial is time-limited.',
+     paidCTA: `Pay securely via Razorpay: ${PAYMENT_LINK}`
+   },
   guardrails: [
     'Do NOT invent features beyond this list.',
     'If out of scope, say “I’m not sure yet” and show 2–3 quick commands.',
@@ -9665,12 +9665,11 @@ const lang = canonicalizeLang(language ?? 'en');
              const pref = await getUserPreference(shopId);
              const plan = String(pref?.plan ?? '').toLowerCase();
              _activated = (plan === 'trial' || plan === 'paid');
-           } catch {}
-           if (_activated && INLINE_PAYTM_IN_PRICING && askedPrice && pricingFlavor === 'tool_pricing') {
-            // Keep it short and language-neutral (numbers/brand names OK in single-script output)
-            const line = `\nPaytm → ${PAYTM_NUMBER} (${PAYTM_NAME})`;
-            out = out + line;
-          }
+           } catch {}                     
+          if (_activated && askedPrice && flavor === 'tool_pricing') {
+              const line = `\nPay securely via Razorpay: ${PAYMENT_LINK}`;
+              out = out + line;
+            }
         } catch (_) { /* no-op */ }    
     // Final single-script guard for any residual mixed content          
       let finalOut = enforceSingleScriptSafe(out, lang);
