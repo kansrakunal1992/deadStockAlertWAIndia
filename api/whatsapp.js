@@ -9279,8 +9279,36 @@ async function composeAIOnboarding(language = 'en') {
   }
 }
 
+// ---- Helper: echo brand/tool/product names mentioned by user unchanged once ----
+function ensureBrandEcho(question, answer) {
+  try {
+    const qRaw = String(question ?? '');
+    const aRaw = String(answer ?? '');
+    // Simple token extractor: keeps ASCII brand-like tokens (e.g., Saamagrii.AI, Maggi, Parle-G)
+    const brandTokens = (qRaw.match(/[A-Za-z][A-Za-z0-9\-.+ ]{1,}/g) || [])
+      .map(s => s.trim())
+      .filter(s => /[A-Za-z]/.test(s) && s.length >= 2);
+    let out = aRaw;
+    for (const b of brandTokens) {
+      const rx = new RegExp(`\\b${escapeRegExp(b)}\\b`);
+      if (!rx.test(out)) {
+        // Prepend once—keeps single script; nativeglishWrap will handle anchors later
+        out = `${b}: ${out}`;
+        break;
+      }
+    }
+    return out;
+  } catch {
+    return answer;
+  }
+}
+function escapeRegExp(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
 // NEW: Grounded sales Q&A for short questions like “benefits?”, “how does it help?”
-async function composeAISalesAnswer(shopId, question, language = 'en') {
+async function composeAISalesAnswer(shopId, question, language = 'en') {  
+// ---- SALES-QA :: grounded system prompt + brand-preservation ----
+const SALES_QA_ROUTE_PREFIX = 'ROUTE:'; // allows AI to hand off canonical commands
+
 // Fast-pricing detector (English + Hindi)
   const q = String(question ?? '').trim();
   const isPricing = /\b(price|cost|charges?)\b/i.test(q) || /क़ीमत|कीमत|मूल्य|भाव|लागत/i.test(q);
@@ -9294,14 +9322,26 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
     } catch {}
     const flavor = (activated && /\b(inventory|stock|summary|sales)\b/i.test(q))
       ? 'inventory_pricing'
-      : 'tool_pricing';      
-  const pricingText = await composePricingAnswer(language, flavor, shopId); // pass shopId
-    const aiNative = enforceSingleScriptSafe(pricingText, language);
-    // brand preserved by nativeglishWrap (Patch 1)
+      : 'tool_pricing';            
+    const pricingText = await composePricingAnswer(language, flavor, shopId); // pass shopId
+        let aiNative = enforceSingleScriptSafe(pricingText, language);
+        // Ensure brand/tool names from question are echoed unchanged at least once
+        aiNative = ensureBrandEcho(q, aiNative);
+        // Brand + anchors preserved by nativeglishWrap
     return normalizeNumeralsToLatin(nativeglishWrap(aiNative, language));
   }
 
 const lang = canonicalizeLang(language ?? 'en');
+
+  // ---- Canonical quick-command handoff (deterministic ROUTE:) ----
+  try {
+    const langExact = ensureLangExact(lang);
+    const canonical = normalizeCommandAlias?.(q, langExact) ?? null;
+    const ALLOW = new Set(['sales today','sales week','sales month','top 5 products month','value summary','prices']);
+    if (canonical && (ALLOW.has(canonical) || (_isTerminalCommand?.(canonical) === true && ALLOW.has(canonical)))) {
+      return `${SALES_QA_ROUTE_PREFIX}${canonical}`;
+    }
+  } catch (_) { /* noop */ }
 
   // ---------- Generic, extensible domain classification ----------
   // Optional: pull a saved category from preferences if you later store it
@@ -9437,27 +9477,30 @@ const lang = canonicalizeLang(language ?? 'en');
 
   // If user asks about invoice, force an explicit line in the reply about PDFs
   const mustMentionInvoice = /\b(invoice|बिल|चालान)\b/i.test(String(question ?? ''));              
-            
-    const sys = `
-    You are a helpful WhatsApp assistant. ${targetScriptNote}
-    Be concise (3–5 short sentences). Use ONLY MANIFEST facts; never invent features.
-    If pricing/cost is asked, include: Saamagrii.AI offers free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month.
-    Answer directly to the user's question topic; do not repeat onboarding slogans.
-    ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''}        
-    Identity: If the user asks for your name or who you are (e.g., "what's your name", "tumhara naam kya hai", "तुम्हारा नाम क्या है"),
-        reply with exactly: "Name - ${process.env.AGENT_NAME ?? 'Suhani'}, Saamagrii.AI <friend>".
-        Localize the leading label ("Name"/localized equivalent) and the word "friend" to the user's language/script (hi → Devanagari; hi-Latn → Hinglish; bn/ta/te/kn/mr/gu → native),
-        but always keep "Saamagrii.AI" in Latin. One sentence only; no emojis, no upsell; do not consult or reuse any translation caches.
-    STYLE (respectful, professional):
-    - In Hindi or Hinglish or any Native+English, ALWAYS address the user with “aap / aapki / aapke / aapko / aapse”.
-    - NEVER use “tum / tumhari / tumhara / tumhare / tumko / tumse”.
-    - Use polite plural verb forms: “sakte hain”, “karenge”, “kar payenge”; avoid “sakte ho”, “karoge”, “kar paoge”.
-    - In Hindi or Hinglish or any Native+English, always ensure numerals/numbers are in roman script only - e.g. केवल ₹11 प्रति माह.
-    FORMAT RULES (strict):
-    - Do NOT use code fences (no triple backticks).
-    - Do NOT use inline backticks (no backtick characters).
-    - Avoid bullet lists; prefer short sentences.
-    `.trim();
+                
+  const sys = `
+   You are a helpful WhatsApp assistant. ${targetScriptNote}
+   Be concise (3–5 short sentences, ~1000 chars max). Use ONLY MANIFEST facts; never invent features or numbers.
+   ROUTING: If the question is a canonical quick command (sales today/week/month, top 5 products month, value summary, prices),
+   reply ONLY with \`ROUTE:<canonical>\` (no extra text).
+   BRANDS: Keep brand/product/tool names EXACTLY as in the question; do NOT translate brand names. Echo at least once.
+   If pricing/cost is asked, include: Saamagrii.AI offers free trial for ${TRIAL_DAYS} days, then ₹${PAID_PRICE_INR}/month.
+   Answer directly to the user's question topic; do not repeat onboarding slogans.
+   ${mustMentionInvoice ? 'If asked about invoice, clearly state that sale invoices (PDF) are generated automatically in both trial and paid plans.' : ''}
+   Identity: If the user asks for your name or who you are (e.g., "what's your name", "tumhara naam kya hai", "तुम्हारा नाम क्या है"),
+   reply with exactly: "Name - ${process.env.AGENT_NAME ?? 'Suhani'}, Saamagrii.AI <friend>".
+   Localize the leading label ("Name"/localized equivalent) and the word "friend" to the user's language/script (hi → Devanagari; hi-Latn → Hinglish; bn/ta/te/kn/mr/gu → native),
+   but always keep "Saamagrii.AI" in Latin. One sentence only; no emojis, no upsell; do not consult or reuse any translation caches.
+   STYLE (respectful, professional):
+   - In Hindi or Hinglish or any Native+English, ALWAYS address the user with “aap / aapki / aapke / aapko / aapse”.
+   - NEVER use “tum / tumhari / tumhara / tumhare / tumko / tumse”.
+   - Use polite plural verb forms: “sakte hain”, “karenge”, “kar payenge”; avoid “sakte ho”, “karoge”, “kar paoge”.
+   - In Hindi or Hinglish or any Native+English, always ensure numerals/numbers are in roman script only - e.g. केवल ₹11 प्रति माह.
+   FORMAT RULES (strict):
+   - Do NOT use code fences (no triple backticks).
+   - Do NOT use inline backticks (no backtick characters).
+   - Avoid bullet lists; prefer short sentences.
+   `.trim();
 
   const manifest = JSON.stringify(SALES_AI_MANIFEST);
 
@@ -9584,13 +9627,19 @@ const lang = canonicalizeLang(language ?? 'en');
           console.warn(`[${requestId}] [UNIQ:PRICING-GUARD-003] Strict retry failed: ${e?.message}`);
         }
       }
-
+        
+    // If the model chose to ROUTE, return immediately (router will handle)
+      if (out.startsWith(SALES_QA_ROUTE_PREFIX)) {
+        return out;
+      }
     // --- NEW: Hinglish-aware fallback + nativeglish anchors ---         
     // Avoid generic benefits fallback for pricing in *-latn flows        
     if (!(topicForced === 'pricing' && langExactAgent.endsWith('-latn'))) {
           out = ensureLanguageOrFallback(out, lang); // keep fallback for non-pricing topics
-        }
-        out = nativeglishWrap(out, lang);
+        }                
+        // Ensure brand/tool/product names from question appear unchanged at least once
+          out = ensureBrandEcho(question, out);
+          out = nativeglishWrap(out, lang);
         // Final single-script guard for any residual mixed content; de-echo first
         const out0 = normalizeTwoBlockFormat(out, lang);                
         out = enforceSingleScriptSafe(out0, lang);      
@@ -21129,13 +21178,25 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       // Question → answer & exit
       if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
         handledRequests.add(requestId);                
-        const ans = await composeAISalesAnswer(shopId, Body, langExact);
-            // Send AI-native answer without MT; keep one script + readable anchors
-            const aiNative = enforceSingleScriptSafe(ans, langExact);
-            const msg = normalizeNumeralsToLatin(
-              nativeglishWrap(aiNative, langExact)
-            );
-            await sendMessageDedup(From, msg);
+        const ans = await composeAISalesAnswer(shopId, Body, langExact);                
+        // ROUTE handoff: if AI returns 'ROUTE:<canonical>', call deterministic quick-query
+            if (String(ans).startsWith('ROUTE:')) {
+              const canonical = String(ans).replace(/^ROUTE:/, '').trim();
+              await routeQuickQueryRaw(canonical, From, langExact, `${requestId}::sales-qa-route`);
+              try {
+                // Resurface List‑Picker after terminal canonical commands
+                if (typeof _isTerminalCommand === 'function' && _isTerminalCommand(canonical)) {
+                  await maybeResendListPicker(From, langExact, requestId);
+                }
+              } catch (_) { /* best effort */ }
+            } else {
+              // Send AI-native answer without MT; keep one script + readable anchors
+              const aiNative = enforceSingleScriptSafe(ans, langExact);
+              const msg = normalizeNumeralsToLatin(
+                nativeglishWrap(aiNative, langExact)
+              );
+              await sendMessageDedup(From, msg);
+            }
         try {
           const isActivated = await isUserActivated(shopId);
           const buttonLang = langExact.includes('-latn') ? langExact.split('-')[0] : langExact;
