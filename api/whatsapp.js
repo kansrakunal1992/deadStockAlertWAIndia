@@ -21178,27 +21178,29 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       // Question → answer & exit
       if (!FORCE_INVENTORY && (orch.isQuestion === true || orch.kind === 'question')) {
         handledRequests.add(requestId);                
-        const ans = await composeAISalesAnswer(shopId, Body, langExact);                
-        // ROUTE handoff: if AI returns 'ROUTE:<canonical>', call deterministic quick-query
-            if (String(ans).startsWith('ROUTE:')) {
-              const canonical = String(ans).replace(/^ROUTE:/, '').trim();
-              await routeQuickQueryRaw(canonical, From, langExact, `${requestId}::sales-qa-route`);
-              try {
-                // Resurface List‑Picker after terminal canonical commands
-                if (typeof _isTerminalCommand === 'function' && _isTerminalCommand(canonical)) {
-                  await maybeResendListPicker(From, langExact, requestId);
-                }
-              } catch (_) { /* best effort */ }
-            } else {
-              // Send AI-native answer without MT; keep one script + readable anchors
-              const aiNative = enforceSingleScriptSafe(ans, langExact);
-              const msg = normalizeNumeralsToLatin(
-                nativeglishWrap(aiNative, langExact)
-              );
-              await sendMessageDedup(From, msg);
-            }
-        try {
+        const ans = await composeAISalesAnswer(shopId, Body, langExact);                              
+      // ROUTE handoff gated by activation: only route if user is on trial/paid
           const isActivated = await isUserActivated(shopId);
+          if (String(ans).startsWith('ROUTE:') && isActivated) {
+            const canonical = String(ans).replace(/^ROUTE:/, '').trim();
+            await routeQuickQueryRaw(canonical, From, langExact, `${requestId}::sales-qa-route`);
+            try {
+              if (typeof _isTerminalCommand === 'function' && _isTerminalCommand(canonical)) {
+                await maybeResendListPicker(From, langExact, requestId);
+              }
+            } catch (_) { /* best effort */ }
+          } else {
+            // Not activated OR plain text answer → send Q&A message
+            const aiNative = enforceSingleScriptSafe(
+              String(ans).startsWith('ROUTE:')
+                ? await t('🔒 Reports are available during trial or paid plan. Tap “Start Trial” to enable, or ask a short question (e.g., “benefits?”).', langExact, `${requestId}::qa-lock`)
+                : ans,
+              langExact
+            );
+            const msg = normalizeNumeralsToLatin(nativeglishWrap(aiNative, langExact));
+            await sendMessageDedup(From, msg);
+          }
+        try {
           const buttonLang = langExact.includes('-latn') ? langExact.split('-')[0] : langExact;
           await sendSalesQAButtons(From, buttonLang, isActivated);
         } catch (e) {
@@ -21238,7 +21240,19 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
             _handled = true;
             return;
           }
-          await routeQuickQueryRaw(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);                  
+          await routeQuickQueryRaw(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);     
+                  
+          // GATE: only route normalized commands when activated
+              {
+                const isActivated2 = await isUserActivated(shopId);
+                if (isActivated2) {
+                  await routeQuickQueryRaw(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
+                } else {
+                  const lockMsg = await t('🔒 Detailed reports are available during trial or paid plan. Tap “Start Trial” to enable. You can ask general questions and get help here.', langExact, `${requestId}::ai-norm-lock`);
+                  await sendMessageDedup(From, normalizeNumeralsToLatin(nativeglishWrap(lockMsg, langExact)));
+                }
+              }
+        
           // B: After normalized command reply, if terminal, resurface List‑Picker
               try {
                 const cmd = String(orch.normalizedCommand).toLowerCase().trim();
@@ -21378,10 +21392,22 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           // --- END: explicit STOCK/BATCHES specialized-op dispatch (pre-CTA) ---
 
             const handledQuick = await routeQuickQueryRaw(normalized, From, detectedLanguage, requestId);
-          if (handledQuick) {
-              __handled = true;
-            return res.send('<Response></Response>'); // reply already sent via API
-          }
+                  
+        // GATE: quickQueryRouter only when activated; else send Q&A lock message
+                {
+                  const isActivated3 = await isUserActivated(shopId);
+                  if (isActivated3) {
+                    if (handledQuick) {
+                      __handled = true;
+                      return res.send('<Response></Response>'); // reply already sent via API
+                    }
+                  } else {
+                    const lockMsg2 = await t('🔒 Reports are available during trial or paid plan. Tap “Start Trial” to enable. Ask “benefits?” or “how does it help?” to learn more.', detectedLanguage, `${requestId}::qq-lock`);
+                    await sendMessageViaAPI(From, normalizeNumeralsToLatin(nativeglishWrap(lockMsg2, detectedLanguage)));
+                    __handled = true;
+                    return res.send('<Response></Response>');
+                  }
+                }
         }
       } catch (e) {
         console.warn(`[${requestId}] Quick-query (normalize) routing failed; continuing.`, e?.message);
