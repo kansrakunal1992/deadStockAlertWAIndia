@@ -3322,29 +3322,34 @@ async function setStickyPurchaseMode(From) {
 async function composeTrialActivationMessage(From, langHint = 'en') {
   const lang = ensureLangExact(langHint ?? 'en');          // keep -latn variants if present
   const days = TRIAL_DAYS;                                 // you already define this at top
-  const btnLabel  = getStaticLabel('recordPurchaseBtn', lang);
-  const demoLabel = getStaticLabel('demoBtn', lang);
-  const helpLabel = getStaticLabel('helpBtn', lang);
 
   // Localize units; keep anchors like ₹ via nativeglishWrap()
   const uPkt = displayUnit('packets', lang);
   const uLtr = displayUnit('ltr', lang);
-
+   
   const bodySrc = [
-    `🎉 Trial activated for ${days} days!`,
-    '',
-    'First step — record a purchase:',
-    `• Parle-G 10 ${uPkt} @ ₹11/${uPkt}`,
-    `• दूध 2 ${uLtr} @ ₹65/${uLtr}`,
-    '',
-    'Type or speak a voice note; we’ll save the price (only once) if it’s new.',
-    '',
-    `Buttons: [${btnLabel}]  [${demoLabel}]  [${helpLabel}]`
-  ].join('\\n');
+      `🎉 Trial activated for ${days} days!`,
+      '',
+      'First step — record a purchase:',
+      `• Parle-G 10 ${uPkt} @ ₹11/${uPkt}`,
+      `• दूध 2 ${uLtr} @ ₹65/${uLtr}`,
+      '',
+      'Type or speak a voice note; we’ll save the price (only once) if it’s new.'
+    ].join('\\n');
 
   let msg0 = await t(bodySrc, lang, `trial-activated::${days}`);
   msg0 = nativeglishWrap(msg0, lang);
-  const tagged = await tagWithLocalizedMode(From, finalizeForSend(msg0, lang), lang);
+  const tagged = await tagWithLocalizedMode(From, finalizeForSend(msg0, lang), lang);    
+  // Inline: send actual quick‑reply buttons + list‑picker (no textual “Buttons:”)
+    try {
+      let L = String(lang ?? 'en').toLowerCase();
+      if (L.endsWith('-latn')) L = 'en';
+      await ensureLangTemplates(L);
+      const sids = getLangSids(L) ?? {};
+      const toWhatsApp = String(From).replace('whatsapp:', '');
+      if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp, contentSid: sids.quickReplySid });
+      if (sids?.listPickerSid) await sendContentTemplate({ toWhatsApp, contentSid: sids.listPickerSid });
+    } catch (_) {}
   return tagged;
 }
 
@@ -6282,12 +6287,28 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
     try { await clearUserState(shopId); } catch {}            
     // -----------------------------------------------------------------------
         // Send activation message WITHOUT clamp & WITHOUT footer to avoid truncation
-        // -----------------------------------------------------------------------
-        
-        let msgRaw = `${NO_CLAMP_MARKER}${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
-                     `Try (type or speak a voice note):"Mode" -> \n• "short summary"\n• "price list"\n• "Record Purchase"\n• "Record Sale"\n• "Record Return"`;               
+        // -----------------------------------------------------------------------               
+        const uPkt = displayUnit('packets', lang);
+        const uLtr = displayUnit('ltr',     lang);
+        let msgRaw =
+          `${NO_CLAMP_MARKER}${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
+          `First step — record a purchase:\n` +
+          `• Parle-G 10 ${uPkt} @ ₹11/${uPkt}\n` +
+          `• दूध 2 ${uLtr} @ ₹65/${uLtr}\n\n` +
+          `Type or speak a voice note; we’ll save the price (only once) if it’s new.`;
+             
         let msgTranslated = await t(msgRaw, lang, `trial-onboard-done-${shopId}`);              
-        await sendMessageViaAPI(From, finalizeForSend(msgTranslated, lang));            
+        await sendMessageViaAPI(From, finalizeForSend(msgTranslated, lang));                        
+        // Inline actual buttons
+        try {
+          let L = String(lang ?? 'en').toLowerCase();
+          if (L.endsWith('-latn')) L = 'en';
+          await ensureLangTemplates(L);
+          const sids = getLangSids(L);
+          if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
+          if (sids?.listPickerSid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.listPickerSid });
+        } catch (_) {}
+
         // NEW: Standalone inventory pre-load tip (post-activation)
         // Sends a brief line without footer; localized via t(), digits normalized via finalizeForSend().
         try {
@@ -6454,13 +6475,22 @@ async function activateTrialFlow(From, lang = 'en') {
       return { success: true, already: true };
     }
   } catch { /* continue */ }    
-  if (CAPTURE_SHOP_DETAILS_ON === 'paid') {
-      // Activate trial immediately (no capture)
+  if (CAPTURE_SHOP_DETAILS_ON === 'paid') {      
+    // Activate trial immediately (no capture)
       try { await startTrialForAuthUser(shopId, TRIAL_DAYS); } catch (_) {}
-      const msgRaw = `${NO_CLAMP_MARKER}${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
-                     `Try:\n• short summary\n• price list\n• "10 Parle-G sold at 11/packet"`;
+      // Localized unit labels for examples
+      const uPkt = displayUnit('packets', lang);
+      const uLtr = displayUnit('ltr',     lang);
+      // Unified activation message (suppresses footer; keeps Latin anchors)
+      const msgRaw =
+        `${NO_CLAMP_MARKER}${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
+        `First step — record a purchase:\n` +
+        `• Parle-G 10 ${uPkt} @ ₹11/${uPkt}\n` +
+        `• दूध 2 ${uLtr} @ ₹65/${uLtr}\n\n` +
+        `Type or speak a voice note; we’ll save the price (only once) if it’s new.`;
       let msgTranslated = await t(msgRaw, lang, `trial-activated-${shopId}`);
       await sendMessageViaAPI(From, finalizeForSend(msgTranslated, lang));
+
       try { (globalThis._recentActivations = globalThis._recentActivations ?? new Map()).set(shopId, Date.now()); } catch {}
       try {
         await ensureLangTemplates(lang);
