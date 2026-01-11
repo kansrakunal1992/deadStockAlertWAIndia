@@ -2086,10 +2086,23 @@ function buildTranslationCacheKey(requestId, topic, flavor, lang, sourceText) {
 
 // ---- NEW: helper to sanitize after late string edits (e.g., replacing labels)
 function sanitizeAfterReplace(text, lang) {
-  try {        
+  try {               
     // t() already applied single-script clamp via enforceSingleScriptSafe.
         // Avoid double-clamp which was causing punctuation-only artifacts.
-        const wrapped = nativeglishWrap(text, lang);
+        let wrapped = nativeglishWrap(text, lang);
+        // --- BRAND RESTORER (minimal & localized) --------------------------------
+        // Some upstream answers in Hindi may lose the Latin brand and leave " . "
+        // before "के साथ". Similarly, English/Hinglish may leave "with ."/"using .".
+        try {
+          const L = String(lang ?? 'en').toLowerCase();
+          const brand = BRAND_NAME;
+          // Hindi: " ... . के साथ ..."  =>  " ... Saamagrii.AI के साथ ..."
+          wrapped = wrapped.replace(/(\s)\.(\s*के\s+साथ)/u, `$1${brand}$2`);
+          // English/Hinglish: "with .", "using ."  =>  "with Saamagrii.AI"/"using Saamagrii.AI"
+          wrapped = wrapped.replace(/\b(with|using)\s+\.(\b|[^\w])/gi,
+            (_m, w, tail) => `${w} ${brand}${tail}`);
+        } catch (_) { /* noop */ }
+        // -------------------------------------------------------------------------
         return normalizeNumeralsToLatin(wrapped);
   } catch {
     return normalizeNumeralsToLatin(text);
@@ -2998,6 +3011,10 @@ const { processShopSummary } = require('../dailySummary');
 const { generateInvoicePDF, generateInventoryShortSummaryPDF, generateSalesRawTablePDF } = require('../pdfGenerator'); // +new generators
 const { getShopDetails, getProductTotalQuantity } = require('../database');
 const TRANSLATE_TIMEOUT_MS = Number(process.env.TRANSLATE_TIMEOUT_MS || 4000);
+// === BRAND NAME (fallback) ===================================================
+// If upstream templates/agents ever strip the brand from mixed-script answers,
+// we restore it late in the pipeline. Keep English brand unless you set env.
+const BRAND_NAME = process.env.BRAND_NAME ?? 'Saamagrii.AI';
 
 // ===PATCH START: UNIQ:PARALLEL-HELPERS-20251219===
 // Bound a non-critical promise with a tight timeout and a safe fallback.
