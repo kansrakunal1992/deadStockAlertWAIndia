@@ -2099,8 +2099,7 @@ function sanitizeAfterReplace(text, lang) {
           // Hindi: " ... . के साथ ..."  =>  " ... Saamagrii.AI के साथ ..."
           wrapped = wrapped.replace(/(\s)\.(\s*के\s+साथ)/u, `$1${brand}$2`);
           // English/Hinglish: "with .", "using ."  =>  "with Saamagrii.AI"/"using Saamagrii.AI"
-          wrapped = wrapped.replace(/\b(with|using)\s+\.(\b|[^\w])/gi,
-            (_m, w, tail) => `${w} ${brand}${tail}`);
+          wrapped = wrapped.replace(/\b(with|using)\s+\.(?=\W|$)/gi, (_m, w) => `${w} ${brand}`);
         } catch (_) { /* noop */ }
         // -------------------------------------------------------------------------
         return normalizeNumeralsToLatin(wrapped);
