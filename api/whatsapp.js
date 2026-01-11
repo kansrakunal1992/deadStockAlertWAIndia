@@ -6521,7 +6521,7 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
 
     try { if (requestId) handledRequests.add(requestId); } catch {}
     return true;
-  }
+  } catch {}
 
   return false;
 }
