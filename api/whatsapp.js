@@ -2389,13 +2389,18 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
   function inBackground(label, fn) {
     Promise.resolve().then(fn).catch((e) => console.warn(`[bg:${label}]`, e?.message));
   }
+  // Tightened pricing detector: requires explicit pricing tokens or currency,
+  // and never triggers if the message is clearly a capabilities question.
   function isPricingQuestion(msg) {
-    const t = String(msg ?? '').toLowerCase();
-    const en = /\b(price|cost|charge|charges|rate)\b/;
-    const hing = /\b(kimat|daam|rate|price kya|kitna|kitni)\b/;
-    const hiNative = /(कीमत|दाम|भाव|रेट|कितना|कितनी)/;
-    return en.test(t) || hing.test(t) || hiNative.test(msg);
+      const s = String(msg ?? '').toLowerCase();
+      if (isCapabilitiesQuestion(msg)) return false; // capability intent wins
+      const hasCurrency = /(?:₹|rs\.?|inr)\s*\d+(?:\.\d+)?/.test(s);
+      const priceWordsEn = /\b(price|cost|charge|charges|rate)\b/i.test(s);
+      const priceWordsHing = /\b(kimat|daam|rate|price\s*kya|kitna|kitni)\b/i.test(s);
+      const priceWordsHiNative = /(कीमत|दाम|भाव|रेट|कितना|कितनी)/u.test(msg);
+      return hasCurrency || priceWordsEn || priceWordsHing || priceWordsHiNative;
   }
+  
   function isBenefitQuestion(msg) {
     const t = String(msg ?? '').toLowerCase();
         
@@ -2409,18 +2414,31 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         || /(फ़ायदा|लाभ|मदद|दैनिक)/.test(msg)
         || /\b(fayda)\b/.test(t);
   }
-  function isCapabilitiesQuestion(msg) {
-    const t = String(msg ?? '').toLowerCase();
-    return /\b(what.*do|what does it do|exactly.*does|how does it work|kya karta hai)\b/.test(t)
-        || /(क्या करता है|किस काम का है|कैसे चलता है)/.test(msg)
-        || /\b(kya karta hai)\b/.test(t);
-  }
-  function classifyQuestionTopic(msg) {
-    if (isPricingQuestion(msg)) return 'pricing';
-    if (isBenefitQuestion(msg)) return 'benefits';
-    if (isCapabilitiesQuestion(msg)) return 'capabilities';
-    return null;
-  }
+    
+  // Broader capabilities detector: Hindi (native), Hinglish, and English
+    function isCapabilitiesQuestion(msg) {
+      const s = String(msg ?? '').trim();
+      const t = s.toLowerCase();
+      // Hindi-native patterns: “क्या … कर सकता/सकती/सकते/पाऊंगा/पाऊंगी/पाएंगे”, invoice/stock verbs
+      const hiNativeCap =
+        /(क्या\s+(मैं|हम)\s+.*\s+कर\s+(सकता|सकती|सकते|पाऊंगा|पाऊंगी|पाएंगे)|इनवॉइस|इन्वॉइस|स्टॉक\s+ट्रैक|ट्रैक\s+कर|कॉपी\s+जेनरेट)/u.test(s);
+      // Hinglish / Roman Hindi capability intent
+      const hinglishCap =
+        /\b(kya\s+(main|hum)|can\s+i|how\s+do\s+i|how\s+can\s+i)\b.*\b(track|generate|create|bana|banana|invoice|stock)\b/i.test(t);
+      // English capability intent
+      const enCap =
+        /\b(what\s+can\s+you\s+do|features|capabilities|does\s+it\s+support|can\s+i\s+.*(track|generate|invoice))\b/i.test(t);
+      return hiNativeCap || hinglishCap || enCap;
+    }
+
+     // Prefer 'capabilities' over 'pricing' to avoid upsell on feature questions
+      function classifyQuestionTopic(msg) {
+        if (isCapabilitiesQuestion(msg)) return 'capabilities';
+        if (isPricingQuestion(msg))      return 'pricing';
+        if (isBenefitQuestion(msg))      return 'benefits';
+        return null;
+      }
+
   function looksLikeInventoryPricing(msg) {
     const s = String(msg ?? '').toLowerCase();
     const unitRx = /(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|बॉक्स|टुकड़ा|नंग)/i;
@@ -9316,14 +9334,19 @@ const lang = canonicalizeLang(language ?? 'en');
     return null;
   }
 
-  // ---- NEW: topic & pricing flavor ----
-  function isPricingQuestion(msg) {
-    const t = String(msg ?? '').toLowerCase();
-    const en = /\b(price|cost|charge|charges|rate)\b/;
-    const hing = /\b(kimat|daam|rate|price kya|kitna|kitni)\b/;
-    const hiNative = /(कीमत|दाम|भाव|रेट|कितना|कितनी)/;
-    return en.test(t) || hing.test(t) || hiNative.test(msg);
-  }
+  // ---- NEW: topic & pricing flavor ----  
+  // Tightened pricing detector: requires explicit pricing tokens or currency,
+    // and never triggers if the message is clearly a capabilities question.
+    function isPricingQuestion(msg) {
+      const s = String(msg ?? '').toLowerCase();
+      if (isCapabilitiesQuestion(msg)) return false; // capability intent wins
+      const hasCurrency = /(?:₹|rs\.?|inr)\s*\d+(?:\.\d+)?/.test(s);
+      const priceWordsEn = /\b(price|cost|charge|charges|rate)\b/i.test(s);
+      const priceWordsHing = /\b(kimat|daam|rate|price\s*kya|kitna|kitni)\b/i.test(s);
+      const priceWordsHiNative = /(कीमत|दाम|भाव|रेट|कितना|कितनी)/u.test(msg);
+      return hasCurrency || priceWordsEn || priceWordsHing || priceWordsHiNative;
+    }
+
   function isBenefitQuestion(msg) {
     const t = String(msg ?? '').toLowerCase();
         
@@ -9337,18 +9360,30 @@ const lang = canonicalizeLang(language ?? 'en');
         || /(फ़ायदा|लाभ|मदद|दैनिक)/.test(msg)
         || /\b(fayda)\b/.test(t);
   }
-  function isCapabilitiesQuestion(msg) {
-    const t = String(msg ?? '').toLowerCase();
-    return /\b(what.*do|what does it do|exactly.*does|how does it work|kya karta hai)\b/.test(t)
-        || /(क्या करता है|किस काम का है|कैसे चलता है)/.test(msg)
-        || /\b(kya karta hai)\b/.test(t);
-  }
-  function classifyQuestionTopic(msg) {
-    if (isPricingQuestion(msg)) return 'pricing';
-    if (isBenefitQuestion(msg)) return 'benefits';
-    if (isCapabilitiesQuestion(msg)) return 'capabilities';
-    return null;
-  }
+  
+  // Broader capabilities detector: Hindi (native), Hinglish, and English
+    function isCapabilitiesQuestion(msg) {
+      const s = String(msg ?? '').trim();
+      const t = s.toLowerCase();
+      // Hindi-native patterns: “क्या … कर सकता/सकती/सकते/पाऊंगा/पाऊंगी/पाएंगे”, invoice/stock verbs
+      const hiNativeCap =
+        /(क्या\s+(मैं|हम)\s+.*\s+कर\s+(सकता|सकती|सकते|पाऊंगा|पाऊंगी|पाएंगे)|इनवॉइस|इन्वॉइस|स्टॉक\s+ट्रैक|ट्रैक\s+कर|कॉपी\s+जेनरेट)/u.test(s);
+      // Hinglish / Roman Hindi capability intent
+      const hinglishCap =
+        /\b(kya\s+(main|hum)|can\s+i|how\s+do\s+i|how\s+can\s+i)\b.*\b(track|generate|create|bana|banana|invoice|stock)\b/i.test(t);
+      // English capability intent
+      const enCap =
+        /\b(what\s+can\s+you\s+do|features|capabilities|does\s+it\s+support|can\s+i\s+.*(track|generate|invoice))\b/i.test(t);
+      return hiNativeCap || hinglishCap || enCap;
+    }   
+      
+    // Prefer 'capabilities' over 'pricing' to avoid upsell on feature questions
+      function classifyQuestionTopic(msg) {
+        if (isCapabilitiesQuestion(msg)) return 'capabilities';
+        if (isPricingQuestion(msg))      return 'pricing';
+        if (isBenefitQuestion(msg))      return 'benefits';
+        return null;
+      }
 
   function looksLikeInventoryPricing(msg) {
     const s = String(msg ?? '').toLowerCase();
