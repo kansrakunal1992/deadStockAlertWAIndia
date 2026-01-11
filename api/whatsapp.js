@@ -3334,7 +3334,7 @@ async function composeTrialActivationMessage(From, langHint = 'en') {
       `• Parle-G 10 ${uPkt} @ ₹11/${uPkt}`,
       `• दूध 2 ${uLtr} @ ₹65/${uLtr}`,
       '',
-      'Type or speak a voice note; we’ll save the price (only once) if it’s new.'
+      'Click on "Record Purchase" button below. Then, Type or speak a voice note; we’ll save the price (only once) if it’s new.'
     ].join('\\n');
 
   let msg0 = await t(bodySrc, lang, `trial-activated::${days}`);
@@ -6295,7 +6295,7 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
           `First step — record a purchase:\n` +
           `• Parle-G 10 ${uPkt} @ ₹11/${uPkt}\n` +
           `• दूध 2 ${uLtr} @ ₹65/${uLtr}\n\n` +
-          `Type or speak a voice note; we’ll save the price (only once) if it’s new.`;
+          `Click on "Record Purchase" button below. Then, Type or speak a voice note; we’ll save the price (only once) if it’s new.`;
              
         let msgTranslated = await t(msgRaw, lang, `trial-onboard-done-${shopId}`);              
         await sendMessageViaAPI(From, finalizeForSend(msgTranslated, lang));                        
@@ -6487,7 +6487,7 @@ async function activateTrialFlow(From, lang = 'en') {
         `First step — record a purchase:\n` +
         `• Parle-G 10 ${uPkt} @ ₹11/${uPkt}\n` +
         `• दूध 2 ${uLtr} @ ₹65/${uLtr}\n\n` +
-        `Type or speak a voice note; we’ll save the price (only once) if it’s new.`;
+        `Click on "Record Purchase" button below. Then, Type or speak a voice note; we’ll save the price (only once) if it’s new.`;
       let msgTranslated = await t(msgRaw, lang, `trial-activated-${shopId}`);
       await sendMessageViaAPI(From, finalizeForSend(msgTranslated, lang));
 
