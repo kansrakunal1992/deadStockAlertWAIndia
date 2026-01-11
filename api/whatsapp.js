@@ -3286,11 +3286,87 @@ const STATIC_LABELS = {
       kn: 'ಸಹಾಯ',
       mr: 'मदत',
       gu: 'મદદ'
-    }
+    }  
+  ,
+  // [UNIQ:TRIAL-ACTIVATION-MSG-20260111] New localized CTA label for the purchase-only onboarding
+  recordPurchaseBtn: {
+    en: 'Record Purchase',
+    hi: 'खरीद दर्ज करें',
+    bn: 'ক্রয় রেকর্ড করুন',
+    ta: 'கொள்முதல் பதிவு',
+    te: 'కొనుగోలు నమోదు',
+    kn: 'ಖರೀದಿ ದಾಖಲೆ',
+    mr: 'खरेदी नोंदवा',
+    gu: 'ખરીદી નોંધાવો'
+  }
 };
 function getStaticLabel(key, lang) {
   const lc = String(lang || 'en').toLowerCase();
   return STATIC_LABELS[key]?.[lc] || STATIC_LABELS[key]?.en || '';
+}
+
+// [UNIQ:TRIAL-ACTIVATION-MSG-20260111] Sticky Purchase + localized first-message helpers
+async function setStickyPurchaseMode(From) {
+  try {
+    // Reuse your safe shim & sticky-mode cache
+    await setUserState(From, 'awaitingTransactionDetails', { action: 'purchased' });
+    try {
+      const shopId = shopIdFrom(From);
+      __lastStickyAction.set(shopId, { action: 'purchased', ts: Date.now() });
+    } catch { /* best-effort */ }
+    return true;
+  } catch { return false; }
+}
+
+// Localized, purchase-only onboarding message (uses TRIAL_DAYS, t(), nativeglishWrap(), displayUnit())
+async function composeTrialActivationMessage(From, langHint = 'en') {
+  const lang = ensureLangExact(langHint ?? 'en');          // keep -latn variants if present
+  const days = TRIAL_DAYS;                                 // you already define this at top
+  const btnLabel  = getStaticLabel('recordPurchaseBtn', lang);
+  const demoLabel = getStaticLabel('demoBtn', lang);
+  const helpLabel = getStaticLabel('helpBtn', lang);
+
+  // Localize units; keep anchors like ₹ via nativeglishWrap()
+  const uPkt = displayUnit('packets', lang);
+  const uLtr = displayUnit('ltr', lang);
+
+  const bodySrc = [
+    `🎉 Trial activated for ${days} days!`,
+    '',
+    'First step — record a purchase:',
+    `• Parle-G 10 ${uPkt} @ ₹11/${uPkt}`,
+    `• दूध 2 ${uLtr} @ ₹65/${uLtr}`,
+    '',
+    'Type or speak a voice note; we’ll save the price (only once) if it’s new.',
+    '',
+    `Buttons: [${btnLabel}]  [${demoLabel}]  [${helpLabel}]`
+  ].join('\\n');
+
+  let msg0 = await t(bodySrc, lang, `trial-activated::${days}`);
+  msg0 = nativeglishWrap(msg0, lang);
+  const tagged = await tagWithLocalizedMode(From, finalizeForSend(msg0, lang), lang);
+  return tagged;
+}
+
+// Sends the activation message, sets sticky Purchase immediately, then nudges with examples.
+async function sendTrialActivation(From, langHint = 'en') {
+  const lang = ensureLangExact(langHint ?? 'en');
+  const payload = await composeTrialActivationMessage(From, lang);
+  await sendMessageViaAPI(From, payload);
+
+  // Make Purchase sticky right away so footer shows the correct badge + examples parse easily
+  await setStickyPurchaseMode(From);
+
+  // Short follow-up nudge with concrete examples (text or voice)
+  const uPkt = displayUnit('packets', lang), uLtr = displayUnit('ltr', lang);
+  const followSrc = [
+    '👉 Tap “Record Purchase” or type/speak:',
+    `• “Parle-G 10 ${uPkt} @ ₹11/${uPkt}”`,
+    `• “दूध 2 ${uLtr} @ ₹65/${uLtr}”`
+  ].join('\\n');
+  const followMsg   = await t(followSrc, lang, 'trial-cta2');
+  const taggedFollow = await tagWithLocalizedMode(From, finalizeForSend(followMsg, lang), lang);
+  await sendMessageViaAPI(From, taggedFollow);
 }
 
 // ===PATCH ADD: UNIQ:VOICE-ACK-20251230===
