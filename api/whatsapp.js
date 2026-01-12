@@ -6430,36 +6430,14 @@ async function beginPaidOnboarding(From, lang = 'en') {
        await sendMessageViaAPI(From, finalizeForSend(askAddr, langNow));
        return;
      }
-   }    
-  // --- Guard: skip "Shop Name" prompt if already present in user record ---
-   // Reuse existing DB helper; tolerate different field casings
-   try {
-     const rec = await getAuthUserRecord(shopId).catch(() => null);
-     const hasShopName =
-       !!(rec?.shopName || rec?.ShopName || rec?.fields?.['Shop Name']);
-     if (hasShopName) {
-       console.log(`[paid-onboard] shopName present for ${shopId}, skipping name prompt`);
-       const collected = {
-         name: rec?.shopName ?? rec?.ShopName ?? rec?.fields?.['Shop Name']
-       };
-       // Jump straight to GSTIN step
-       await setUserState(shopId, 'onboarding_paid_capture', { step: 'gstin', collected, lang });
-       const askGstin = await t(
-         NO_CLAMP_MARKER + NO_FOOTER_MARKER +
-         'Please share your *GSTIN* (optional). If not available, reply "NA".',
-         lang, `paid-onboard-gstin-${shopId}`
-       );
-       await sendMessageViaAPI(From, finalizeForSend(askGstin, lang));
-       return;
-     }
-   } catch (_) { /* fall back to normal prompt */ }
-   // Normal path: set state and ask for Shop Name
-   await setUserState(shopId, 'onboarding_paid_capture', { step: 'name', collected: {}, lang });
-   try { await saveUserPreference(shopId, lang); } catch {}
-   const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `paid-onboard-name-${shopId}`);
-   const msg = finalizeForSend(askName, lang);
-   console.log('[paid-onboard] sending name prompt', { to: From, lang, len: msg.length });
-   await sendMessageViaAPI(From, msg);
+   }
+  await setUserState(shopId, 'onboarding_paid_capture', { step: 'name', collected: {}, lang });
+  try { await saveUserPreference(shopId, lang); } catch {}    
+  const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `paid-onboard-name-${shopId}`);    
+  // First onboarding prompt must always deliver; do not dedup here
+    const msg = finalizeForSend(askName, lang);
+    console.log('[paid-onboard] sending name prompt', { to: From, lang, len: msg.length });
+    await sendMessageViaAPI(From, msg);
 }
 
 async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = null) {
@@ -6489,35 +6467,7 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
     lang = await checkAndUpdateLanguageSafe(String(text ?? ''), From, currentLang, `paid-onboard-${shopId}`);
   } catch (_) {}
 
-  if (step === 'name') {            
-  // --- Guard: if name already collected or present in DB, skip re-prompt ---
-  if (data.name) {
-    await setUserState(shopId, 'onboarding_paid_capture', { step: 'gstin', collected: data, lang });
-    const askGstin0 = await t(
-      NO_CLAMP_MARKER + NO_FOOTER_MARKER +
-      'Please share your *GSTIN* (optional). If not available, reply "NA".',
-      lang, `paid-onboard-gstin-${shopId}`
-    );
-    await sendMessageDedup(From, finalizeForSend(askGstin0, lang));
-    try { if (requestId) handledRequests.add(requestId); } catch {}
-    return true;
-  }
-  try {
-    const rec = await getAuthUserRecord(shopId).catch(() => null);
-    const dbName = rec?.shopName ?? rec?.ShopName ?? rec?.fields?.['Shop Name'];
-    if (dbName) {
-      data.name = dbName;
-      await setUserState(shopId, 'onboarding_paid_capture', { step: 'gstin', collected: data, lang });
-      const askGstin1 = await t(
-        NO_CLAMP_MARKER + NO_FOOTER_MARKER +
-        'Please share your *GSTIN* (optional). If not available, reply "NA".',
-        lang, `paid-onboard-gstin-${shopId}`
-      );
-      await sendMessageDedup(From, finalizeForSend(askGstin1, lang));
-      try { if (requestId) handledRequests.add(requestId); } catch {}
-      return true;
-    }
-  } catch (_) { /* proceed to normal name capture */ }
+  if (step === 'name') {        
     const name = String(text ?? '').trim();
         if (!name) {
           const retryName = await t(
