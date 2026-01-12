@@ -3525,12 +3525,31 @@ async function detectLanguageWithFallback(text, from, requestId) {
                     // If the user previously chose a non‑English language, keep it
                     // for this turn unless the message is an explicit language switch.
                     // This is language‑agnostic (hi/bn/ta/te/kn/mr/gu and *-latn).
-                    // ------------------------------------------------------------------
-              const GSTIN_RX = /^[0-9A-Z]{15}$/i;
+                    // ------------------------------------------------------------------                                  
+                    const GSTIN_RX = /^[0-9A-Z]{15}$/i;
+                    // PATCH: localized NA/Skip tokens (accept user reply in native script; no new functions)
+                    const __NA_TOKENS = {
+                      en: ['na', 'n/a', 'skip'],
+                      hi: ['एनए', 'एन/ए', 'न/अ', 'स्किप', 'छोड़ें'],
+                      bn: ['এনএ', 'এন/এ', 'স্কিপ', 'এড়িয়ে যান'],
+                      ta: ['என்ஏ', 'என்/ஏ', 'ஸ்கிப்', 'தவிர்க்க'],
+                      te: ['ఎన్‌ఏ', 'ఎన్/ఏ', 'స్కిప్', 'దాటవేయి'],
+                      kn: ['ಎನ್‌ಏ', 'ಎನ್/ಏ', 'ಸ್ಕಿಪ್', 'ಬಿಟ್ಟುಬಿಡಿ'],
+                      mr: ['एनए', 'एन/ए', 'स्किप', 'वगळा'],
+                      gu: ['એનએ', 'એન/એ', 'સ્કિપ', 'છોડી દો'],
+                    };
+                    // NOTE: we are in language-detection scope; detectedLanguage & text are in view here
+                    const __L_NOW  = String(detectedLanguage ?? 'en').toLowerCase();
+                    const __L_BASE = __L_NOW.replace(/-latn$/, '');
+                    const __naList = __NA_TOKENS[__L_NOW] || __NA_TOKENS[__L_BASE] || __NA_TOKENS.en;
+                    const __rawLC  = String(text ?? '').trim().toLowerCase();
+                    const __isNaOrSkipLocal = __naList.some(tok => __rawLC === tok);
+      
               const raw = String(text ?? '');
               const asciiLen = raw.replace(/[^\x00-\x7F]/g, '').length;
-              const isCodeDominant = (asciiLen / Math.max(1, raw.length)) > 0.85 || ((raw.match(/\d/g) ?? []).length >= 10);
-              if (isOnboarding && (GSTIN_RX.test(raw) || isCodeDominant)) {
+              const isCodeDominant = (asciiLen / Math.max(1, raw.length)) > 0.85 || ((raw.match(/\d/g) ?? []).length >= 10);                           
+              // Accept localized NA/Skip as "no GSTIN" during onboarding
+              if (isOnboarding && (__isNaOrSkipLocal || GSTIN_RX.test(raw) || isCodeDominant)) {
                 const langLocked = pinnedLang || 'en';
                 console.log(`[${requestId}] GSTIN/code-dominant during onboarding; sticking to ${langLocked}`);
                 try { await saveUserPreference(shopIdX, langLocked); } catch {}
@@ -6207,7 +6226,8 @@ async function maybeShowPaidCTAAfterInteraction(from, langHint = 'en', opts = {}
 // --- [NEW HELPERS & FLOW: begin capture BEFORE activation] ---------------------------
 function _isSkipGST(s) {
   const t = String(s ?? '').trim().toLowerCase();
-  return ['skip','na','n/a','not available','none','no gst','no'].includes(t);
+  const native = ['एनए','एन/ए','न/अ','स्किप','छोड़ें','এনএ','এন/এ','স্কিপ','এড়িয়ে যান','என்ஏ','என்/ஏ','ஸ்கிப்','తవిర్క','ఎన్‌ఏ','ఎన్/ఏ','స్కిప్','ದಾಟವೆಯಿ','ಎನ್‌ಏ','ಎನ್/ಏ','ಸ್ಕಿಪ್','ಬಿಟ್ಟುಬಿಡಿ','एनए','एन/ए','स्किप','वगळा','એનએ','એન/એ','સ્કિપ','છોડી દો'];
+  return ['skip','na','n/a','not available','none','no gst','no'].includes(t) || native.includes(t);
 }
 
 async function beginTrialOnboarding(From, lang = 'en') {
@@ -6215,9 +6235,24 @@ async function beginTrialOnboarding(From, lang = 'en') {
   // ✅ Always store by shopId (without "whatsapp:") to match DB readers
   await setUserState(shopId, 'onboarding_trial_capture', { step: 'name', collected: {}, lang });
   try { await saveUserPreference(shopId, lang); } catch {}
-  const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+  const NO_FOOTER_MARKER = '<!NO_FOOTER!>';    
   const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `trial-onboard-name-${shopId}`);
-  await sendMessageViaAPI(From, askName);
+    await sendMessageViaAPI(From, askName);
+    // PATCH: Immediately ask for GSTIN in local language (GSTIN stays Latin; NA/Skip in native script)
+    const GSTIN_PROMPT = {
+      en: 'Enter your *GSTIN* (if not available, type *NA* or *skip*).',
+      hi: 'अपना *GSTIN* दर्ज करें (अगर उपलब्ध नहीं है तो *एनए* टाइप करें या *स्किप* करें)।',
+      bn: 'আপনার *GSTIN* লিখুন (না থাকলে *এনএ* লিখুন বা *স্কিপ* করুন)।',
+      ta: 'உங்கள் *GSTIN* ஐ உள்ளிடவும் (இல்லையெனில் *என்ஏ* அல்லது *ஸ்கிப்* எழுதவும்).',
+      te: 'మీ *GSTIN* నమోదు చేయండి (లభ్యం కాకపోతే *ఎన్‌ఏ* లేదా *స్కిప్* టైప్ చేయండి).',
+      kn: 'ನಿಮ್ಮ *GSTIN* ನಮೂದಿಸಿ (ಲಭ್ಯವಿಲ್ಲದಿದ್ದರೆ *ಎನ್‌ಏ* ಅಥವಾ *ಸ್ಕಿಪ್* ಎಂದು ಟೈಪ್ ಮಾಡಿ).',
+      mr: 'आपला *GSTIN* प्रविष्ट करा (उपलब्ध नसेल तर *एनए* टाइप करा किंवा *स्किप* करा).',
+      gu: 'તમારો *GSTIN* દાખલ કરો (ઉપલબ્ધ ન હોય તો *એનએ* લખો અથવા *સ્કિપ* કરો).',
+    };
+    const langExact = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
+    const msgGstinRaw = GSTIN_PROMPT[langExact] ?? GSTIN_PROMPT.en;
+    // Avoid t(...) here to keep NA/Skip exactly in native script; still finalize (single-script + numerals)
+    await sendMessageViaAPI(From, finalizeForSend(msgGstinRaw, langExact));
 }
 
 async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = null) {
@@ -6403,30 +6438,53 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
         }
         data.name = name;
 
-    await setUserState(shopId, 'onboarding_paid_capture', { step: 'gstin', collected: data, lang });
-    const askGstin = await t(
-      NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'Enter your *GSTIN* (type "*NA*" or *skip* if not available).',
-      lang, `paid-onboard-gstin-${shopId}`
-    );
-    await sendMessageViaAPI(From, finalizeForSend(askGstin, lang));
+    await setUserState(shopId, 'onboarding_paid_capture', { step: 'gstin', collected: data, lang });        
+    // Localized GSTIN prompt: keep "GSTIN" in Latin; show NA/Skip in native script
+        const GSTIN_PROMPT = {
+          en: 'Enter your *GSTIN* (if not available, type *NA* or *skip*).',
+          hi: 'अपना *GSTIN* दर्ज करें (अगर उपलब्ध नहीं है तो *एनए* टाइप करें या *स्किप* करें)।',
+          bn: 'আপনার *GSTIN* লিখুন (না থাকলে *এনএ* লিখুন বা *স্কিপ* করুন)।',
+          ta: 'உங்கள் *GSTIN* ஐ உள்ளிடவும் (இல்லையெனில் *என்ஏ* அல்லது *ஸ்கிப்* எழுதவும்).',
+          te: 'మీ *GSTIN* నమోదు చేయండి (లభ్యం కాకపోతే *ఎన్‌ఏ* లేదా *స్కిప్* టైప్ చేయండి).',
+          kn: 'ನಿಮ್ಮ *GSTIN* ನಮೂದಿಸಿ (ಲಭ್ಯವಿಲ್ಲದಿದ್ದರೆ *ಎನ್‌ಏ* ಅಥವಾ *ಸ್ಕಿಪ್* ಎಂದು ಟೈಪ್ ಮಾಡಿ).',
+          mr: 'आपला *GSTIN* प्रविष्ट करा (उपलब्ध नसेल तर *एनए* टाइप करा किंवा *स्किप* करा).',
+          gu: 'તમારો *GSTIN* દાખલ કરો (ઉપલબ્ધ ન હોય તો *એનએ* લખો અથવા *સ્કિપ* કરો).',
+        };
+        const langExact = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
+        const msgGstinRaw = GSTIN_PROMPT[langExact] ?? GSTIN_PROMPT.en;
+        const askGstin = NO_CLAMP_MARKER + NO_FOOTER_MARKER + msgGstinRaw;
+        // Avoid t(...) to keep NA/Skip exactly in native script
+        await sendMessageViaAPI(From, finalizeForSend(askGstin, langExact));
     try { if (requestId) handledRequests.add(requestId); } catch {}
     return true;
   }
 
-  if (step === 'gstin') {
-    const raw = String(text ?? '').trim();        
-    const isSkip = _isSkipGST(raw);
-        const GSTIN_RX = /^[0-9A-Z]{15}$/i;
-        if (!isSkip && !GSTIN_RX.test(raw)) {
-          const retryGstin = await t(
-            NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'GSTIN seems invalid—please re-enter 15 characters or type *skip*.',
-            lang, `paid-onboard-gstin-retry-${shopId}`
-          );
-          await sendMessageViaAPI(From, finalizeForSend(retryGstin, lang));
+  if (step === 'gstin') {     
+  // Normalize numerals and clean separators before regex
+      const raw0 = String(text ?? '').trim();
+      const isSkip = _isSkipGST(raw0); // expand tokens in helper to include native scripts
+      const rawNorm  = normalizeNumeralsToLatin(raw0);
+      const rawClean = rawNorm.replace(/[\s-]/g, ''); // allow "22AAAAA0000A1Z5" with spaces/dashes
+      const GSTIN_RX = /^[0-9A-Z]{15}$/i;
+          if (!isSkip && !GSTIN_RX.test(rawClean)) {
+            // Localized retry with native-script Skip tokens
+            const GSTIN_RETRY = {
+              en: 'GSTIN seems invalid—please re-enter 15 characters or type *NA* / *skip*.',
+              hi: 'GSTIN अमान्य प्रतीत हो रहा है—कृपया 15 कैरेक्टर दर्ज करें या *एनए* / *स्किप* लिखें।',
+              bn: 'GSTIN অবৈধ মনে হচ্ছে—১৫ অক্ষর লিখুন অথবা *এনএ* / *স্কিপ* লিখুন।',
+              ta: 'GSTIN தவறானது போல உள்ளது—15 எழுத்துகள் மீண்டும் எழுதவும் அல்லது *என்ஏ* / *ஸ்கிப்* எழுதவும்.',
+              te: 'GSTIN చెల్లుబాటు కాదనిపిస్తోంది—15 అక్షరాలు మళ్లీ నమోదు చేయండి లేదా *ఎన్‌ఏ* / *స్కిప్* టైప్ చేయండి.',
+              kn: 'GSTIN ಅಮಾನ್ಯವಾಗಿದೆ—ದಯವಿಟ್ಟು 15 ಅಕ್ಷರಗಳನ್ನು ಮರು ನಮೂದಿಸಿ ಅಥವಾ *ಎನ್‌ಏ* / *ಸ್ಕಿಪ್* ಎಂದು ಟೈಪ್ ಮಾಡಿ.',
+              mr: 'GSTIN अवैध दिसत आहे—कृपया 15 अक्षरे पुन्हा टाइप करा किंवा *एनए* / *स्किप* लिहा.',
+              gu: 'GSTIN અમાન્ય લાગે છે—કૃપા કરીને 15 અક્ષરો ફરી લખો અથવા *એનએ* / *સ્કિપ* લખો.',
+            };
+            const langExact2 = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
+            const retryRaw = NO_CLAMP_MARKER + NO_FOOTER_MARKER + (GSTIN_RETRY[langExact2] ?? GSTIN_RETRY.en);
+            await sendMessageViaAPI(From, finalizeForSend(retryRaw, langExact2));
           try { if (requestId) handledRequests.add(requestId); } catch {}
           return true;
         }
-        data.gstin = isSkip ? null : raw.toUpperCase();
+        data.gstin = isSkip ? null : rawClean.toUpperCase();
         await setUserState(shopId, 'onboarding_paid_capture', { step: 'address', collected: data, lang });
         const askAddr = await t(
           NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'Please share your *Shop Address* (area, city).',
@@ -6465,7 +6523,6 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
     try { if (requestId) handledRequests.add(requestId); } catch {}
     return true;
   }
-
   return false;
 }
 
