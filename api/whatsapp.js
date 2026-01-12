@@ -3497,7 +3497,8 @@ function _safeLang(...candidates) {
 // Must be declared BEFORE any calls (e.g., in handleRequest or module.exports).
 async function detectLanguageWithFallback(text, from, requestId) {
   return (async () => {
-    try {              
+    try {           
+      let detectedLanguage = 'en';
         // --- GREETING SHORT-CIRCUIT ---
               // If the inbound text is a greeting (e.g., "hi", "hello", "namaste", "namaskar"),
               // do NOT treat it as a language token and do NOT flip language.
@@ -3560,7 +3561,6 @@ async function detectLanguageWithFallback(text, from, requestId) {
                 return ensureLangExact(langLocked);
               }
       const lowerText = String(text || '').toLowerCase();
-      let detectedLanguage = 'en';
 
       // 0) Explicit one-word switch (uses your existing tokens helper)
       try {
