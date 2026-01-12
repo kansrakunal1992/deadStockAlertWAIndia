@@ -242,15 +242,6 @@ app.post(
             // We already ACKed; just stop processing here
             return;
           }
-                    
-          // --- BEGIN: suppress webhook-paid confirm sender (keep WhatsApp flow) ---
-                const SUPPRESS_WEBHOOK_PAID_CONFIRM =
-                  String(process.env.SUPPRESS_WEBHOOK_PAID_CONFIRM ?? '1') === '1';
-                if (SUPPRESS_WEBHOOK_PAID_CONFIRM) {
-                  console.log(`[${requestId}] [paid-confirm] suppressed by server (env gate)`, { shopId });
-                  return; // let whatsapp.js orchestration send the richer confirm
-                }
-                // --- END: suppress webhook-paid confirm sender ---
                                             
           // Non-blocking WhatsApp confirmation
           // Mark confirmed BEFORE sending to avoid races across concurrent webhooks
