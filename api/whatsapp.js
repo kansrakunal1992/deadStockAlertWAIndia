@@ -4,6 +4,10 @@ const twilio = require('twilio'); // REQUIRED for TwiML usage [twilio-node docs]
 const client = require('../twilioClient'); // from /root/api → ../twilioClient.js
 // Soniox async transcription helper (server-side file transcription; no streaming)
 const { transcribeFileWithSoniox } = require('../stt/sonioxAsync');
+
+// Fast in-memory grace guard to suppress duplicate paid confirmations in bursty webhooks
+globalThis._paidConfirmGrace = globalThis._paidConfirmGrace ?? new Map();
+
 const {
   normalizeLangExact,
   toSonioxHints,
@@ -5717,7 +5721,17 @@ async function sendPaidPlanCTA(From, lang = 'en') {
 // Idempotent + deduped paid confirmation (static localized; shows "30 days" and expiry date if present)
 async function sendWhatsAppPaidConfirmation(From) {
   try {
-    const shopId = shopIdFrom(From);
+    const shopId = shopIdFrom(From);    
+    // 15s grace dedupe (runtime) to absorb concurrent webhooks before DB stamp persists
+    const graceKey = `${shopId}:${Math.floor(Date.now() / 15000)}`;
+    if (globalThis._paidConfirmGrace.get(graceKey)) {
+      console.log('[paid-confirm] suppressed by grace window', { shopId, graceKey });
+      return;
+    }
+    try {
+      globalThis._paidConfirmGrace.set(graceKey, true);
+      setTimeout(() => { try { globalThis._paidConfirmGrace.delete(graceKey); } catch {} }, 15000);
+    } catch {}
     // Resolve language preference (fallback 'en')
     let lang = 'en';
     try {
@@ -6391,11 +6405,19 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
 
 // === Paid onboarding (collect details after payment) ===
 async function beginPaidOnboarding(From, lang = 'en') {
-  const shopId = shopIdFrom(From);
+  const shopId = shopIdFrom(From);    
+  // Skip starting if a capture is already in progress
+    try {
+      const st = await getUserStateFromDB(shopId);
+      if (st?.mode === 'onboarding_paid_capture') {
+        console.log('[paid-onboard] already in progress; skipping duplicate start', { shopId });
+        return;
+      }
+    } catch {}
   await setUserState(shopId, 'onboarding_paid_capture', { step: 'name', collected: {}, lang });
-  try { await saveUserPreference(shopId, lang); } catch {}
+  try { await saveUserPreference(shopId, lang); } catch {}    
   const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `paid-onboard-name-${shopId}`);
-  await sendMessageViaAPI(From, askName);
+  await sendMessageDedup(From, finalizeForSend(askName, lang));
 }
 
 async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = null) {
@@ -6432,7 +6454,7 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
             NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'Shop name seems empty—please re-enter your *Shop Name*.',
             lang, `paid-onboard-name-retry-${shopId}`
           );
-          await sendMessageViaAPI(From, finalizeForSend(retryName, lang));
+          await sendMessageDedup(From, finalizeForSend(retryName, lang));
           try { if (requestId) handledRequests.add(requestId); } catch {}
           return true;
         }
