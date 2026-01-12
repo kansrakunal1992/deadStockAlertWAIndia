@@ -35,7 +35,8 @@ const crypto = require('crypto');          // NEW: HMAC for webhook signature
 const app = express();
 
 // Request logging middleware
-// ==== Paid-confirm dedupe (lightweight persisted) ============================
+
+// ==== Paid-confirm idempotency (event-scoped, persisted) =====================
 // TTL can be tuned via env; default 6h
 const PAID_CONFIRM_TTL_MS = Number(process.env.PAID_CONFIRM_TTL_MS ?? (6 * 60 * 60 * 1000));
 const paidConfirmTrackerPath = path.join('/tmp', 'paid_confirm_tracker.json');
@@ -50,17 +51,41 @@ function savePaidTracker() {
     fs.writeFileSync(paidConfirmTrackerPath, JSON.stringify(paidTracker, null, 2));
   } catch { /* noop */ }
 }
-function wasRecentlyConfirmed(shopId, eventId) {
-  if (!shopId) return false;
-  const rec = paidTracker[shopId];
-  if (!rec) return false;
-  const fresh = (Date.now() - (rec.at ?? 0)) < PAID_CONFIRM_TTL_MS;    
-  // Within TTL treat as duplicate regardless of eventId (Razorpay may send varied IDs)
-  return fresh;
+// Structure:
+// paidTracker[shopId] = { events: { [eventId]: { at: <ts>, status: 'processing'|'completed' } } }
+function _ensureShopRec(shopId) {
+  const rec = paidTracker[shopId] || {};
+  rec.events = rec.events || {};
+  paidTracker[shopId] = rec;
+  return rec;
 }
-function markConfirmed(shopId, eventId) {
-  paidTracker[shopId] = { at: Date.now(), eventId };
+function claimPaidConfirm(shopId, eventId) {
+  // First claimant for (shopId,eventId) within TTL proceeds; others are duplicates.
+  if (!shopId || !eventId) return true; // allow if no eventId fallback available
+  const rec = _ensureShopRec(shopId);
+  const ev = rec.events[eventId];
+  if (ev && (Date.now() - (ev.at || 0)) < PAID_CONFIRM_TTL_MS) {
+    return false; // already claimed/recently processed
+  }
+  rec.events[eventId] = { at: Date.now(), status: 'processing' };
   savePaidTracker();
+  return true;
+}
+function markPaidConfirmCompleted(shopId, eventId) {
+  if (!shopId || !eventId) return;
+  const rec = _ensureShopRec(shopId);
+  if (rec.events[eventId]) {
+    rec.events[eventId].status = 'completed';
+    savePaidTracker();
+  }
+}
+function releasePaidConfirmClaim(shopId, eventId) {
+  if (!shopId || !eventId) return;
+  const rec = _ensureShopRec(shopId);
+  if (rec.events[eventId]) {
+    delete rec.events[eventId];
+    savePaidTracker();
+  }
 }
 
 app.use((req, res, next) => {
@@ -195,16 +220,18 @@ app.post(
           const c = d.startsWith('91') && d.length >= 12 ? d.slice(2) : d.replace(/^0+/, '');
           return `+91${c}`;
         };
-        const fromWhatsApp = `whatsapp:${toE164(shopId)}`;
-        console.log(`[${requestId}] WhatsApp paid confirm target=${fromWhatsApp}`);
-
-        // ---- Idempotency Guard: suppress duplicates within TTL ----
-        if (wasRecentlyConfirmed(shopId, razorEventId)) {
-          console.log(
-            `[${requestId}] [paid-confirm] suppressed duplicate for shop=${shopId} event=${razorEventId}`
-          );
-          return;
-        }
+        const fromWhatsApp = `whatsapp:${toE164(shopId)}`;                                
+        console.log(`[${requestId}] WhatsApp paid confirm target=${fromWhatsApp}`, {
+        shopId, status, eventId: razorEventId
+        });
+            // ---- Idempotency Claim: allow exactly one first processing per event ----
+            const claimed = claimPaidConfirm(shopId, razorEventId);
+            if (!claimed) {
+              console.log(
+                `[${requestId}] [paid-confirm] suppressed duplicate for shop=${shopId} event=${razorEventId}`
+              );
+              return;
+            }
 
         // record event (audit)
         try {
@@ -243,9 +270,7 @@ app.post(
             return;
           }
                                             
-          // Non-blocking WhatsApp confirmation
-          // Mark confirmed BEFORE sending to avoid races across concurrent webhooks
-          markConfirmed(shopId, razorEventId);
+          // Non-blocking WhatsApp confirmation (send now; mark completion AFTER success)
              const lockKey = `lock:paid-confirm:${shopId}`;
              const gotLock = (typeof redis !== 'undefined')
                ? await redis.set(lockKey, '1', { NX: true, PX: 15000 })
@@ -257,12 +282,11 @@ app.post(
              try {
             const wa = require('./api/whatsapp');
             if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {                          
-            // Final duplicate guard just before send
-            if (wasRecentlyConfirmed(shopId, razorEventId)) return;
-              await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
+            await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
               console.log(
                 `[${requestId}] WhatsApp paid confirm sent to ${fromWhatsApp}`
               );
+              markPaidConfirmCompleted(shopId, razorEventId);
             } else {
               // Fallback: send confirmation directly via Twilio WhatsApp
               try {
@@ -276,8 +300,6 @@ app.post(
                     `[${requestId}] Twilio fallback skipped: WHATSAPP_NUMBER env not set`
                   );
                 } else {                                    
-                  // Final duplicate guard just before send
-                  if (wasRecentlyConfirmed(shopId, razorEventId)) return;
                   await twilio.messages.create({
                     from: WHATSAPP_NUMBER,
                     to: fromWhatsApp, // already in 'whatsapp:+91XXXXXXXXXX' format
@@ -287,17 +309,22 @@ app.post(
                   console.log(
                     `[${requestId}] Twilio fallback: paid confirm sent to ${fromWhatsApp}`
                   );
+                  markPaidConfirmCompleted(shopId, razorEventId);
                 }
               } catch (twErr) {
                 console.warn(
                   `[${requestId}] Twilio fallback paid confirm failed: ${twErr?.message}`
-                );
+                );                              
+              // Release the claim so a retry can process later
+              releasePaidConfirmClaim(shopId, razorEventId);
               }
             }
           } catch (e) {
             console.warn(
               `[${requestId}] WhatsApp paid confirm (razorpay) failed: ${e?.message}`
-            );                    
+            );                                             
+          // Release the claim so the next delivery or manual retry can process
+          releasePaidConfirmClaim(shopId, razorEventId);
           } finally {
              if (typeof redis !== 'undefined') {
                try { await redis.del(lockKey); } catch {}
@@ -306,7 +333,9 @@ app.post(
         } else {
           console.log(
             `[${requestId}] Razorpay webhook received non-capture status: ${status}`
-          );
+          );         
+      // For non-success statuses, release claim to allow later 'captured' event to send confirm
+      releasePaidConfirmClaim(shopId, razorEventId);
         }
 
         // already ACKed — just finish the async handler
