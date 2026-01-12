@@ -54,9 +54,9 @@ function wasRecentlyConfirmed(shopId, eventId) {
   if (!shopId) return false;
   const rec = paidTracker[shopId];
   if (!rec) return false;
-  const fresh = (Date.now() - (rec.at ?? 0)) < PAID_CONFIRM_TTL_MS;
-  // Same eventId within TTL -> duplicate
-  return fresh && rec.eventId === eventId;
+  const fresh = (Date.now() - (rec.at ?? 0)) < PAID_CONFIRM_TTL_MS;    
+  // Within TTL treat as duplicate regardless of eventId (Razorpay may send varied IDs)
+  return fresh;
 }
 function markConfirmed(shopId, eventId) {
   paidTracker[shopId] = { at: Date.now(), eventId };
@@ -242,9 +242,10 @@ app.post(
             // We already ACKed; just stop processing here
             return;
           }
-                      
-            // Non-blocking WhatsApp confirmation
-             // PATCH: cross‑process lock keyed to shop to serialize paid‑confirm sends
+                                            
+          // Non-blocking WhatsApp confirmation
+          // Mark confirmed BEFORE sending to avoid races across concurrent webhooks
+          markConfirmed(shopId, razorEventId);
              const lockKey = `lock:paid-confirm:${shopId}`;
              const gotLock = (typeof redis !== 'undefined')
                ? await redis.set(lockKey, '1', { NX: true, PX: 15000 })
@@ -255,12 +256,13 @@ app.post(
              }
              try {
             const wa = require('./api/whatsapp');
-            if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {
+            if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {                          
+            // Final duplicate guard just before send
+            if (wasRecentlyConfirmed(shopId, razorEventId)) return;
               await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
               console.log(
                 `[${requestId}] WhatsApp paid confirm sent to ${fromWhatsApp}`
               );
-              markConfirmed(shopId, razorEventId);
             } else {
               // Fallback: send confirmation directly via Twilio WhatsApp
               try {
@@ -273,7 +275,9 @@ app.post(
                   console.warn(
                     `[${requestId}] Twilio fallback skipped: WHATSAPP_NUMBER env not set`
                   );
-                } else {
+                } else {                                    
+                  // Final duplicate guard just before send
+                  if (wasRecentlyConfirmed(shopId, razorEventId)) return;
                   await twilio.messages.create({
                     from: WHATSAPP_NUMBER,
                     to: fromWhatsApp, // already in 'whatsapp:+91XXXXXXXXXX' format
@@ -283,7 +287,6 @@ app.post(
                   console.log(
                     `[${requestId}] Twilio fallback: paid confirm sent to ${fromWhatsApp}`
                   );
-                  markConfirmed(shopId, razorEventId);
                 }
               } catch (twErr) {
                 console.warn(
@@ -857,7 +860,7 @@ function periodWindow(period) {
 }
 const toNum = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
 
-async function aggregateSales(periodKey) {
+async function aggregateSales(periodKey, q = {}) {
   const { start, end } = periodWindow(periodKey);
   const shopIds = await getAllShopIDs(); // from your DB layer
   const meta = await shopMetaMap(shopIds);
@@ -867,9 +870,9 @@ async function aggregateSales(periodKey) {
 
   for (let i = 0; i < shopIds.length; i += CONC) {
     const batch = shopIds.slice(i, i + CONC);
-    await Promise.all(batch.map(async (shopId) => {           
-      const m = meta.get(shopId) || normalizeShopMeta({ shopId });
-      if (!matchesFilter(m, q)) return;
+    await Promise.all(batch.map(async (shopId) => {                     
+    const m = meta.get(shopId) ?? normalizeShopMeta({ shopId });
+    if (!matchesFilter(m, q)) return;
       const data = await getSalesDataForPeriod(shopId, start, end);
       totalItems += toNum(data.totalItems);
       totalValue += toNum(data.totalValue);
@@ -920,11 +923,11 @@ app.get('/api/dashboard/low-stock', async (req, res) => {
     const shopIds = await getAllShopIDs();        
     const { state, city, segment, shopId } = req.query;
     const meta = await shopMetaMap(shopIds);
-    const items = [];
-    for (const shopId of shopIds) {           
-      const m = meta.get(sid) || normalizeShopMeta({ shopId: sid });
-      if (!matchesFilter(m, { state, city, segment, shopId })) continue;
-      const low = await getLowStockProducts(shopId, 5);
+    const items = [];        
+    for (const sid of shopIds) {
+          const m = meta.get(sid) ?? normalizeShopMeta({ shopId: sid });
+          if (!matchesFilter(m, { state, city, segment, shopId })) continue;
+          const low = await getLowStockProducts(sid, 5);
       for (const p of low) {
         items.push({
           name: p.name || p.fields?.Product,
