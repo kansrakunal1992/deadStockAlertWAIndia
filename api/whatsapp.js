@@ -6405,15 +6405,32 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
 
 // === Paid onboarding (collect details after payment) ===
 async function beginPaidOnboarding(From, lang = 'en') {
-  const shopId = shopIdFrom(From);    
-  // Skip starting if a capture is already in progress
-    try {
-      const st = await getUserStateFromDB(shopId);
-      if (st?.mode === 'onboarding_paid_capture') {
-        console.log('[paid-onboard] already in progress; skipping duplicate start', { shopId });
-        return;
-      }
-    } catch {}
+  const shopId = shopIdFrom(From);        
+  // If capture already in progress, re-send the appropriate prompt for the current step
+   let st = null;
+   try { st = await getUserStateFromDB(shopId); } catch {}
+   if (st?.mode === 'onboarding_paid_capture') {
+     const step = st?.data?.step ?? 'name';
+     const langNow = st?.data?.lang ?? lang;
+     if (step === 'name') {
+       const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', langNow, `paid-onboard-name-${shopId}`);
+       await sendMessageViaAPI(From, finalizeForSend(askName, langNow));
+       return;
+     }
+     if (step === 'gstin') {
+       // Reuse GSTIN prompt from the step handler (keep “GSTIN” Latin; NA/skip in native)
+       const GSTIN_PROMPT = { en: 'Enter your *GSTIN* (if not available, type *NA* or *skip*).', hi: 'अपना *GSTIN* दर्ज करें (अगर उपलब्ध नहीं है तो *एनए* या *स्किप* लिखें)।', /* ...other langs... */ };
+       const langExact = ensureLangExact(langNow);
+       const msgGstinRaw = GSTIN_PROMPT[langExact] ?? GSTIN_PROMPT.en;
+       await sendMessageViaAPI(From, finalizeForSend(msgGstinRaw, langExact));
+       return;
+     }
+     if (step === 'address') {
+       const askAddr = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'Please share your *Shop Address* (area, city).', langNow, `paid-onboard-address-${shopId}`);
+       await sendMessageViaAPI(From, finalizeForSend(askAddr, langNow));
+       return;
+     }
+   }
   await setUserState(shopId, 'onboarding_paid_capture', { step: 'name', collected: {}, lang });
   try { await saveUserPreference(shopId, lang); } catch {}    
   const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `paid-onboard-name-${shopId}`);    
