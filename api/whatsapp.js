@@ -6416,8 +6416,11 @@ async function beginPaidOnboarding(From, lang = 'en') {
     } catch {}
   await setUserState(shopId, 'onboarding_paid_capture', { step: 'name', collected: {}, lang });
   try { await saveUserPreference(shopId, lang); } catch {}    
-  const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `paid-onboard-name-${shopId}`);
-  await sendMessageDedup(From, finalizeForSend(askName, lang));
+  const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `paid-onboard-name-${shopId}`);    
+  // First onboarding prompt must always deliver; do not dedup here
+    const msg = finalizeForSend(askName, lang);
+    console.log('[paid-onboard] sending name prompt', { to: From, lang, len: msg.length });
+    await sendMessageViaAPI(From, msg);
 }
 
 async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = null) {
