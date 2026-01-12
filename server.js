@@ -295,7 +295,7 @@ app.post(
             }
           }
           // (lock release handled below)
-          finally {
+        } finally {
              if (typeof redis !== 'undefined') {
                try { await redis.del(lockKey); } catch {}
              }
