@@ -149,13 +149,24 @@ app.post(
         const entity = payload?.payload?.payment?.entity || {};
         const status = String(entity.status || '').toLowerCase();
         const notes = entity.notes || {};
-
+                
         // Razorpay's unique event ID (recommended for idempotency)
-        const razorEventId =
-          req.get('x-razorpay-event-id') ||
-          req.get('X-Razorpay-Event-Id') ||
-          payload?.event || // fallback if header missing
-          crypto.createHash('sha256').update(rawBody).digest('hex'); // last resort: body hash
+         const razorEventId =
+           req.get('x-razorpay-event-id') ||
+           req.get('X-Razorpay-Event-Id') ||
+           payload?.event ||
+           // fallback if header missing
+           crypto.createHash('sha256').update(rawBody).digest('hex'); // last resort: body hash
+         // PATCH: Source idempotency at the event level (persisted key; returns early if seen)
+         if (typeof redis !== 'undefined' && razorEventId) {
+           const processedKey = `evt:${razorEventId}`;
+           if (await redis.get(processedKey)) {
+             console.log(`[${requestId}] duplicate eventId; skipping downstream`, { razorEventId });
+             return;
+           }
+           // Keep for 7 days; enough for gateway retries
+           await redis.set(processedKey, '1', { NX: true, PX: 7 * 24 * 60 * 60 * 1000 });
+         }
 
         const buyerPhone = String(entity.contact || '').trim(); // payer-entered phone
 
@@ -231,9 +242,18 @@ app.post(
             // We already ACKed; just stop processing here
             return;
           }
-
-          // Non-blocking WhatsApp confirmation
-          try {
+                      
+            // Non-blocking WhatsApp confirmation
+             // PATCH: cross‑process lock keyed to shop to serialize paid‑confirm sends
+             const lockKey = `lock:paid-confirm:${shopId}`;
+             const gotLock = (typeof redis !== 'undefined')
+               ? await redis.set(lockKey, '1', { NX: true, PX: 15000 })
+               : true; // if Redis not available, proceed
+             if (!gotLock) {
+               console.log(`[${requestId}] [paid-confirm] skipped due to lock`, { shopId });
+               return;
+             }
+             try {
             const wa = require('./api/whatsapp');
             if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {
               await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
@@ -274,8 +294,12 @@ app.post(
           } catch (e) {
             console.warn(
               `[${requestId}] WhatsApp paid confirm (razorpay) failed: ${e?.message}`
-            );
-          }
+            );                    
+          } finally {
+             if (typeof redis !== 'undefined') {
+               try { await redis.del(lockKey); } catch {}
+             }
+           }
         } else {
           console.log(
             `[${requestId}] Razorpay webhook received non-capture status: ${status}`
