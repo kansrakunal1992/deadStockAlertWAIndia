@@ -5695,49 +5695,54 @@ async function sendPaidPlanCTA(From, lang = 'en') {
  * Called from the server webhook after successful payment capture.
  */
 
-// Idempotent + deduped paid confirmation (shows "30 days" and expiry date if present)
-const _paidConfirmGuard = new Map(); // shopId -> { at: ms, lastHash: string }
-const PAID_CONFIRM_TTL_MS = Number(process.env.PAID_CONFIRM_TTL_MS ?? (5 * 60 * 1000));
-function _hash(s) { try { return crypto.createHash('sha256').update(String(s ?? '')).digest('hex'); } catch { return String(s ?? '').length.toString(16); } }
+// Idempotent + deduped paid confirmation (static localized; shows "30 days" and expiry date if present)
 async function sendWhatsAppPaidConfirmation(From) {
   try {
     const shopId = shopIdFrom(From);
-    // Resolve language
+    // Resolve language preference (fallback 'en')
     let lang = 'en';
     try {
       const pref = await getUserPreference(shopId);
       if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
     } catch {}
-    // Read unified end date (uses TrialEndDate for both trial & paid)
+    // Persisted sent-stamp gate (skip if already sent recently)
+    const PAID_CONFIRM_TTL_MS = Number(process.env.PAID_CONFIRM_TTL_MS ?? (24 * 60 * 60 * 1000)); // 24h
+    try {
+      const planInfo = await getUserPlan(shopId);
+      if (planInfo?.plan === 'paid' && planInfo?.paidConfirmSentAt && (Date.now() - planInfo.paidConfirmSentAt) < PAID_CONFIRM_TTL_MS) {
+        console.log('[paid-confirm] suppressed by sent-stamp', { shopId });
+        return;
+      }
+      await setPaidConfirmSentAt(shopId, Date.now()); // atomic write
+    } catch { /* best effort */ }
+    // Unified end date
     let endISO = null;
     try {
       const planInfo = await getUserPlan(shopId);
-      endISO = getUnifiedEndDate(planInfo);
+      endISO = (typeof getUnifiedEndDate === 'function')
+        ? getUnifiedEndDate(planInfo)
+        : (planInfo?.paidUntil ?? null);
     } catch {}
-    const endLine = endISO
-      ? `\nExpires on ${new Date(endISO).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}.`
-      : '';
-    const text0 = await t(
-      `✅ Your Saamagrii.AI Paid Plan is now active. Enjoy full access for 30 days!${endLine}`,
-      lang,
-      `paid-confirm::${shopId}`
-    );
-    // Append footer and normalize; then idempotency guard by hash within TTL
-    const withFooter = await appendSupportFooter(text0, From);
-    const body = normalizeNumeralsToLatin(enforceSingleScriptSafe(withFooter, lang)).trim();
-    const h = _hash(body); const prev = _paidConfirmGuard.get(shopId); const now = Date.now();
-    if (prev && (now - prev.at) < PAID_CONFIRM_TTL_MS && prev.lastHash === h) { console.log('[paid-confirm] suppressed duplicate', { shopId }); return; }
-    _paidConfirmGuard.set(shopId, { at: now, lastHash: h });
-    await sendMessageDedup(From, body);        
-    // If configured for paid capture and details are incomplete, start capture
-      try {
-        if (CAPTURE_SHOP_DETAILS_ON === 'paid') {
-          const shopId = shopIdFrom(From);
-          const details = await getShopDetails(shopId).catch(() => null);
-          const missing = !details || !details.name || !details.address; // keep GSTIN optional
-          if (missing) { await beginPaidOnboarding(From, lang); }
-        }
-      } catch (_) {}
+    const expires = endISO
+      ? new Date(endISO).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })
+      : null;
+    // Static localized strings (remove translation variance)
+    const MSGS = {
+      en: `✅ Your Saamagrii.AI Paid Plan is now active. Enjoy full access for 30 days!${expires ? `\nExpires on ${expires}.` : ''}`,
+      hi: `✅ आपकी Saamagrii.AI पेड प्लान अब सक्रिय है। 30 दिनों के लिए पूर्ण एक्सेस का आनंद लें!${expires ? `\nसमाप्ति तिथि: ${expires}।` : ''}`,
+    };
+    const body = MSGS[lang] ?? MSGS.en;
+    // Final send via dedupe layer
+    const tagged = await tagWithLocalizedMode(From, finalizeForSend(body, lang), lang);
+    await sendMessageDedup(From, tagged);
+    // Retain your paid-capture onboarding hook
+    try {
+      if (CAPTURE_SHOP_DETAILS_ON === 'paid') {
+        const details = await getShopDetails(shopId).catch(() => null);
+        const missing = !details || !details.name || !details.address; // GSTIN optional
+        if (missing) { await beginPaidOnboarding(From, lang); }
+      }
+    } catch (_) {}
   } catch (e) {
     console.warn('[paid-confirm] failed:', e?.message);
   }
@@ -6433,7 +6438,7 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
     try { await clearUserState(shopId); } catch {}
 
     let msg0 = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + '✅ Paid Plan activated. Thank you! Your details are saved.', lang, `paid-onboard-done-${shopId}`);
-    await sendMessageViaAPI(From, finalizeForSend(msg0, lang));
+    await sendMessageDedup(From, finalizeForSend(msg0, lang));
 
     // Normal paid confirmation + menus
     try { await sendWhatsAppPaidConfirmation(From); } catch {}
