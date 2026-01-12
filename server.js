@@ -252,50 +252,50 @@ app.post(
              if (!gotLock) {
                console.log(`[${requestId}] [paid-confirm] skipped due to lock`, { shopId });
                return;
-             }
-             try {
-            const wa = require('./api/whatsapp');
-            if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {
+             }               
+          // Helper: Twilio fallback sender (used when module send fails or is unavailable)
+          async function sendTwilioFallback(toWhatsApp) {
+            const twilio = require('twilio')(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
+            const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER; // e.g., 'whatsapp:+14155238886'
+            if (!WHATSAPP_NUMBER) {
+              console.warn(`[${requestId}] Twilio fallback skipped: WHATSAPP_NUMBER env not set`);
+              throw new Error('Missing WHATSAPP_NUMBER');
+            }
+            await twilio.messages.create({
+              from: WHATSAPP_NUMBER,
+              to: toWhatsApp, // 'whatsapp:+91XXXXXXXXXX'
+              body: '✅ Your Saamagrii.AI Paid Plan is now active.\nPlease share your shop name to complete your setup.'
+            });
+            console.log(`[${requestId}] Twilio fallback: paid confirm sent to ${toWhatsApp}`);
+          }
+  
+          // Try WhatsApp module first; if it fails, fall back to Twilio. Only mark confirmed on success.
+          const wa = require('./api/whatsapp');
+          if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {
+            try {
               await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
-              console.log(
-                `[${requestId}] WhatsApp paid confirm sent to ${fromWhatsApp}`
-              );
+              console.log(`[${requestId}] WhatsApp paid confirm sent to ${fromWhatsApp}`);
               markConfirmed(shopId, razorEventId);
-            } else {
-              // Fallback: send confirmation directly via Twilio WhatsApp
+            } catch (modErr) {
+              console.warn(`[${requestId}] WhatsApp module send failed: ${modErr?.message}; attempting Twilio fallback`);
               try {
-                const twilio = require('twilio')(
-                  process.env.ACCOUNT_SID,
-                  process.env.AUTH_TOKEN
-                );
-                const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER; // e.g., 'whatsapp:+14155238886'
-                if (!WHATSAPP_NUMBER) {
-                  console.warn(
-                    `[${requestId}] Twilio fallback skipped: WHATSAPP_NUMBER env not set`
-                  );
-                } else {
-                  await twilio.messages.create({
-                    from: WHATSAPP_NUMBER,
-                    to: fromWhatsApp, // already in 'whatsapp:+91XXXXXXXXXX' format
-                    body:
-                      '✅ Your Saamagrii.AI Paid Plan is now active. Enjoy full access!',
-                  });
-                  console.log(
-                    `[${requestId}] Twilio fallback: paid confirm sent to ${fromWhatsApp}`
-                  );
-                  markConfirmed(shopId, razorEventId);
-                }
+                await sendTwilioFallback(fromWhatsApp);
+                markConfirmed(shopId, razorEventId);
               } catch (twErr) {
-                console.warn(
-                  `[${requestId}] Twilio fallback paid confirm failed: ${twErr?.message}`
-                );
+                console.warn(`[${requestId}] Twilio fallback paid confirm failed: ${twErr?.message}`);
+                // Do not markConfirmed here; allow retries to attempt again.
               }
             }
-          } catch (e) {
-            console.warn(
-              `[${requestId}] WhatsApp paid confirm (razorpay) failed: ${e?.message}`
-            );                    
-          } finally {
+          } else {
+            try {
+              await sendTwilioFallback(fromWhatsApp);
+              markConfirmed(shopId, razorEventId);
+            } catch (twErr) {
+              console.warn(`[${requestId}] Twilio fallback paid confirm failed: ${twErr?.message}`);
+            }
+          }
+          // (lock release handled below)
+          finally {
              if (typeof redis !== 'undefined') {
                try { await redis.del(lockKey); } catch {}
              }
