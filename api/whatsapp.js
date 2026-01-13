@@ -1845,6 +1845,43 @@ async function parseMultipleUpdates(reqOrText, requestId) {
     return accepted;
 }
 
+// ============================
+// [PATCH:PAID-ONBOARD-NAME-API]
+// Explicit API to mark 'onboarding_paid_capture' and send the shop-name prompt.
+// Keeps "paid plan active" text suppressed; only the name prompt is emitted.
+// ============================
+async function sendPaidOnboardingNamePrompt(From) {
+  try {
+    // Resolve shopId and language hint quickly
+    const shopId = String(From ?? '').replace('whatsapp:', '');
+    const lang = await detectLanguageWithFallback('', From, 'paid-onboard-name');
+
+    // Set onboarding state (capture mode) with step marker
+    try {
+      await setUserState(shopId, 'onboarding_paid_capture', {
+        step: 'name',
+        initiatedAtISO: new Date().toISOString()
+      });
+      console.log('[onboard-paid] state set: onboarding_paid_capture', { shopId });
+    } catch (e) {
+      console.warn('[onboard-paid] unable to set state', e?.message);
+    }
+
+    // Compose localized name prompt; keep exact wording you use in logs
+    let msg = await t('कृपया अपना *दुकान का नाम* साझा करें।.', lang, 'paid-onboard-name');
+    // Footer/tagging per this-turn language
+    const tagged = await tagWithLocalizedMode(From, finalizeForSend(msg, lang), lang);
+    await sendMessageViaAPI(From, tagged);
+    return { success: true };
+  } catch (e) {
+    console.warn('[onboard-paid] name prompt failed:', e?.message);
+    return { success: false, error: e?.message };
+  }
+}
+
+// Export the API
+module.exports.sendPaidOnboardingNamePrompt = sendPaidOnboardingNamePrompt;
+
 // ===== NEW: Consume and persist price for the pending batch =====================
 // [REMOVED]: price-await persist/ack flow. We now require the user to resend
 // the purchase line WITH price; no DB saves or acks for missing price lines.
