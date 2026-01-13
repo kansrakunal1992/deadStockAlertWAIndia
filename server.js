@@ -280,14 +280,19 @@ app.post(
                return;
              }
              try {
-            const wa = require('./api/whatsapp');
-            if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {                          
-            await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
-              console.log(
-                `[${requestId}] WhatsApp paid confirm sent to ${fromWhatsApp}`
-              );
-              markPaidConfirmCompleted(shopId, razorEventId);
-            } else {
+            const wa = require('./api/whatsapp');                        
+            // [PATCH:PAID-CONFIRM-TEXT-SUPPRESS]
+                      // Suppress the "paid plan active" text; keep onboarding flow/CTAs untouched.
+                      // Default behavior: do NOT send the active-plan text. Flip via env if ever needed.
+                      const SUPPRESS_PAID_CONFIRM_TEXT =
+                        String(process.env.SUPPRESS_PAID_CONFIRM_TEXT ?? '1')
+                          .toLowerCase() === '1';
+                      if (!SUPPRESS_PAID_CONFIRM_TEXT && wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {
+                        await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
+                        console.log(`[${requestId}] WhatsApp paid confirm sent to ${fromWhatsApp}`);
+                        markPaidConfirmCompleted(shopId, razorEventId);
+                      } else {
+                        console.log(`[${requestId}] [paid-confirm] text confirmation suppressed by config`, { shopId });
               // Fallback: send confirmation directly via Twilio WhatsApp
               try {
                 const twilio = require('twilio')(
@@ -299,17 +304,10 @@ app.post(
                   console.warn(
                     `[${requestId}] Twilio fallback skipped: WHATSAPP_NUMBER env not set`
                   );
-                } else {                                    
-                  await twilio.messages.create({
-                    from: WHATSAPP_NUMBER,
-                    to: fromWhatsApp, // already in 'whatsapp:+91XXXXXXXXXX' format
-                    body:
-                      '✅ Your Saamagrii.AI Paid Plan is now active. Enjoy full access!',
-                  });
-                  console.log(
-                    `[${requestId}] Twilio fallback: paid confirm sent to ${fromWhatsApp}`
-                  );
-                  markPaidConfirmCompleted(shopId, razorEventId);
+                } else {                                                                    
+              // [PATCH:PAID-CONFIRM-TEXT-SUPPRESS] — also suppress Twilio text fallback
+              console.log(`[${requestId}] Twilio fallback suppressed for paid confirm text`, { to: fromWhatsApp });
+              markPaidConfirmCompleted(shopId, razorEventId);
                 }
               } catch (twErr) {
                 console.warn(
