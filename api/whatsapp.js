@@ -1515,8 +1515,34 @@ async function parseMultipleUpdates(reqOrText, requestId) {
   // If user is in onboarding flow, consume this message and do not parse as inventory        
   if (userState && (userState.mode === 'onboarding_trial_capture' || userState.mode === 'onboarding_paid_capture')) {
      try {
-       const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'onboard-capture');
-       if (userState.mode === 'onboarding_trial_capture') {
+       const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'onboard-capture');               
+       // [PATCH:PAID-ONBOARD-NAME-SUPPRESS]
+              // If we are in paid-capture but Shop Name already exists, do NOT re-prompt.
+              // Mark state as 'onboarding_paid_confirmed' and skip capture handlers.
+              if (userState.mode === 'onboarding_paid_capture') {
+                try {
+                  // Prefer E.164 shopId and DB helper already imported above
+                  const sid = String(from ?? `whatsapp:${shopId}`).replace('whatsapp:', '');
+                  const details = await getShopDetails(sid).catch(() => null);
+                  const shopName =
+                    details?.shopDetails?.shopName ??
+                    details?.shopDetails?.['Shop Name'] ??
+                    details?.shopName ??
+                    details?.['Shop Name'] ??
+                    '';
+                  if (shopName && shopName.trim().length > 0) {
+                    // Shop name exists → mark confirmed; do not run handlePaidOnboardingStep
+                    try {
+                      await setUserState(sid, 'onboarding_paid_confirmed', {
+                        confirmedAtISO: new Date().toISOString()
+                      });
+                      console.log('[onboard-paid] shop name present; marked onboarding_paid_confirmed', { sid, shopName });
+                    } catch (_) {}
+                    return []; // consume onboarding branch without re-prompt
+                  }
+                } catch (_) { /* best-effort; fall through to handler */ }
+              }
+              if (userState.mode === 'onboarding_trial_capture') {
          await handleTrialOnboardingStep(from ?? `whatsapp:${shopId}`, transcript, langHint, requestId1);
        } else {
          await handlePaidOnboardingStep(from ?? `whatsapp:${shopId}`, transcript, langHint, requestId1);
