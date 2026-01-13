@@ -316,7 +316,20 @@ app.post(
               // Release the claim so a retry can process later
               releasePaidConfirmClaim(shopId, razorEventId);
               }
-            }
+            }                         
+          // [PATCH:PAID-ONBOARD-NAME-TRIGGER]
+                    // Always trigger paid-onboarding name prompt after successful payment,
+                    // even when we suppress the "paid plan active" text.
+                    try {
+                      if (wa && typeof wa.sendPaidOnboardingNamePrompt === 'function') {
+                        await wa.sendPaidOnboardingNamePrompt(fromWhatsApp);
+                        console.log(`[${requestId}] Paid onboarding name prompt sent to ${fromWhatsApp}`);
+                      } else {
+                        console.log(`[${requestId}] Paid onboarding name prompt API not available; skipping`, { to: fromWhatsApp });
+                      }
+                    } catch (npErr) {
+                      console.warn(`[${requestId}] Paid onboarding name prompt failed: ${npErr?.message}`);
+                    }
           } catch (e) {
             console.warn(
               `[${requestId}] WhatsApp paid confirm (razorpay) failed: ${e?.message}`
