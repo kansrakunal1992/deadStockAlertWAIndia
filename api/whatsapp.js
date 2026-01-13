@@ -1879,9 +1879,6 @@ async function sendPaidOnboardingNamePrompt(From) {
   }
 }
 
-// Export the API
-module.exports.sendPaidOnboardingNamePrompt = sendPaidOnboardingNamePrompt;
-
 // ===== NEW: Consume and persist price for the pending batch =====================
 // [REMOVED]: price-await persist/ack flow. We now require the user to resend
 // the purchase line WITH price; no DB saves or acks for missing price lines.
@@ -20218,6 +20215,16 @@ try { whatsappHandler.sendPaidPlanCTA = sendPaidPlanCTA; } catch (_) {}
 
 // Export the handler as the default export
 module.exports = whatsappHandler;
+
+// IMPORTANT: make the named APIs reachable from server.js
+// The server-side Razorpay webhook calls these via:
+//   const wa = require('./api/whatsapp');
+//   wa.sendWhatsAppPaidConfirmation(...);
+//   wa.sendPaidOnboardingNamePrompt(...);
+//
+// Ensure both functions are defined above this block, then attach:
+module.exports.sendWhatsAppPaidConfirmation = sendWhatsAppPaidConfirmation;
+module.exports.sendPaidOnboardingNamePrompt = sendPaidOnboardingNamePrompt;
 
 async function handleRequest(req, res, response, requestId, requestStart) {  
   try {
