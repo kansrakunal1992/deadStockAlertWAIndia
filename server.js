@@ -280,34 +280,36 @@ app.post(
                return;
              }
              try {
-            const wa = require('./api/whatsapp');                        
-            // [PATCH:PAID-CONFIRM-TEXT-SUPPRESS]
-                      // Suppress the "paid plan active" text; keep onboarding flow/CTAs untouched.
-                      // Default behavior: do NOT send the active-plan text. Flip via env if ever needed.
-                      const SUPPRESS_PAID_CONFIRM_TEXT =
-                        String(process.env.SUPPRESS_PAID_CONFIRM_TEXT ?? '1')
-                          .toLowerCase() === '1';
-                      if (!SUPPRESS_PAID_CONFIRM_TEXT && wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {
-                        await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
-                        console.log(`[${requestId}] WhatsApp paid confirm sent to ${fromWhatsApp}`);
-                        markPaidConfirmCompleted(shopId, razorEventId);
-                      } else {
-                        console.log(`[${requestId}] [paid-confirm] text confirmation suppressed by config`, { shopId });
+            const wa = require('./api/whatsapp');
+            if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {                          
+            await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
+              console.log(
+                `[${requestId}] WhatsApp paid confirm sent to ${fromWhatsApp}`
+              );
+              markPaidConfirmCompleted(shopId, razorEventId);
+            } else {
               // Fallback: send confirmation directly via Twilio WhatsApp
               try {
                 const twilio = require('twilio')(
                   process.env.ACCOUNT_SID,
                   process.env.AUTH_TOKEN
                 );
-                const WHATSAPP_NUMBER = process.env.TWILIO_WHATSAPP_NUMBER; // e.g., 'whatsapp:+14155238886'
+                const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER; // e.g., 'whatsapp:+14155238886'
                 if (!WHATSAPP_NUMBER) {
                   console.warn(
                     `[${requestId}] Twilio fallback skipped: WHATSAPP_NUMBER env not set`
                   );
-                } else {                                                                    
-              // [PATCH:PAID-CONFIRM-TEXT-SUPPRESS] — also suppress Twilio text fallback
-              console.log(`[${requestId}] Twilio fallback suppressed for paid confirm text`, { to: fromWhatsApp });
-              markPaidConfirmCompleted(shopId, razorEventId);
+                } else {                                    
+                  await twilio.messages.create({
+                    from: WHATSAPP_NUMBER,
+                    to: fromWhatsApp, // already in 'whatsapp:+91XXXXXXXXXX' format
+                    body:
+                      '✅ Your Saamagrii.AI Paid Plan is now active. Enjoy full access!',
+                  });
+                  console.log(
+                    `[${requestId}] Twilio fallback: paid confirm sent to ${fromWhatsApp}`
+                  );
+                  markPaidConfirmCompleted(shopId, razorEventId);
                 }
               } catch (twErr) {
                 console.warn(
@@ -316,20 +318,7 @@ app.post(
               // Release the claim so a retry can process later
               releasePaidConfirmClaim(shopId, razorEventId);
               }
-            }                         
-          // [PATCH:PAID-ONBOARD-NAME-TRIGGER]
-                    // Always trigger paid-onboarding name prompt after successful payment,
-                    // even when we suppress the "paid plan active" text.
-                    try {
-                      if (wa && typeof wa.sendPaidOnboardingNamePrompt === 'function') {
-                        await wa.sendPaidOnboardingNamePrompt(fromWhatsApp);
-                        console.log(`[${requestId}] Paid onboarding name prompt sent to ${fromWhatsApp}`);
-                      } else {
-                        console.log(`[${requestId}] Paid onboarding name prompt API not available; skipping`, { to: fromWhatsApp });
-                      }
-                    } catch (npErr) {
-                      console.warn(`[${requestId}] Paid onboarding name prompt failed: ${npErr?.message}`);
-                    }
+            }
           } catch (e) {
             console.warn(
               `[${requestId}] WhatsApp paid confirm (razorpay) failed: ${e?.message}`
