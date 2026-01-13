@@ -1515,34 +1515,8 @@ async function parseMultipleUpdates(reqOrText, requestId) {
   // If user is in onboarding flow, consume this message and do not parse as inventory        
   if (userState && (userState.mode === 'onboarding_trial_capture' || userState.mode === 'onboarding_paid_capture')) {
      try {
-       const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'onboard-capture');               
-       // [PATCH:PAID-ONBOARD-NAME-SUPPRESS]
-              // If we are in paid-capture but Shop Name already exists, do NOT re-prompt.
-              // Mark state as 'onboarding_paid_confirmed' and skip capture handlers.
-              if (userState.mode === 'onboarding_paid_capture') {
-                try {
-                  // Prefer E.164 shopId and DB helper already imported above
-                  const sid = String(from ?? `whatsapp:${shopId}`).replace('whatsapp:', '');
-                  const details = await getShopDetails(sid).catch(() => null);
-                  const shopName =
-                    details?.shopDetails?.shopName ??
-                    details?.shopDetails?.['Shop Name'] ??
-                    details?.shopName ??
-                    details?.['Shop Name'] ??
-                    '';
-                  if (shopName && shopName.trim().length > 0) {
-                    // Shop name exists → mark confirmed; do not run handlePaidOnboardingStep
-                    try {
-                      await setUserState(sid, 'onboarding_paid_confirmed', {
-                        confirmedAtISO: new Date().toISOString()
-                      });
-                      console.log('[onboard-paid] shop name present; marked onboarding_paid_confirmed', { sid, shopName });
-                    } catch (_) {}
-                    return []; // consume onboarding branch without re-prompt
-                  }
-                } catch (_) { /* best-effort; fall through to handler */ }
-              }
-              if (userState.mode === 'onboarding_trial_capture') {
+       const langHint = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'onboard-capture');
+       if (userState.mode === 'onboarding_trial_capture') {
          await handleTrialOnboardingStep(from ?? `whatsapp:${shopId}`, transcript, langHint, requestId1);
        } else {
          await handlePaidOnboardingStep(from ?? `whatsapp:${shopId}`, transcript, langHint, requestId1);
@@ -1843,40 +1817,6 @@ async function parseMultipleUpdates(reqOrText, requestId) {
       await sendMultiPriceRequiredNudge(from, lacking, langHint);
     }
     return accepted;
-}
-
-// ============================
-// [PATCH:PAID-ONBOARD-NAME-API]
-// Explicit API to mark 'onboarding_paid_capture' and send the shop-name prompt.
-// Keeps "paid plan active" text suppressed; only the name prompt is emitted.
-// ============================
-async function sendPaidOnboardingNamePrompt(From) {
-  try {
-    // Resolve shopId and language hint quickly
-    const shopId = String(From ?? '').replace('whatsapp:', '');
-    const lang = await detectLanguageWithFallback('', From, 'paid-onboard-name');
-
-    // Set onboarding state (capture mode) with step marker
-    try {
-      await setUserState(shopId, 'onboarding_paid_capture', {
-        step: 'name',
-        initiatedAtISO: new Date().toISOString()
-      });
-      console.log('[onboard-paid] state set: onboarding_paid_capture', { shopId });
-    } catch (e) {
-      console.warn('[onboard-paid] unable to set state', e?.message);
-    }
-
-    // Compose localized name prompt; keep exact wording you use in logs
-    let msg = await t('कृपया अपना *दुकान का नाम* साझा करें।.', lang, 'paid-onboard-name');
-    // Footer/tagging per this-turn language
-    const tagged = await tagWithLocalizedMode(From, finalizeForSend(msg, lang), lang);
-    await sendMessageViaAPI(From, tagged);
-    return { success: true };
-  } catch (e) {
-    console.warn('[onboard-paid] name prompt failed:', e?.message);
-    return { success: false, error: e?.message };
-  }
 }
 
 // ===== NEW: Consume and persist price for the pending batch =====================
@@ -20215,16 +20155,6 @@ try { whatsappHandler.sendPaidPlanCTA = sendPaidPlanCTA; } catch (_) {}
 
 // Export the handler as the default export
 module.exports = whatsappHandler;
-
-// IMPORTANT: make the named APIs reachable from server.js
-// The server-side Razorpay webhook calls these via:
-//   const wa = require('./api/whatsapp');
-//   wa.sendWhatsAppPaidConfirmation(...);
-//   wa.sendPaidOnboardingNamePrompt(...);
-//
-// Ensure both functions are defined above this block, then attach:
-module.exports.sendWhatsAppPaidConfirmation = sendWhatsAppPaidConfirmation;
-module.exports.sendPaidOnboardingNamePrompt = sendPaidOnboardingNamePrompt;
 
 async function handleRequest(req, res, response, requestId, requestStart) {  
   try {
