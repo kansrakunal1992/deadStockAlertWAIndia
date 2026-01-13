@@ -299,7 +299,7 @@ app.post(
                   process.env.ACCOUNT_SID,
                   process.env.AUTH_TOKEN
                 );
-                const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER; // e.g., 'whatsapp:+14155238886'
+                const WHATSAPP_NUMBER = process.env.TWILIO_WHATSAPP_NUMBER; // e.g., 'whatsapp:+14155238886'
                 if (!WHATSAPP_NUMBER) {
                   console.warn(
                     `[${requestId}] Twilio fallback skipped: WHATSAPP_NUMBER env not set`
