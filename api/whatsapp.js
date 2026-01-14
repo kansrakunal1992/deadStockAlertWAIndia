@@ -2080,6 +2080,10 @@ function shortHash(s) {
     return String(s ?? '').length.toString(16).padStart(12, '0');
   }
 }
+
+// === NEW (D): alias _hash → shortHash to prevent ReferenceError crashes ===
+function _hash(s) { return shortHash(s); }
+
 function buildTranslationCacheKey(requestId, topic, flavor, lang, sourceText) {
   const rid = String(requestId ?? '').trim() || 'req';
   const tpc = String(topic ?? 'unknown').toLowerCase();
@@ -7396,6 +7400,29 @@ if (payload === 'confirm_paid') {
         
           case 'list_value':
             await route('value summary'); return true;
+                 
+          // === NEW (C): Undo last transaction — verify change before ACK ===
+              case 'list_undo_last':
+              case 'qr_undo_last': {
+                const shopId = String(from ?? '').replace('whatsapp:', '');
+                // Apply the undo using the richer result from database.js
+                let r = null;
+                try { r = await applyUndoLastTxn(shopId); } catch (_) { r = null; }
+                const langForUi = lpLang;
+                if (r && r.success === true && r.changed === true) {
+                  const bodySrc =
+                    `↩️ Undone:\n` +
+                    `${String(r.undone.action ?? 'change')} ${r.undone.quantity} ${r.undone.unit} ${r.undone.product}\n` +
+                    `Stock: ${r.stockBefore} → ${r.stockAfter} ${r.unit}`;
+                  const msg = finalizeForSend(await t(bodySrc, langForUi, `${requestId}::undo-ok`), langForUi);
+                  await sendMessageViaAPI(from, msg);
+                } else {
+                  const failSrc = '⚠️ Undo failed — no matching stock found for the last change.';
+                  const fail = finalizeForSend(await t(failSrc, langForUi, `${requestId}::undo-fail`), langForUi);
+                  await sendMessageViaAPI(from, fail);
+                }
+                return true;
+              }
 }     
   // If Twilio only sent text (rare), you can optionally pattern‑match:
     if (/record\s+purchase/i.test(text)) { /* ... */ }
