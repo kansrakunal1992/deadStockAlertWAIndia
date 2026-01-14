@@ -3520,8 +3520,16 @@ async function detectLanguageWithFallback(text, from, requestId) {
             console.log(`[${requestId}] list-slug detected; using pref language: ${langLocked}`);
             return langLocked;
           }
+                            
               const stX = await getUserStateFromDB(shopIdX).catch(() => null);
-              const isOnboarding = stX?.mode === 'onboarding_trial_capture';                            
+                // Cover both trial and paid onboarding
+                const isOnboarding = stX && (
+                  stX.mode === 'onboarding_trial_capture' ||
+                  stX.mode === 'onboarding_paid_capture'
+                );
+                // Only apply "no flip" during the GSTIN step
+                const stepIsGstin = String(stX?.data?.step ?? '').toLowerCase() === 'gstin';
+                          
               // NOTE: For TEXT turns we should NOT retain pinned non-English preference.
                     // Voice path already respects pinned language via STT config helpers.
                     const pinnedLang = ''; // <-- disable pinned pref retention for text    
@@ -3553,13 +3561,20 @@ async function detectLanguageWithFallback(text, from, requestId) {
               const raw = String(text ?? '');
               const asciiLen = raw.replace(/[^\x00-\x7F]/g, '').length;
               const isCodeDominant = (asciiLen / Math.max(1, raw.length)) > 0.85 || ((raw.match(/\d/g) ?? []).length >= 10);                           
-              // Accept localized NA/Skip as "no GSTIN" during onboarding
-              if (isOnboarding && (__isNaOrSkipLocal || GSTIN_RX.test(raw) || isCodeDominant)) {
-                const langLocked = pinnedLang || 'en';
-                console.log(`[${requestId}] GSTIN/code-dominant during onboarding; sticking to ${langLocked}`);
-                try { await saveUserPreference(shopIdX, langLocked); } catch {}
-                return ensureLangExact(langLocked);
-              }
+              // Accept localized NA/Skip as "no GSTIN" during onboarding                            
+              if (isOnboarding && stepIsGstin && (__isNaOrSkipLocal || GSTIN_RX.test(raw) || isCodeDominant)) {
+                  // Do NOT flip to English for GSTIN/code inputs—keep user's pinned/current turn language
+                  let langLocked;
+                  try {
+                    const prefQuick = await getUserPrefQuick(shopIdX).catch(() => null);
+                    langLocked = ensureLangExact(prefQuick?.language ?? detectedLanguage ?? 'en');
+                  } catch (_) {
+                    langLocked = ensureLangExact(detectedLanguage ?? 'en');
+                  }
+                  console.log(`[${requestId}] GSTIN step: code-dominant input; keeping language = ${langLocked}`);
+                  try { if (typeof saveUserPreference === 'function') await saveUserPreference(shopIdX, langLocked); } catch {}
+                  return langLocked;
+                }
       const lowerText = String(text || '').toLowerCase();
 
       // 0) Explicit one-word switch (uses your existing tokens helper)
@@ -6458,14 +6473,16 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
   } catch (_) {}
 
   const data = state.data?.collected ?? {};
-  const step = state.data?.step ?? 'name';
-
-  // Keep language stable for code-like inputs (GSTIN)
-  try {
-    const pref = await getUserPreference(shopId).catch(() => ({ language: lang }));
-    const currentLang = String(pref?.language ?? lang ?? 'en').toLowerCase();
-    lang = await checkAndUpdateLanguageSafe(String(text ?? ''), From, currentLang, `paid-onboard-${shopId}`);
-  } catch (_) {}
+  const step = state.data?.step ?? 'name';  
+    
+  // Only keep language stable during the GSTIN step; otherwise use normal updater
+    try {
+      const pref = await getUserPreference(shopId).catch(() => ({ language: lang }));
+      const currentLang = String(pref?.language ?? lang ?? 'en').toLowerCase();
+      lang = (step === 'gstin')
+        ? await checkAndUpdateLanguageSafe(String(text ?? ''), From, currentLang, `paid-onboard-${shopId}`)
+        : await checkAndUpdateLanguage(String(text ?? ''), From, currentLang, `paid-onboard-${shopId}`);
+    } catch (_) {}
 
   if (step === 'name') {        
     const name = String(text ?? '').trim();
