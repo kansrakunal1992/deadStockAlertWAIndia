@@ -22,18 +22,25 @@ function getCanonicalShopId(fromOrDigits) {
  * Arm a short correction window for the last txn.
  * lastTxn = { action: 'sale'|'purchase'|'return', product, quantity, unit, compositeKey? }
  */
-async function openCorrectionWindow(shopId, lastTxn, detectedLanguage = 'en') {
+async function openCorrectionWindow(shopId, lastTxn, detectedLanguage = 'en') {    
   const payload = {
-    last: {
-      action: String(lastTxn.action || '').toLowerCase(),       // stable action name
-      product: lastTxn.product,
-      quantity: Number(lastTxn.quantity || 0),
-      unit: normalizeUnit(lastTxn.unit || 'pieces'),
-      compositeKey: lastTxn.compositeKey ?? null                 // for purchase batch, when available
-    },
-    createdAtISO: new Date().toISOString(),
-    ttlSec: CORRECTION_WINDOW_TTL_SEC
-  };
+      last: {
+        action: String(lastTxn.action ?? '').toLowerCase(), // stable action name
+        product: lastTxn.product,
+        quantity: Number(lastTxn.quantity ?? 0),
+        unit: normalizeUnit(lastTxn.unit ?? 'pieces'),
+        compositeKey: lastTxn.compositeKey ?? null // for purchase batch, when available
+      },
+      // === NEW (A): canonical anchors to make Undo deterministic ===
+      anchors: {
+        // canonical product key used by inventory filters
+        productLc: String(lastTxn.product ?? '').trim().toLowerCase(),
+        // batch key carried through as-is; can be normalized by helpers when read
+        batchCompositeKey: lastTxn.compositeKey ?? null
+      },
+      createdAtISO: new Date().toISOString(),
+      ttlSec: CORRECTION_WINDOW_TTL_SEC
+    };
 
   // Store ephemeral user state (your existing table)
   await saveUserStateToDB(shopId, 'awaitingCorrection', payload); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
@@ -63,9 +70,18 @@ async function applyUndoLastTxn(shopId) {
     return { success: false, error: 'expired' };
   }
   const last = state?.data?.last;
-  if (!last || isMissingProductToken(last.product)) {
+  if (!last) {
     return { success: false, error: 'no-last' };
   }
+    
+  // Prefer canonical product key when original was missing or noisy
+    const productKey =
+      !isMissingProductToken(last.product)
+        ? last.product
+        : String(state?.data?.anchors?.productLc ?? '').trim();
+    if (isMissingProductToken(productKey)) {
+      return { success: false, error: 'no-product' };
+    }
 
   const qty  = Number(last.quantity || 0);
   const unit = normalizeUnit(last.unit || 'pieces');
@@ -96,14 +112,40 @@ async function applyUndoLastTxn(shopId) {
     default:
       invDelta = 0;
   }
-
-  if (invDelta !== 0) {
-    await updateInventory(shopId, last.product, invDelta, unit); // ✔ existing PATCH strategy, no record deletes [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
-  }
-
-  // Close window
-  await deleteUserStateFromDB(state.id); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
-  return { success: true, undone: last };
+    
+  // === NEW (B): fail-safe if product isn't present in inventory; no silent create
+    // Read aggregate BEFORE patch
+    const beforeAgg = await getProductInventoryAggregate(shopId, productKey);
+    if (!beforeAgg?.success || (beforeAgg.rows ?? 0) === 0) {
+      return { success: false, error: 'not-found' };
+    }
+    // Apply patch only when there is something to revert
+    let patched = false;
+    if (invDelta !== 0) {
+      const r = await updateInventory(shopId, productKey, invDelta, unit);
+      patched = !!r?.success;
+    }
+    // Read aggregate AFTER patch for verification
+    const afterAgg = await getProductInventoryAggregate(shopId, productKey);
+    const changed =
+      !!patched &&
+      afterAgg?.success &&
+      Math.abs(Number(afterAgg.quantity ?? 0) - Number(beforeAgg.quantity ?? 0)) > 0;
+    // === NEW (C): only close the correction window when something actually changed
+    if (changed) {
+      await deleteUserStateFromDB(state.id);
+    }
+    // Return a rich result so the caller can decide the ACK vs failure message
+    return changed
+      ? {
+          success: true,
+          undone: { ...last, product: productKey },
+          changed: true,
+          stockBefore: beforeAgg.quantity,
+          stockAfter: afterAgg.quantity,
+          unit: afterAgg.unit
+        }
+      : { success: false, error: 'not-found', changed: false };
 }
 
 async function closeCorrectionWindow(shopId) {
