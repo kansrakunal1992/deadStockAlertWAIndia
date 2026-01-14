@@ -6655,14 +6655,22 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
        ? String(rawFrom)
        : `whatsapp:${String(rawFrom ?? '').replace(/^whatsapp:/, '')}`;
     const shopIdTop = shopIdFrom(from);    
-  
+          
     // Detect inventory list selections (e.g., "list_low", "list_sales_day").
       const _payloadId = String(
         raw.Body ?? raw.ListId ?? raw.EventId ?? raw.ContentSid ?? ''
-      ).toLowerCase();  
-            
-          const _payloadTitle = String(raw.ButtonText ?? raw.Body ?? '').toLowerCase();
-          const isUndoTap = /\bundo\b/.test(_payloadId) || /\bundo\b/.test(_payloadTitle);
+      ).toLowerCase();
+      const _payloadTitle = String(raw.ButtonText ?? raw.Body ?? '').toLowerCase();
+      // NEW: read Twilio postback ids up-front (stable across languages)
+      const payloadStable = String(
+        raw.ButtonPayload ?? raw.ButtonId ?? raw.PostbackData ?? raw.EventId ?? ''
+      ).toLowerCase();
+      // Route Undo on id 'undo_last_txn' (localized titles like "ठीक करें" won't match "undo")
+      const isUndoTap =
+        payloadStable === 'undo_last_txn' ||
+        /\bundo_last_txn\b/.test(_payloadId) ||
+        /\bundo\b/.test(_payloadTitle);
+      try { console.log(`[interactive] undo-detect: id=${payloadStable} title=${_payloadTitle}`); } catch {}
 
     // === Intercept QR taps (purchase/sale/return) and send localized examples ===
           try {
@@ -6677,33 +6685,65 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
             const isPurchase = _payloadId === 'qr_purchase';
             const isSale     = _payloadId === 'qr_sale';
             const isReturn   = _payloadId === 'qr_return';
-                        
+                                    
             // ---- NEW: Undo CTA ----
-                if (isUndoTap) {                  
+              if (isUndoTap) {
+                // Tiny idempotency guard: suppress double-taps within 3s for this shop
                 try {
-                        const res = await applyUndoLastTxn(shopIdTop); // DB helper: checks TTL, reverts stock/batch, clears state
-                        if (res?.success) {
-                          const u = res.undone; // {action, product, quantity, unit}
-                          let body = `↩️ Undone: ${u.action} ${u.quantity} ${u.unit} ${u.product}.`;
-                          try {
-                            const overall = await getProductInventoryAggregate(shopIdTop, u.product);
-                            if (overall?.success) body += ` (Stock: ${overall.quantity} ${overall.unit})`;
-                          } catch (_) {}
-                          const tagged = await tagWithLocalizedMode(from, finalizeForSend(body, langUi), langUi);
-                          await sendMessageViaAPI(from, tagged);
-                        } else {
-                          const msgRaw = (res?.error === 'expired')
-                            ? '⌛ Undo window expired. Please try right after the next update.'
-                            : '⚠️ No recent update to undo.';
-                          const tagged = await tagWithLocalizedMode(from, finalizeForSend(msgRaw, langUi), langUi);
-                          await sendMessageViaAPI(from, tagged);
-                        }
-                      } catch (e) {
-                        const errMsg = await t('⚠️ Unable to run Undo right now. Please try again.', langUi);
-                        await sendMessageViaAPI(from, finalizeForSend(errMsg, langUi));
+                  const _recentUndo = (globalThis._recentUndo = globalThis._recentUndo ?? new Map());
+                  const now = Date.now();
+                  const prev = _recentUndo.get(shopIdTop);
+                  if (prev && (now - prev) < 3000) return true;
+                  _recentUndo.set(shopIdTop, now);
+                } catch (_) {}
+                try {
+                  const res = await applyUndoLastTxn(shopIdTop); // DB: TTL check, revert stock/batch, clear state
+                  if (res?.success) {
+                    const u = res.undone; // {action, product, quantity, unit}
+                    let body = '';
+                    try {
+                      const overall = await getProductInventoryAggregate(shopIdTop, u.product);
+                      const stockLine = overall?.success
+                        ? `${overall.quantity} ${overall.unit}`
+                        : null;
+                      // Localized "Undone" + stock snapshot
+                      if (String(langUi).startsWith('hi')) {
+                        body = `↩️ पूर्ववत: ${u.product} ${u.quantity} ${u.unit}` +
+                               (stockLine ? `\n(स्टॉक: ${stockLine})` : '');
+                      } else {
+                        body = `↩️ Undone: ${u.product} ${u.quantity} ${u.unit}` +
+                               (stockLine ? `\n(Stock: ${stockLine})` : '');
                       }
-                  return true; // handled
+                    } catch (_) {
+                      body = String(langUi).startsWith('hi')
+                        ? `↩️ पूर्ववत: ${u.product} ${u.quantity} ${u.unit}`
+                        : `↩️ Undone: ${u.product} ${u.quantity} ${u.unit}`;
+                    }
+                    const tagged = await tagWithLocalizedMode(from, finalizeForSend(body, langUi), langUi);
+                    await sendMessageViaAPI(from, tagged);
+                  } else {
+                    const msgRaw =
+                      (res?.error === 'expired')
+                        ? (String(langUi).startsWith('hi')
+                            ? '⌛ Undo विंडो समाप्त हो गई। अगले अपडेट के तुरंत बाद कोशिश करें।'
+                            : '⌛ Undo window expired. Please try right after the next update.')
+                        : (String(langUi).startsWith('hi')
+                            ? '⚠️ Undo के लिए हाल का अपडेट नहीं मिला।'
+                            : '⚠️ No recent update to undo.');
+                    const tagged = await tagWithLocalizedMode(from, finalizeForSend(msgRaw, langUi), langUi);
+                    await sendMessageViaAPI(from, tagged);
+                  }
+                } catch (e) {
+                  const errMsg = await t(
+                    String(langUi).startsWith('hi')
+                      ? '⚠️ अभी Undo नहीं चल पाया। कृपया फिर से प्रयास करें।'
+                      : '⚠️ Unable to run Undo right now. Please try again.',
+                    langUi
+                  );
+                  await sendMessageViaAPI(from, finalizeForSend(errMsg, langUi));
                 }
+                return true; // handled
+              }
 
             if (isPurchase || isSale || isReturn) {
               // Localized header: Example (Purchase|Sale|Return)
@@ -6868,14 +6908,14 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
       _recentTaps.set(shopId, { payload, at: now });
       return false;
     }
-
-  // Quick‑Reply payloads (Twilio replies / Content API postbacks)
-  let payload = String(
-    raw.ButtonPayload ||
-    raw.ButtonId ||
-    raw.PostbackData ||
-    ''
-  );
+    
+  // Quick-Reply payloads (Twilio replies / Content API postbacks)
+    let payload = String(
+      raw.ButtonPayload ??
+      raw.ButtonId ??
+      raw.PostbackData ??
+      ''
+    );
    
   // Duplicate‑tap short‑circuit
     try {
