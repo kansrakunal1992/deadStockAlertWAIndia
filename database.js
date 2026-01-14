@@ -41,9 +41,24 @@ async function openCorrectionWindow(shopId, lastTxn, detectedLanguage = 'en') {
       createdAtISO: new Date().toISOString(),
       ttlSec: CORRECTION_WINDOW_TTL_SEC
     };
+  
+  // AUDIT: arm correction window (shows TTL and computed expiry)
+    try {
+      const createdMs = new Date(payload.createdAtISO).getTime();
+      const expiresMs = createdMs + Number(payload.ttlSec) * 1000;
+      console.log('[undo-arm]', {
+        shopId: normalizeShopIdForWrite(shopId),
+        ttlSec: payload.ttlSec,
+        createdAtISO: payload.createdAtISO,
+        expiresAtISO: new Date(expiresMs).toISOString()
+      });
+    } catch (_) {}
 
   // Store ephemeral user state (your existing table)
   await saveUserStateToDB(shopId, 'awaitingCorrection', payload); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
+  
+  // AUDIT: confirm state persisted
+    try { console.log('[undo-arm-saved]', { shopId: normalizeShopIdForWrite(shopId) }); } catch (_) {}
 
   // Optional: audit trail / rehydration safety
   try {
@@ -65,7 +80,25 @@ function isCorrectionWindowActive(state) {
  * Reverts inventory delta; updates batch qty for purchase where compositeKey is present.
  */
 async function applyUndoLastTxn(shopId) {
-  const state = await getUserStateFromDB(shopId); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
+const state = await getUserStateFromDB(shopId); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
+  // AUDIT: show expiry math at check time
+  try {
+    const now = Date.now();
+    const createdMs = new Date(state?.data?.createdAtISO || 0).getTime();
+    const ttlMs = Number(state?.data?.ttlSec ?? CORRECTION_WINDOW_TTL_SEC) * 1000;
+    const expiresMs = createdMs + ttlMs;
+    const expired = !createdMs || now > expiresMs;
+    console.log('[undo-check]', {
+      shopId: normalizeShopIdForWrite(shopId),
+      createdAtISO: state?.data?.createdAtISO,
+      ttlSec: state?.data?.ttlSec ?? CORRECTION_WINDOW_TTL_SEC,
+      nowISO: new Date(now).toISOString(),
+      expiresAtISO: createdMs ? new Date(expiresMs).toISOString() : null,
+      msLeft: createdMs ? Math.max(0, expiresMs - now) : null,
+      expired
+    });
+  } catch (_) {}
+
   if (!isCorrectionWindowActive(state)) {
     return { success: false, error: 'expired' };
   }
@@ -131,6 +164,20 @@ async function applyUndoLastTxn(shopId) {
       !!patched &&
       afterAgg?.success &&
       Math.abs(Number(afterAgg.quantity ?? 0) - Number(beforeAgg.quantity ?? 0)) > 0;
+  
+    // AUDIT: summarize result (delta & aggregates)
+      try {
+        console.log('[undo-result]', {
+          shopId: normalizeShopIdForWrite(shopId),
+          productKey,
+          invDelta,
+          patched,
+          changed,
+          stockBefore: beforeAgg?.quantity,
+          stockAfter: afterAgg?.quantity,
+          unit
+        });
+      } catch (_) {}
     // === NEW (C): only close the correction window when something actually changed
     if (changed) {
       await deleteUserStateFromDB(state.id);
