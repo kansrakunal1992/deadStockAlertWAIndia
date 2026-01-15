@@ -53,17 +53,14 @@ async function openCorrectionWindow(shopId, lastTxn, detectedLanguage = 'en') {
         expiresAtISO: new Date(expiresMs).toISOString()
       });
     } catch (_) {}
-
-  // Store ephemeral user state (your existing table)
-  await saveUserStateToDB(shopId, 'awaitingCorrection', payload); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
   
-  // AUDIT: confirm state persisted
-    try { console.log('[undo-arm-saved]', { shopId: normalizeShopIdForWrite(shopId) }); } catch (_) {}
-
-  // Optional: audit trail / rehydration safety
-  try {
-    await saveCorrectionState(normalizeShopIdForWrite(shopId), 'awaitingCorrection', payload, detectedLanguage); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
-  } catch (_) { /* non-blocking */ }
+  // Persist Undo window ONLY in CorrectionState (do not overwrite sticky UserState)
+  await saveCorrectionState(
+    normalizeShopIdForWrite(shopId),
+    'awaitingCorrection',
+    payload,
+    detectedLanguage
+  );
 
   return { success: true };
 }
@@ -79,10 +76,10 @@ function isCorrectionWindowActive(state) {
  * Apply Undo to the *last* txn stored in awaitingCorrection.
  * Reverts inventory delta; updates batch qty for purchase where compositeKey is present.
  */
-async function applyUndoLastTxn(shopId) {
-  // Prefer UserState; if missing/overwritten, fall back to CorrectionState
-    let state = await getUserStateFromDB(shopId);
-    let source = 'user_state';
+async function applyUndoLastTxn(shopId) {    
+  // Use CorrectionState directly (do not read/clear sticky UserState)
+    let state = null;
+    let source = 'correction_state';
   
     // Compute check snapshot for whichever source we end up using
     const _auditCheck = (st) => {
@@ -105,10 +102,8 @@ async function applyUndoLastTxn(shopId) {
         });
       } catch (_) {}
     };
-  
-    // If UserState is missing/doesn't carry a window payload, try CorrectionState table
-    if (!state || !state.data || !state.data.createdAtISO) {
-      try {
+          
+    try {
         const cs = await getCorrectionState(normalizeShopIdForWrite(shopId));
         if (cs?.success && cs.correctionState?.pendingUpdate?.createdAtISO) {
           state = {
@@ -116,10 +111,8 @@ async function applyUndoLastTxn(shopId) {
             data: cs.correctionState.pendingUpdate,
             id: cs.correctionState.id
           };
-          source = 'correction_state';
         }
       } catch (_) {}
-    }
   
     _auditCheck(state);
   
@@ -226,11 +219,7 @@ async function applyUndoLastTxn(shopId) {
       } catch (_) {}
     // === NEW (C): only close the correction window when something actually changed
     if (changed) {              
-        if (source === 'user_state') {
-              await deleteUserStateFromDB(state.id);
-            } else if (source === 'correction_state') {
-              try { await deleteCorrectionState(state.id); } catch (_) {}
-            }
+        try { await deleteCorrectionState(state.id); } catch (_) {}
     }
     // Return a rich result so the caller can decide the ACK vs failure message        
     return changed
@@ -246,13 +235,15 @@ async function applyUndoLastTxn(shopId) {
         : { success: false, error: 'not-found', changed: false, msLeft };
 }
 
-async function closeCorrectionWindow(shopId) {
-  const state = await getUserStateFromDB(shopId); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
-  if (state && state.mode === 'awaitingCorrection') {
-    await deleteUserStateFromDB(state.id); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
-    return { success: true, closed: true };
-  }
-  return { success: true, closed: false };
+async function closeCorrectionWindow(shopId) { 
+  try {
+      const cs = await getCorrectionState(normalizeShopIdForWrite(shopId));
+      if (cs?.success && cs.correctionState?.id) {
+        await deleteCorrectionState(cs.correctionState.id);
+        return { success: true, closed: true };
+      }
+    } catch (_) {}
+    return { success: true, closed: false };
 }
 
 // === NEW: Always store ShopID in +91########## format for all writes ===
