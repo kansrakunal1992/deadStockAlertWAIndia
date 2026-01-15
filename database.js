@@ -80,31 +80,77 @@ function isCorrectionWindowActive(state) {
  * Reverts inventory delta; updates batch qty for purchase where compositeKey is present.
  */
 async function applyUndoLastTxn(shopId) {
-const state = await getUserStateFromDB(shopId); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
-  // AUDIT: show expiry math at check time
-  try {
-    const now = Date.now();
-    const createdMs = new Date(state?.data?.createdAtISO || 0).getTime();
-    const ttlMs = Number(state?.data?.ttlSec ?? CORRECTION_WINDOW_TTL_SEC) * 1000;
+  // Prefer UserState; if missing/overwritten, fall back to CorrectionState
+    let state = await getUserStateFromDB(shopId);
+    let source = 'user_state';
+  
+    // Compute check snapshot for whichever source we end up using
+    const _auditCheck = (st) => {
+      try {
+        const now = Date.now();
+        const createdMs = new Date(st?.data?.createdAtISO ?? 0).getTime();
+        const ttlMs = Number(st?.data?.ttlSec ?? CORRECTION_WINDOW_TTL_SEC) * 1000;
+        const expiresMs = createdMs + ttlMs;
+        const expired = !createdMs || now > expiresMs;
+        console.log('[undo-check]', {
+          shopId: normalizeShopIdForWrite(shopId),
+          createdAtISO: st?.data?.createdAtISO,
+          ttlSec: st?.data?.ttlSec ?? CORRECTION_WINDOW_TTL_SEC,
+          nowISO: new Date(now).toISOString(),
+          expiresAtISO: createdMs ? new Date(expiresMs).toISOString() : null,
+          msLeft: createdMs ? Math.max(0, expiresMs - now) : null,
+          expired,
+          mode: st?.mode ?? null,
+          source
+        });
+      } catch (_) {}
+    };
+  
+    // If UserState is missing/doesn't carry a window payload, try CorrectionState table
+    if (!state || !state.data || !state.data.createdAtISO) {
+      try {
+        const cs = await getCorrectionState(normalizeShopIdForWrite(shopId));
+        if (cs?.success && cs.correctionState?.pendingUpdate?.createdAtISO) {
+          state = {
+            mode: cs.correctionState.correctionType ?? 'awaitingCorrection',
+            data: cs.correctionState.pendingUpdate,
+            id: cs.correctionState.id
+          };
+          source = 'correction_state';
+        }
+      } catch (_) {}
+    }
+  
+    _auditCheck(state);
+  
+    // Validate payload presence first
+    const hasPayload = !!state?.data?.last && !!state?.data?.createdAtISO;
+    if (!hasPayload) {
+      console.log('[undo-check::decision]', { error: 'no_recent', shopId: normalizeShopIdForWrite(shopId), source });
+      return { success: false, error: 'no_recent', msLeft: null };
+    }
+  
+    // Derive expiry strictly from timestamps (ignore mode drift)
+    const createdMs = new Date(state.data.createdAtISO).getTime();
+    const ttlMs = Number(state.data.ttlSec ?? CORRECTION_WINDOW_TTL_SEC) * 1000;
     const expiresMs = createdMs + ttlMs;
+    const now = Date.now();
+    const msLeft = Math.max(0, expiresMs - now);
     const expired = !createdMs || now > expiresMs;
-    console.log('[undo-check]', {
-      shopId: normalizeShopIdForWrite(shopId),
-      createdAtISO: state?.data?.createdAtISO,
-      ttlSec: state?.data?.ttlSec ?? CORRECTION_WINDOW_TTL_SEC,
-      nowISO: new Date(now).toISOString(),
-      expiresAtISO: createdMs ? new Date(expiresMs).toISOString() : null,
-      msLeft: createdMs ? Math.max(0, expiresMs - now) : null,
-      expired
-    });
-  } catch (_) {}
-
-  if (!isCorrectionWindowActive(state)) {
-    return { success: false, error: 'expired' };
-  }
-  const last = state?.data?.last;
+    if (expired) {
+      console.log('[undo-check::decision]', { error: 'expired', msLeft, mode: state?.mode ?? null, source });
+      return { success: false, error: 'expired', msLeft };
+    }
+  
+    // If another feature overwrote StateMode but payload is valid, proceed (note mismatch)
+    const modeMismatch = state?.mode !== 'awaitingCorrection';
+    if (modeMismatch) {
+      console.warn('[undo-check::note] state mode drift detected', { mode: state?.mode, expected: 'awaitingCorrection', source });
+    }
+  
+    const last = state?.data?.last;
   if (!last) {
-    return { success: false, error: 'no-last' };
+    return { success: false, error: 'no-last', msLeft };
   }
     
   // Prefer canonical product key when original was missing or noisy
@@ -113,7 +159,7 @@ const state = await getUserStateFromDB(shopId); // ✔ existing helper [2](https
         ? last.product
         : String(state?.data?.anchors?.productLc ?? '').trim();
     if (isMissingProductToken(productKey)) {
-      return { success: false, error: 'no-product' };
+      return { success: false, error: 'no-product', msLeft };
     }
 
   const qty  = Number(last.quantity || 0);
@@ -150,7 +196,7 @@ const state = await getUserStateFromDB(shopId); // ✔ existing helper [2](https
     // Read aggregate BEFORE patch
     const beforeAgg = await getProductInventoryAggregate(shopId, productKey);
     if (!beforeAgg?.success || (beforeAgg.rows ?? 0) === 0) {
-      return { success: false, error: 'not-found' };
+      return { success: false, error: 'not-found', msLeft };
     }
     // Apply patch only when there is something to revert
     let patched = false;
@@ -179,20 +225,25 @@ const state = await getUserStateFromDB(shopId); // ✔ existing helper [2](https
         });
       } catch (_) {}
     // === NEW (C): only close the correction window when something actually changed
-    if (changed) {
-      await deleteUserStateFromDB(state.id);
+    if (changed) {              
+        if (source === 'user_state') {
+              await deleteUserStateFromDB(state.id);
+            } else if (source === 'correction_state') {
+              try { await deleteCorrectionState(state.id); } catch (_) {}
+            }
     }
-    // Return a rich result so the caller can decide the ACK vs failure message
+    // Return a rich result so the caller can decide the ACK vs failure message        
     return changed
-      ? {
-          success: true,
-          undone: { ...last, product: productKey },
-          changed: true,
-          stockBefore: beforeAgg.quantity,
-          stockAfter: afterAgg.quantity,
-          unit: afterAgg.unit
-        }
-      : { success: false, error: 'not-found', changed: false };
+        ? {
+            success: true,
+            undone: { ...last, product: productKey },
+            changed: true,
+            stockBefore: beforeAgg.quantity,
+            stockAfter: afterAgg.quantity,
+            unit: afterAgg.unit,
+            msLeft
+          }
+        : { success: false, error: 'not-found', changed: false, msLeft };
 }
 
 async function closeCorrectionWindow(shopId) {
