@@ -13894,9 +13894,9 @@ for (const update of updates) {
           : `• ${productRawForDb}: ${update.quantity} ${update.unit} purchased @ ₹${finalPrice}`
           + (isPerishable ? `\n Expiry: ${edDisplay}` : `\n Expiry: —`);
         
-        // Open the 2-min expiry override window
+        // Open the 5-min expiry override window
               try {
-                const timeoutSec = 120;
+                const timeoutSec = 300; // 5 minutes
                 const nowISO = new Date().toISOString();
                 const windowEndsAtISO = new Date(Date.now() + timeoutSec * 1000).toISOString();
                 console.log(`[CorrectionWindow ${shopId} - ${productRawForDb}] Arming purchase-expiry window (${timeoutSec}s)`, {
@@ -14268,14 +14268,14 @@ for (const update of updates) {
             }
           );
 
-          // --- NEW: start a short override window (2 min) only if multiple batches exist ---         
+          // --- NEW: start a short override window (5 min) only if multiple batches exist ---  
           try {
                   const offerOverrideNow = await shouldOfferBatchOverride(shopId, productRawForDb);
                   console.log(`[CorrectionWindow ${shopId} - ${productRawForDb}] shouldOfferBatchOverride -> ${offerOverrideNow}`, {
                     selectedBatchCompositeKey
                   });
                   if (offerOverrideNow) {
-                    const timeoutSec = 120;
+                    const timeoutSec = 300; // 5 minutes
                     const nowISO = new Date().toISOString();
                     const windowEndsAtISO = new Date(Date.now() + timeoutSec * 1000).toISOString();
                     console.log(`[CorrectionWindow ${shopId} - ${productRawForDb}] Arming sale-batch window (${timeoutSec}s)`, {
@@ -14343,7 +14343,7 @@ for (const update of updates) {
             const hdr = `✅ ${productRawForDb} — sold ${qty} ${update.unit}${salePrice > 0 ? ` @ ₹${salePrice}` : ''}`; // Fixed: Use salePrice
             const batchInfo = usedBatch ? `Used batch: Purchased ${pd} (Expiry ${ed})` : '';
             const overrideHelp = offerOverride
-              ? `To change batch (within 2 min):\n• batch DD-MM   e.g., batch 12-09\n• exp DD-MM     e.g., exp 20-09\n• batch oldest  |  batch latest`
+              ? `To change batch (within 5 min):\n• batch DD-MM   e.g., batch 12-09\n• exp DD-MM     e.g., exp 20-09\n• batch oldest  |  batch latest`
               : '';
             return [hdr, batchInfo, overrideHelp, altLines, `Full list → reply: batches ${product}`]
               .filter(Boolean)
