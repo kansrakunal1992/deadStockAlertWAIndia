@@ -17138,18 +17138,22 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
       try {
         const reqId = String(opts?.requestId ?? opts?.req ?? '').trim();
         if (looksLikeTxnConfirmation(finalText, { strict: true })) {
+          let armed = false;
           try {
             if (typeof openCorrectionWindow === 'function') {
               const shopIdForDb = shopIdFrom(formattedTo);
               const lastTxn = _deriveLastTxnFromConfirmation(finalText, opts);
-              if (lastTxn && lastTxn.product) {
-                await openCorrectionWindow(shopIdForDb, lastTxn, lang);
+              if (lastTxn && lastTxn.product) {                                
+                const r = await openCorrectionWindow(shopIdForDb, lastTxn, lang);
+                armed = !!r?.success;
               }
             }
           } catch (eArm) { console.warn('[confirm->undo] arm failed:', eArm?.message); }
-          console.log(`[confirm->undo] start lang=${lang} req=${reqId}`);
-          await new Promise(r => setTimeout(r, 350));
-          await sendUndoCTAQuickReply(formattedTo, lang, reqId);
+          console.log(`[confirm->undo] start lang=${lang} req=${reqId}`);                    
+          if (armed) {
+            await new Promise(r => setTimeout(r, 350));
+            await sendUndoCTAQuickReply(formattedTo, lang, reqId);
+          }
           console.log(`[confirm->undo] done req=${reqId}`);
         }
       } catch (e) {
@@ -17207,18 +17211,22 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
       try {
         const reqId = String(opts?.requestId ?? opts?.req ?? '').trim();
         if (isLast && looksLikeTxnConfirmation(text, { strict: true })) {
+          let armed = false;
           try {
             if (typeof openCorrectionWindow === 'function') {
               const shopIdForDb = shopIdFrom(formattedTo);
               const lastTxn = _deriveLastTxnFromConfirmation(text, opts);
-              if (lastTxn && lastTxn.product) {
-                await openCorrectionWindow(shopIdForDb, lastTxn, lang);
+              if (lastTxn && lastTxn.product) {                                  
+                  const r = await openCorrectionWindow(shopIdForDb, lastTxn, lang);
+                  armed = !!r?.success;
               }
             }
           } catch (eArm) { console.warn('[confirm->undo] arm(multi) failed:', eArm?.message); }
-          console.log(`[confirm->undo] start(multi) lang=${lang} req=${reqId}`);
-          await new Promise(r => setTimeout(r, 350));
-          await sendUndoCTAQuickReply(formattedTo, lang, reqId);
+          console.log(`[confirm->undo] start(multi) lang=${lang} req=${reqId}`);                   
+          if (armed) {
+               await new Promise(r => setTimeout(r, 350));
+               await sendUndoCTAQuickReply(formattedTo, lang, reqId);
+          }
           console.log(`[confirm->undo] done(multi) req=${reqId}`);
         }
       } catch (e) {
