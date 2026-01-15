@@ -759,7 +759,17 @@ function _isExpiredEphemeral(st) {
 async function clearEphemeralOverrideStateByShopId(shopId) {
   try {
     const st = await getUserStateFromDB(shopId);
-    if (st && _isEphemeralOverride(st)) {
+    if (st && _isEphemeralOverride(st)) {            
+      try {
+              const ttlMs = _ttlForMode(st?.mode);
+              const createdISO = st?.data?.createdAtISO ?? st?.createdAtISO ?? st?.createdAt ?? null;
+              const createdMs = createdISO ? new Date(createdISO).getTime() : 0;
+              const msAlive = createdMs ? (Date.now() - createdMs) : null;
+              console.log('[CorrectionWindow] Expiring/clearing override state', {
+                shopId, mode: st.mode, createdAtISO: createdISO, ttlSec: Math.floor(ttlMs/1000),
+                msAlive, expired: _isExpiredEphemeral(st)
+              });
+            } catch (_) { /* log-safety */ }
       await deleteUserStateFromDB(st.id ?? shopId);
       console.log('[state] cleared ephemeral override', { shopId, mode: st.mode });
       return true;
@@ -777,7 +787,19 @@ async function setEphemeralOverrideState(fromOrShopId, mode, data = {}) {
       timeoutSec: (_ttlForMode(mode) / 1000)
     };
     await setUserState(shopId, mode, payload);
-    const ttlMs = _ttlForMode(mode);
+    const ttlMs = _ttlForMode(mode);        
+    try {
+          console.log('[CorrectionWindow] Arming override window', {
+            mode, shopId, ttlSec: Math.floor(ttlMs/1000),
+            dataPreview: {
+              action: data?.lastTxn?.action ?? data?.action ?? null,
+              product: data?.lastTxn?.product ?? data?.product ?? null,
+              quantity: data?.lastTxn?.quantity ?? data?.quantity ?? null,
+              unit: data?.lastTxn?.unit ?? data?.unit ?? null,
+              compositeKey: data?.lastTxn?.compositeKey ?? data?.compositeKey ?? null
+            }
+          });
+        } catch (_) { /* log-safety */ }
     if (ttlMs > 0) {
       // Best-effort timer: process-lifetime only; read-side TTL is the hard guard.
       setTimeout(() => {
