@@ -1048,8 +1048,10 @@ if (typeof globalThis.normalizeUnit !== 'function') {
     globalThis.preArmUndoFromCommit = async function preArmUndoFromCommit(shopId, txn, lang = 'en') {
       try {
         if (typeof openCorrectionWindow !== 'function') return;
+        const a0 = String(txn?.action ?? '').toLowerCase().trim();
+        const action = a0 === 'sold' ? 'sale' : a0 === 'purchased' ? 'purchase' : a0 === 'returned' ? 'return' : a0;
         const lastTxn = {
-          action: String(txn?.action ?? '').toLowerCase(),  // 'purchased' | 'sold' | 'returned'
+          action,
           product: txn?.productRawForDb ?? txn?.product ?? '',
           quantity: Number(txn?.quantity ?? 0),
           unit: normalizeUnit(txn?.unit ?? 'pieces'),
@@ -13713,9 +13715,11 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   const UNDO_PREARM_TTL_MS = 12_000;
   async function preArmUndoFromCommit(shopIdArg, txn, langArg = 'en') {
     try {
-      if (typeof openCorrectionWindow !== 'function') return;
-      const lastTxn = {
-        action: String(txn?.action ?? '').toLowerCase(),   // 'purchased' | 'sold' | 'returned'
+      if (typeof openCorrectionWindow !== 'function') return;              
+        const a0 = String(txn?.action ?? '').toLowerCase().trim();
+        const action = a0 === 'sold' ? 'sale' : a0 === 'purchased' ? 'purchase' : a0 === 'returned' ? 'return' : a0;
+        const lastTxn = {
+        action,
         product: txn?.productRawForDb ?? txn?.product ?? '',
         quantity: Number(txn?.quantity ?? 0),
         unit: normalizeUnit(txn?.unit ?? 'pieces'),
