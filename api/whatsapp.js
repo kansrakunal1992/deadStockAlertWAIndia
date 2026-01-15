@@ -6695,11 +6695,68 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
       const payloadStable = String(
         raw.ButtonPayload ?? raw.ButtonId ?? raw.PostbackData ?? raw.EventId ?? ''
       ).toLowerCase();
-      // Route Undo on id 'undo_last_txn' (localized titles like "ठीक करें" won't match "undo")
+      // Route Undo on id 'undo_last_txn' (localized titles like "ठीक करें" won't match "undo")            
       const isUndoTap =
-        payloadStable === 'undo_last_txn' ||
-        /\bundo_last_txn\b/.test(_payloadId) ||
-        /\bundo\b/.test(_payloadTitle);
+          payloadStable === 'undo_last_txn'
+          || /\bundo_last_txn\b/.test(_payloadId)
+          || /\bundo\b/.test(_payloadTitle);
+  
+        // === Centralized: format + send Undo outcome consistently (success and failures) ===
+        async function _sendUndoOutcome(from, langUi, res, shopIdTop) {
+          try {
+            console.log('[interactive:undo] result', {
+              success: !!res?.success,
+              error: res?.error ?? null,
+              changed: res?.changed ?? null,
+              msLeft: res?.msLeft ?? null,
+              shopId: shopIdTop
+            });
+          } catch {}
+          if (res?.success) {
+            const u = res.undone; // { action, product, quantity, unit }
+            let body = '';
+            try {
+              const overall = await getProductInventoryAggregate(shopIdTop, u.product);
+              const stockLine = overall?.success ? `${overall.quantity} ${overall.unit}` : null;
+              body = String(langUi).startsWith('hi')
+                ? `↩️ पूर्ववत: ${u.product} ${u.quantity} ${u.unit}` + (stockLine ? `\n(स्टॉक: ${stockLine})` : '')
+                : `↩️ Undone: ${u.product} ${u.quantity} ${u.unit}` + (stockLine ? `\n(Stock: ${stockLine})` : '');
+            } catch {
+              body = String(langUi).startsWith('hi')
+                ? `↩️ पूर्ववत: ${u.product} ${u.quantity} ${u.unit}`
+                : `↩️ Undone: ${u.product} ${u.quantity} ${u.unit}`;
+            }
+            const tagged = await tagWithLocalizedMode(from, finalizeForSend(body, langUi), langUi);
+            await sendMessageViaAPI(from, tagged);
+            return true;
+          } else {
+            let msgRaw;
+            switch (res?.error) {
+              case 'expired':
+                msgRaw = String(langUi).startsWith('hi')
+                  ? '⌛ Undo विंडो समाप्त हो गई। अगले अपडेट के तुरंत बाद कोशिश करें।'
+                  : '⌛ Undo window expired. Please try right after the next update.';
+                break;
+              case 'no_recent':
+              case 'missing_payload':
+              case 'state_mismatch':
+              case 'no-last':
+              case 'no-product':
+              case 'not-found':
+                msgRaw = String(langUi).startsWith('hi')
+                  ? '⚠️ Undo के लिए हाल का अपडेट नहीं मिला।'
+                  : '⚠️ No recent update to undo.';
+                break;
+              default:
+                msgRaw = String(langUi).startsWith('hi')
+                  ? '⚠️ अभी Undo नहीं चल पाया। कृपया फिर से प्रयास करें।'
+                  : '⚠️ Unable to run Undo right now. Please try again.';
+            }
+            const tagged = await tagWithLocalizedMode(from, finalizeForSend(msgRaw, langUi), langUi);
+            await sendMessageViaAPI(from, tagged);
+            return true;
+          }
+        }
       try { console.log(`[interactive] undo-detect: id=${payloadStable} title=${_payloadTitle}`); } catch {}
 
     // === Intercept QR taps (purchase/sale/return) and send localized examples ===
@@ -6726,43 +6783,9 @@ const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
                   if (prev && (now - prev) < 3000) return true;
                   _recentUndo.set(shopIdTop, now);
                 } catch (_) {}
-                try {
-                  const res = await applyUndoLastTxn(shopIdTop); // DB: TTL check, revert stock/batch, clear state
-                  if (res?.success) {
-                    const u = res.undone; // {action, product, quantity, unit}
-                    let body = '';
-                    try {
-                      const overall = await getProductInventoryAggregate(shopIdTop, u.product);
-                      const stockLine = overall?.success
-                        ? `${overall.quantity} ${overall.unit}`
-                        : null;
-                      // Localized "Undone" + stock snapshot
-                      if (String(langUi).startsWith('hi')) {
-                        body = `↩️ पूर्ववत: ${u.product} ${u.quantity} ${u.unit}` +
-                               (stockLine ? `\n(स्टॉक: ${stockLine})` : '');
-                      } else {
-                        body = `↩️ Undone: ${u.product} ${u.quantity} ${u.unit}` +
-                               (stockLine ? `\n(Stock: ${stockLine})` : '');
-                      }
-                    } catch (_) {
-                      body = String(langUi).startsWith('hi')
-                        ? `↩️ पूर्ववत: ${u.product} ${u.quantity} ${u.unit}`
-                        : `↩️ Undone: ${u.product} ${u.quantity} ${u.unit}`;
-                    }
-                    const tagged = await tagWithLocalizedMode(from, finalizeForSend(body, langUi), langUi);
-                    await sendMessageViaAPI(from, tagged);
-                  } else {
-                    const msgRaw =
-                      (res?.error === 'expired')
-                        ? (String(langUi).startsWith('hi')
-                            ? '⌛ Undo विंडो समाप्त हो गई। अगले अपडेट के तुरंत बाद कोशिश करें।'
-                            : '⌛ Undo window expired. Please try right after the next update.')
-                        : (String(langUi).startsWith('hi')
-                            ? '⚠️ Undo के लिए हाल का अपडेट नहीं मिला।'
-                            : '⚠️ No recent update to undo.');
-                    const tagged = await tagWithLocalizedMode(from, finalizeForSend(msgRaw, langUi), langUi);
-                    await sendMessageViaAPI(from, tagged);
-                  }
+                try {                                    
+                const res = await applyUndoLastTxn(shopIdTop); // DB: TTL check, revert stock/batch, clear/close state
+                await _sendUndoOutcome(from, langUi, res, shopIdTop);
                 } catch (e) {
                   const errMsg = await t(
                     String(langUi).startsWith('hi')
@@ -7427,28 +7450,14 @@ if (payload === 'confirm_paid') {
           case 'list_value':
             await route('value summary'); return true;
                  
-          // === NEW (C): Undo last transaction — verify change before ACK ===
-              case 'list_undo_last':
-              case 'qr_undo_last': {
-                const shopId = String(from ?? '').replace('whatsapp:', '');
-                // Apply the undo using the richer result from database.js
-                let r = null;
-                try { r = await applyUndoLastTxn(shopId); } catch (_) { r = null; }
-                const langForUi = lpLang;
-                if (r && r.success === true && r.changed === true) {
-                  const bodySrc =
-                    `↩️ Undone:\n` +
-                    `${String(r.undone.action ?? 'change')} ${r.undone.quantity} ${r.undone.unit} ${r.undone.product}\n` +
-                    `Stock: ${r.stockBefore} → ${r.stockAfter} ${r.unit}`;
-                  const msg = finalizeForSend(await t(bodySrc, langForUi, `${requestId}::undo-ok`), langForUi);
-                  await sendMessageViaAPI(from, msg);
-                } else {
-                  const failSrc = '⚠️ Undo failed — no matching stock found for the last change.';
-                  const fail = finalizeForSend(await t(failSrc, langForUi, `${requestId}::undo-fail`), langForUi);
-                  await sendMessageViaAPI(from, fail);
-                }
-                return true;
-              }
+          // === NEW (C): Undo last transaction — verify change before ACK ===                        
+          case 'list_undo_last':
+            case 'qr_undo_last': {
+              const shopIdUnified = String(from ?? '').replace('whatsapp:', '');
+              let res = null; try { res = await applyUndoLastTxn(shopIdUnified); } catch {}
+              await _sendUndoOutcome(from, lpLang, res, shopIdUnified);
+              return true;
+            }
 }     
   // If Twilio only sent text (rare), you can optionally pattern‑match:
     if (/record\s+purchase/i.test(text)) { /* ... */ }
