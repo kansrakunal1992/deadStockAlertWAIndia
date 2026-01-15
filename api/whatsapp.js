@@ -1035,6 +1035,37 @@ if (typeof globalThis.normalizeUnit !== 'function') {
   };
 }
 
+  // ========= Undo Pre‑Arm (commit‑first) =========
+  // Short‑lived map linking a DB‑armed correction window with the next send (shopId only)
+  globalThis.__undoPreArmedByShop = globalThis.__undoPreArmedByShop ?? new Map();
+  const UNDO_PREARM_TTL_MS = 12_000; // keep ordering tight; prevent carry‑over
+
+  /**
+   * preArmUndoFromCommit(shopId, txn, lang)
+   * (DB layer calls this; send layer only emits CTA if pre‑armed)
+   */
+  if (typeof globalThis.preArmUndoFromCommit !== 'function') {
+    globalThis.preArmUndoFromCommit = async function preArmUndoFromCommit(shopId, txn, lang = 'en') {
+      try {
+        if (typeof openCorrectionWindow !== 'function') return;
+        const lastTxn = {
+          action: String(txn?.action ?? '').toLowerCase(),  // 'purchased' | 'sold' | 'returned'
+          product: txn?.productRawForDb ?? txn?.product ?? '',
+          quantity: Number(txn?.quantity ?? 0),
+          unit: normalizeUnit(txn?.unit ?? 'pieces'),
+          compositeKey: txn?.compositeKey ?? null
+        };
+        if (!lastTxn.product) return;
+        await openCorrectionWindow(shopId, lastTxn, lang);
+        // Shop‑scoped flag only (no reqId coupling)
+        globalThis.__undoPreArmedByShop.set(shopId, { ts: Date.now(), lang });
+        setTimeout(() => globalThis.__undoPreArmedByShop.delete(shopId), UNDO_PREARM_TTL_MS);
+      } catch (e) {
+        console.warn('[preArmUndo] failed:', e?.message);
+      }
+    };
+  }
+
 // =======================================================================
 // [STRICT-PURCHASE-PRICE-REQUIRED] Helpers
 // Enforce: do NOT accept "purchased" lines without price when backend
@@ -13660,6 +13691,7 @@ async function validateTranscript(transcript, requestId, langHint = 'en') {
 async function updateMultipleInventory(shopId, updates, languageCode) {
   // Keep script/language stable for this turn (e.g., Hindi from STT)
   const lang = String(languageCode ?? 'en').toLowerCase();
+  const isSingleItemCall = Array.isArray(updates) && updates.length === 1; // ← suppress Undo for aggregated ops
 
   // --- NEW: per-shop recent price-nudge marker (global, lightweight) ---
   globalThis.__recentPriceNudge = globalThis.__recentPriceNudge ?? new Map(); // shopId -> ts(ms)
@@ -13676,7 +13708,29 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   const pendingNoPrice = [];   // <– used only to drive nudges; we DO NOT write for these
   const accepted = [];
   
-for (const update of updates) {
+  // ========= Undo Pre‑Arm (commit‑first) – shared (safe if defined elsewhere) =========
+  globalThis.__undoPreArmedByShop = globalThis.__undoPreArmedByShop ?? new Map();
+  const UNDO_PREARM_TTL_MS = 12_000;
+  async function preArmUndoFromCommit(shopIdArg, txn, langArg = 'en') {
+    try {
+      if (typeof openCorrectionWindow !== 'function') return;
+      const lastTxn = {
+        action: String(txn?.action ?? '').toLowerCase(),   // 'purchased' | 'sold' | 'returned'
+        product: txn?.productRawForDb ?? txn?.product ?? '',
+        quantity: Number(txn?.quantity ?? 0),
+        unit: normalizeUnit(txn?.unit ?? 'pieces'),
+        compositeKey: txn?.compositeKey ?? null
+      };
+      if (!lastTxn.product) return;
+      await openCorrectionWindow(shopIdArg, lastTxn, langArg);
+      globalThis.__undoPreArmedByShop.set(shopIdArg, { ts: Date.now(), lang: langArg });
+      setTimeout(() => globalThis.__undoPreArmedByShop.delete(shopIdArg), UNDO_PREARM_TTL_MS);
+    } catch (e) {
+      console.warn('[preArmUndo@DB] failed:', e?.message);
+    }
+  }
+
+  for (const update of updates) {
    let productRawForDb;            // <-- hoist for catch to see it
    let productForLog;              // <-- stable fallback for logging
    try {
@@ -13757,7 +13811,19 @@ for (const update of updates) {
           unitAfter: u,
           inlineConfirmText: confirmTextLine,
         });
-
+        
+        // DB COMMIT POINT (Return): arm Undo only for single‑item calls
+            try {
+              if (isSingleItemCall && !!result?.success) {
+                await preArmUndoFromCommit(shopId, {
+                  action: 'returned',
+                  productRawForDb,
+                  quantity: Math.abs(update.quantity),
+                  unit: update.unit,
+                  compositeKey: null
+                }, lang);
+              }
+            } catch (_) {}
         continue; // Move to next update
       }
       let needsPriceInput = false;
@@ -13932,6 +13998,20 @@ for (const update of updates) {
           totalValue: finalPrice * Math.abs(update.quantity),
           inlineConfirmText: confirmTextLine
         });
+                
+        // DB COMMIT POINT (Purchase + batch): arm Undo only for single‑item calls
+            try {
+              if (isSingleItemCall) {
+                await preArmUndoFromCommit(shopId, {
+                  action: 'purchased',
+                  productRawForDb,
+                  quantity: Number(update.quantity),
+                  unit: update.unit,
+                  compositeKey: batchCompositeKey ?? null
+                }, lang);
+              }
+            } catch (_) {}
+
         continue; // done with purchase branch
       }
       // === END NEW block ===
@@ -14234,6 +14314,20 @@ for (const update of updates) {
 
           // Add transaction logging
           console.log(`[Transaction] Sale processed - Product: ${product}, Qty: ${Math.abs(update.quantity)}, Price: ${salePrice}, Total: ${saleValue}`);
+          
+          // DB COMMIT POINT (Sale): arm Undo only for single‑item calls
+              try {
+                if (isSingleItemCall && result?.success) {
+                  const composite = (saleGuard?.selectedBatchCompositeKey ?? selectedBatchCompositeKey) || null;
+                  await preArmUndoFromCommit(shopId, {
+                    action: 'sold',
+                    productRawForDb,
+                    quantity: Math.abs(update.quantity),
+                    unit: normalize(overallUnit ?? update.unit),
+                    compositeKey: normalizeCompositeKey?.(composite) ?? composite
+                  }, lang);
+                }
+              } catch (_) {}
 
           // Send a single confirmation (dedup) and append stock if we have it
           await sendSaleConfirmationOnce(
@@ -16986,40 +17080,7 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
       return /(?:^|\n)«[^»]+»\s*$/u.test(String(text ?? ''));
     }
 
-    // --- UNDO: derive the "last transaction" payload (prefer caller; Unicode-safe fallback)
-    function _deriveLastTxnFromConfirmation(text, tagOpts) {
-      try {                  
-          // Prefer the caller-provided payload (never translate for DB writes)
-          if (tagOpts?.lastTxn && (tagOpts.lastTxn.productRawForDb || tagOpts.lastTxn.product)) {
-          const t = tagOpts.lastTxn;
-          return {
-            action: String(t.action ?? '').toLowerCase(), // 'purchased' | 'sold' | 'returned'
-            product: t.productRawForDb ?? t.product,
-            quantity: Number(t.quantity ?? 0),                        
-            unit: normalizeUnit(t.unit ?? 'pieces'),
-            compositeKey: t.compositeKey ?? null
-          };
-        }
-        const line = String(text ?? '').split(/\r?\n/)[0];
-        const lc = line.toLowerCase();
-        let action = null;
-        if (/\b(purchased)\b/.test(lc) || /📦/.test(line)) action = 'purchased';
-        else if (/\b(sold)\b/.test(lc) || /🛒/.test(line)) action = 'sold';
-        else if (/\b(returned)\b/.test(lc) || /↩️|⤴|⬅️/.test(line)) action = 'returned';
-        if (!action) return null;                
-        // Unicode-safe unit capture (e.g., "4 बोतलें") — \p{L}+ picks up Indic scripts
-        const qtyUnit = line.match(/(\d+(?:\.\d+)?)\s+([\p{L}]+)\b/iu);
-        if (!qtyUnit) return null;
-        const quantity = Number(qtyUnit[1]);
-        const unit = normalizeUnit(qtyUnit[2]);
-        const idxAfter = line.indexOf(qtyUnit[0]) + qtyUnit[0].length;
-        let product = line.slice(idxAfter).trim();
-        const cutIdx = [product.indexOf('@'), product.indexOf('(')].filter(i => i >= 0).sort()[0];
-        if (Number.isFinite(cutIdx)) product = product.slice(0, cutIdx).trim();
-        if (!product) return null;
-        return { action, product, quantity, unit, compositeKey: opts?.compositeKey ?? null };
-      } catch { return null; }
-    }
+   // (Removed) Text‑derived Undo payload: Undo is armed at DB commit; send layer only emits CTA.
 
     // --- Honor NO_FOOTER sentinel (single and multi-part paths)
     const NO_FOOTER_RX = /^\s*(?:!NO_FOOTER!|<!NO_FOOTER!>|<\!NO_FOOTER\!>)\s*/i;
@@ -17136,30 +17197,17 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
       });
       console.log(`[sendMessageViaAPI] Message sent successfully. SID: ${message.sid}`);
 
-      // Arm correction window + Undo CTA (send CTA only if arm succeeded)
-      try {
-        const reqId = String(opts?.requestId ?? opts?.req ?? '').trim();
-        if (looksLikeTxnConfirmation(finalText, { strict: true })) {                  
-        let armedOk = false;
-                  try {
-                    if (typeof openCorrectionWindow === 'function') {
-                      const shopIdForDb = shopIdFrom(formattedTo);
-                      const lastTxn = _deriveLastTxnFromConfirmation(finalText, opts);
-                      if (lastTxn && lastTxn.product) {
-                        await openCorrectionWindow(shopIdForDb, lastTxn, lang);
-                        armedOk = true;
-                      } else {
-                        console.warn('[confirm->undo] skip arm: lastTxn unavailable or missing product');
-                      }
-                    }
-                  } catch (eArm) { console.warn('[confirm->undo] arm failed:', eArm?.message); }
-                  if (armedOk) {
-                    console.log(`[confirm->undo] start lang=${lang} req=${reqId}`);
-                    await new Promise(r => setTimeout(r, 350));
-                    await sendUndoCTAQuickReply(formattedTo, lang, reqId);
-                    console.log(`[confirm->undo] done req=${reqId}`);
-                  }
-        }
+      // Undo CTA emit‑only (pre‑armed at DB commit; no text parsing / no reqId coupling)
+      try {                
+        const shopKey = shopIdFrom(formattedTo);
+                const pre = globalThis.__undoPreArmedByShop?.get?.(shopKey);
+                if (pre && (Date.now() - pre.ts) <= UNDO_PREARM_TTL_MS) {
+                  console.log(`[confirm->undo] pre-armed; emitting CTA lang=${lang} shop=${shopKey}`);
+                  await new Promise(r => setTimeout(r, 350));
+                  await sendUndoCTAQuickReply(formattedTo, lang, String(opts?.requestId ?? opts?.req ?? '').trim());
+                  globalThis.__undoPreArmedByShop.delete(shopKey);
+                  console.log(`[confirm->undo] CTA sent (pre-armed) shop=${shopKey}`);
+                }
       } catch (e) {
         console.warn('[confirm->undo] failed:', e?.message);
       }
@@ -17211,30 +17259,19 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
       messageSids.push(message.sid);
       console.log(`[sendMessageViaAPI] Part ${i + 1} sent successfully. SID: ${message.sid}`);
 
-      // Undo CTA for multipart confirmations (unchanged)
-      try {
-        const reqId = String(opts?.requestId ?? opts?.req ?? '').trim();
-        if (isLast && looksLikeTxnConfirmation(text, { strict: true })) {                  
-        let armedOk = false;
-                  try {
-                    if (typeof openCorrectionWindow === 'function') {
-                      const shopIdForDb = shopIdFrom(formattedTo);
-                      const lastTxn = _deriveLastTxnFromConfirmation(text, opts);
-                      if (lastTxn && lastTxn.product) {
-                        await openCorrectionWindow(shopIdForDb, lastTxn, lang);
-                        armedOk = true;
-                      } else {
-                        console.warn('[confirm->undo] skip arm(multi): lastTxn unavailable or missing product');
-                      }
+      // Undo CTA for multipart confirmations (same emit‑only; still suppressed for aggregates)
+      try {        
+          if (isLast) {
+                    const shopKey = shopIdFrom(formattedTo);
+                    const pre = globalThis.__undoPreArmedByShop?.get?.(shopKey);
+                    if (pre && (Date.now() - pre.ts) <= UNDO_PREARM_TTL_MS) {
+                      console.log(`[confirm->undo] pre-armed(multi); emitting CTA lang=${lang} shop=${shopKey}`);
+                      await new Promise(r => setTimeout(r, 350));
+                      await sendUndoCTAQuickReply(formattedTo, lang, String(opts?.requestId ?? opts?.req ?? '').trim());
+                      globalThis.__undoPreArmedByShop.delete(shopKey);
+                      console.log(`[confirm->undo] done(multi) shop=${shopKey}`);
                     }
-                  } catch (eArm) { console.warn('[confirm->undo] arm(multi) failed:', eArm?.message); }
-                  if (armedOk) {
-                    console.log(`[confirm->undo] start(multi) lang=${lang} req=${reqId}`);
-                    await new Promise(r => setTimeout(r, 350));
-                    await sendUndoCTAQuickReply(formattedTo, lang, reqId);
-                    console.log(`[confirm->undo] done(multi) req=${reqId}`);
                   }
-        }
       } catch (e) {
         console.warn('[confirm->undo] failed (multi):', e?.message);
       }
