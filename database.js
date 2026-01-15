@@ -1964,7 +1964,7 @@ async function getCorrectionState(shopId) {
   try {
     console.log(`[${context}] Starting to get correction state for shop: ${shopId}`);
     
-    const filterFormula = `{ShopID} = '${shopId}'`;
+    const filterFormula = buildShopIdVariantFilter('ShopID', shopId);
     console.log(`[${context}] Using filter formula: ${filterFormula}`);
     
     const result = await airtableRequest({
