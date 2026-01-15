@@ -31,15 +31,15 @@ const PAID_CONFIRM_LABELS = {
  }; 
 
 // --- NEW: Undo-correction CTA (single-button quick reply) ---
-const UNDO_CORRECTION_LABELS = {
-  en: { body: 'Mistake? Press Undo within 2 min. Ignore to auto-lock.', button: 'Undo' },
-  hi: { body: 'गलती हुई? 2 मिनट में Undo दबाएँ। Ignore करेंगे तो अपने-आप लॉक हो जाएगा.', button: 'Undo' },
-  gu: { body: 'ભૂલ થઈ? 2 મિનિટમાં Undo દબાવો. Ignore કરશો તો આપમેળે લોક થઈ જશે.', button: 'Undo' },
-  ta: { body: 'தவறா? 2 நிமிடத்தில் Undo அழுத்தவும். கவனிக்காவிட்டால் தானாக பூட்டப்படும்.', button: 'Undo' },
-  te: { body: 'తప్పా? 2 నిమిషాల్లో Undo నొక్కండి. Ignore చేస్తే ఆటో-లాక్ అవుతుంది.', button: 'Undo' },
-  kn: { body: 'ತಪ್ಪಾ? 2 ನಿಮಿಷಗಳಲ್ಲಿ Undo ಒತ್ತಿ. Ignore ಮಾಡಿದರೆ ಸ್ವಯಂ ಲಾಕ್.', button: 'Undo' },
-  mr: { body: 'चूक झाली? 2 मिनिटांत Undo दाबा. Ignore केल्यास आपोआप लॉक होईल.', button: 'Undo' },
-  bn: { body: 'ভুল হয়েছে? ২ মিনিটে Undo চাপুন। Ignore করলে নিজে থেকেই লক হবে।', button: 'Undo' }
+const UNDO_CORRECTION_LABELS = { 
+  en: { body: 'Mistake? Press Undo within 5 min. Ignore to auto-lock.', button: 'Undo' },
+  hi: { body: 'गलती हुई? 5 मिनट में Undo दबाएँ। Ignore करेंगे तो अपने-आप लॉक हो जाएगा.', button: 'Undo' },
+  gu: { body: 'ભૂલ થઈ? 5 મિનિટમાં Undo દબાવો. Ignore કરશો તો આપમેળે લોક થઈ જશે.', button: 'Undo' },
+  ta: { body: 'தவறா? 5 நிமிடத்தில் Undo அழுத்தவும். கவனிக்காவிட்டால் தானாக பூட்டப்படும்.', button: 'Undo' },
+  te: { body: 'తప్పా? 5 నిమిషాల్లో Undo నొక్కండి. Ignore చేస్తే ఆటో-లాక్ అవుతుంది.', button: 'Undo' },
+  kn: { body: 'ತಪ್ಪಾ? 5 ನಿಮಿಷಗಳಲ್ಲಿ Undo ಒತ್ತಿ. Ignore ಮಾಡಿದರೆ ಸ್ವಯಂ ಲಾಕ್.', button: 'Undo' },
+  mr: { body: 'चूक झाली? 5 मिनिटांत Undo दाबा. Ignore केल्यास आपोआप लॉक होईल.', button: 'Undo' },
+  bn: { body: 'ভুল হয়েছে? ৫ মিনিটে Undo চাপুন। Ignore করলে নিজে থেকেই লক হবে।', button: 'Undo' }
 };
 
 if (!ACCOUNT_SID || !AUTH_TOKEN) {
@@ -103,16 +103,16 @@ function getUndoLabelForLang(lang) {
 function getUndoBodyForLang(lang) {
   const L = normalizeLangForContent(lang);
   const undo = getUndoLabelForLang(L); // embeds localized button text
-  const map = {
-    en: `Made a mistake? Tap "${undo}" within 2 minutes to revert.`,
-    hi: `कोई गलती हुई है? 2 मिनट के भीतर "${undo}" दबाएँ।`,
-    gu: `કોઈ ભૂલ થઈ છે? 2 મિનિટમાં "${undo}" દબાવો.`,
-    bn: `ভুল হয়েছে? ২ মিনিটের মধ্যে "${undo}" চাপুন।`,
-    mr: `चूक झाली आहे का? 2 मिनिटांत "${undo}" दाबा.`,
-    ta: `ஏதாவது தவறு நடந்ததா? 2 நிமிடங்களுக்குள் "${undo}" அழுத்தவும்.`,
-    te: `ఏదైనా తప్పు జరిగిందా? 2 నిమిషాల్లో "${undo}" నొక్కండి.`,
-    pa: `ਕੋਈ ਗਲਤੀ ਹੋ ਗਈ ਹੈ? 2 ਮਿੰਟਾਂ ਵਿੱਚ "${undo}" ਦਬਾਓ।`,
-    kn: `ತಪ್ಪಾ? 2 ನಿಮಿಷಗಳಲ್ಲಿ "${undo}" ಒತ್ತಿ.` // retained
+  const map = {        
+    en: `Made a mistake? Tap "${undo}" within 5 minutes to revert.`,
+        hi: `कोई गलती हुई है? 5 मिनट के भीतर "${undo}" दबाएँ।`,
+        gu: `કોઈ ભૂલ થઈ છે? 5 મિનિટમાં "${undo}" દબાવો.`,
+        bn: `ভুল হয়েছে? ৫ মিনিটের মধ্যে "${undo}" চাপুন।`,
+        mr: `चूक झाली आहे का? 5 मिनिटांत "${undo}" दाबा.`,
+        ta: `ஏதாவது தவறு நடந்ததா? 5 நிமிடங்களுக்குள் "${undo}" அழுத்தவும்.`,
+        te: `ఏదైనా తప్పు జరిగిందా? 5 నిమిషాల్లో "${undo}" నొక్కండి.`,
+        pa: `ਕੋਈ ਗਲਤੀ ਹੋ ਗਈ ਹੈ? 5 ਮਿੰਟਾਂ ਵਿੱਚ "${undo}" ਦਬਾਓ।`,
+        kn: `ತಪ್ಪಾ? 5 ನಿಮಿಷಗಳಲ್ಲಿ "${undo}" ಒತ್ತಿ.`
   };
   return map[L] ?? map.en;
 }
