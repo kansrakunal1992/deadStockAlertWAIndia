@@ -5,7 +5,7 @@ const CORRECTION_STATE_TABLE_NAME = process.env.AIRTABLE_CORRECTION_STATE_TABLE_
 const USER_STATE_TABLE_NAME = process.env.AIRTABLE_USER_STATE_TABLE_NAME || 'UserState';
 const TRANSLATIONS_TABLE_NAME = process.env.AIRTABLE_TRANSLATIONS_TABLE_NAME || 'Translations';
 const STATE_TIMEOUT = Number(process.env.USER_STATE_TTL_MS ?? (60 * 60 * 1000)); // 60 minutes
-const CORRECTION_WINDOW_TTL_SEC = Number(process.env.TTL_CORRECTION ?? 120);
+const CORRECTION_WINDOW_TTL_SEC = Number(process.env.TTL_CORRECTION ?? 300);
 
 // Canonicalize ShopID to digits-only (no whatsapp:, +91, 91, 0 prefixes)
 function getCanonicalShopId(fromOrDigits) {
