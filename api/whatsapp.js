@@ -16986,16 +16986,17 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
       return /(?:^|\n)«[^»]+»\s*$/u.test(String(text ?? ''));
     }
 
-    // --- UNDO: derive the "last transaction" payload from a confirmation line (fallback)
+    // --- UNDO: derive the "last transaction" payload (prefer caller; Unicode-safe fallback)
     function _deriveLastTxnFromConfirmation(text, tagOpts) {
-      try {
-        if (tagOpts?.lastTxn && tagOpts.lastTxn.product) {
+      try {                  
+          // Prefer the caller-provided payload (never translate for DB writes)
+          if (tagOpts?.lastTxn && (tagOpts.lastTxn.productRawForDb || tagOpts.lastTxn.product)) {
           const t = tagOpts.lastTxn;
           return {
             action: String(t.action ?? '').toLowerCase(), // 'purchased' | 'sold' | 'returned'
-            product: t.product,
-            quantity: Number(t.quantity ?? 0),
-            unit: t.unit ?? 'pieces',
+            product: t.productRawForDb ?? t.product,
+            quantity: Number(t.quantity ?? 0),                        
+            unit: normalizeUnit(t.unit ?? 'pieces'),
             compositeKey: t.compositeKey ?? null
           };
         }
@@ -17005,11 +17006,12 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
         if (/\b(purchased)\b/.test(lc) || /📦/.test(line)) action = 'purchased';
         else if (/\b(sold)\b/.test(lc) || /🛒/.test(line)) action = 'sold';
         else if (/\b(returned)\b/.test(lc) || /↩️|⤴|⬅️/.test(line)) action = 'returned';
-        if (!action) return null;
-        const qtyUnit = line.match(/(\d+(?:\.\d+)?)\s+([A-Za-z][A-Za-z]*)/);
+        if (!action) return null;                
+        // Unicode-safe unit capture (e.g., "4 बोतलें") — \p{L}+ picks up Indic scripts
+        const qtyUnit = line.match(/(\d+(?:\.\d+)?)\s+([\p{L}]+)\b/iu);
         if (!qtyUnit) return null;
         const quantity = Number(qtyUnit[1]);
-        const unit = qtyUnit[2];
+        const unit = normalizeUnit(qtyUnit[2]);
         const idxAfter = line.indexOf(qtyUnit[0]) + qtyUnit[0].length;
         let product = line.slice(idxAfter).trim();
         const cutIdx = [product.indexOf('@'), product.indexOf('(')].filter(i => i >= 0).sort()[0];
@@ -17134,23 +17136,29 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
       });
       console.log(`[sendMessageViaAPI] Message sent successfully. SID: ${message.sid}`);
 
-      // Arm correction window + Undo CTA (unchanged)
+      // Arm correction window + Undo CTA (send CTA only if arm succeeded)
       try {
         const reqId = String(opts?.requestId ?? opts?.req ?? '').trim();
-        if (looksLikeTxnConfirmation(finalText, { strict: true })) {
-          try {
-            if (typeof openCorrectionWindow === 'function') {
-              const shopIdForDb = shopIdFrom(formattedTo);
-              const lastTxn = _deriveLastTxnFromConfirmation(finalText, opts);
-              if (lastTxn && lastTxn.product) {
-                await openCorrectionWindow(shopIdForDb, lastTxn, lang);
-              }
-            }
-          } catch (eArm) { console.warn('[confirm->undo] arm failed:', eArm?.message); }
-          console.log(`[confirm->undo] start lang=${lang} req=${reqId}`);
-          await new Promise(r => setTimeout(r, 350));
-          await sendUndoCTAQuickReply(formattedTo, lang, reqId);
-          console.log(`[confirm->undo] done req=${reqId}`);
+        if (looksLikeTxnConfirmation(finalText, { strict: true })) {                  
+        let armedOk = false;
+                  try {
+                    if (typeof openCorrectionWindow === 'function') {
+                      const shopIdForDb = shopIdFrom(formattedTo);
+                      const lastTxn = _deriveLastTxnFromConfirmation(finalText, opts);
+                      if (lastTxn && lastTxn.product) {
+                        await openCorrectionWindow(shopIdForDb, lastTxn, lang);
+                        armedOk = true;
+                      } else {
+                        console.warn('[confirm->undo] skip arm: lastTxn unavailable or missing product');
+                      }
+                    }
+                  } catch (eArm) { console.warn('[confirm->undo] arm failed:', eArm?.message); }
+                  if (armedOk) {
+                    console.log(`[confirm->undo] start lang=${lang} req=${reqId}`);
+                    await new Promise(r => setTimeout(r, 350));
+                    await sendUndoCTAQuickReply(formattedTo, lang, reqId);
+                    console.log(`[confirm->undo] done req=${reqId}`);
+                  }
         }
       } catch (e) {
         console.warn('[confirm->undo] failed:', e?.message);
@@ -17206,20 +17214,26 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
       // Undo CTA for multipart confirmations (unchanged)
       try {
         const reqId = String(opts?.requestId ?? opts?.req ?? '').trim();
-        if (isLast && looksLikeTxnConfirmation(text, { strict: true })) {
-          try {
-            if (typeof openCorrectionWindow === 'function') {
-              const shopIdForDb = shopIdFrom(formattedTo);
-              const lastTxn = _deriveLastTxnFromConfirmation(text, opts);
-              if (lastTxn && lastTxn.product) {
-                await openCorrectionWindow(shopIdForDb, lastTxn, lang);
-              }
-            }
-          } catch (eArm) { console.warn('[confirm->undo] arm(multi) failed:', eArm?.message); }
-          console.log(`[confirm->undo] start(multi) lang=${lang} req=${reqId}`);
-          await new Promise(r => setTimeout(r, 350));
-          await sendUndoCTAQuickReply(formattedTo, lang, reqId);
-          console.log(`[confirm->undo] done(multi) req=${reqId}`);
+        if (isLast && looksLikeTxnConfirmation(text, { strict: true })) {                  
+        let armedOk = false;
+                  try {
+                    if (typeof openCorrectionWindow === 'function') {
+                      const shopIdForDb = shopIdFrom(formattedTo);
+                      const lastTxn = _deriveLastTxnFromConfirmation(text, opts);
+                      if (lastTxn && lastTxn.product) {
+                        await openCorrectionWindow(shopIdForDb, lastTxn, lang);
+                        armedOk = true;
+                      } else {
+                        console.warn('[confirm->undo] skip arm(multi): lastTxn unavailable or missing product');
+                      }
+                    }
+                  } catch (eArm) { console.warn('[confirm->undo] arm(multi) failed:', eArm?.message); }
+                  if (armedOk) {
+                    console.log(`[confirm->undo] start(multi) lang=${lang} req=${reqId}`);
+                    await new Promise(r => setTimeout(r, 350));
+                    await sendUndoCTAQuickReply(formattedTo, lang, reqId);
+                    console.log(`[confirm->undo] done(multi) req=${reqId}`);
+                  }
         }
       } catch (e) {
         console.warn('[confirm->undo] failed (multi):', e?.message);
