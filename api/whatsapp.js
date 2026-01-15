@@ -6672,797 +6672,781 @@ async function activateTrialFlow(From, lang = 'en') {
 // Map button taps / list selections to your existing quick‑query router
 // Robust to multiple Twilio payload shapes + safe fallback
 async function handleInteractiveSelection(req) {
-// Global, minimal grace-cache to avoid stale plan reads immediately after trial activation
-const _recentActivations = (globalThis._recentActivations = globalThis._recentActivations || new Map()); // shopId -> ts(ms)
-const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
+  // Global, minimal grace-cache to avoid stale plan reads immediately after trial activation
+  const _recentActivations = (globalThis._recentActivations = globalThis._recentActivations ?? new Map()); // shopId -> ts(ms)
+  const RECENT_ACTIVATION_MS = 15000; // 15 seconds grace
 
-  const raw = req.body || {};      
+  const raw = req.body ?? {};
+
   // Normalize "From" to the WhatsApp-prefixed format used by downstream readers
-    const rawFrom =
+  const rawFrom =
     raw.From ?? raw.from ??
     (raw.WaId ? `whatsapp:${raw.WaId}` : null);
-    const from = rawFrom && String(rawFrom).startsWith('whatsapp:')
-       ? String(rawFrom)
-       : `whatsapp:${String(rawFrom ?? '').replace(/^whatsapp:/, '')}`;
-    const shopIdTop = shopIdFrom(from);    
-          
-    // Detect inventory list selections (e.g., "list_low", "list_sales_day").
-      const _payloadId = String(
-        raw.Body ?? raw.ListId ?? raw.EventId ?? raw.ContentSid ?? ''
-      ).toLowerCase();
-      const _payloadTitle = String(raw.ButtonText ?? raw.Body ?? '').toLowerCase();
-      // NEW: read Twilio postback ids up-front (stable across languages)
-      const payloadStable = String(
-        raw.ButtonPayload ?? raw.ButtonId ?? raw.PostbackData ?? raw.EventId ?? ''
-      ).toLowerCase();
-      // Route Undo on id 'undo_last_txn' (localized titles like "ठीक करें" won't match "undo")            
-      const isUndoTap =
-          payloadStable === 'undo_last_txn'
-          || /\bundo_last_txn\b/.test(_payloadId)
-          || /\bundo\b/.test(_payloadTitle);
-  
-        // === Centralized: format + send Undo outcome consistently (success and failures) ===
-        async function _sendUndoOutcome(from, langUi, res, shopIdTop) {
-          try {
-            console.log('[interactive:undo] result', {
-              success: !!res?.success,
-              error: res?.error ?? null,
-              changed: res?.changed ?? null,
-              msLeft: res?.msLeft ?? null,
-              shopId: shopIdTop
-            });
-          } catch {}
-          if (res?.success) {
-            const u = res.undone; // { action, product, quantity, unit }
-            let body = '';
-            try {
-              const overall = await getProductInventoryAggregate(shopIdTop, u.product);
-              const stockLine = overall?.success ? `${overall.quantity} ${overall.unit}` : null;
-              body = String(langUi).startsWith('hi')
-                ? `↩️ पूर्ववत: ${u.product} ${u.quantity} ${u.unit}` + (stockLine ? `\n(स्टॉक: ${stockLine})` : '')
-                : `↩️ Undone: ${u.product} ${u.quantity} ${u.unit}` + (stockLine ? `\n(Stock: ${stockLine})` : '');
-            } catch {
-              body = String(langUi).startsWith('hi')
-                ? `↩️ पूर्ववत: ${u.product} ${u.quantity} ${u.unit}`
-                : `↩️ Undone: ${u.product} ${u.quantity} ${u.unit}`;
-            }
-            const tagged = await tagWithLocalizedMode(from, finalizeForSend(body, langUi), langUi);
-            await sendMessageViaAPI(from, tagged);
-            return true;
-          } else {
-            let msgRaw;
-            switch (res?.error) {
-              case 'expired':
-                msgRaw = String(langUi).startsWith('hi')
-                  ? '⌛ Undo विंडो समाप्त हो गई। अगले अपडेट के तुरंत बाद कोशिश करें।'
-                  : '⌛ Undo window expired. Please try right after the next update.';
-                break;
-              case 'no_recent':
-              case 'missing_payload':
-              case 'state_mismatch':
-              case 'no-last':
-              case 'no-product':
-              case 'not-found':
-                msgRaw = String(langUi).startsWith('hi')
-                  ? '⚠️ Undo के लिए हाल का अपडेट नहीं मिला।'
-                  : '⚠️ No recent update to undo.';
-                break;
-              default:
-                msgRaw = String(langUi).startsWith('hi')
-                  ? '⚠️ अभी Undo नहीं चल पाया। कृपया फिर से प्रयास करें।'
-                  : '⚠️ Unable to run Undo right now. Please try again.';
-            }
-            const tagged = await tagWithLocalizedMode(from, finalizeForSend(msgRaw, langUi), langUi);
-            await sendMessageViaAPI(from, tagged);
-            return true;
-          }
-        }
-      try { console.log(`[interactive] undo-detect: id=${payloadStable} title=${_payloadTitle}`); } catch {}
+  const from = rawFrom && String(rawFrom).startsWith('whatsapp:')
+    ? String(rawFrom)
+    : `whatsapp:${String(rawFrom ?? '').replace(/^whatsapp:/, '')}`;
 
-    // === Intercept QR taps (purchase/sale/return) and send localized examples ===
-          try {
-            // Resolve UI language from preference; fall back to 'en'
-            let langUi = 'en';
-            try {
-              const pref = await getUserPreference(shopIdTop);
-              if (pref?.success && pref.language) langUi = String(pref.language).toLowerCase();
-            } catch (_) {}
-            langUi = langUi.replace(/-latn$/, ''); // e.g., hi-latn -> hi
-    
-            const isPurchase = _payloadId === 'qr_purchase';
-            const isSale     = _payloadId === 'qr_sale';
-            const isReturn   = _payloadId === 'qr_return';
-                                    
-            // ---- NEW: Undo CTA ----
-              if (isUndoTap) {
-                // Tiny idempotency guard: suppress double-taps within 3s for this shop
-                try {
-                  const _recentUndo = (globalThis._recentUndo = globalThis._recentUndo ?? new Map());
-                  const now = Date.now();
-                  const prev = _recentUndo.get(shopIdTop);
-                  if (prev && (now - prev) < 3000) return true;
-                  _recentUndo.set(shopIdTop, now);
-                } catch (_) {}
-                try {                                    
-                const res = await applyUndoLastTxn(shopIdTop); // DB: TTL check, revert stock/batch, clear/close state
-                await _sendUndoOutcome(from, langUi, res, shopIdTop);
-                } catch (e) {
-                  const errMsg = await t(
-                    String(langUi).startsWith('hi')
-                      ? '⚠️ अभी Undo नहीं चल पाया। कृपया फिर से प्रयास करें।'
-                      : '⚠️ Unable to run Undo right now. Please try again.',
-                    langUi
-                  );
-                  await sendMessageViaAPI(from, finalizeForSend(errMsg, langUi));
-                }
-                return true; // handled
-              }
+  const shopIdTop = shopIdFrom(from);
 
-            if (isPurchase || isSale || isReturn) {
-              // Localized header: Example (Purchase|Sale|Return)
-              const header = (function () {
-                switch (langUi) {
-                  case 'hi': return isPurchase ? 'उदाहरण (खरीद):' : isSale ? 'उदाहरण (बिक्री):' : 'उदाहरण (वापसी):';
-                  case 'bn': return isPurchase ? 'উদাহরণ (ক্রয়):'   : isSale ? 'উদাহরণ (বিক্রি):' : 'উদাহরণ (রিটার্ন):';
-                  case 'ta': return isPurchase ? 'உதாரணம் (கொள்முதல்):' : isSale ? 'உதாரணம் (விற்பனை):' : 'உதாரணம் (ரிட்டர்ன்):';
-                  case 'te': return isPurchase ? 'ఉదాహరణ (కొనుగోలు):'  : isSale ? 'ఉదాహరణ (అమ్మకం):'  : 'ఉదాహరణ (రిటర్న్):';
-                  case 'kn': return isPurchase ? 'ಉದಾಹರಣೆ (ಖರೀದಿ):'    : isSale ? 'ಉದಾಹರಣೆ (ಮಾರಾಟ):'  : 'ಉದಾಹರಣೆ (ರಿಟರ್ನ್):';
-                  case 'mr': return isPurchase ? 'उदाहरण (खरेदी):'      : isSale ? 'उदाहरण (विक्री):'    : 'उदाहरण (परत):';
-                  case 'gu': return isPurchase ? 'ઉદાહરણ (ખરીદી):'      : isSale ? 'ઉદાહરણ (વેચાણ):'     : 'ઉદાહરણ (રિટર્ન):';
-                  default:   return isPurchase ? 'Examples (Purchase):'    : isSale ? 'Examples (Sale):'       : 'Examples (Return):';
-                }
-              })();
-                          
-            // “Type or speak (voice note):” line (localized) — shown before the bullets
-                  const speakLine =
-                    langUi === 'hi' ? 'टाइप करें या वॉइस नोट बोलें:' :
-                    langUi === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন:' :
-                    langUi === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:' :
-                    langUi === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:' :
-                    langUi === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:' :
-                    langUi === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला:' :
-                    langUi === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' :
-                    'Type or speak (voice note):';
+  // Detect inventory list selections (e.g., "list_low", "list_sales_day").
+  const _payloadId = String(
+    raw.Body ?? raw.ListId ?? raw.EventId ?? raw.ContentSid ?? ''
+  ).toLowerCase();
+  const _payloadTitle = String(raw.ButtonText ?? raw.Body ?? '').toLowerCase();
 
-              
-            // Localized item examples (bullets) — simplified for Sale/Return taps; keep Purchase same
-            const bullets = (function () {
-              const isPurchaseTap = isPurchase === true;
-              if (isPurchaseTap) {
-                // (UNCHANGED) existing Purchase examples with price/expiry
-                switch (langUi) {
-                  case 'hi': return [
-                    '• दूध 10 लीटर @ ₹10/लीटर',
-                    '• पैरासिटामोल 3 पैकेट @ ₹20/पैकेट एक्सपायरी +7 दिन',
-                    '• मोबाइल हैंडसेट Xiaomi 1 पैकेट @ ₹60000/पैकेट'
-                  ];
-                  case 'bn': return [
-                    '• দুধ 10 লিটার @ ₹10/লিটার',
-                   '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
-                    '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
-                  ];
-                  case 'ta': return [
-                    '• பால் 10 லிட்டர் @ ₹10/லிட்டர்',
-                    '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
-                    '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
-                  ];
-                  case 'te': return [
-                    '• పాలు 10 లీటర్ @ ₹10/లీటర్',
-                    '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
-                    '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
-                  ];
-                  case 'kn': return [
-                    '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
-                    '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
-                    '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
-                  ];
-                  case 'mr': return [
-                    '• दूध 10 लिटर @ ₹10/लिटर',
-                    '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
-                    '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
-                  ];
-                  case 'gu': return [
-                    '• દૂધ 10 લિટર @ ₹10/લિટર',
-                    '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
-                    '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
-                  ];
-                  default: return [
-                    '• milk 10 litres at ₹10/litre',
-                    '• paracetamol 3 packets at ₹20/packet expiry +7d',
-                    '• mobile handset Xiaomi 1 packet at ₹60000/packet'
-                  ];
-                }
-              }
-              // (NEW) simplified for Sale/Return taps — no price/expiry
-              switch (langUi) {
-                case 'hi': return [
-                  '• दूध 10 लीटर',
-                  '• पैरासिटामोल 3 पैकेट',
-                  '• मोबाइल हैंडसेट Xiaomi 1 पैकेट'
-                ];
-                case 'bn': return [
-                  '• দুধ 10 লিটার',
-                  '• প্যারাসিটামল 3 প্যাকেট',
-                  '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট'
-                ];
-                case 'ta': return [
-                  '• பால் 10 லிட்டர்',
-                  '• பாராசிடமால் 3 பாக்கெட்',
-                  '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட்'
-                ];
-                case 'te': return [
-                  '• పాలు 10 లీటర్',
-                  '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు',
-                  '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్'
-                ];
-                case 'kn': return [
-                  '• ಹಾಲು 10 ಲೀಟರ್',
-                  '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್',
-                  '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್'
-                ];
-                case 'mr': return [
-                  '• दूध 10 लिटर',
-                  '• पॅरासिटामॉल 3 पॅकेट',
-                  '• मोबाइल हँडसेट Xiaomi 1 पॅकेट'
-                ];
-                case 'gu': return [
-                  '• દૂધ 10 લિટર',
-                  '• પેરાસિટામોલ 3 પેકેટ',
-                  '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ'
-                ];
-                default: return [
-                  '• milk 10 litres',
-                  '• paracetamol 3 packets',
-                  '• mobile handset Xiaomi 1 packet'
-                ];
-              }
-            })();
-       
-              const bodyExamples = [header, speakLine, ...bullets].join('\n');
-              const reqId = String(req?.headers?.['x-request-id'] ?? Date.now());                            
-              // NEW: direct localized ACK for Examples, with localized mode/footer
-                try {
-                  let ack0 = await t('Processing your message…', langUi, `${reqId}::examples-ack`);
-                  let ackTagged = await tagWithLocalizedMode(from, ack0, langUi);
-                  ackTagged = enforceSingleScriptSafe(ackTagged, langUi);
-                  ackTagged = normalizeNumeralsToLatin(ackTagged).trim();
-                  await sendMessageViaAPI(from, ackTagged);
-                } catch (_) { /* best-effort only; do not block examples */ }
-              const msg0 = await t(bodyExamples, langUi, `${reqId}::qr-examples`);
-              let msgFinal = await tagWithLocalizedMode(from, msg0, langUi);
-              msgFinal = enforceSingleScriptSafe(msgFinal, langUi);
-              msgFinal = normalizeNumeralsToLatin(msgFinal).trim();
-              await sendMessageViaAPI(from, msgFinal);
-              return; // consumed: prevent legacy "Examples (purchase)" path
-            }
-          } catch (_) { /* best-effort; fall through to existing logic */ }
-  
-      const _isInventoryListSelection = /^list_/.test(_payloadId);
-    
-      // Fire-and-forget: resurface List-Picker AFTER the main reply, regardless of early returns.
-      // Tiny delay so the buttons appear immediately after the text reply in WA clients.
-      try {
-        if (_isInventoryListSelection) {
-          setTimeout(async () => {
-            try {
-              const langHint = await getPreferredLangQuick(from, 'en');
-              await maybeResendListPicker(from, langHint, raw.requestId ?? 'interactive');
-            } catch (_) { /* noop */ }
-          }, 350);
-        }
-      } catch (_) { /* noop */ }
-     
-    // STEP 12: 3s duplicate‑tap guard (per shop + payload)
-    const _recentTaps = (globalThis._recentTaps ||= new Map()); // shopId -> { payload, at }
-    function _isDuplicateTap(shopId, payload, windowMs = 3000) {
-      const prev = _recentTaps.get(shopId);
-      const now = Date.now();
-      if (prev && prev.payload === payload && (now - prev.at) < windowMs) return true;
-      _recentTaps.set(shopId, { payload, at: now });
-      return false;
-    }
-    
-  // Quick-Reply payloads (Twilio replies / Content API postbacks)
-    let payload = String(
-      raw.ButtonPayload ??
-      raw.ButtonId ??
-      raw.PostbackData ??
-      ''
-    );
-   
-  // Duplicate‑tap short‑circuit
-    try {
-      if (payload && _isDuplicateTap(shopIdTop, payload)) return true;
-    } catch (_) {} 
-   
-  // STEP 13: Summary buttons → route directly
-    if (payload === 'instant_summary' || payload === 'full_summary') {
-      let btnLang = 'en';
-      try {
-        const prefLP = await getUserPreference(shopIdTop);
-        if (prefLP?.success && prefLP.language) btnLang = String(prefLP.language).toLowerCase();
-      } catch (_) {}
-      const cmd = (payload === 'instant_summary') ? 'short summary' : 'full summary';
-      await handleQuickQueryEN(cmd, from, btnLang, 'btn');            
-      // NEW: also generate Inventory Short Summary PDF for 'short summary' button                   
-          if (cmd === 'short summary') {
-                try {
-                  const pdfPath = await generateInventoryShortSummaryPDF(shopIdTop);
-                  // Optional safety check (mirrors your invoice flow):
-                  if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);                                    
-                  // Pass current UI language so caption matches the text summary language
-                  const msg = await sendPDFViaWhatsApp(From, pdfPath, btnLang);
-                  console.log(`[interactive] Inventory summary PDF sent. SID: ${msg?.sid}`);
-                } catch (e) {
-                  console.warn('[interactive] inventory PDF send failed', e?.message);
-                }
-              }
-      return true;
-    }
+  // NEW: read Twilio postback ids up-front (stable across languages)
+  const payloadStable = String(
+    raw.ButtonPayload ?? raw.ButtonId ?? raw.PostbackData ?? raw.EventId ?? ''
+  ).toLowerCase();
 
-  // List‑Picker selections across possible fields/shapes
-  const lr = (raw.ListResponse || raw.List || raw.Interactive || {});
-  const lrId = (lr.Id || lr.id || lr.ListItemId || lr.SelectedItemId)
-            || raw.ListId || raw.ListPickerSelection || raw.SelectedListItem
-            || raw.ListReplyId || raw.PostbackData || '';
-  let listId = String(lrId || '');
-  // Text fallbacks (rare deliveries echoing IDs in Body)
-  const text = String(raw.ButtonText || raw.Body || '');
-  if (!listId && /^list_/.test(text)) listId = text.trim();
-  // Debug snapshot to verify what we received in prod logs
-  try {
-    console.log(`[interact] payload=${payload || '—'} listId=${listId || '—'} body=${text || '—'}`);
-  } catch (_) {}
-    
-  // --- 4B: Map localized ButtonText -> canonical payload IDs (EN + HI)
-    // Covers cases where Twilio doesn't send ButtonPayload but only ButtonText.         
-    // Helper: normalize any escaped/mangled newlines from translations/templates
-      function fixNewlines(str) {
-        if (!str) return str;
-        // Convert typical escape sequences back to real newlines; also trim weird artifacts.
-        return String(str).replace(/\\n/g, '\n').replace(/\r/g, '').replace(/[ \t]*\.\?\\n/g, '\n');
-      }
-         
-    // --- NEW: send examples with a localized "Processing your message…" ack + single footer tag          
-    async function sendExamplesWithAck(from, lang, examplesText, requestId = 'examples') {
-      // NEW: early localized ACK (with localized badge), then examples
-      try {
-        const ack0 = await t('Processing your message…', lang, `${requestId}::ack`);
-        let ackTagged = await tagWithLocalizedMode(from, ack0, lang);
-        ackTagged = renderNativeglishLabels(ackTagged, lang);               // ⇐ localize badge
-        ackTagged = enforceSingleScriptSafe(ackTagged, lang);
-        ackTagged = normalizeNumeralsToLatin(ackTagged).trim();
-        await sendMessageViaAPI(from, ackTagged);
-      } catch (_) { /* best-effort ack; do not block examples */ }
-    
-      try {
-        let tagged = await tagWithLocalizedMode(from, fixNewlines(examplesText), lang);
-        tagged = renderNativeglishLabels(tagged, lang);                     // ⇐ localize badge
-        tagged = enforceSingleScriptSafe(tagged, lang);
-        tagged = normalizeNumeralsToLatin(tagged).trim();
-        await sendMessageViaAPI(from, tagged);
-      } catch (e) {
-        // Fallback: still send examples if tagging fails
-        let ex = fixNewlines(examplesText);
-        ex = enforceSingleScriptSafe(ex, lang);
-        ex = normalizeNumeralsToLatin(ex).trim();
-        await sendMessageViaAPI(from, ex);
-      }
-    }
-    
-    if (!payload && text) {
-      const BTN_TEXT_MAP = [
-        // Onboarding buttons
-        { rx: /^ट्रायल\s+शुरू\s+करें$/i, payload: 'activate_trial' },
-        { rx: /^ट्रायल$/i,               payload: 'activate_trial' },
-        { rx: /^डेमो(?:\s+देखें)?$/i,    payload: 'show_demo' },
-        { rx: /^(मदद|सहायता)$/i,         payload: 'show_help' },
-        // Transaction quick-reply buttons
-        { rx: /^खरीद\s+दर्ज\s+करें$/i,   payload: 'qr_purchase' },
-        { rx: /^बिक्री\s+दर्ज\s+करें$/i,  payload: 'qr_sale' },
-        { rx: /^रिटर्न\s+दर्ज\s+करें$/i,  payload: 'qr_return' },
-      ];
-      const hit = BTN_TEXT_MAP.find(m => m.rx.test(text));
-      if (hit) payload = hit.payload;
-    }
-  
-    // Shared: shopId + language + activation gate
-    const shopId = String(from).replace('whatsapp:', '');
-    let lang = 'en';
-    try {
-      const prefLP = await getUserPreference(shopId);
-      if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();
-    } catch (_) {}
-         
-    // Optional helper: boolean activation check if available (preferred over raw plan reads)
-      async function _isActivated(shopIdNum) {
-        try { if (typeof isUserActivated === 'function') return !!(await isUserActivated(shopIdNum)); } catch (_) {}
-        return null; // let planInfo logic decide
-      }
-            
-    // Helpers (local to this handler):
-      function isPlanActive(planInfo) {
-        const plan = String(planInfo?.plan ?? '').toLowerCase();
-        const end = planInfo?.trialEnd ?? planInfo?.endDate ?? null;
-        const isExpired = (() => {
-          if (!end) return true;
-          const d = new Date(end);
-          return Number.isNaN(d.getTime()) ? true : (d.getTime() < Date.now());
-        })();
-        return plan === 'paid' || (plan === 'trial' && !isExpired);
-      }
-      
-  function getStickyExamplesLocalized(action, langCode) {
-      const baseLang = String(langCode || 'en').toLowerCase().replace(/-latn$/, ''); // map hi-latn -> hi
-      const act = String(action || '').toLowerCase(); // 'purchased' | 'sold' | 'returned'
-      // Header per action (retain Purchase/Sale/Return)
-      const H = {
-        en: { p:'Examples (Purchase):', s:'Examples (Sale):',    r:'Examples (Return):',  n:'Example:' },
-        hi: { p:'उदाहरण (खरीद):',      s:'उदाहरण (बिक्री):',   r:'उदाहरण (वापसी):',   n:'उदाहरण:' },
-        bn: { p:'উদাহরণ (ক্রয়):',       s:'উদাহরণ (বিক্রি):',    r:'উদাহরণ (রিটার্ন):',  n:'উদাহরণ:' },
-        ta: { p:'உதாரணம் (கொள்முதல்):', s:'உதாரணம் (விற்பனை):', r:'உதாரணம் (ரிட்டர்ன்):', n:'உதாரணம்:' },
-        te: { p:'ఉదాహరణ (కొనుగోలు):',  s:'ఉదాహరణ (అమ్మకం):',   r:'ఉదాహరణ (రిటర్న్):',   n:'ఉదాహరణ:' },
-        kn: { p:'ಉದಾಹರಣೆ (ಖರೀದಿ):',     s:'ಉದಾಹರಣೆ (ಮಾರಾಟ):',   r:'ಉದಾಹರಣೆ (ರಿಟರ್ನ್):',  n:'ಉದಾಹರಣೆ:' },
-        mr: { p:'उदाहरण (खरेदी):',      s:'उदाहरण (विक्री):',    r:'उदाहरण (परत):',      n:'उदाहरणे:' },
-        gu: { p:'ઉદાહરણ (ખરીદી):',      s:'ઉદાહરણ (વેચાણ):',     r:'ઉદાહરણ (રિટર્ન):',    n:'ઉદાહરણ:' }
-      };
-      
-      const headerMap = H[baseLang] || H.en;
-        const header = act === 'purchased' ? headerMap.p : act === 'sold' ? headerMap.s : act === 'returned' ? headerMap.r : headerMap.n;
-        // “Type or speak (voice note):”
-        const speakLine =
-          baseLang === 'hi' ? 'टाइप करें या वॉइस नोट बोलें:' :
-          baseLang === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন:' :
-          baseLang === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:' :
-          baseLang === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:' :
-          baseLang === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:' :
-          baseLang === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला:' :
-          baseLang === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' :
-          'Type or speak (voice note):';       
-     
-      // PURCHASE bullets — WITH price/expiry
-        const purchaseBullets =
-          baseLang === 'hi' ? [
-            '• दूध 10 लीटर @ ₹10/लीटर',
-            '• पैरासिटामोल 3 पैकेट @ ₹20/पैकेट एक्सपायरी +7 दिन',
-            '• मोबाइल हैंडसेट Xiaomi 1 पैकेट @ ₹60000/पैकेट'
-          ] :
-          baseLang === 'bn' ? [
-            '• দুধ 10 লিটার @ ₹10/লিটার',
-            '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
-            '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
-          ] :
-          baseLang === 'ta' ? [
-            '• பால் 10 லிட்டர் @ ₹10/லிட்டர்',
-            '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
-            '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
-          ] :
-          baseLang === 'te' ? [
-            '• పాలు 10 లీటర్ @ ₹10/లీటర్',
-            '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
-            '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
-          ] :
-          baseLang === 'kn' ? [
-            '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
-            '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
-            '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
-          ] :
-          baseLang === 'mr' ? [
-            '• दूध 10 लिटर @ ₹10/लिटर',
-            '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
-            '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
-          ] :
-          baseLang === 'gu' ? [
-            '• દૂધ 10 લિટર @ ₹10/લિટર',
-            '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
-            '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
-          ] :
-          [
-            '• milk 10 litres at ₹10/litre',
-            '• paracetamol 3 packets at ₹20/packet expiry +7d',
-            '• mobile handset Xiaomi 1 packet at ₹60000/packet'
-          ];
-      
-        // SALE / RETURN bullets — PRICE‑LESS
-        const saleReturnBullets =
-          baseLang === 'hi' ? [
-            '• दूध 10 लीटर',
-            '• पैरासिटामोल 3 पैकेट',
-            '• मोबाइल हैंडसेट Xiaomi 1 पैकेट'
-          ] :
-          baseLang === 'bn' ? [
-            '• দুধ 10 লিটার',
-            '• প্যারাসিটামল 3 প্যাকেট',
-            '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট'
-          ] :
-          baseLang === 'ta' ? [
-            '• பால் 10 லிட்டர்',
-            '• பாராசிடமால் 3 பாக்கெட்',
-            '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட்'
-          ] :
-          baseLang === 'te' ? [
-            '• పాలు 10 లీటర్లు',
-            '• పారాసిటమోల్ 3 ప్యాకెట్లు',
-            '• మొబైల్ హ్యాండ్‌సెట్ Xiaomi 1 ప్యాకెట్'
-          ] :
-          baseLang === 'kn' ? [
-            '• ಹಾಲು 10 ಲೀಟರ್',
-            '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್',
-            '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್'
-          ] :
-          baseLang === 'mr' ? [
-            '• दूध 10 लिटर',
-            '• पॅरासिटामॉल 3 पॅकेट',
-            '• मोबाइल हँडसेट Xiaomi 1 पॅकेट'
-          ] :
-          baseLang === 'gu' ? [
-            '• દૂધ 10 લિટર',
-            '• પેરાસિટામોલ 3 પેકેટ',
-            '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ'
-          ] :
-          [
-            '• milk 10 litres',
-            '• paracetamol 3 packets',
-            '• mobile handset Xiaomi 1 packet'
-          ];
-      
-        // Choose the right bullets by action
-        const bullets = (act === 'purchased') ? purchaseBullets : saleReturnBullets;
+  // Route Undo on id 'undo_last_txn' (localized titles like "ठीक करें" won't match "undo")
+  const isUndoTap =
+    payloadStable === 'undo_last_txn'
+    || /\bundo_last_txn\b/.test(_payloadId)
+    || /\bundo\b/.test(_payloadTitle);
 
-    // Compose final block (header + speakLine + bullets)
-    return [header, speakLine, ...bullets].join('\n');
+  // === Centralized: format + send Undo outcome consistently (success and failures) ===
+  // 5‑minute TTL phrasing; fully localized (en, hi, gu, ta, te, kn, mr, bn, pa)
+  const UNDO_MSG = {
+    en: {
+      success: ({ product, qty, unit, stockAfter }) =>
+        `↩️ Undone: ${product} ${qty} ${unit}\n(Stock: ${stockAfter} ${unit})`,
+      expired: '⌛ Undo window expired. (5 min)',
+      no_recent: '⚠️ No recent update to undo.',
+      not_found: '⚠️ Couldn’t find the item to undo.',
+      no_product: '⚠️ Product not found for Undo.',
+      error: '❌ Couldn’t undo. Please try again.'
+    },
+    hi: {
+      success: ({ product, qty, unit, stockAfter }) =>
+        `↩️ पूर्ववत: ${product} ${qty} ${unit}\n(स्टॉक: ${stockAfter} ${unit})`,
+      expired: '⌛ Undo समय-सीमा समाप्त। (5 मिनट)',
+      no_recent: '⚠️ Undo के लिए हाल का अपडेट नहीं मिला।',
+      not_found: '⚠️ Undo करने के लिए आइटम नहीं मिला।',
+      no_product: '⚠️ Undo के लिए प्रोडक्ट नहीं मिला।',
+      error: '❌ Undo नहीं हो पाया। कृपया दोबारा कोशिश करें।'
+    },
+    gu: {
+      success: ({ product, qty, unit, stockAfter }) =>
+        `↩️ પૂર્વવત્: ${product} ${qty} ${unit}\n(સ્ટોક: ${stockAfter} ${unit})`,
+      expired: '⌛ Undo સમય સમાપ્ત. (5 મિનિટ)',
+      no_recent: '⚠️ Undo કરવા માટે તાજું અપડેટ મળ્યું નથી.',
+      not_found: '⚠️ Undo માટે આઇટમ મળ્યું નથી.',
+      no_product: '⚠️ Undo માટે પ્રોડક્ટ મળ્યું નથી.',
+      error: '❌ Undo થઈ શક્યું નથી. કૃપા કરીને ફરી પ્રયાસ કરો.'
+    },
+    ta: {
+      success: ({ product, qty, unit, stockAfter }) =>
+        `↩️ பின் மாற்றம்: ${product} ${qty} ${unit}\n(சரக்கு: ${stockAfter} ${unit})`,
+      expired: '⌛ Undo நேரம் முடிந்தது. (5 நிமி)',
+      no_recent: '⚠️ Undo செய்ய சமீபத்திய அப்டேட் இல்லை.',
+      not_found: '⚠️ Undo செய்ய பொருள் கிடைக்கவில்லை.',
+      no_product: '⚠️ Undo க்கு பொருள் கிடைக்கவில்லை.',
+      error: '❌ Undo செய்ய முடியவில்லை. மீண்டும் முயற்சிக்கவும்.'
+    },
+    te: {
+      success: ({ product, qty, unit, stockAfter }) =>
+        `↩️ రద్దు: ${product} ${qty} ${unit}\n(స్టాక్: ${stockAfter} ${unit})`,
+      expired: '⌛ Undo గడువు ముగిసింది. (5 నిమి)',
+      no_recent: '⚠️ Undo చేయడానికి తాజా అప్డేట్ లేదు.',
+      not_found: '⚠️ Undo కోసం ఐటమ్ కనబడలేదు.',
+      no_product: '⚠️ Undo కి ప్రొడక్ట్ కనబడలేదు.',
+      error: '❌ Undo కాలేదు. దయచేసి మళ్లీ ప్రయత్నించండి.'
+    },
+    kn: {
+      success: ({ product, qty, unit, stockAfter }) =>
+        `↩️ ರದ್ದುಪಡಿಸಲಾಗಿದೆ: ${product} ${qty} ${unit}\n(ಸ್ಟಾಕ್: ${stockAfter} ${unit})`,
+      expired: '⌛ Undo ಸಮಯ ಮೀರಿದೆ. (5 ನಿ)',
+      no_recent: '⚠️ Undo ಮಾಡಲು ಇತ್ತೀಚಿನ ಅಪ್ಡೇಟ್ ಇಲ್ಲ.',
+      not_found: '⚠️ Undo ಗಾಗಿ ಐಟಂ ಸಿಕ್ಕಿಲ್ಲ.',
+      no_product: '⚠️ Undo ಗಾಗಿ ಉತ್ಪನ್ನ ಸಿಕ್ಕಿಲ್ಲ.',
+      error: '❌ Undo ಆಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.'
+    },
+    mr: {
+      success: ({ product, qty, unit, stockAfter }) =>
+        `↩️ पूर्ववत: ${product} ${qty} ${unit}\n(स्टॉक: ${stockAfter} ${unit})`,
+      expired: '⌛ Undo ची वेळ संपली. (5 मिनिटे)',
+      no_recent: '⚠️ Undo करण्यासाठी अलीकडील अपडेट नाही.',
+      not_found: '⚠️ Undo साठी आयटम सापडला नाही.',
+      no_product: '⚠️ Undo साठी प्रोडक्ट सापडले नाही.',
+      error: '❌ Undo झाले नाही. कृपया पुन्हा प्रयत्न करा.'
+    },
+    bn: {
+      success: ({ product, qty, unit, stockAfter }) =>
+        `↩️ পূর্বাবস্থায় ফেরত: ${product} ${qty} ${unit}\n(স্টক: ${stockAfter} ${unit})`,
+      expired: '⌛ Undo-এর সময় শেষ। (৫ মিনিট)',
+      no_recent: '⚠️ Undo করার মতো সাম্প্রতিক আপডেট নেই।',
+      not_found: '⚠️ Undo করার জন্য আইটেম খুঁজে পাওয়া যায়নি।',
+      no_product: '⚠️ Undo-এর জন্য পণ্য পাওয়া যায়নি।',
+      error: '❌ Undo করা যায়নি। দয়া করে আবার চেষ্টা করুন।'
+    },
+    pa: {
+      success: ({ product, qty, unit, stockAfter }) =>
+        `↩️ ਵਾਪਸ ਕੀਤਾ: ${product} ${qty} ${unit}\n(ਸਟਾਕ: ${stockAfter} ${unit})`,
+      expired: '⌛ Undo ਦਾ ਸਮਾਂ ਮੁੱਕ ਗਿਆ। (5 ਮਿੰਟ)',
+      no_recent: '⚠️ Undo ਲਈ ਹਾਲੀਆ ਅੱਪਡੇਟ ਨਹੀਂ ਮਿਲੀ।',
+      not_found: '⚠️ Undo ਲਈ ਆਈਟਮ ਨਹੀਂ ਮਿਲੀ।',
+      no_product: '⚠️ Undo ਲਈ ਪ੍ਰੋਡਕਟ ਨਹੀਂ ਮਿਲੀ।',
+      error: '❌ Undo ਨਹੀਂ ਹੋ ਸਕਿਆ। ਕਿਰਪਾ ਕਰਕੇ ਦੁਬਾਰਾ ਕੋਸ਼ਿਸ਼ ਕਰੋ।'
     }
-          
-    // Activation check for example gating + prompts
-      let activated = false;
-      let planInfo = null;
-     let activatedDirect = null;
-      try {                  
-        // Preferred: fast boolean if available
-        activatedDirect = await _isActivated(shopIdTop);
-        planInfo = await getUserPlan(shopIdTop);
-        activated = (activatedDirect === true) ? true : isPlanActive(planInfo);
-      } catch (_) {}
-      const plan = String(planInfo?.plan ?? '').toLowerCase();
-      const end  = planInfo?.trialEnd ?? planInfo?.endDate ?? null;
-      const isNewUser = !plan || plan === 'none';
-      const trialExpired = plan === 'trial' && end ? (new Date(end).getTime() < Date.now()) : false;         
-     // Recent activation grace: treat as active for a short window after 'activate_trial'
-      const recentTs = _recentActivations.get(shopIdTop);
-      const isRecentlyActivated = !!recentTs && (Date.now() - recentTs < RECENT_ACTIVATION_MS);
-      const allowExamples = activated || isRecentlyActivated;
-  
-   // Quick‑Reply buttons (payload IDs are language‑independent)
-   if (payload === 'qr_purchase') {                                     
-        await setStickyMode(from, 'purchased'); // always set sticky                       
-            if (allowExamples) {
-                  // re-check activation right before send, to cope with very short DB lag
-                  try {
-                    const check = await _isActivated(shopIdTop);
-                    if (check !== true && !isRecentlyActivated) throw new Error('not-activated-yet');
-                  } catch (_) {}
-              const examples = getStickyExamplesLocalized('purchased', lang);
-              await sendExamplesWithAck(from, lang, examples, `qr-purchase-${shopIdTop}`);                        
-            } else {
-                  // NEW: Prompt for activation when plan not active (new or expired trial)                                                      
-            const msgRaw = isNewUser
-               ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
-               : trialExpired
-               ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
-               : await t(`ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
-                  await sendMessageViaAPI(from, fixNewlines(msgRaw));
-                }
-       try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}                    
-       return true;
-   }
-   if (payload === 'qr_sale') {                       
-        await setStickyMode(from, 'sold'); // always set sticky                      
-            if (allowExamples) {
-                  try {
-                    const check = await _isActivated(shopIdTop);
-                    if (check !== true && !isRecentlyActivated) throw new Error('not-activated-yet');
-                  } catch (_) {}
-              const examples = getStickyExamplesLocalized('sold', lang);
-              await sendExamplesWithAck(from, lang, examples, `qr-sale-${shopIdTop}`);              
-            } else {                                                 
-            const msgRaw = isNewUser
-               ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
-               : trialExpired
-               ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
-               : await t(`ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
-                      await sendMessageViaAPI(from, fixNewlines(msgRaw));
-                }
-       try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}               
-       return true;
-   }
-   if (payload === 'qr_return') {                         
-        await setStickyMode(from, 'returned'); // always set sticky                        
-            if (allowExamples) {
-                  try {
-                    const check = await _isActivated(shopIdTop);
-                    if (check !== true && !isRecentlyActivated) throw new Error('not-activated-yet');
-                  } catch (_) {}
-                const examples = getStickyExamplesLocalized('returned', lang);
-                await sendExamplesWithAck(from, lang, examples, `qr-return-${shopIdTop}`);
-        } else {                                 
-            const msgRaw = isNewUser
-               ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
-               : trialExpired
-               ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
-               : await t(`ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
-                  await sendMessageViaAPI(from, fixNewlines(msgRaw));
-            }
-       try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch (_) {}                    
-       return true;
-   }
- 
-  // --- NEW: Activate Trial Plan ---
-  if (payload === 'activate_trial') {                  
-        // --- NEW: start onboarding capture; do NOT activate yet
-            if (activated) {
-              const msg = await t('✅ You already have access.', lang, `cta-trial-already-${shopId}`);
-              await sendMessageViaAPI(from, fixNewlines(msg));
-              try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: true }); } catch {}
-              return true;
-            }                        
-            if (CAPTURE_SHOP_DETAILS_ON === 'paid') {
-                // Immediate trial activation (no capture)
-                await activateTrialFlow(from, lang);
-              } else {
-                // Legacy behavior: capture during trial
-                await beginTrialOnboarding(from, lang);
-              }
-              return true;
+  };
+
+  function _pickUndoLang(langHint = 'en') {
+    const L = String(langHint || 'en').toLowerCase();
+    const base = L.endsWith('-latn') ? L.split('-')[0] : L;
+    return UNDO_MSG[base] ? base : 'en';
   }
-  
-  // --- NEW: Demo button ---     
-  if (payload === 'show_demo') {                
-        // Send demo video (no text narrative) and the QR buttons, then exit.
-          try {
-            const langPinned = String(lang ?? 'en').toLowerCase();
-            const rqid = req.requestId ? String(req.requestId) : `req-${Date.now()}`;
-            console.log(`[interactive:demo] payload=${payload} → sending video`);
-            await sendDemoVideoAndButtons(from, langPinned, `${rqid}::cta-demo`);
-          } catch (e) {
-            console.warn('[interactive:demo] video send failed:', e?.message);
+
+  async function _sendUndoOutcome(from, langUiHint, res, shopIdTop) {
+    try {
+      console.log('[interactive:undo] result', {
+        success: !!res?.success,
+        error: res?.error ?? null,
+        changed: res?.changed ?? null,
+        msLeft: res?.msLeft ?? null,
+        shopId: shopIdTop
+      });
+    } catch {}
+
+    const lang = _pickUndoLang(langUiHint);
+    const dict = UNDO_MSG[lang] || UNDO_MSG.en;
+
+    // Compose success/failure body
+    let body;
+    if (res?.success && res?.changed) {
+      // Prefer DB-returned values; fall back to aggregate if needed
+      const product = res.product ?? res.productKey ?? res?.undone?.product ?? 'item';
+      const qty = Math.abs(res.qty ?? res.invDelta ?? res?.undone?.quantity ?? 0);
+      const unit = res.unit ?? res?.undone?.unit ?? '';
+      let stockAfter = res.stockAfter;
+
+      // If stockAfter not provided, fetch aggregate defensively
+      if (stockAfter == null) {
+        try {
+          const overall = await getProductInventoryAggregate(shopIdTop, product);
+          if (overall?.success) {
+            stockAfter = overall.quantity;
           }
-          // We already replied via PM API; short‑circuit this turn.
-          return true;
+        } catch {}
       }
-  // --- NEW: Help button ---
-  if (payload === 'show_help') {        
-    const helpEn = [
-          'Help:',
-          `• WhatsApp or call: +91-9013283687`,
-          `• WhatsApp link: https://wa.link/6q3ol7`
-        ].join('\n');
-        const help = await t(helpEn, lang, `cta-help-${shopId}`);
-        await sendMessageViaAPI(from, help);
+      body = dict.success({ product, qty, unit, stockAfter: stockAfter ?? '' });
+    } else {
+      const code = String(res?.error || 'error');
+      body =
+        code === 'expired'    ? dict.expired :
+        code === 'no_recent'  ? dict.no_recent :
+        code === 'not-found'  ? dict.not_found :
+        code === 'no-product' ? dict.no_product :
+                                dict.error;
+    }
+
+    // Keep your single‑script + mode‑badge pipeline; do NOT alter sticky mode here
+    const tagged = await tagWithLocalizedMode(from, finalizeForSend(body, langUiHint), langUiHint);
+    await sendMessageViaAPI(from, tagged);
     return true;
   }
-   
-  // --- NEW: Activate Paid Plan ---     
-  if (payload === 'activate_paid') {
-    // Show paywall; activation only after user replies "paid"
-         // IMPORTANT: use RAW markers so clamp/footer logic can detect them.
-         const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
-    
-      // Compose the 3-line paywall body
-      const body =
-        `To activate the paid plan, pay ₹${PAID_PRICE_INR} via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\n` +
-        `Or pay at: ${PAYMENT_LINK}\nClick on "paid" after payment ✅`;        
-          
-    // Put BOTH markers INSIDE the string given to t(...),
-         // so enforceSingleScriptSafe() and tagWithLocalizedMode() skip clamp/footer.                 
-        let localized = await t(NO_FOOTER_MARKER + body, lang, `cta-paid-${shopId}`);
-            // ANCHOR: UNIQ:ACTIVATE-PAID-001
-            // Finalize before sending (strip markers, single-script, newline & digit normalization)
-            await sendMessageViaAPI(from, finalizeForSend(localized, lang));
-    
-      // NEW: Immediately surface single-button "Paid" quick-reply (unchanged)
+
+  try { console.log(`[interactive] undo-detect: id=${payloadStable} title=${_payloadTitle}`); } catch {}
+
+  // === Intercept QR taps (purchase/sale/return) and send localized examples ===
+  try {
+    // Resolve UI language from preference; fall back to 'en'
+    let langUi = 'en';
+    try {
+      const pref = await getUserPreference(shopIdTop);
+      if (pref?.success && pref.language) langUi = String(pref.language).toLowerCase();
+    } catch(_) {}
+    langUi = langUi.replace(/-latn$/, ''); // e.g., hi-latn -> hi
+
+    const isPurchase = _payloadId === 'qr_purchase';
+    const isSale = _payloadId === 'qr_sale';
+    const isReturn = _payloadId === 'qr_return';
+
+    // ---- NEW: Undo CTA ----
+    if (isUndoTap) {
+      // Tiny idempotency guard: suppress double-taps within 3s for this shop
       try {
-        await ensureLangTemplates(lang);
-        const sids = getLangSids(lang);
-        if (sids?.paidConfirmSid) {
-          await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.paidConfirmSid });
-        }
+        const _recentUndo = (globalThis._recentUndo = globalThis._recentUndo ?? new Map());
+        const now = Date.now();
+        const prev = _recentUndo.get(shopIdTop);
+        if (prev && (now - prev) < 3000) return true;
+        _recentUndo.set(shopIdTop, now);
+      } catch(_) {}
+
+      try {
+        // DB: TTL check, revert stock/batch; **do not** clear/alter sticky mode here
+        const res = await applyUndoLastTxn(shopIdTop);
+        await _sendUndoOutcome(from, langUi, res, shopIdTop);
       } catch (e) {
-        console.warn('[activate_paid] paidConfirm send failed', e?.response?.status, e?.response?.data);
+        const errMsg = await t(
+          String(langUi).startsWith('hi')
+            ? '⚠️ अभी Undo नहीं चल पाया। कृपया फिर से प्रयास करें.'
+            : '⚠️ Unable to run Undo right now. Please try again.',
+          langUi
+        );
+        await sendMessageViaAPI(from, finalizeForSend(errMsg, langUi));
       }
-    
-      try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: false }); } catch (_) {}
-      return true;
+      return true; // handled
     }
 
-// NEW: Handle taps on the single-button "Paid" quick-reply
-if (payload === 'confirm_paid') {
-  const shopId = String(from).replace('whatsapp:', '');
-  const langPref = (await getUserPreference(shopId))?.language?.toLowerCase() ?? 'en';      
-    let ack = await t(
-        'Thanks! We will verify the payment shortly. If not activated in a minute, please tap “Paid” again.',
-        langPref, `confirm-paid-${shopId}`
-      );
-      await sendMessageViaAPI(from, finalizeForSend(ack, langPref));
-  // Re-surface the button for convenience
-  try {
-    await ensureLangTemplates(langPref);
-    const sids = getLangSids(langPref);
-    if (sids?.paidConfirmSid) {
-      await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.paidConfirmSid });
+    if (isPurchase || isSale || isReturn) {
+      // Localized header: Example (Purchase|Sale|Return)
+      const header = (function () {
+        switch (langUi) {
+          case 'hi': return isPurchase ? 'उदाहरण (खरीद):' : isSale ? 'उदाहरण (बिक्री):' : 'उदाहरण (वापसी):';
+          case 'bn': return isPurchase ? 'উদাহরণ (ক্রয়):' : isSale ? 'উদাহরণ (বিক্রি):' : 'উদাহরণ (রিটার্ন):';
+          case 'ta': return isPurchase ? 'உதாரணம் (கொள்முதல்):' : isSale ? 'உதாரணம் (விற்பனை):' : 'உதாரணம் (ரிட்டர்ன்):';
+          case 'te': return isPurchase ? 'ఉదాహరణ (కొనుగోలు):' : isSale ? 'ఉదాహరణ (అమ్మకం):' : 'ఉదాహరణ (రిటర్న్):';
+          case 'kn': return isPurchase ? 'ಉದಾಹರಣೆ (ಖರೀದಿ):' : isSale ? 'ಉದಾಹರಣೆ (ಮಾರಾಟ):' : 'ಉದಾಹರಣೆ (ರಿಟರ್ನ್):';
+          case 'mr': return isPurchase ? 'उदाहरण (खरेदी):' : isSale ? 'उदाहरण (विक्री):' : 'उदाहरण (परत):';
+          case 'gu': return isPurchase ? 'ઉદાહરણ (ખરીદી):' : isSale ? 'ઉદાહરણ (વેચાણ):' : 'ઉદાહરણ (રિટર્ન):';
+          default:   return isPurchase ? 'Examples (Purchase):' : isSale ? 'Examples (Sale):' : 'Examples (Return):';
+        }
+      })();
+
+      // “Type or speak (voice note):” line (localized)
+      const speakLine =
+        langUi === 'hi' ? 'टाइप करें या वॉइस नोट बोलें:' :
+        langUi === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন:' :
+        langUi === 'ta' ? 'தட்டச்சிடவும் অথবা வொய்ஸ் நோட் பேசவும்:' :
+        langUi === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:' :
+        langUi === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:' :
+        langUi === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला:' :
+        langUi === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' :
+        'Type or speak (voice note):';
+
+      // Localized item examples (bullets) — purchase with price/expiry; sale/return without
+      const bullets = (function () {
+        const isPurchaseTap = isPurchase === true;
+        if (isPurchaseTap) {
+          switch (langUi) {
+            case 'hi': return [
+              '• दूध 10 लीटर @ ₹10/लीटर',
+              '• पैरासिटामोल 3 पैकेट @ ₹20/पैकेट एक्सपायरी +7 दिन',
+              '• मोबाइल हैंडसेट Xiaomi 1 पैकेट @ ₹60000/पैकेट'
+            ];
+            case 'bn': return [
+              '• দুধ 10 লিটার @ ₹10/লিটার',
+              '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
+              '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
+            ];
+            case 'ta': return [
+              '• பால் 10 லிட்டர் @ ₹10/லிட்டர்',
+              '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
+              '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
+            ];
+            case 'te': return [
+              '• పాలు 10 లీటర్ @ ₹10/లీటర్',
+              '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
+              '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
+            ];
+            case 'kn': return [
+              '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
+              '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
+              '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
+            ];
+            case 'mr': return [
+              '• दूध 10 लिटर @ ₹10/लिटर',
+              '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
+              '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
+            ];
+            case 'gu': return [
+              '• દૂધ 10 લિટર @ ₹10/લિટર',
+              '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
+              '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
+            ];
+            default: return [
+              '• milk 10 litres at ₹10/litre',
+              '• paracetamol 3 packets at ₹20/packet expiry +7d',
+              '• mobile handset Xiaomi 1 packet at ₹60000/packet'
+            ];
+          }
+        }
+        // Sale/Return (no price/expiry)
+        switch (langUi) {
+          case 'hi': return ['• दूध 10 लीटर','• पैरासिटामोल 3 पैकेट','• मोबाइल हैंडसेट Xiaomi 1 पैकेट'];
+          case 'bn': return ['• দুধ 10 লিটার','• প্যারাসিটামল 3 প্যাকেট','• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট'];
+          case 'ta': return ['• பால் 10 லிட்டர்','• பாராசிடமால் 3 பாக்கெட்','• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட்'];
+          case 'te': return ['• పాలు 10 లీటర్','• ప్యారాసెటమాల్ 3 ప్యాకెట్లు','• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్'];
+          case 'kn': return ['• ಹಾಲು 10 ಲೀಟರ್','• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್','• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್'];
+          case 'mr': return ['• दूध 10 लिटर','• पॅरासिटामॉल 3 पॅकेट','• मोबाइल हँडसेट Xiaomi 1 पॅकेट'];
+          case 'gu': return ['• દૂધ 10 લિટર','• પેરાસિટામોલ 3 પેકેટ','• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ'];
+          default:   return ['• milk 10 litres','• paracetamol 3 packets','• mobile handset Xiaomi 1 packet'];
+        }
+      })();
+
+      const bodyExamples = [header, speakLine, ...bullets].join('\n');
+      const reqId = String(req?.headers?.['x-request-id'] ?? Date.now());
+
+      // NEW: direct localized ACK for Examples, with localized mode/footer
+      try {
+        let ack0 = await t('Processing your message…', langUi, `${reqId}::examples-ack`);
+        let ackTagged = await tagWithLocalizedMode(from, ack0, langUi);
+        ackTagged = enforceSingleScriptSafe(ackTagged, langUi);
+        ackTagged = normalizeNumeralsToLatin(ackTagged).trim();
+        await sendMessageViaAPI(from, ackTagged);
+      } catch(_) { /* best-effort only; do not block examples */ }
+
+      const msg0 = await t(bodyExamples, langUi, `${reqId}::qr-examples`);
+      let msgFinal = await tagWithLocalizedMode(from, msg0, langUi);
+      msgFinal = enforceSingleScriptSafe(msgFinal, langUi);
+      msgFinal = normalizeNumeralsToLatin(msgFinal).trim();
+      await sendMessageViaAPI(from, msgFinal);
+      return; // consumed: prevent legacy "Examples (purchase)" path
     }
-  } catch (e) {
-    console.warn('[confirm_paid] re-send failed', e?.response?.status, e?.response?.data);
-  }    
-  // Begin paid onboarding capture (shop name, GSTIN, address)
+  } catch(_) { /* best-effort; fall through to existing logic */ }
+
+  const _isInventoryListSelection = /^list_/.test(_payloadId);
+
+  // Fire-and-forget: resurface List-Picker AFTER the main reply
+  try {
+    if (_isInventoryListSelection) {
+      setTimeout(async () => {
+        try {
+          const langHint = await getPreferredLangQuick(from, 'en');
+          await maybeResendListPicker(from, langHint, raw.requestId ?? 'interactive');
+        } catch {/* noop */}
+      }, 350);
+    }
+  } catch {/* noop */ }
+
+  // STEP 12: 3s duplicate‑tap guard (per shop + payload)
+  const _recentTaps = (globalThis._recentTaps ??= new Map()); // shopId -> { payload, at }
+  function _isDuplicateTap(shopId, payload, windowMs = 3000) {
+    const prev = _recentTaps.get(shopId);
+    const now = Date.now();
+    if (prev && prev.payload === payload && (now - prev.at) < windowMs) return true;
+    _recentTaps.set(shopId, { payload, at: now });
+    return false;
+  }
+
+  // Quick-Reply payloads (Twilio replies / Content API postbacks)
+  let payload = String(
+    raw.ButtonPayload ??
+    raw.ButtonId ??
+    raw.PostbackData ??
+    ''
+  );
+
+  // Duplicate‑tap short‑circuit
+  try {
+    if (payload && _isDuplicateTap(shopIdTop, payload)) return true;
+  } catch(_) {}
+
+  // STEP 13: Summary buttons → route directly
+  if (payload === 'instant_summary' || payload === 'full_summary') {
+    let btnLang = 'en';
+    try {
+      const prefLP = await getUserPreference(shopIdTop);
+      if (prefLP?.success && prefLP.language) btnLang = String(prefLP.language).toLowerCase();
+    } catch(_) {}
+    const cmd = (payload === 'instant_summary') ? 'short summary' : 'full summary';
+    await handleQuickQueryEN(cmd, from, btnLang, 'btn');
+
+    if (cmd === 'short summary') {
+      try {
+        const pdfPath = await generateInventoryShortSummaryPDF(shopIdTop);
+        if (!fs.existsSync(pdfPath)) throw new Error(`Generated PDF not found: ${pdfPath}`);
+        const msg = await sendPDFViaWhatsApp(From, pdfPath, btnLang);
+        console.log(`[interactive] Inventory summary PDF sent. SID: ${msg?.sid}`);
+      } catch (e) {
+        console.warn('[interactive] inventory PDF send failed', e?.message);
+      }
+    }
+    return true;
+  }
+
+  // List-Picker selections across possible fields/shapes
+  const lr = (raw.ListResponse ?? raw.List ?? raw.Interactive ?? {});
+  const lrId = (lr.Id ?? lr.id ?? lr.ListItemId ?? lr.SelectedItemId)
+    ?? raw.ListId
+    ?? raw.ListPickerSelection
+    ?? raw.SelectedListItem
+    ?? raw.ListReplyId
+    ?? raw.PostbackData
+    ?? '';
+  let listId = String(lrId ?? '');
+
+  // Text fallbacks (rare deliveries echoing IDs in Body)
+  const text = String(raw.ButtonText ?? raw.Body ?? '');
+  if (!listId && /^list_/.test(text)) listId = text.trim();
+
+  // Debug snapshot
+  try {
+    console.log(`[interact] payload=${payload ?? '—'} listId=${listId ?? '—'} body=${text ?? '—'}`);
+  } catch(_) {}
+
+  // --- 4B: Map localized ButtonText -> canonical payload IDs (EN + HI)
+  function fixNewlines(str) {
+    if (!str) return str;
+    return String(str).replace(/\\n/g, '\n').replace(/\r/g, '').replace(/[ \t]*\.?\n/g, '\n');
+  }
+
+  async function sendExamplesWithAck(from, lang, examplesText, requestId = 'examples') {
+    try {
+      const ack0 = await t('Processing your message…', lang, `${requestId}::ack`);
+      let ackTagged = await tagWithLocalizedMode(from, ack0, lang);
+      ackTagged = renderNativeglishLabels(ackTagged, lang);
+      ackTagged = enforceSingleScriptSafe(ackTagged, lang);
+      ackTagged = normalizeNumeralsToLatin(ackTagged).trim();
+      await sendMessageViaAPI(from, ackTagged);
+    } catch(_) { /* best-effort ack */ }
+
+    try {
+      let tagged = await tagWithLocalizedMode(from, fixNewlines(examplesText), lang);
+      tagged = renderNativeglishLabels(tagged, lang);
+      tagged = enforceSingleScriptSafe(tagged, lang);
+      tagged = normalizeNumeralsToLatin(tagged).trim();
+      await sendMessageViaAPI(from, tagged);
+    } catch (e) {
+      let ex = fixNewlines(examplesText);
+      ex = enforceSingleScriptSafe(ex, lang);
+      ex = normalizeNumeralsToLatin(ex).trim();
+      await sendMessageViaAPI(from, ex);
+    }
+  }
+
+  if (!payload && text) {
+    const BTN_TEXT_MAP = [
+      // Onboarding buttons
+      { rx: /^ट्रायल\s+शुरू\s+करें$/i, payload: 'activate_trial' },
+      { rx: /^ट्रायल$/i, payload: 'activate_trial' },
+      { rx: /^डेमो(?:\s+देखें)?$/i, payload: 'show_demo' },
+      { rx: /^(मदद|सहायता)$/i, payload: 'show_help' },
+
+      // Transaction quick-reply buttons
+      { rx: /^खरीद\s+दर्ज\s+करें$/i, payload: 'qr_purchase' },
+      { rx: /^बिक्री\s+दर्ज\s+करें$/i, payload: 'qr_sale' },
+      { rx: /^रिटर्न\s+दर्ज\s+करें$/i, payload: 'qr_return' },
+    ];
+    const hit = BTN_TEXT_MAP.find(m => m.rx.test(text));
+    if (hit) payload = hit.payload;
+  }
+
+  // Shared: shopId + language + activation gate
+  const shopId = String(from).replace('whatsapp:', '');
+  let lang = 'en';
+  try {
+    const prefLP = await getUserPreference(shopId);
+    if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();
+  } catch(_) {}
+
+  async function _isActivated(shopIdNum) {
+    try { if (typeof isUserActivated === 'function') return !!(await isUserActivated(shopIdNum)); } catch(_) {}
+    return null;
+  }
+
+  function isPlanActive(planInfo) {
+    const plan = String(planInfo?.plan ?? '').toLowerCase();
+    const end = planInfo?.trialEnd ?? planInfo?.endDate ?? null;
+    const isExpired = (() => {
+      if (!end) return true;
+      const d = new Date(end);
+      return Number.isNaN(d.getTime()) ? true : (d.getTime() < Date.now());
+    })();
+    return plan === 'paid' || (plan === 'trial' && !isExpired);
+  }
+
+  function getStickyExamplesLocalized(action, langCode) {
+    const baseLang = String(langCode ?? 'en').toLowerCase().replace(/-latn$/, '');
+    const act = String(action ?? '').toLowerCase(); // 'purchased' | 'sold' | 'returned'
+
+    const H = {
+      en: { p:'Examples (Purchase):', s:'Examples (Sale):', r:'Examples (Return):', n:'Example:' },
+      hi: { p:'उदाहरण (खरीद):', s:'उदाहरण (बिक्री):', r:'उदाहरण (वापसी):', n:'उदाहरण:' },
+      bn: { p:'উদাহরণ (ক্রয়):', s:'উদাহরণ (বিক্রি):', r:'উদাহরণ (রিটার্ন):', n:'উদাহরণ:' },
+      ta: { p:'உதாரணம் (கொள்முதல்):', s:'உதாரணம் (விற்பனை):', r:'உதாரணம் (ரிட்டர்ன்):', n:'உதாரணம்:' },
+      te: { p:'ఉదాహరణ (కొనుగోలు):', s:'ఉదాహరణ (అమ్మకం):', r:'ఉదాహరణ (రిటర్న్):', n:'ఉదాహరణ:' },
+      kn: { p:'ಉದಾಹರಣೆ (ಖರೀದಿ):', s:'ಉದಾಹರಣೆ (ಮಾರಾಟ):', r:'ಉದಾಹರಣೆ (ರಿಟರ್ನ್):', n:'ಉದಾಹರಣೆ:' },
+      mr: { p:'उदाहरण (खरेदी):', s:'उदाहरण (विक्री):', r:'उदाहरण (परत):', n:'उदाहरणे:' },
+      gu: { p:'ઉદાહરણ (ખરીદી):', s:'ઉદાહરણ (વેચાણ):', r:'ઉદાહરણ (રિટર્ન):', n:'ઉદાહરણ:' }
+    };
+    const headerMap = H[baseLang] ?? H.en;
+    const header = act === 'purchased' ? headerMap.p : act === 'sold' ? headerMap.s : act === 'returned' ? headerMap.r : headerMap.n;
+
+    const speakLine =
+      baseLang === 'hi' ? 'टाइप करें या वॉइस नोट बोलें:' :
+      baseLang === 'bn' ? 'টাইপ করুন বা ভয়েস নোট বলুন:' :
+      baseLang === 'ta' ? 'தட்டச்சிடவும் அல்லது வொய்ஸ் நோட் பேசவும்:' :
+      baseLang === 'te' ? 'టైప్ చేయండి లేదా వాయిస్ నోట్ మాట్లాడండి:' :
+      baseLang === 'kn' ? 'ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಮಾತನಾಡಿ:' :
+      baseLang === 'mr' ? 'टाइप करा किंवा व्हॉईस नोट बोला:' :
+      baseLang === 'gu' ? 'ટાઈપ કરો અથવા વૉઇસ નોટ બોલો:' :
+      'Type or speak (voice note):';
+
+    const purchaseBullets =
+      baseLang === 'hi' ? [
+        '• दूध 10 लीटर @ ₹10/लीटर',
+        '• पैरासिटामोल 3 पैकेट @ ₹20/पैकेट एक्सपायरी +7 दिन',
+        '• मोबाइल हँडसेट Xiaomi 1 पैकेट @ ₹60000/पैकेट'
+      ] :
+      baseLang === 'bn' ? [
+        '• দুধ 10 লিটার @ ₹10/লিটার',
+        '• প্যারাসিটামল 3 প্যাকেট @ ₹20/প্যাকেট মেয়াদ +7 দিন',
+        '• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট @ ₹60000/প্যাকেট'
+      ] :
+      baseLang === 'ta' ? [
+        '• பால் 10 லிட்டர் @ ₹10/லிட்டர்',
+        '• பாராசிடமால் 3 பாக்கெட் @ ₹20/பாக்கெட் காலாவதி +7 நாள்',
+        '• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட் @ ₹60000/பாக்கெட்'
+      ] :
+      baseLang === 'te' ? [
+        '• పాలు 10 లీటర్ @ ₹10/లీటర్',
+        '• ప్యారాసెటమాల్ 3 ప్యాకెట్లు @ ₹20/ప్యాకెట్ గడువు +7 రోజులు',
+        '• మొబైల్ హ్యాండ్సెట్ Xiaomi 1 ప్యాకెట్ @ ₹60000/ప్యాకెట్'
+      ] :
+      baseLang === 'kn' ? [
+        '• ಹಾಲು 10 ಲೀಟರ್ @ ₹10/ಲೀಟರ್',
+        '• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್ @ ₹20/ಪ್ಯಾಕೆಟ್ ಅವಧಿ +7 ದಿನ',
+        '• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್ @ ₹60000/ಪ್ಯಾಕೆಟ್'
+      ] :
+      baseLang === 'mr' ? [
+        '• दूध 10 लिटर @ ₹10/लिटर',
+        '• पॅरासिटामॉल 3 पॅकेट @ ₹20/पॅकेट कालबाह्यता +7 दिवस',
+        '• मोबाइल हँडसेट Xiaomi 1 पॅकेट @ ₹60000/पॅकेट'
+      ] :
+      baseLang === 'gu' ? [
+        '• દૂધ 10 લિટર @ ₹10/લિટર',
+        '• પેરાસિટામોલ 3 પેકેટ @ ₹20/પેકેટ સમયસમાપ્તિ +7 દિવસ',
+        '• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ @ ₹60000/પેકેટ'
+      ] :
+      [
+        '• milk 10 litres at ₹10/litre',
+        '• paracetamol 3 packets at ₹20/packet expiry +7d',
+        '• mobile handset Xiaomi 1 packet at ₹60000/packet'
+      ];
+
+    const saleReturnBullets =
+      baseLang === 'hi' ? ['• दूध 10 लीटर','• पॅरासिटामॉल 3 पॅकेट','• मोबाइल हँडसेट Xiaomi 1 पॅकेट'] :
+      baseLang === 'bn' ? ['• দুধ 10 লিটার','• প্যারাসিটামল 3 প্যাকেট','• মোবাইল হ্যান্ডসেট Xiaomi 1 প্যাকেট'] :
+      baseLang === 'ta' ? ['• பால் 10 லிட்டர்','• பாராசிடமால் 3 பாக்கெட்','• மொபைல் ஹேண்ட்செட் Xiaomi 1 பாக்கெட்'] :
+      baseLang === 'te' ? ['• పాలు 10 లీటర్లు','• పారాసిటమోల్ 3 ప్యాకెట్లు','• మొబైల్ హ్యాండ్‌సెట్ Xiaomi 1 ప్యాకెట్'] :
+      baseLang === 'kn' ? ['• ಹಾಲು 10 ಲೀಟರ್','• ಪ್ಯಾರಾಸಿಟಮಾಲ್ 3 ಪ್ಯಾಕೆಟ್','• ಮೊಬೈಲ್ ಹ್ಯಾಂಡ್‌ಸೆಟ್ Xiaomi 1 ಪ್ಯಾಕೆಟ್'] :
+      baseLang === 'mr' ? ['• दूध 10 लिटर','• पॅरासिटामॉल 3 पॅकेट','• मोबाइल हँडसेट Xiaomi 1 पॅकेट'] :
+      baseLang === 'gu' ? ['• દૂધ 10 લિટર','• પેરાસિટામોલ 3 પેકેટ','• મોબાઇલ હેન્ડસેટ Xiaomi 1 પેકેટ'] :
+      ['• milk 10 litres','• paracetamol 3 packets','• mobile handset Xiaomi 1 packet'];
+
+    const bullets = (act === 'purchased') ? purchaseBullets : saleReturnBullets;
+    return [header, speakLine, ...bullets].join('\n');
+  }
+
+  // Activation check for example gating + prompts
+  let activated = false;
+  let planInfo = null;
+  let activatedDirect = null;
+  try {
+    activatedDirect = await _isActivated(shopIdTop);
+    planInfo = await getUserPlan(shopIdTop);
+    activated = (activatedDirect === true) ? true : isPlanActive(planInfo);
+  } catch(_) {}
+  const plan = String(planInfo?.plan ?? '').toLowerCase();
+  const end = planInfo?.trialEnd ?? planInfo?.endDate ?? null;
+  const isNewUser = !plan || plan === 'none';
+  const trialExpired = plan === 'trial' && end ? (new Date(end).getTime() < Date.now()) : false;
+
+  const recentTs = _recentActivations.get(shopIdTop);
+  const isRecentlyActivated = !!recentTs && (Date.now() - recentTs < RECENT_ACTIVATION_MS);
+  const allowExamples = activated || isRecentlyActivated;
+
+  if (payload === 'qr_purchase') {
+    await setStickyMode(from, 'purchased'); // keep sticky
+    if (allowExamples) {
+      try {
+        const check = await _isActivated(shopIdTop);
+        if (check !== true && !isRecentlyActivated) throw new Error('not-activated-yet');
+      } catch(_) {}
+      const examples = getStickyExamplesLocalized('purchased', lang);
+      await sendExamplesWithAck(from, lang, examples, `qr-purchase-${shopIdTop}`);
+    } else {
+      const msgRaw = isNewUser
+        ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
+        : trialExpired
+          ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+          : await t(`ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
+      await sendMessageViaAPI(from, fixNewlines(msgRaw));
+    }
+    try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch(_) {}
+    return true;
+  }
+
+  if (payload === 'qr_sale') {
+    await setStickyMode(from, 'sold'); // keep sticky
+    if (allowExamples) {
+      try {
+        const check = await _isActivated(shopIdTop);
+        if (check !== true && !isRecentlyActivated) throw new Error('not-activated-yet');
+      } catch(_) {}
+      const examples = getStickyExamplesLocalized('sold', lang);
+      await sendExamplesWithAck(from, lang, examples, `qr-sale-${shopIdTop}`);
+    } else {
+      const msgRaw = isNewUser
+        ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
+        : trialExpired
+          ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+          : await t(`ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
+      await sendMessageViaAPI(from, fixNewlines(msgRaw));
+    }
+    try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch(_) {}
+    return true;
+  }
+
+  if (payload === 'qr_return') {
+    await setStickyMode(from, 'returned'); // keep sticky
+    if (allowExamples) {
+      try {
+        const check = await _isActivated(shopIdTop);
+        if (check !== true && !isRecentlyActivated) throw new Error('not-activated-yet');
+      } catch(_) {}
+      const examples = getStickyExamplesLocalized('returned', lang);
+      await sendExamplesWithAck(from, lang, examples, `qr-return-${shopIdTop}`);
+    } else {
+      const msgRaw = isNewUser
+        ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
+        : trialExpired
+          ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+          : await t(`ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
+      await sendMessageViaAPI(from, fixNewlines(msgRaw));
+    }
+    try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: isStartTrialIntent(text) }); } catch(_) {}
+    return true;
+  }
+
+  // --- Activate Trial Plan
+  if (payload === 'activate_trial') {
+    if (activated) {
+      const msg = await t('✅ You already have access.', lang, `cta-trial-already-${shopId}`);
+      await sendMessageViaAPI(from, fixNewlines(msg));
+      try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: true }); } catch {}
+      return true;
+    }
+    if (CAPTURE_SHOP_DETAILS_ON === 'paid') {
+      await activateTrialFlow(from, lang);
+    } else {
+      await beginTrialOnboarding(from, lang);
+    }
+    return true;
+  }
+
+  // --- Demo button
+  if (payload === 'show_demo') {
+    try {
+      const langPinned = String(lang ?? 'en').toLowerCase();
+      const rqid = req.requestId ? String(req.requestId) : `req-${Date.now()}`;
+      console.log(`[interactive:demo] payload=${payload} → sending video`);
+      await sendDemoVideoAndButtons(from, langPinned, `${rqid}::cta-demo`);
+    } catch (e) {
+      console.warn('[interactive:demo] video send failed:', e?.message);
+    }
+    return true;
+  }
+
+  // --- Help button
+  if (payload === 'show_help') {
+    const helpEn = [
+      'Help:',
+      `• WhatsApp or call: +91-9013283687`,
+      `• WhatsApp link: https://wa.link/6q3ol7`
+    ].join('\n');
+    const help = await t(helpEn, lang, `cta-help-${shopId}`);
+    await sendMessageViaAPI(from, help);
+    return true;
+  }
+
+  // --- Activate Paid Plan
+  if (payload === 'activate_paid') {
+    const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+    const body =
+      `To activate the paid plan, pay ₹${PAID_PRICE_INR} via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\n` +
+      `Or pay at: ${PAYMENT_LINK}\nClick on "paid" after payment ✅`;
+    let localized = await t(NO_FOOTER_MARKER + body, lang, `cta-paid-${shopId}`);
+    await sendMessageViaAPI(from, finalizeForSend(localized, lang));
+    try {
+      await ensureLangTemplates(lang);
+      const sids = getLangSids(lang);
+      if (sids?.paidConfirmSid) {
+        await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.paidConfirmSid });
+      }
+    } catch (e) {
+      console.warn('[activate_paid] paidConfirm send failed', e?.response?.status, e?.response?.data);
+    }
+    try { await maybeShowPaidCTAAfterInteraction(from, lang, { trialIntentNow: false }); } catch(_) {}
+    return true;
+  }
+
+  // NEW: Handle taps on the single‑button "Paid" quick‑reply
+  if (payload === 'confirm_paid') {
+    const shopId = String(from).replace('whatsapp:', '');
+    const langPref = (await getUserPreference(shopId))?.language?.toLowerCase() ?? 'en';
+    let ack = await t(
+      'Thanks! We will verify the payment shortly. If not activated in a minute, please tap “Paid” again.',
+      langPref, `confirm-paid-${shopId}`
+    );
+    await sendMessageViaAPI(from, finalizeForSend(ack, langPref));
+    try {
+      await ensureLangTemplates(langPref);
+      const sids = getLangSids(langPref);
+      if (sids?.paidConfirmSid) {
+        await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.paidConfirmSid });
+      }
+    } catch (e) {
+      console.warn('[confirm_paid] re-send failed', e?.response?.status, e?.response?.data);
+    }
     if (CAPTURE_SHOP_DETAILS_ON === 'paid') {
       try { await beginPaidOnboarding(from, langPref); } catch (e) { console.warn('[confirm_paid] beginPaidOnboarding failed:', e?.message); }
     }
-  return true;
-}
-     
+    return true;
+  }
+
   // List‑Picker selections → route using user's saved language preference
-    let lpLang = 'en';
-    try {
-      const shopIdLP = String(from).replace('whatsapp:', '');
-      const prefLP = await getUserPreference(shopIdLP);
-      if (prefLP?.success && prefLP.language) lpLang = String(prefLP.language).toLowerCase();
-    } catch (_) { /* best effort */ }
-    
-  // ✅ Ultra‑early localized ACK using saved preference 
+  let lpLang = 'en';
+  try {
+    const shopIdLP = String(from).replace('whatsapp:', '');
+    const prefLP = await getUserPreference(shopIdLP);
+    if (prefLP?.success && prefLP.language) lpLang = String(prefLP.language).toLowerCase();
+  } catch { /* best effort */ }
+
+  // ✅ Ultra‑early localized ACK using saved preference
   if (EARLY_ACK.listPicker) {
-  await sendProcessingAckQuick(from, 'text', lpLang);
+    await sendProcessingAckQuick(from, 'text', lpLang);
   }
-  
-   const route = (cmd) => handleQuickQueryEN(cmd, from, lpLang, 'lp');
-   switch (listId) {
-             
-        case 'list_short_summary':                      
-          await route('short summary');
-                return true;
-        
-          case 'list_full_summary':
-            await route('full summary'); return true;
-        
-          case 'list_reorder_suggest':
-            await route('reorder suggestions'); return true;
-        
-          case 'list_sales_week':                   
-            await route('sales week');
-                  return true;
-        
-          case 'list_expiring_30':
-            await route('expiring 30'); return true;
-        
-          // keep existing IDs working:
-          case 'list_low':
-            await route('low stock'); return true;
-        
-          case 'list_expiring': // your "Expiring 0"
-            await route('expiring 0'); return true;
-        
-          case 'list_sales_day':                      
-            await route('sales today');
-                  return true;
-        
-          case 'list_top_month':
-            await route('top 5 products month'); return true;
-        
-          case 'list_value':
-            await route('value summary'); return true;
-                 
-          // === NEW (C): Undo last transaction — verify change before ACK ===                        
-          case 'list_undo_last':
-            case 'qr_undo_last': {
-              const shopIdUnified = String(from ?? '').replace('whatsapp:', '');
-              let res = null; try { res = await applyUndoLastTxn(shopIdUnified); } catch {}
-              await _sendUndoOutcome(from, lpLang, res, shopIdUnified);
-              return true;
-            }
-}     
+
+  const route = (cmd) => handleQuickQueryEN(cmd, from, lpLang, 'lp');
+  switch (listId) {
+    case 'list_short_summary':
+      await route('short summary'); return true;
+    case 'list_full_summary':
+      await route('full summary'); return true;
+    case 'list_reorder_suggest':
+      await route('reorder suggestions'); return true;
+    case 'list_sales_week':
+      await route('sales week'); return true;
+    case 'list_expiring_30':
+      await route('expiring 30'); return true;
+    case 'list_low':
+      await route('low stock'); return true;
+    case 'list_expiring':
+      await route('expiring 0'); return true;
+    case 'list_sales_day':
+      await route('sales today'); return true;
+    case 'list_top_month':
+      await route('top 5 products month'); return true;
+    case 'list_value':
+      await route('value summary'); return true;
+
+    // === NEW (C): Undo last transaction — verify change before ACK
+    case 'list_undo_last':
+    case 'qr_undo_last': {
+      const shopIdUnified = String(from ?? '').replace('whatsapp:', '');
+      let res = null; try { res = await applyUndoLastTxn(shopIdUnified); } catch {}
+      await _sendUndoOutcome(from, lpLang, res, shopIdUnified);
+      return true;
+    }
+  }
+
   // If Twilio only sent text (rare), you can optionally pattern‑match:
-    if (/record\s+purchase/i.test(text)) { /* ... */ }
-    return false;
-  }
+  if (/record\s+purchase/i.test(text)) { /* ... */ }
+  return false;
+}
 
 // --- Tiny edit distance (Damerau-Levenshtein would be nicer; classic Levenshtein is fine here)
 function _editDistance(a, b) {
