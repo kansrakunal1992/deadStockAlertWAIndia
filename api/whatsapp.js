@@ -1637,6 +1637,10 @@ async function parseMultipleUpdates(reqOrText, requestId) {
           }          
           // NEW: salvage noisy "<product> <qty> <unit>" from AI
           update = normalizeProductQtyUnit(update);
+                    
+          // NEW: stamp DB-safe product for downstream (parity with rule-based path)
+          update.productRawForDb = resolveProductNameForWrite(update.product);
+
           return update;
         } catch (error) {
           console.warn(`[AI Parsing] Error processing update:`, error.message);
@@ -13647,6 +13651,11 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   const markNudged = () => {
     try { globalThis.__recentPriceNudge.set(shopId, Date.now()); } catch (_) {}
   };
+  
+  // Minimal entry log to observe batch/correction-window paths across a run
+    try {
+      console.log(`[Update ${shopId}] updateMultipleInventory start; items=${Array.isArray(updates) ? updates.length : 0}`);
+    } catch (_) {}
 
   const results = [];
   const pendingNoPrice = [];   // <– used only to drive nudges; we DO NOT write for these
@@ -13815,8 +13824,14 @@ for (const update of updates) {
           expiryDate: expiryToUse,
           purchasePrice: finalPrice // may be 0 if unknown now
         });
-
-        if (batchResult?.success) createdBatchEarly = true;
+                
+        if (batchResult?.success) {
+                createdBatchEarly = true;
+                // Trace batch creation to confirm the correction window can be armed
+                console.log(`[PurchaseFlow ${shopId} - ${productRawForDb}] Batch created`, { batchId: batchResult.id ?? null, expiryToUse });
+              } else {
+                console.warn(`[PurchaseFlow ${shopId} - ${productRawForDb}] Batch creation returned non-success`, { ok: !!batchResult?.success, err: batchResult?.error });
+              }
 
         // Ensure inventory reflects the purchase *and* capture stock for summary lines
         let invResult;
@@ -13841,19 +13856,30 @@ for (const update of updates) {
             : `📦 Purchased ${update.quantity} ${update.unit} ${productRawForDb} @ ₹${finalPrice}`)
           : `• ${productRawForDb}: ${update.quantity} ${update.unit} purchased @ ₹${finalPrice}`
           + (isPerishable ? `\n Expiry: ${edDisplay}` : `\n Expiry: —`);
-
+        
         // Open the 2-min expiry override window
-        try {
-          await saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
-            batchId: batchResult?.id ?? null,
-            product: productRawForDb,
-            action: 'purchased',
-            purchaseDateISO,
-            currentExpiryISO: expiryToUse ?? null,
-            createdAtISO: new Date().toISOString(),
-            timeoutSec: 120
-          });
-        } catch (_) {}
+              try {
+                const timeoutSec = 120;
+                const nowISO = new Date().toISOString();
+                const windowEndsAtISO = new Date(Date.now() + timeoutSec * 1000).toISOString();
+                console.log(`[CorrectionWindow ${shopId} - ${productRawForDb}] Arming purchase-expiry window (${timeoutSec}s)`, {
+                  batchId: batchResult?.id ?? null, expiryToUse, nowISO, windowEndsAtISO
+                });
+                await saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
+                  batchId: batchResult?.id ?? null,
+                  product: productRawForDb,
+                  action: 'purchased',
+                  purchaseDateISO,
+                  currentExpiryISO: expiryToUse ?? null,
+                  createdAtISO: nowISO,
+                  timeoutSec,
+                  windowEndsAtISO,
+                  armed: true,
+                  source: 'purchase'
+                });
+              } catch (e) {
+                console.warn(`[CorrectionWindow ${shopId} - ${productRawForDb}] Failed to arm purchase-expiry window`, { error: e?.message });
+              }
 
         results.push({
           product: productRawForDb,
@@ -14188,21 +14214,38 @@ for (const update of updates) {
             }
           );
 
-          // --- NEW: start a short override window (2 min) only if multiple batches exist ---
+          // --- NEW: start a short override window (2 min) only if multiple batches exist ---         
           try {
-            if (await shouldOfferBatchOverride(shopId, productRawForDb)) {
-              await saveUserStateToDB(shopId, 'awaitingBatchOverride', {
-                saleRecordId: salesResult.id,
-                product,
-                action: 'sold',
-                unit: update.unit,
-                quantity: Math.abs(update.quantity),
-                oldCompositeKey: selectedBatchCompositeKey,
-                createdAtISO: new Date().toISOString(),
-                timeoutSec: 120
-              });
-            }
-          } catch (_) {}
+                  const offerOverrideNow = await shouldOfferBatchOverride(shopId, productRawForDb);
+                  console.log(`[CorrectionWindow ${shopId} - ${productRawForDb}] shouldOfferBatchOverride -> ${offerOverrideNow}`, {
+                    selectedBatchCompositeKey
+                  });
+                  if (offerOverrideNow) {
+                    const timeoutSec = 120;
+                    const nowISO = new Date().toISOString();
+                    const windowEndsAtISO = new Date(Date.now() + timeoutSec * 1000).toISOString();
+                    console.log(`[CorrectionWindow ${shopId} - ${productRawForDb}] Arming sale-batch window (${timeoutSec}s)`, {
+                      saleRecordId: salesResult.id, nowISO, windowEndsAtISO
+                    });
+                    await saveUserStateToDB(shopId, 'awaitingBatchOverride', {
+                      saleRecordId: salesResult.id,
+                      product,
+                      action: 'sold',
+                      unit: update.unit,
+                      quantity: Math.abs(update.quantity),
+                      oldCompositeKey: selectedBatchCompositeKey,
+                      createdAtISO: nowISO,
+                      timeoutSec,
+                      windowEndsAtISO,
+                      armed: true,
+                      source: 'sale'
+                    });
+                  } else {
+                    console.log(`[CorrectionWindow ${shopId} - ${productRawForDb}] Skipping sale-batch window (only one batch or none)`);
+                  }
+                } catch (e) {
+                  console.warn(`[CorrectionWindow ${shopId} - ${productRawForDb}] Error deciding/arming sale-batch window`, { error: e?.message });
+                }
 
           // Compose confirmation message with used batch and up to N alternatives
           let altLines = '';
