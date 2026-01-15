@@ -13844,8 +13844,10 @@ for (const update of updates) {
           continue; // Move to next update; NO batch, NO inventory, NO state
         }
 
-        // If we have a price, continue with normal flow
+        // If we have a price, continue with normal flow                
         // Create batch immediately with defaulted expiry (or blank)
+          // (We will capture the compositeKey so Undo can also revert the batch precisely.)
+          let batchCompositeKey = null;  // <-- NEW: hoisted so it's available when arming the window
         const batchResult = await createBatchRecord({
           shopId: shopIdFrom(shopId), // ensure E.164 (+91…) for DB write
           product: productRawForDb,
@@ -13857,9 +13859,13 @@ for (const update of updates) {
         });
                 
         if (batchResult?.success) {
-                createdBatchEarly = true;
-                // Trace batch creation to confirm the correction window can be armed
-                console.log(`[PurchaseFlow ${shopId} - ${productRawForDb}] Batch created`, { batchId: batchResult.id ?? null, expiryToUse });
+                createdBatchEarly = true;                                
+                // Capture compositeKey (returned by createBatchRecord) for precise Undo of purchase
+                    batchCompositeKey = batchResult?.compositeKey ?? null;           // <-- NEW
+                    // Trace batch creation to confirm the correction window can be armed
+                    console.log(`[PurchaseFlow ${shopId} - ${productRawForDb}] Batch created`, {
+                      batchId: batchResult.id ?? null, expiryToUse, compositeKey: batchCompositeKey   // <-- NEW
+                    });
               } else {
                 console.warn(`[PurchaseFlow ${shopId} - ${productRawForDb}] Batch creation returned non-success`, { ok: !!batchResult?.success, err: batchResult?.error });
               }
@@ -13895,19 +13901,36 @@ for (const update of updates) {
                 const windowEndsAtISO = new Date(Date.now() + timeoutSec * 1000).toISOString();
                 console.log(`[CorrectionWindow ${shopId} - ${productRawForDb}] Arming purchase-expiry window (${timeoutSec}s)`, {
                   batchId: batchResult?.id ?? null, expiryToUse, nowISO, windowEndsAtISO
-                });
-                await saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
-                  batchId: batchResult?.id ?? null,
-                  product: productRawForDb,
-                  action: 'purchased',
-                  purchaseDateISO,
-                  currentExpiryISO: expiryToUse ?? null,
-                  createdAtISO: nowISO,
-                  timeoutSec,
-                  windowEndsAtISO,
-                  armed: true,
-                  source: 'purchase'
-                });
+                });                
+        // 🔧 Persist a revertable payload alongside the window (consumed by applyUndoLastTxn)
+            await saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
+              // --- Existing fields (kept for compatibility) ---
+              batchId: batchResult?.id ?? null,
+              product: productRawForDb,
+              action: 'purchased',            // UI/compat copy stays as 'purchased'
+              purchaseDateISO,
+              currentExpiryISO: expiryToUse ?? null,
+              createdAtISO: nowISO,
+              timeoutSec,
+              windowEndsAtISO,
+              armed: true,
+              source: 'purchase',
+              // --- NEW: canonical "last" payload expected by applyUndoLastTxn ---
+              last: {
+                action: 'purchase',           // <-- IMPORTANT: normalized verb ('purchase'|'sale'|'return')
+                product: productRawForDb,
+                quantity: Number(update.quantity),
+                unit: update.unit,
+                compositeKey: batchCompositeKey // enables batch quantity rollback for purchases
+              },
+              // --- NEW: anchors to make lookups deterministic even when product text is noisy ---
+              anchors: {
+                productLc: String(productRawForDb).toLowerCase().trim(),
+                batchCompositeKey: batchCompositeKey
+              },
+              // --- NEW: TTL mirror for Undo layer (msLeft computation) ---
+              ttlSec: timeoutSec
+            });
               } catch (e) {
                 console.warn(`[CorrectionWindow ${shopId} - ${productRawForDb}] Failed to arm purchase-expiry window`, { error: e?.message });
               }
