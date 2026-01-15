@@ -22,10 +22,15 @@ function getCanonicalShopId(fromOrDigits) {
  * Arm a short correction window for the last txn.
  * lastTxn = { action: 'sale'|'purchase'|'return', product, quantity, unit, compositeKey? }
  */
-async function openCorrectionWindow(shopId, lastTxn, detectedLanguage = 'en') {    
-  const payload = {
-      last: {
-        action: String(lastTxn.action ?? '').toLowerCase(), // stable action name
+async function openCorrectionWindow(shopId, lastTxn, detectedLanguage = 'en') {      
+      const rawAct = String(lastTxn.action ?? '').toLowerCase().trim();
+      const canonAct = rawAct === 'sold' ? 'sale'
+                      : rawAct === 'purchased' ? 'purchase'
+                      : rawAct === 'returned' ? 'return'
+                      : rawAct;
+       const payload = {
+         last: {
+           action: canonAct, // stable action name
         product: lastTxn.product,
         quantity: Number(lastTxn.quantity ?? 0),
         unit: normalizeUnit(lastTxn.unit ?? 'pieces'),
@@ -157,33 +162,37 @@ async function applyUndoLastTxn(shopId) {
 
   const qty  = Number(last.quantity || 0);
   const unit = normalizeUnit(last.unit || 'pieces');
-
-  let invDelta = 0;
-  switch (String(last.action)) {
-    case 'sale':
-    case 'sold':
-      // Undo sale: add back to stock
-      invDelta = +qty;
-      break;
-
-    case 'purchase':
-    case 'bought':
-      // Undo purchase: subtract from stock and reduce the batch if we know it
-      invDelta = -qty;
-      if (last.compositeKey) {
-        await updateBatchQuantityByCompositeKey(last.compositeKey, -qty, unit); // ✔ existing helper [2](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/database.js.txt)
-      }
-      break;
-
-    case 'return':
-    case 'returned':
-      // Undo customer return (you added stock earlier): remove it
-      invDelta = -qty;
-      break;
-
-    default:
-      invDelta = 0;
-  }
+  
+ // Normalize action to handle verb/noun variants
+ const action = String(last.action ?? '').toLowerCase().trim();
+ let invDelta = 0;
+ switch (action) {
+   case 'sale':
+   case 'sold':
+     // Undo sale: add back to stock
+     invDelta = +qty;
+     // (Optional) also add back to the batch if compositeKey was recorded for sales
+     if (last.compositeKey) {
+       await updateBatchQuantityByCompositeKey(last.compositeKey, +qty, unit);
+     }
+     break;
+   case 'purchase':
+   case 'purchased':
+   case 'bought':
+     // Undo purchase: subtract from stock and reduce the batch if we know it
+     invDelta = -qty;
+     if (last.compositeKey) {
+       await updateBatchQuantityByCompositeKey(last.compositeKey, -qty, unit);
+     }
+     break;
+   case 'return':
+   case 'returned':
+     // Undo customer return: remove it
+     invDelta = -qty;
+     break;
+   default:
+     invDelta = 0; // unknown action → no-op
+ }
     
   // === NEW (B): fail-safe if product isn't present in inventory; no silent create
     // Read aggregate BEFORE patch
