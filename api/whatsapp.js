@@ -1034,29 +1034,34 @@ if (typeof globalThis.normalizeUnit !== 'function') {
     }
   };
 }
+  
+// ========= Undo Pre‑Arm (commit‑first) =========
+// Short‑lived map linking a DB‑armed correction window with the next send (shopId only)
+globalThis.__undoPreArmedByShop = globalThis.__undoPreArmedByShop ?? new Map();
+const UNDO_PREARM_TTL_MS = 12_000; // keep ordering tight; prevent carry‑over
 
-  // ========= Undo Pre‑Arm (commit‑first) =========
-  // Short‑lived map linking a DB‑armed correction window with the next send (shopId only)
-  globalThis.__undoPreArmedByShop = globalThis.__undoPreArmedByShop ?? new Map();
-  const UNDO_PREARM_TTL_MS = 12_000; // keep ordering tight; prevent carry‑over
-
-  /**
-   * preArmUndoFromCommit(shopId, txn, lang)
-   * (DB layer calls this; send layer only emits CTA if pre‑armed)
-   */
-  if (typeof globalThis.preArmUndoFromCommit !== 'function') {
-    globalThis.preArmUndoFromCommit = async function preArmUndoFromCommit(shopId, txn, lang = 'en') {
+/**
+ * preArmUndoFromCommit(shopId, txn, lang)
+ * txn = { action, productRawForDb|product, quantity, unit, compositeKey?, saleRecordId? }
+ * (DB layer usually calls this; WhatsApp may call when it has post‑commit result objects)
+ */
+if (typeof globalThis.preArmUndoFromCommit !== 'function') {
+  globalThis.preArmUndoFromCommit = async function preArmUndoFromCommit(shopId, txn, lang = 'en') {
       try {
         if (typeof openCorrectionWindow !== 'function') return;
         const a0 = String(txn?.action ?? '').toLowerCase().trim();
-        const action = a0 === 'sold' ? 'sale' : a0 === 'purchased' ? 'purchase' : a0 === 'returned' ? 'return' : a0;
-        const lastTxn = {
-          action,
-          product: txn?.productRawForDb ?? txn?.product ?? '',
-          quantity: Number(txn?.quantity ?? 0),
-          unit: normalizeUnit(txn?.unit ?? 'pieces'),
-          compositeKey: txn?.compositeKey ?? null
-        };
+        const action = a0 === 'sold' ? 'sale' : a0 === 'purchased' ? 'purchase' : a0 === 'returned' ? 'return' : a0;                
+        const a0 = String(txn?.action ?? '').toLowerCase().trim();
+              // Canonicalize to nouns expected by Undo: sale | purchase | return
+              const action = a0 === 'sold' ? 'sale' : a0 === 'purchased' ? 'purchase' : a0 === 'returned' ? 'return' : a0;
+              const lastTxn = {
+                action,                              // 'sale' | 'purchase' | 'return'
+                product: txn?.productRawForDb ?? txn?.product ?? '',
+                quantity: Number(txn?.quantity ?? 0),
+                unit: normalizeUnit(txn?.unit ?? 'pieces'),
+                compositeKey: txn?.compositeKey ?? null,
+                saleRecordId: txn?.saleRecordId ?? null
+              };
         if (!lastTxn.product) return;
         await openCorrectionWindow(shopId, lastTxn, lang);
         // Shop‑scoped flag only (no reqId coupling)
@@ -13709,24 +13714,28 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   const results = [];
   const pendingNoPrice = [];   // <– used only to drive nudges; we DO NOT write for these
   const accepted = [];
-  
-  // ========= Undo Pre‑Arm (commit‑first) – shared (safe if defined elsewhere) =========
+    
+  // ========= Undo Pre‑Arm (commit‑first) – DB-local helper =========
+  // Calls openCorrectionWindow(...) and sets a short-lived in-memory flag used by the sender.
   globalThis.__undoPreArmedByShop = globalThis.__undoPreArmedByShop ?? new Map();
   const UNDO_PREARM_TTL_MS = 12_000;
   async function preArmUndoFromCommit(shopIdArg, txn, langArg = 'en') {
     try {
-      if (typeof openCorrectionWindow !== 'function') return;              
-        const a0 = String(txn?.action ?? '').toLowerCase().trim();
-        const action = a0 === 'sold' ? 'sale' : a0 === 'purchased' ? 'purchase' : a0 === 'returned' ? 'return' : a0;
-        const lastTxn = {
+      if (typeof openCorrectionWindow !== 'function') return;
+      const a0 = String(txn?.action ?? '').toLowerCase().trim();
+      // Canonical nouns expected by Undo: sale | purchase | return
+      const action = a0 === 'sold' ? 'sale' : a0 === 'purchased' ? 'purchase' : a0 === 'returned' ? 'return' : a0;
+      const lastTxn = {
         action,
         product: txn?.productRawForDb ?? txn?.product ?? '',
         quantity: Number(txn?.quantity ?? 0),
         unit: normalizeUnit(txn?.unit ?? 'pieces'),
-        compositeKey: txn?.compositeKey ?? null
+        compositeKey: txn?.compositeKey ?? null,
+        saleRecordId: txn?.saleRecordId ?? null
       };
       if (!lastTxn.product) return;
       await openCorrectionWindow(shopIdArg, lastTxn, langArg);
+      // sender emit-only: short-lived flag keyed by shop
       globalThis.__undoPreArmedByShop.set(shopIdArg, { ts: Date.now(), lang: langArg });
       setTimeout(() => globalThis.__undoPreArmedByShop.delete(shopIdArg), UNDO_PREARM_TTL_MS);
     } catch (e) {
@@ -14318,18 +14327,23 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
           // Add transaction logging
           console.log(`[Transaction] Sale processed - Product: ${product}, Qty: ${Math.abs(update.quantity)}, Price: ${salePrice}, Total: ${saleValue}`);
-          
-          // DB COMMIT POINT (Sale): arm Undo only for single‑item calls
+                              
+          // DB COMMIT POINT (Sale) → Arm only for single-item calls
               try {
                 if (isSingleItemCall && result?.success) {
                   const composite = (saleGuard?.selectedBatchCompositeKey ?? selectedBatchCompositeKey) || null;
-                  await preArmUndoFromCommit(shopId, {
-                    action: 'sold',
-                    productRawForDb,
-                    quantity: Math.abs(update.quantity),
-                    unit: normalize(overallUnit ?? update.unit),
-                    compositeKey: normalizeCompositeKey?.(composite) ?? composite
-                  }, lang);
+                  await preArmUndoFromCommit(
+                    shopId,
+                    {
+                      action: 'sold',
+                      productRawForDb,
+                      quantity: Math.abs(update.quantity),
+                      unit: normalize(overallUnit ?? update.unit),
+                      compositeKey: normalizeCompositeKey?.(composite) ?? composite,
+                      saleRecordId: salesResult?.id ?? null
+                    },
+                    lang
+                  );
                 }
               } catch (_) {}
 
