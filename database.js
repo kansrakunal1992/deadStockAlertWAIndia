@@ -28,14 +28,24 @@ async function openCorrectionWindow(shopId, lastTxn, detectedLanguage = 'en') {
                       : rawAct === 'purchased' ? 'purchase'
                       : rawAct === 'returned' ? 'return'
                       : rawAct;
+       
+      // Canonicalize action into noun form to avoid verb/noun mismatches
+       const rawAct = String(lastTxn.action ?? '').toLowerCase().trim();
+       const canonAct =
+         rawAct === 'sold'      ? 'sale'     :
+         rawAct === 'purchased' ? 'purchase' :
+         rawAct === 'returned'  ? 'return'   :
+         rawAct;
        const payload = {
          last: {
            action: canonAct, // stable action name
-        product: lastTxn.product,
-        quantity: Number(lastTxn.quantity ?? 0),
-        unit: normalizeUnit(lastTxn.unit ?? 'pieces'),
-        compositeKey: lastTxn.compositeKey ?? null // for purchase batch, when available
-      },
+           product: lastTxn.product,
+           quantity: Number(lastTxn.quantity ?? 0),
+           unit: normalizeUnit(lastTxn.unit ?? 'pieces'),
+           compositeKey: lastTxn.compositeKey ?? null, // precise batch (if any)
+           // Optional: sale record id if caller provides it (used to void Sales on Undo)
+           saleRecordId: lastTxn.saleRecordId ?? null
+         },
       // === NEW (A): canonical anchors to make Undo deterministic ===
       anchors: {
         // canonical product key used by inventory filters
@@ -46,6 +56,19 @@ async function openCorrectionWindow(shopId, lastTxn, detectedLanguage = 'en') {
       createdAtISO: new Date().toISOString(),
       ttlSec: CORRECTION_WINDOW_TTL_SEC
     };
+  
+ // Enrich purchase arm with the previous Product price so Undo can revert it
+ try {
+   if (payload.last.action === 'purchase') {
+     const prev = await getProductPrice(payload.last.product, shopId).catch(() => null);
+     if (prev && prev.success) {
+       payload.meta = {
+         prevPrice: Number(prev.price ?? 0),
+         prevUnit : prev.unit ?? 'pieces'
+       };
+     }
+   }
+ } catch (_) { /* non-blocking */ }
   
   // AUDIT: arm correction window (shows TTL and computed expiry)
     try {
@@ -162,56 +185,98 @@ async function applyUndoLastTxn(shopId) {
 
   const qty  = Number(last.quantity || 0);
   const unit = normalizeUnit(last.unit || 'pieces');
-  
- // Normalize action to handle verb/noun variants
- const action = String(last.action ?? '').toLowerCase().trim();
- let invDelta = 0;
- switch (action) {
-   case 'sale':
-   case 'sold':
-     // Undo sale: add back to stock
-     invDelta = +qty;
-     // (Optional) also add back to the batch if compositeKey was recorded for sales
-     if (last.compositeKey) {
-       await updateBatchQuantityByCompositeKey(last.compositeKey, +qty, unit);
-     }
-     break;
-   case 'purchase':
-   case 'purchased':
-   case 'bought':
-     // Undo purchase: subtract from stock and reduce the batch if we know it
-     invDelta = -qty;
-     if (last.compositeKey) {
-       await updateBatchQuantityByCompositeKey(last.compositeKey, -qty, unit);
-     }
-     break;
-   case 'return':
-   case 'returned':
-     // Undo customer return: remove it
-     invDelta = -qty;
-     break;
-   default:
-     invDelta = 0; // unknown action → no-op
- }
+     
+  // Normalize action to handle verb/noun variants robustly
+   const action = String(last.action ?? '').toLowerCase().trim();
+   const qty  = Number(last.quantity ?? 0);
+   const unit = normalizeUnit(last.unit ?? 'pieces');
+   let invDelta = 0;
+   let batchPatched = false;
+   let saleDeleted  = false;
+   let priceReverted = false;
+   switch (action) {
+     case 'sale':
+     case 'sold':
+       // Undo sale: add back to stock
+       invDelta = +qty;
+       // Also add back to the batch if we know which one was used
+       if (last.compositeKey) {
+         try {
+           const r = await updateBatchQuantityByCompositeKey(last.compositeKey, +qty, unit);
+           batchPatched = !!r?.success;
+         } catch (_) {}
+       }
+       // If we saved the Sales record id, delete/void it now
+       if (last.saleRecordId) {
+         try {
+           await airtableSalesRequest({
+             method: 'delete',
+             url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${SALES_TABLE_NAME}/${last.saleRecordId}`
+           }, 'Undo::DeleteSale');
+           saleDeleted = true;
+         } catch (_) { /* non-blocking */ }
+       }
+       break;
+     case 'purchase':
+     case 'purchased':
+     case 'bought':
+       // Undo purchase: subtract from stock and reduce the precise batch if known
+       invDelta = -qty;
+       if (last.compositeKey) {
+         try {
+           const r = await updateBatchQuantityByCompositeKey(last.compositeKey, -qty, unit);
+           batchPatched = !!r?.success;
+         } catch (_) {}
+       }
+       // Revert Products.price if we captured the previous price at arm-time
+       try {
+         const prevPrice = Number(state?.data?.meta?.prevPrice ?? NaN);
+         if (Number.isFinite(prevPrice) && prevPrice >= 0) {
+           const up = await upsertProduct({
+             shopId,
+             name: String(last.product ?? '').trim(),
+             price: prevPrice,
+             unit: state?.data?.meta?.prevUnit ?? unit
+           });
+           priceReverted = !!up?.success;
+         }
+       } catch (_) {}
+       break;
+     case 'return':
+     case 'returned':
+       // Undo customer return (we previously added stock): remove it
+       invDelta = -qty;
+       // If a compositeKey was recorded for return, decrease that batch as well
+       if (last.compositeKey) {
+         try {
+           const r = await updateBatchQuantityByCompositeKey(last.compositeKey, -qty, unit);
+           batchPatched = !!r?.success;
+         } catch (_) {}
+       }
+       break;
+     default:
+       invDelta = 0;
+   }
     
   // === NEW (B): fail-safe if product isn't present in inventory; no silent create
     // Read aggregate BEFORE patch
     const beforeAgg = await getProductInventoryAggregate(shopId, productKey);
     if (!beforeAgg?.success || (beforeAgg.rows ?? 0) === 0) {
       return { success: false, error: 'not-found', msLeft };
-    }
-    // Apply patch only when there is something to revert
-    let patched = false;
-    if (invDelta !== 0) {
-      const r = await updateInventory(shopId, productKey, invDelta, unit);
-      patched = !!r?.success;
-    }
+    }      
+  // Apply patch only when there is something to revert
+   let patched = false;
+   if (invDelta !== 0) {
+     const r = await updateInventory(shopId, productKey, invDelta, unit);
+     patched = !!r?.success;
+   }
     // Read aggregate AFTER patch for verification
-    const afterAgg = await getProductInventoryAggregate(shopId, productKey);
-    const changed =
-      !!patched &&
-      afterAgg?.success &&
-      Math.abs(Number(afterAgg.quantity ?? 0) - Number(beforeAgg.quantity ?? 0)) > 0;
+    const afterAgg = await getProductInventoryAggregate(shopId, productKey);        
+    const changedInventory =
+       !!patched &&
+       afterAgg?.success &&
+       Math.abs(Number(afterAgg.quantity ?? 0) - Number(beforeAgg.quantity ?? 0)) > 0;
+     const changed = changedInventory || batchPatched || saleDeleted || priceReverted;
   
     // AUDIT: summarize result (delta & aggregates)
       try {
@@ -230,18 +295,24 @@ async function applyUndoLastTxn(shopId) {
     if (changed) {              
         try { await deleteCorrectionState(state.id); } catch (_) {}
     }
-    // Return a rich result so the caller can decide the ACK vs failure message        
-    return changed
-        ? {
-            success: true,
-            undone: { ...last, product: productKey },
-            changed: true,
-            stockBefore: beforeAgg.quantity,
-            stockAfter: afterAgg.quantity,
-            unit: afterAgg.unit,
-            msLeft
-          }
-        : { success: false, error: 'not-found', changed: false, msLeft };
+    // Return a rich result so the caller can decide the ACK vs failure message              
+   return changed
+     ? {
+         success: true,
+         undone: { ...last, product: productKey },
+         changed: true,
+         stockBefore: beforeAgg.quantity,
+         stockAfter: afterAgg.quantity,
+         unit: afterAgg.unit,
+         msLeft,
+         sideEffects: {
+           inventory: changedInventory,
+           batch: batchPatched,
+           salesDeleted: saleDeleted,
+           priceReverted
+         }
+       }
+     : { success: false, error: 'not-found', changed: false, msLeft };
 }
 
 async function closeCorrectionWindow(shopId) { 
