@@ -454,16 +454,16 @@ const language = normalizeLangForContent(lang);
   // Fast path with TTL
   const cached = sidsByLang.get(language);
   if (cached && (Date.now() - (cached.ts || 0) < TTL_MS)) {      
-  console.log(`[contentCache] cache-hit for ${language}`, {
-        quickReplySid      : !!cached.quickReplySid,
-        listPickerSid      : !!cached.listPickerSid,
-        trialCtaSid        : !!cached.trialCtaSid,
-        paidCtaSid         : !!cached.paidCtaSid,
-        paidConfirmSid     : !!cached.paidConfirmSid,
-        onboardingQrSid    : !!cached.onboardingQrSid,
-        correctionUndoSid  : !!cached.correctionUndoSid,
-        ts                 : cached.ts
-      });
+  //console.log(`[contentCache] cache-hit for ${language}`, {
+  //      quickReplySid      : !!cached.quickReplySid,
+  //      listPickerSid      : !!cached.listPickerSid,
+  //      trialCtaSid        : !!cached.trialCtaSid,
+  //      paidCtaSid         : !!cached.paidCtaSid,
+  //      paidConfirmSid     : !!cached.paidConfirmSid,
+  //      onboardingQrSid    : !!cached.onboardingQrSid,
+  //      correctionUndoSid  : !!cached.correctionUndoSid,
+  //      ts                 : cached.ts
+  //    });
     return cached;
   }
   // (Re)create or fetch once
