@@ -182,8 +182,6 @@ async function applyUndoLastTxn(shopId) {
      
   // Normalize action to handle verb/noun variants robustly
    const action = String(last.action ?? '').toLowerCase().trim();
-   const qty  = Number(last.quantity ?? 0);
-   const unit = normalizeUnit(last.unit ?? 'pieces');
    let invDelta = 0;
    let batchPatched = false;
    let saleDeleted  = false;
