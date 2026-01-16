@@ -30,12 +30,6 @@ async function openCorrectionWindow(shopId, lastTxn, detectedLanguage = 'en') {
                       : rawAct;
        
       // Canonicalize action into noun form to avoid verb/noun mismatches
-       const rawAct = String(lastTxn.action ?? '').toLowerCase().trim();
-       const canonAct =
-         rawAct === 'sold'      ? 'sale'     :
-         rawAct === 'purchased' ? 'purchase' :
-         rawAct === 'returned'  ? 'return'   :
-         rawAct;
        const payload = {
          last: {
            action: canonAct, // stable action name
