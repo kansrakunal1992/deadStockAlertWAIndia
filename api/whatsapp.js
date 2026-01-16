@@ -1048,9 +1048,7 @@ const UNDO_PREARM_TTL_MS = 12_000; // keep ordering tight; prevent carry‑over
 if (typeof globalThis.preArmUndoFromCommit !== 'function') {
   globalThis.preArmUndoFromCommit = async function preArmUndoFromCommit(shopId, txn, lang = 'en') {
       try {
-        if (typeof openCorrectionWindow !== 'function') return;
-        const a0 = String(txn?.action ?? '').toLowerCase().trim();
-        const action = a0 === 'sold' ? 'sale' : a0 === 'purchased' ? 'purchase' : a0 === 'returned' ? 'return' : a0;                
+        if (typeof openCorrectionWindow !== 'function') return;            
         const a0 = String(txn?.action ?? '').toLowerCase().trim();
               // Canonicalize to nouns expected by Undo: sale | purchase | return
               const action = a0 === 'sold' ? 'sale' : a0 === 'purchased' ? 'purchase' : a0 === 'returned' ? 'return' : a0;
