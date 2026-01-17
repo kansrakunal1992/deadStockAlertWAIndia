@@ -6635,9 +6635,11 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
 
     let msg0 = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + '✅ Paid Plan activated. Thank you! Your details are saved.', lang, `paid-onboard-done-${shopId}`);
     await sendMessageDedup(From, finalizeForSend(msg0, lang));
-
-    // Normal paid confirmation + menus
-    try { await sendWhatsAppPaidConfirmation(From); } catch {}
+    
+    // Paid confirmation already sent above ("details are saved").
+    // Just send menus - commented below lines hence
+      // Normal paid confirmation + menus
+      //try { await sendWhatsAppPaidConfirmation(From); } catch {}
     try {
       await ensureLangTemplates(lang);
       const sids = getLangSids(lang);
