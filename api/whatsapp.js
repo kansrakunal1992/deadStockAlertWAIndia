@@ -5852,16 +5852,26 @@ async function sendWhatsAppPaidConfirmation(From) {
     // Retain your paid-capture onboarding hook        
     // If configured for paid capture and details are incomplete, START CAPTURE ONCE (persisted state gate)
           try {
-            if (CAPTURE_SHOP_DETAILS_ON === 'paid') {
-              const details = await getShopDetails(shopId).catch(() => null);
-              const missing = !details || !details.name || !details.address; // GSTIN optional
+            if (CAPTURE_SHOP_DETAILS_ON === 'paid') {                            
+              const detailsResp = await getShopDetails(shopId).catch(() => null);
+              const sd = detailsResp?.shopDetails ?? null;
+              const missing = !sd || !sd.name || !sd.address;
               const PAID_CAPTURE_TTL_MS = Number(process.env.PAID_CAPTURE_TTL_MS ?? (24 * 60 * 60 * 1000)); // 24h
               // Read current user state; skip re-init if already in capture within TTL
-              const st = await getUserStateFromDB(shopId).catch(() => null);
+              const st = await getUserStateFromDB(shopId).catch(() => null);                            
+              const startedAtISO =
+                st?.data?.startedAt ||
+                st?.data?.createdAtISO ||     // optional fallback if you ever use it
+                null;
+              
+              const startedAtMs = startedAtISO ? new Date(startedAtISO).getTime() : 0;
+              
               const inCapture =
                 st?.mode === 'onboarding_paid_capture' &&
-                st?.startedAt &&
-                (Date.now() - new Date(st.startedAt).getTime()) < PAID_CAPTURE_TTL_MS;
+                Number.isFinite(startedAtMs) &&
+                startedAtMs > 0 &&
+                (Date.now() - startedAtMs) < PAID_CAPTURE_TTL_MS;
+
               if (missing && !inCapture) {
                 await setUserState(shopId, 'onboarding_paid_capture', { startedAt: new Date().toISOString() });
                 await beginPaidOnboarding(From, lang); // fire once
