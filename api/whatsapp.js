@@ -16714,13 +16714,13 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
             }
           }
                           
-        baseMessage += USE_TEMPLATE_CONFIRM_TRANSLATION
-                    ? `+            ? `\n${composeConfirmUpdatedLine(successCount, totalProcessed, detectedLanguage)}`
-                    : `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
-                  
-                  const formattedResponse = USE_TEMPLATE_CONFIRM_TRANSLATION
-                    ? baseMessage
-                    : await t(baseMessage, detectedLanguage, requestId);
+                     baseMessage += USE_TEMPLATE_CONFIRM_TRANSLATION
+                  ? `\n${composeConfirmUpdatedLine(successCount, totalProcessed, detectedLanguage)}`
+                  : `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
+                const formattedResponse = USE_TEMPLATE_CONFIRM_TRANSLATION
+                  ? baseMessage.trim()
+                  : await t(baseMessage.trim(), detectedLanguage, requestId);
+                await sendMessageDedup(From, formattedResponse, { lang: detectedLanguage, requestId });
         }
         
         // Debug: Log final totals
