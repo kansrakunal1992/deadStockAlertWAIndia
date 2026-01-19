@@ -3505,6 +3505,54 @@ const SWITCH_WORD = {
   gu: 'મોડ'
 };
 
+// =============================================================================
+// [UNIQ:ACK-FOOTER-MEM-ONLY-001] ACK footer from memory ONLY (zero DB/Airtable)
+// - Uses __lastStickyAction (in-memory) and localized MODE_BADGE/SWITCH_WORD.
+// - If mode unknown => returns '' (ACK goes WITHOUT footer).
+// =============================================================================
+const ACK_MODE_TTL_MS = Number(process.env.ACK_MODE_TTL_MS ?? 10 * 60 * 1000); // 10m best-effort
+
+function _ackFooterBaseLang(lang) {
+  const L = String(lang ?? 'en').toLowerCase().trim();
+  // For romanized variants (hi-latn, bn-latn, ...), keep footer in Latin by using English keys.
+  return L.endsWith('-latn') ? 'en' : L.replace(/-latn$/, '');
+}
+
+function _ackBadgeKey(action) {
+  const a = String(action ?? '').toLowerCase().trim();
+  if (a === 'purchased' || a === 'purchase') return 'purchase';
+  if (a === 'sold' || a === 'sale') return 'sold';
+  if (a === 'returned' || a === 'return') return 'returned';
+  return null;
+}
+
+function buildAckFooterFromMemory(From, lang) {
+  try {
+    // __lastStickyAction is maintained in-memory to reflect mode immediately.
+    const shopId = (typeof shopIdFrom === 'function')
+      ? shopIdFrom(From)
+      : String(From ?? '').replace('whatsapp:', '');
+
+    const st = __lastStickyAction?.get?.(shopId);
+    if (!st || !st.action) return '';
+
+    // optional staleness guard
+    if (st.ts && (Date.now() - Number(st.ts)) > ACK_MODE_TTL_MS) return '';
+
+    const key = _ackBadgeKey(st.action);
+    if (!key) return '';
+
+    const L = _ackFooterBaseLang(lang);
+    const badge = (MODE_BADGE?.[key]?.[L]) ?? (MODE_BADGE?.[key]?.en);
+    const sw    = (SWITCH_WORD?.[L]) ?? SWITCH_WORD.en;
+    if (!badge || !sw) return '';
+
+    return `\n«${badge} • ${sw}»`;
+  } catch {
+    return '';
+  }
+}
+
 // ===== TERMINAL COMMANDS & ALIAS GUARD (new unified) =========================
 // Commands that are terminal (one-shot, read-only). Once resolved to these,
 // we should NOT recurse/re-route or re-orchestrate in the same cycle.
@@ -5729,7 +5777,11 @@ async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
          // FAST PATH: no further awaits before initiating send
          const lang = canonicalizeLang(langHint ?? 'en');
          const raw  = getStaticLabel(kind === 'voice' ? 'ackVoice' : 'ack', lang) ?? getStaticLabel('ack', 'en');
-         const body = finalizeForSend(raw, lang); // single-script + numerals
+    
+         // Build body first (fast), then append footer ONLY if mode is known in memory (zero DB).
+                   let body = finalizeForSend(raw, lang); // single-script + numerals 
+                   const footer = buildAckFooterFromMemory(From, lang); // '' if unknown mode
+                   if (footer) body = (body + footer).trim();
     
          const postTs = Number(globalThis.__lastPostTs || Date.now());
          markAckSent(From);
