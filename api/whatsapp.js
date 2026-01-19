@@ -5660,6 +5660,7 @@ const EARLY_ACK_TIMEOUT_MS = Number(process.env.EARLY_ACK_TIMEOUT_MS ?? 500);
 const _recentAcks = (globalThis._recentAcks = globalThis._recentAcks ?? new Map()); // from -> {at}
 const ACK_SILENCE_WINDOW_MS = Number(process.env.ACK_SILENCE_WINDOW_MS ?? 1200);
 const EARLY_ACK = { listPicker: true, text: false, voice: true };
+const ACK_PLAN_TIMEOUT_MS = Number(process.env.ACK_PLAN_TIMEOUT_MS ?? 250);
 
 function wasAckRecentlySent(From, windowMs = ACK_SILENCE_WINDOW_MS) {
   try {
@@ -5698,48 +5699,45 @@ async function getPreferredLangQuick(From, hint = 'en') {
  * Send ultra-early ack (text/voice). No t(), no footer; single-script + digits normalized.
  * Safe to call multiple times — guarded by _recentAcks.
  */
+async function isActivatedForAckQuick(shopId, timeoutMs = ACK_PLAN_TIMEOUT_MS) {
+   try {
+     const planInfo = await Promise.race([
+       getUserPlanQuick(shopId),
+       new Promise(resolve => setTimeout(() => resolve(null), timeoutMs))
+     ]);
+     if (!planInfo) return null; // unknown within timeout → treat as not safe to ACK
+     const plan = String(planInfo?.plan ?? '').toLowerCase();
+     const end  = getUnifiedEndDate(planInfo);
+     const activated =
+       (plan === 'paid') ||
+       (plan === 'trial' && end && new Date(end).getTime() > Date.now());
+     return activated;
+   } catch {
+     return null;
+   }
+ }
+
 async function sendProcessingAckQuick(From, kind = 'text', langHint = 'en') {
   try {        
     if (wasAckRecentlySent(From)) return; // prevent duplicate ack
-    if (!SEND_EARLY_ACK) return;           
-        // Activation gate (ALL kinds): suppress ultra‑early ack until Trial/Paid is active
-            const shopId = String(From ?? '').replace('whatsapp:', '');
-            try {
-              // Fast L1 cache read; avoids blocking the critical path
-              const planInfo = await getUserPlanQuick(shopId);
-              const plan = String(planInfo?.plan ?? '').toLowerCase();
-              const end  = getUnifiedEndDate(planInfo);
-              const activated =
-                (plan === 'paid') ||
-                (plan === 'trial' && end && new Date(end).getTime() > Date.now());
-              if (!activated) return; // skip any ack before activation (trial or paid)
-            } catch (_) {
-              // Best‑effort: if plan can't be resolved quickly, avoid sending ack pre‑activation
-              return;
-            }
-
-        // Prefer a script/hinglish guess when available; fall back to incoming hint
-        // NOTE: callers that don't pass source text should use the wrapper below.              
-        const preHint = canonicalizeLang(langHint ?? 'en');             
-        // TEXT: do NOT override with DB preference; VOICE can retain pinned pref.
-        let lang = preHint;
-        if (kind === 'voice') {
-          try {
-            const pref = await getUserPreference(shopId);
-            if (pref?.success && pref.language) lang = String(pref.language).toLowerCase();
-          } catch {}
-        }
-         const raw = getStaticLabel(kind === 'voice' ? 'ackVoice' : 'ack', lang) ?? getStaticLabel('ack', 'en');               
-      // Ensure footer uses THIS TURN language for text acks
-          const tagOpts = { kind, noPrefOverride: (kind === 'text') };
-          let withFooter = await tagWithLocalizedMode(From, raw, lang, tagOpts);
-        withFooter = finalizeForSend(withFooter, lang);                    // single‑script + numerals
-        // Instrument ack latency (POST→ack‑sent). The webhook sets reqStart in scope.
-        const __t0 = Date.now();        
-        const t0 = Date.now();
-        await sendMessageViaAPI(From, withFooter);
-        try { console.log('[ack]', { ms_post_to_sent: Date.now() - (globalThis.__lastPostTs || t0) }); } catch {}
-        markAckSent(From);
+    if (!SEND_EARLY_ACK) return;                           
+    // Activation gate (B): only ACK if Trial/Paid is ACTIVE, but never wait long
+         const shopId = String(From ?? '').replace('whatsapp:', '');
+         const activated = await isActivatedForAckQuick(shopId);
+         if (activated !== true) return; // false OR unknown within timeout → do not send ACK
+    
+         // FAST PATH: no further awaits before initiating send
+         const lang = canonicalizeLang(langHint ?? 'en');
+         const raw  = getStaticLabel(kind === 'voice' ? 'ackVoice' : 'ack', lang) ?? getStaticLabel('ack', 'en');
+         const body = finalizeForSend(raw, lang); // single-script + numerals
+    
+         const postTs = Number(globalThis.__lastPostTs || Date.now());
+         markAckSent(From);
+    
+         // Fire-and-forget so ACK "send" is initiated immediately
+         sendMessageViaAPI(From, body)
+           .then(() => { try { console.log('[ack]', { ms_post_to_sent: Date.now() - postTs }); } catch {} })
+           .catch((e) => { try { console.warn('[ack-fast] failed:', e?.message); } catch {} });
   } catch (e) {
     try { console.warn('[ack-fast] failed:', e?.message); } catch {}
   }
@@ -5762,10 +5760,9 @@ async function sendProcessingAckQuickFromText(From, kind = 'text', sourceText = 
         hint = String(prefLang ?? hint).toLowerCase();
       } catch { /* keep hint as-is */ }
     }
-    // Previously this function sent an early ACK for text.
-    // We now suppress it to ensure ACK only comes from the List‑Picker path.
-    console.log(`[ACK-TEXT] suppressed early ACK for text from=${From} hint=${hint}`);
-    return; // NO‑OP: do NOT call sendProcessingAckQuick here
+  // Re-enable text ACK (still activation-gated inside sendProcessingAckQuick)
+       sendProcessingAckQuick(From, kind, hint).catch(() => {});
+       return;
   } catch (e) {
     try { console.warn('[ack-fast-wrapper] failed:', e?.message); } catch {}
   }
@@ -7025,15 +7022,9 @@ async function handleInteractiveSelection(req) {
 
       const bodyExamples = [header, speakLine, ...bullets].join('\n');
       const reqId = String(req?.headers?.['x-request-id'] ?? Date.now());
-
-      // NEW: direct localized ACK for Examples, with localized mode/footer
-      try {
-        let ack0 = await t('Processing your message…', langUi, `${reqId}::examples-ack`);
-        let ackTagged = await tagWithLocalizedMode(from, ack0, langUi);
-        ackTagged = enforceSingleScriptSafe(ackTagged, langUi);
-        ackTagged = normalizeNumeralsToLatin(ackTagged).trim();
-        await sendMessageViaAPI(from, ackTagged);
-      } catch(_) { /* best-effort only; do not block examples */ }
+          
+      // Fast ACK: rely on ultra-early ACK path; this will no-op if already sent
+      try { sendProcessingAckQuick(from, 'text', langUi).catch(() => {}); } catch (_) {}
 
       const msg0 = await t(bodyExamples, langUi, `${reqId}::qr-examples`);
       let msgFinal = await tagWithLocalizedMode(from, msg0, langUi);
@@ -7455,7 +7446,7 @@ async function handleInteractiveSelection(req) {
 
   // ✅ Ultra‑early localized ACK using saved preference
   if (EARLY_ACK.listPicker) {
-    await sendProcessingAckQuick(from, 'text', lpLang);
+   sendProcessingAckQuick(from, 'text', lpLang).catch(() => {});
   }
 
   const route = (cmd) => handleQuickQueryEN(cmd, from, lpLang, 'lp');
