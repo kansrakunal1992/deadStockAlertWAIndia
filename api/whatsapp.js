@@ -3459,11 +3459,14 @@ async function emitVoiceAckIfNeeded(req) {
     const lang = ensureLangExact(
       pref?.language
         ?? (await detectLanguageWithFallback(req?.body?.Body ?? '', From, 'voice-ack'))
-    );
-    const ack = getStaticLabel('ackVoice', lang);
-    const tagged = await tagWithLocalizedMode(From, ack, lang, { kind: 'voice' });
-    await sendMessageViaAPI(From, tagged);
-    return true;
+    );        
+    // IMPORTANT: route voice ACK through unified early-ACK path so:
+          // - activation gate is respected (trial/paid only)
+          // - dedupe (wasAckRecentlySent/markAckSent) is shared with text ACK
+          const before = wasAckRecentlySent(From);
+          await sendProcessingAckQuick(From, 'voice', lang);
+          // true only if ACK was already sent or was newly marked as sent
+          return before || wasAckRecentlySent(From);
   } catch (e) {
     console.warn('[voice-ack] failed:', e?.message);
     return false;
@@ -7205,7 +7208,9 @@ async function handleInteractiveSelection(req) {
             ackTagged = renderNativeglishLabels(ackTagged, lang);
             ackTagged = enforceSingleScriptSafe(ackTagged, lang);
             ackTagged = normalizeNumeralsToLatin(ackTagged).trim();
-            await sendMessageViaAPI(from, ackTagged);
+            await sendMessageViaAPI(from, ackTagged);                
+    // Ensure any downstream paths see ACK as sent (prevents a later second ACK)
+           try { markAckSent(from); } catch {}
           }
     } catch(_) { /* best-effort ack */ }
 
@@ -12774,15 +12779,10 @@ async function handleQueryCommand(Body, From, detectedLanguage, requestId) {
   // NEW: record activity (touch LastUsed) for every inbound
   try { await touchUserLastUsed(String(From).replace('whatsapp:', '')); } catch {}    
   // NEW: gate for paywall/onboarding
-  const gate = await ensureAccessOrOnboard(From, Body, detectedLanguage);        
-  // Ack only if this request was not already handled (e.g., by the greeting short-circuit)
+  const gate = await ensureAccessOrOnboard(From, Body, detectedLanguage);            
+  // Unify ACK emitter: use ultra-early ACK wrapper (deduped + activation gated)
     if (!handledRequests.has(requestId)) {
-      try {
-        await sendMessageQueued(
-          From,
-          await t('Processing your message…', detectedLanguage, `${requestId}::ack`)
-        );
-      } catch {}
+      try { sendProcessingAckQuickFromText(From, 'text', Body).catch(() => {}); } catch {}
     }
 
   if (!gate.allow) return true; // already responded
@@ -19977,14 +19977,21 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
    }
  }
   try {           
-      // Emit localized "Transcribing your voice…" immediately for audio turns
-        await emitVoiceAckIfNeeded(req);
+      // Emit localized "Transcribing your voice…" immediately for audio turns              
+      let voiceAckSent = false;
+          try {
+            voiceAckSent = await emitVoiceAckIfNeeded(req);
+          } catch { voiceAckSent = false; }
         // For plain text and non-audio media, keep the text ack ultra-early
         const isAudioPost =
           Number(req.body?.NumMedia ?? 0) > 0 &&
           /\baudio\//i.test(String(req.body?.MediaContentType0 ?? ''));
         if (!isAudioPost) {
-          sendProcessingAckQuickFromText(From, 'text', Body).catch(() => {});
+          sendProcessingAckQuickFromText(From, 'text', Body).catch(() => {});                 
+        } else if (!voiceAckSent) {
+              // Fallback: if voice ACK failed, attempt unified ACK once (still activation-gated)
+              // Use 'voice' kind so label is "Transcribing your voice…"
+              sendProcessingAckQuickFromText(From, 'voice', Body ?? '').catch(() => {});
         }
     } catch { /* non-blocking */ }
 
