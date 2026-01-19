@@ -7197,13 +7197,16 @@ async function handleInteractiveSelection(req) {
   }
 
   async function sendExamplesWithAck(from, lang, examplesText, requestId = 'examples') {
-    try {
-      const ack0 = await t('Processing your message…', lang, `${requestId}::ack`);
-      let ackTagged = await tagWithLocalizedMode(from, ack0, lang);
-      ackTagged = renderNativeglishLabels(ackTagged, lang);
-      ackTagged = enforceSingleScriptSafe(ackTagged, lang);
-      ackTagged = normalizeNumeralsToLatin(ackTagged).trim();
-      await sendMessageViaAPI(from, ackTagged);
+    try {      
+    // Prevent double ACK: if early ACK already sent, skip this one.
+          if (!wasAckRecentlySent(from)) {
+            const ack0 = await t('Processing your message…', lang, `${requestId}::ack`);
+            let ackTagged = await tagWithLocalizedMode(from, ack0, lang);
+            ackTagged = renderNativeglishLabels(ackTagged, lang);
+            ackTagged = enforceSingleScriptSafe(ackTagged, lang);
+            ackTagged = normalizeNumeralsToLatin(ackTagged).trim();
+            await sendMessageViaAPI(from, ackTagged);
+          }
     } catch(_) { /* best-effort ack */ }
 
     try {
@@ -12263,12 +12266,12 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
                 return true;
               }
             } catch { /* best-effort */ }
-                   
-    // IMPORTANT: Only send the generic ack if we did NOT (and will not) show welcome.
-      // At this point, welcome has already been checked above and returned if sent.           
-      if (!isQuestion && !handledRequests.has(requestId)) {
-         try { await sendMessageQueued(From, await t('Processing your message…', detectedLanguage, `${requestId}::ack`)); } catch {}
-       }
+                           
+    // IMPORTANT: use the unified ultra-early ACK (activation-gated), never a second “generic” ACK.
+        // This ensures max 1 ACK per inbound message.
+        if (!isQuestion && !handledRequests.has(requestId)) {
+          try { sendProcessingAckQuickFromText(From, 'text', text).catch(() => {}); } catch {}
+        }
 
     if (gate && gate.allow === false) {
       // truly blocked (deactivated/blacklisted)
@@ -19049,7 +19052,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   try {
     console.log(`[${requestId}] [1] Parsing text message: "${Body}"`);
     let __handled = false;
-    try { await sendProcessingAckQuickFromText(From, 'text', Body); } catch (_) {}
+    // ACK is already emitted at webhook entry (ultra-early). Keep max 1 ACK.
     
     // --- EARLY GUARD: typed "start trial" intent (same behavior as the button) ---
         try {
