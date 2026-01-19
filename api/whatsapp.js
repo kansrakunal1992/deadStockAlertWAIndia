@@ -8229,23 +8229,45 @@ function capitalize(s) {
 /**
  * r: { product, quantity, unit, unitAfter, action, success, error, newQuantity? }
  */
-function formatResultLine(r, compact = true, includeStockPart = true) {
+function formatResultLine(r, compact = true, includeStockPart = true, lang = 'en') {
   const qty = Math.abs(r.quantity ?? 0);
   const unit = r.unitAfter ?? r.unit ?? '';    
-  const stockPart = (includeStockPart && Number.isFinite(r.newQuantity))
-      ? ` (Stock: ${r.newQuantity} ${unit})`
-      : '';
   const act = capitalize(r.action ?? '');
   if (compact) {        
     // Treat success === undefined as "not a failure yet".
     // Only render an error line when success is explicitly false.
-    if (r.success !== false) {
-    // Unified symbol map for actions          
-    const SYMBOLS = { purchased: '📦', sold: '🛒', returned: '↩️' };
-          const actionLc = String(r.action ?? '').toLowerCase();
-          const symbol = SYMBOLS[actionLc] ?? '✅';
-          return `${symbol} ${act} ${qty} ${unit} ${r.product}${stockPart}`.trim();
-    }
+      
+  if (r.success !== false) {
+        // Template line (no AI) when flag is ON
+        if (USE_TEMPLATE_CONFIRM_TRANSLATION) {
+          const actionLc = String(r.action ?? '').toLowerCase().trim();
+          const productName =
+            r.productDisplay ?? r.product ?? r.productName ?? r.name ?? r.item ?? r.title ?? 'item';
+          const pricePerUnit =
+            r.rate ?? r.salePrice ?? r.purchasePrice ?? r.pricePerUnit ?? r.price ?? null;
+          return composeConfirmHeadTemplate(
+            actionLc,
+            {
+              product: productName,
+              qty: r.quantity,
+              unit: (r.unitAfter ?? r.unit ?? ''),
+              pricePerUnit,
+              stockQty: includeStockPart ? (r.newQuantity ?? null) : null,
+              stockUnit: (r.unitAfter ?? r.unit ?? '')
+            },
+            lang
+          );
+        }
+        // Original behavior (unchanged) when flag is OFF
+        const stockPart = (includeStockPart && Number.isFinite(r.newQuantity))
+          ? ` (Stock: ${r.newQuantity} ${unit})`
+          : '';
+        const SYMBOLS = { purchased: '📦', sold: '🛒', returned: '↩️' };
+        const actionLc = String(r.action ?? '').toLowerCase();
+        const symbol = SYMBOLS[actionLc] ?? '✅';
+        return `${symbol} ${act} ${qty} ${unit} ${r.product}${stockPart}`.trim();
+      }
+
     return `❌ ${r.product} — ${r.error ?? 'Error'}`;
   }
   const tail = (r.success === false) ? `❌ ${r.error ?? 'Error'}` : '✅';
@@ -8267,14 +8289,209 @@ function composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuan
 const saleConfirmTracker = new Set();
 
 const _confirmHashGuard = new Map(); // shopId -> { at: ms, lastHash: string }
+
+// =============================================================================
+// [FLAG] Deterministic confirmation localization (NO AI translation via t()).
+// Set USE_TEMPLATE_CONFIRM_TRANSLATION=1 to bypass AI translation on confirmations.
+// Default OFF to preserve current behavior.
+// =============================================================================
+const USE_TEMPLATE_CONFIRM_TRANSLATION =
+  String(process.env.USE_TEMPLATE_CONFIRM_TRANSLATION ?? '0') === '1';
+
+function _confirmLangExact(lang = 'en') {
+  return String(lang ?? 'en').toLowerCase().trim();
+}
+function _confirmLangBase(lang = 'en') {
+  const L = _confirmLangExact(lang);
+  return (L.endsWith('-latn') ? L : L.replace(/-latn$/, ''));
+}
+function _confirmUnitDisp(unitRaw, lang = 'en') {
+  const L = _confirmLangExact(lang);
+  const u = canonicalizeUnitToken(String(unitRaw ?? '').trim());
+  // For en/*-latn we keep Latin tokens (kg/ltr/packets) to avoid switching scripts.
+  if (L === 'en' || L.endsWith('-latn')) return u || String(unitRaw ?? '').trim();
+  // For native Indic codes, localize unit display using your existing UNIT_MAP helper.
+  return displayUnit(u || unitRaw, L);
+}
+
+const _CONFIRM_TPL = {
+  en: {
+    stock: 'Stock',
+    purchased: '📦 Purchased {qtyUnit} {product}{rate}{stockPart}',
+    sold:      '🛒 Sold {qtyUnit} {product}{rate}{stockPart}',
+    returned:  '↩️ Returned {qtyUnit} {product}{rate}{stockPart}',
+    updated:   ({ ok, total }) => `✅ Successfully updated ${ok} of ${total} items.`
+  },
+  hi: {
+    stock: 'स्टॉक',
+    purchased: '📦 {qtyUnit} {product} खरीदी गई{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} बेचा गया{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} वापस किया{rate}{stockPart}',
+    updated:   ({ ok, total }) => `✅ ${total} में से ${ok} आइटम सफलतापूर्वक अपडेट किया गया।`
+  },
+  'hi-latn': {
+    stock: 'Stock',
+    purchased: '📦 {qtyUnit} {product} kharidi gayi{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} becha gaya{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} wapas kiya{rate}{stockPart}',
+    updated:   ({ ok, total }) => `✅ ${ok} of ${total} items update ho gaye.`
+  },
+  bn: {
+    stock: 'স্টক',
+    purchased: '📦 {qtyUnit} {product} কেনা হয়েছে{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} বিক্রি হয়েছে{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} ফেরত দেওয়া হয়েছে{rate}{stockPart}',
+    updated:   ({ ok, total }) => `✅ ${total}টির মধ্যে ${ok}টি আইটেম সফলভাবে আপডেট হয়েছে।`
+  },
+  ta: {
+    stock: 'ஸ்டாக்',
+    purchased: '📦 {qtyUnit} {product} வாங்கப்பட்டது{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} விற்கப்பட்டது{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} திருப்பி அளிக்கப்பட்டது{rate}{stockPart}',
+    updated:   ({ ok, total }) => `✅ ${total} இல் ${ok} உருப்படிகள் வெற்றிகரமாக புதுப்பிக்கப்பட்டன.`
+  },
+  te: {
+    stock: 'స్టాక్',
+    purchased: '📦 {qtyUnit} {product} కొనుగోలు చేయబడింది{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} అమ్మబడింది{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} తిరిగి ఇవ్వబడింది{rate}{stockPart}',
+    updated:   ({ ok, total }) => `✅ ${total} లో ${ok} ఐటమ్‌లు విజయవంతంగా అప్‌డేట్ అయ్యాయి.`
+  },
+  kn: {
+    stock: 'ಸ್ಟಾಕ್',
+    purchased: '📦 {qtyUnit} {product} ಖರೀದಿಸಲಾಗಿದೆ{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} ಮಾರಾಟವಾಗಿದೆ{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} ಹಿಂತಿರುಗಿಸಲಾಗಿದೆ{rate}{stockPart}',
+    updated:   ({ ok, total }) => `✅ ${total}ರಲ್ಲಿ ${ok} ಐಟಂಗಳನ್ನು ಯಶಸ್ವಿಯಾಗಿ ಅಪ್ಡೇಟ್ ಮಾಡಲಾಗಿದೆ.`
+  },
+  mr: {
+    stock: 'स्टॉक',
+    purchased: '📦 {qtyUnit} {product} खरेदी झाली{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} विकले{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} परत केले{rate}{stockPart}',
+    updated:   ({ ok, total }) => `✅ ${total} पैकी ${ok} आयटम यशस्वीपणे अपडेट झाले.`
+  },
+  gu: {
+    stock: 'સ્ટોક',
+    purchased: '📦 {qtyUnit} {product} ખરીદાયું{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} વેચાયું{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} પરત આપાયું{rate}{stockPart}',
+    updated:   ({ ok, total }) => `✅ ${total} માંથી ${ok} આઇટમ સફળતાપૂર્વક અપડેટ થયું.`
+  }
+};
+
+// Headers for multi-item summaries (used by chooseHeader)
+const _CONFIRM_HDR = {
+  en: { doneC: '✅ Done:\\n', doneV: '✅ Updates processed:\\n\\n', pricesC: '✅ Prices updated:\\n', pricesV: '✅ Price updates processed:\\n\\n' },
+  hi: { doneC: '✅ हो गया:\\n', doneV: '✅ अपडेट प्रोसेस हुए:\\n\\n', pricesC: '✅ कीमतें अपडेट हुईं:\\n', pricesV: '✅ कीमत अपडेट प्रोसेस हुई:\\n\\n' },
+  'hi-latn': { doneC: '✅ Done:\\n', doneV: '✅ Updates processed:\\n\\n', pricesC: '✅ Prices updated:\\n', pricesV: '✅ Price updates processed:\\n\\n' },
+  bn: { doneC: '✅ সম্পন্ন:\\n', doneV: '✅ আপডেট প্রক্রিয়া সম্পন্ন:\\n\\n', pricesC: '✅ দাম আপডেট হয়েছে:\\n', pricesV: '✅ দামের আপডেট প্রক্রিয়া সম্পন্ন:\\n\\n' },
+  ta: { doneC: '✅ முடிந்தது:\\n', doneV: '✅ புதுப்பிப்புகள் செயலாக்கப்பட்டது:\\n\\n', pricesC: '✅ விலைகள் புதுப்பிக்கப்பட்டன:\\n', pricesV: '✅ விலை புதுப்பிப்பு செயலாக்கப்பட்டது:\\n\\n' },
+  te: { doneC: '✅ పూర్తయ్యింది:\\n', doneV: '✅ అప్‌డేట్లు ప్రాసెస్ అయ్యాయి:\\n\\n', pricesC: '✅ ధరలు అప్‌డేట్ అయ్యాయి:\\n', pricesV: '✅ ధర అప్‌డేట్ ప్రాసెస్ అయ్యింది:\\n\\n' },
+  kn: { doneC: '✅ ಆಯಿತು:\\n', doneV: '✅ ಅಪ್ಡೇಟ್‌ಗಳು ಪ್ರೊಸೆಸ್ ಆಯಿತು:\\n\\n', pricesC: '✅ ಬೆಲೆಗಳು ಅಪ್ಡೇಟ್ ಆಯಿತು:\\n', pricesV: '✅ ಬೆಲೆ ಅಪ್ಡೇಟ್ ಪ್ರೊಸೆಸ್ ಆಯಿತು:\\n\\n' },
+  mr: { doneC: '✅ झाले:\\n', doneV: '✅ अपडेट प्रक्रिया झाली:\\n\\n', pricesC: '✅ किंमती अपडेट झाल्या:\\n', pricesV: '✅ किंमत अपडेट प्रक्रिया झाली:\\n\\n' },
+  gu: { doneC: '✅ થઈ ગયું:\\n', doneV: '✅ અપડેટ પ્રોસેસ થયા:\\n\\n', pricesC: '✅ કિંમતો અપડેટ થઈ:\\n', pricesV: '✅ કિંમત અપડેટ પ્રોસેસ થઈ:\\n\\n' }
+};
+
+function _confirmHdrFor(lang) {
+  const L = _confirmLangExact(lang);
+  return _CONFIRM_HDR[L] || _CONFIRM_HDR[_confirmLangBase(L)] || _CONFIRM_HDR.en;
+}
+
+function _confirmTplFor(lang) {
+  const L = _confirmLangExact(lang);
+  return _CONFIRM_TPL[L] || _CONFIRM_TPL[_confirmLangBase(L)] || _CONFIRM_TPL.en;
+}
+
+function composeConfirmBodyTemplate(action, payload, lang, ok = 1, total = 1) {
+  const tpl = _confirmTplFor(lang);
+  const act = String(action ?? '').toLowerCase().trim();
+
+  const qtyNum = Number(payload?.qty ?? payload?.quantity ?? 0);
+  const qtyAbs = Number.isFinite(qtyNum) ? Math.abs(qtyNum) : (payload?.qty ?? payload?.quantity ?? '');
+  const unitDisp = _confirmUnitDisp(payload?.unit, lang);
+  const qtyUnit = String(qtyAbs ?? '').trim() + (unitDisp ? ` ${unitDisp}` : '');
+
+  const product = String(payload?.product ?? '').trim();
+
+  const p = Number(payload?.pricePerUnit);
+  const hasPrice = Number.isFinite(p) && p > 0;
+  const rate = hasPrice
+    ? ` @ ₹${p.toFixed(p % 1 ? 2 : 0)}${unitDisp ? `/${unitDisp}` : ''}`
+    : '';
+
+  const stockQty = payload?.stockQty ?? payload?.newQuantity ?? payload?.overallStock ?? null;
+  const stockUnitDisp = _confirmUnitDisp(payload?.stockUnit ?? payload?.overallUnit ?? payload?.unit, lang);
+  const stockPart = (stockQty != null)
+    ? ` (${tpl.stock}: ${stockQty}${stockUnitDisp ? ` ${stockUnitDisp}` : ''})`
+    : '';
+
+  const pattern = tpl[act] || tpl.en || tpl.purchased || _CONFIRM_TPL.en.purchased;
+  const head = String(pattern)
+    .replace('{qtyUnit}', qtyUnit.trim())
+    .replace('{product}', product)
+    .replace('{rate}', rate)
+    .replace('{stockPart}', stockPart)
+    .replace(/\\s+/g, ' ')
+    .trim();
+
+  const updated = (typeof tpl.updated === 'function') ? tpl.updated({ ok, total }) : _CONFIRM_TPL.en.updated({ ok, total });
+  return `${head}\\n\\n${updated}`;
+}
+
+// --- NEW: head-only line (no "Successfully updated..." tail) ---
+function composeConfirmHeadTemplate(action, payload, lang) {
+  const tpl = _confirmTplFor(lang);
+  const act = String(action ?? '').toLowerCase().trim();
+
+  const qtyNum = Number(payload?.qty ?? payload?.quantity ?? 0);
+  const qtyAbs = Number.isFinite(qtyNum) ? Math.abs(qtyNum) : (payload?.qty ?? payload?.quantity ?? '');
+  const unitDisp = _confirmUnitDisp(payload?.unit, lang);
+  const qtyUnit = String(qtyAbs ?? '').trim() + (unitDisp ? ` ${unitDisp}` : '');
+
+  const product = String(payload?.product ?? '').trim();
+
+  const p = Number(payload?.pricePerUnit);
+  const hasPrice = Number.isFinite(p) && p > 0;
+  const rate = hasPrice
+    ? ` @ ₹${p.toFixed(p % 1 ? 2 : 0)}${unitDisp ? `/${unitDisp}` : ''}`
+    : '';
+
+  const stockQty = payload?.stockQty ?? payload?.newQuantity ?? payload?.overallStock ?? null;
+  const stockUnitDisp = _confirmUnitDisp(payload?.stockUnit ?? payload?.overallUnit ?? payload?.unit, lang);
+  const stockPart = (stockQty != null)
+    ? ` (${tpl.stock}: ${stockQty}${stockUnitDisp ? ` ${stockUnitDisp}` : ''})`
+    : '';
+
+  const pattern = tpl[act] || _CONFIRM_TPL.en[act] || _CONFIRM_TPL.en.purchased;
+  return String(pattern)
+    .replace('{qtyUnit}', qtyUnit.trim())
+    .replace('{product}', product)
+    .replace('{rate}', rate)
+    .replace('{stockPart}', stockPart)
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// --- NEW: updated counter line only ---
+function composeConfirmUpdatedLine(ok, total, lang) {
+  const tpl = _confirmTplFor(lang);
+  return (typeof tpl.updated === 'function')
+    ? tpl.updated({ ok, total })
+    : _CONFIRM_TPL.en.updated({ ok, total });
+}
+
 const CONFIRM_BODY_TTL_MS = Number(process.env.CONFIRM_BODY_TTL_MS ?? (10 * 1000));
 async function _sendConfirmOnceByBody(From, detectedLanguage, requestId, body, lastTxn = null) {
 const shopId = String(From).replace('whatsapp:', '');
   const t0 = Date.now();
   console.log('[confirm-once] begin', { shopId, requestId, lang: detectedLanguage, len: body?.length ?? 0 });
   let final;
-  try {
-    const localized = await t(body, detectedLanguage ?? 'en', `${requestId}::confirm-once`);
+  try {        
+    console.log('[non AI path] begin');
+    const localized = USE_TEMPLATE_CONFIRM_TRANSLATION
+          ? body
+          : await t(body, detectedLanguage ?? 'en', `${requestId}::confirm-once`);
     // Restore existing footer, then tag/badge, then labels, then script clamp + numerals.
     let withHelp = await appendSupportFooter(localized, From);
     let withTag  = await tagWithLocalizedMode(From, withHelp, detectedLanguage);
@@ -8468,9 +8685,16 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
     newQuantity = null
   } = payload || {};
 
-  // Build the one-line head via composer (emoji + unit/price/stock)  
-const head = composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity });
-const body = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
+console.log('[non ai purchase confirmation path]'); 
+const body = USE_TEMPLATE_CONFIRM_TRANSLATION
+    ? composeConfirmBodyTemplate(
+        'purchased',
+        { product, qty, unit, pricePerUnit, stockQty: newQuantity, stockUnit: unit },
+        detectedLanguage,
+        1,
+        1
+      )
+    : `${composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity })}\n\n✅ Successfully updated 1 of 1 items.`;
 await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body); 
 // Cache sale txn for Undo (best-effort)
   try {
@@ -8538,10 +8762,21 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
 
   const head = `${icon} Sold${qtyUnit ? ` ${qtyUnit}` : ''}${uiProduct ? ` ${uiProduct}` : ''}${rateText}${stockText}`;
 
-  // Localize body; keep anchors; send once
-  const bodySrc = `${head}\n\n✅ Successfully updated 1 of 1 items.`;
-  const bodyLoc = await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);
-  console.log(`[sendSaleConfirmationOnce] start lang=${detectedLanguage} req=${requestId} from=${From}`);
+  // Localize body; keep anchors; send once    
+  const bodySrc = USE_TEMPLATE_CONFIRM_TRANSLATION
+      ? composeConfirmBodyTemplate(
+          'sold',
+          { product: uiProduct, qty, unit: uNorm, pricePerUnit, stockQty, stockUnit },
+          detectedLanguage,
+          1,
+          1
+        )
+      : `${head}\n\n✅ Successfully updated 1 of 1 items.`;
+  
+    const bodyLoc = USE_TEMPLATE_CONFIRM_TRANSLATION
+      ? bodySrc
+      : await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);
+  console.log(`[sendSaleConfirmationOnce - here] start lang=${detectedLanguage} req=${requestId} from=${From}`);
   await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);
   console.log(`[sendSaleConfirmationOnce] sent confirmation`);  
     
@@ -8602,7 +8837,15 @@ function composeSaleConfirmationFallback({
   return `${icon} Sold${qtyUnitPart ? ` ${qtyUnitPart}` : ''}${uiProduct ? ` ${uiProduct}` : ''}${pricePart}${stockPart}`;
 }
 
-function chooseHeader(count, compact = true, isPrice = false) {
+
+function chooseHeader(count, compact = true, isPrice = false, lang = 'en') {
+  if (USE_TEMPLATE_CONFIRM_TRANSLATION) {
+    const H = _confirmHdrFor(lang);
+    if (compact) {
+      return count > 1 ? (isPrice ? H.pricesC : H.doneC) : '';
+    }
+    return isPrice ? H.pricesV : H.doneV;
+  }
   if (compact) {
     return count > 1 ? (isPrice ? '✅ Prices updated:\n' : '✅ Done:\n') : '';
   }
@@ -16466,15 +16709,18 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
             // Defensive: avoid "Error - undefined"
                 const errText = result?.error ? String(result.error) : 'pending user input';                                
                 // Use helper for error rendering too (produces ❌ line)
-                                const errLine = formatResultLine({ ...result, success: false, error: errText }, COMPACT_MODE);
+                                const errLine = formatResultLine({ ...result, success: false, error: errText }, COMPACT_MODE, true, detectedLanguage);
                                 baseMessage += `${errLine}\n`;
             }
           }
-        
-          baseMessage += `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
-          
-          const formattedResponse = await t(baseMessage, detectedLanguage, requestId);
-          await sendMessageDedup(from, formattedResponse);
+                          
+        baseMessage += USE_TEMPLATE_CONFIRM_TRANSLATION
+                    ? `+            ? `\n${composeConfirmUpdatedLine(successCount, totalProcessed, detectedLanguage)}`
+                    : `\n✅ Successfully updated ${successCount} of ${totalProcessed} items`;
+                  
+                  const formattedResponse = USE_TEMPLATE_CONFIRM_TRANSLATION
+                    ? baseMessage
+                    : await t(baseMessage, detectedLanguage, requestId);
         }
         
         // Debug: Log final totals
@@ -18769,7 +19015,9 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         for (let i = 0; i < processed.length; i++) {
               const r = processed[i];
               if (isSingleReturn && i === 0) continue; // already placed above          
-             let rawLine = r?.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+             let rawLine = USE_TEMPLATE_CONFIRM_TRANSLATION
+                  ? formatResultLine(r, COMPACT_MODE, true, detectedLanguage)
+                  : (r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false));
              if (!rawLine) continue;
              // If earlier code produced "undefined", rebuild with safe fallbacks
              if (/\bundefined\b/.test(rawLine)) {
@@ -18793,14 +19041,18 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                      });
              }
           const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-          const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+          const stockPart = USE_TEMPLATE_CONFIRM_TRANSLATION ? '' : (needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '');
           message += `\n${String(rawLine).trim()}${stockPart}`;
           if (r.success) successCount++;
         }                
-        const totalCount = Array.isArray(results) ? results.length : processed.length;
-        message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;                
-        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-        await sendMessageDedup(From, formattedResponse);
+        const totalCount = Array.isArray(results) ? results.length : processed.length;                
+        message += USE_TEMPLATE_CONFIRM_TRANSLATION
+                  ? `\n${composeConfirmUpdatedLine(successCount, totalCount, detectedLanguage)}`
+                  : `\n✅ Successfully updated ${successCount} of ${totalCount} items`;
+                const formattedResponse = USE_TEMPLATE_CONFIRM_TRANSLATION
+                  ? message.trim()
+                  : await t(message.trim(), detectedLanguage, requestId);
+                await sendMessageDedup(From, formattedResponse, { lang: detectedLanguage, requestId });
        
         // (3) Hook into aggregated confirmation flow (single Return)
         try {
@@ -19460,8 +19712,12 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                        pricePerUnit: u.pricePerUnit,
                        newQuantity: undefined
                      }));
+                           
               // Start translation immediately while DB update runs
-              const translateP = t(baseBody, langExact, `${requestId}::confirm-base`);
+                const translateP = USE_TEMPLATE_CONFIRM_TRANSLATION
+                  ? Promise.resolve(baseBody) // (kept for minimal diff; final body will be template-built)
+                  : t(baseBody, langExact, `${requestId}::confirm-base`);
+
               // Kick DB update in parallel (single-item array)
               const shopIdLocal = fromToShopId(From);
               const dbP = updateMultipleInventory(shopIdLocal, [u], langExact);
@@ -19479,7 +19735,24 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
             const stockSuffix = (finalStockQty != null)
               ? ` (Stock: ${finalStockQty} ${unit})`
               : '';
-            const finalBody = `${await translateP}${stockSuffix}`;
+                        
+            const finalBody = USE_TEMPLATE_CONFIRM_TRANSLATION
+                ? composeConfirmBodyTemplate(
+                    String(u.action ?? '').toLowerCase(),
+                    {
+                      product: productName,
+                      qty: u.quantity,
+                      unit: unit,
+                      pricePerUnit: u.pricePerUnit,
+                      stockQty: finalStockQty,
+                      stockUnit: unit
+                    },
+                    langExact,
+                    1,
+                    1
+                  )
+                : `${await translateP}${stockSuffix}`;
+
               await _sendConfirmOnceByBody(From, langExact, requestId, finalBody);
               try { await clearUserState(From); } catch (_){}
               try { await maybeShowPaidCTAAfterInteraction(From, langExact, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_){}
@@ -19658,7 +19931,9 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                 continue;
               }
        
-         let rawLine = r?.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+         let rawLine = USE_TEMPLATE_CONFIRM_TRANSLATION
+                  ? formatResultLine(r, COMPACT_MODE, true, detectedLanguage)
+                  : (r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false));
          if (rawLine && /\bundefined\b/.test(rawLine)) {
            const productName =
              r.productDisplay ?? r.product ?? r.productName ?? r.name ?? r.item ?? r.title ?? 'item';
@@ -19681,13 +19956,19 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
          }
          if (!rawLine) continue;
          const needsStock = COMPACT_MODE && r.newQuantity !== undefined && !/\(Stock:/.test(rawLine);
-         const stockPart = needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '';
+         const stockPart = USE_TEMPLATE_CONFIRM_TRANSLATION ? '' : (needsStock ? ` (Stock: ${r.newQuantity} ${r.unitAfter ?? r.unit ?? ''})` : '');
          message += `\n${String(rawLine).trim()}${stockPart}`;
          if (r.success) successCount++;
        }
-       message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;       
-       const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-         await sendMessageDedup(From, formattedResponse);
+       
+      message += USE_TEMPLATE_CONFIRM_TRANSLATION
+                ? `\n${composeConfirmUpdatedLine(successCount, processed.length, detectedLanguage)}`
+                : `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+              const formattedResponse = USE_TEMPLATE_CONFIRM_TRANSLATION
+                ? message.trim()
+                : await t(message.trim(), detectedLanguage, requestId);
+              await sendMessageDedup(From, formattedResponse, { lang: detectedLanguage, requestId });
+
      } // else → nothing to confirm (nudged or zero success)
         __handled = true;                
         // CTA gated: only last trial day
@@ -21090,7 +21371,7 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
     
     
     const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-      const header = chooseHeader(processed.length, COMPACT_MODE, false);
+      const header = chooseHeader(processed.length, COMPACT_MODE, false, detectedLanguage);
           
       // --- Single-sale confirmation (confirmation flow): one message + return ----
         if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
@@ -21116,20 +21397,26 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
     
       let successCount = 0;
 
-      for (const r of processed) {
-        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
+      for (const r of processed) {                
+        const rawLine = USE_TEMPLATE_CONFIRM_TRANSLATION
+                  ? formatResultLine(r, COMPACT_MODE, true, detectedLanguage)
+                  : (r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false));
         if (!rawLine) continue;               
         // PRODUCT-level total for stock suffix
             const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
             const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
-            const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
+            const stockPart = USE_TEMPLATE_CONFIRM_TRANSLATION ? '' : (needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '');
         message += `${rawLine}${stockPart}\n`;
         if (r.success) successCount++; 
       }
-
-      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-      const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-      await sendMessageDedup(From, formattedResponse);
+         
+    message += USE_TEMPLATE_CONFIRM_TRANSLATION
+            ? `\n${composeConfirmUpdatedLine(successCount, processed.length, detectedLanguage)}`
+            : `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+          const formattedResponse = USE_TEMPLATE_CONFIRM_TRANSLATION
+            ? message.trim()
+            : await t(message.trim(), detectedLanguage, requestId);
+          await sendMessageDedup(From, formattedResponse, { lang: detectedLanguage, requestId });
     
     // Clean up
     await deleteCorrectionState(originalCorrectionId);
@@ -21211,17 +21498,19 @@ async function handleInventoryState(Body, From, state, requestId, res) {
      
         // INLINE-CONFIRM aware single message
         const processed = results.filter(r => r?.success && !r.needsPrice && !r.needsUserInput && !r.awaiting);
-        const header = chooseHeader(processed.length, COMPACT_MODE, false);
+        const header = chooseHeader(processed.length, COMPACT_MODE, false, detectedLanguage);
         let message = header;
         let successCount = 0;
 
         for (const r of processed) {
-          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
+          const rawLine = USE_TEMPLATE_CONFIRM_TRANSLATION
+                ? formatResultLine(r, COMPACT_MODE, true, detectedLanguage)
+                : (r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false));
           if (!rawLine) continue;                    
           // PRODUCT-level total for stock suffix
               const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
               const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
-              const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
+              const stockPart = USE_TEMPLATE_CONFIRM_TRANSLATION ? '' : (needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '');
           message += `${rawLine}${stockPart}\n`;
           if (r.success) successCount++;
         }
@@ -21240,11 +21529,14 @@ async function handleInventoryState(Body, From, state, requestId, res) {
               });
             }
           } catch (_) { /* non-blocking */ }
-
-        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-
-        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-        await sendMessageDedup(From, formattedResponse);
+            
+    message += USE_TEMPLATE_CONFIRM_TRANSLATION
+              ? `\n${composeConfirmUpdatedLine(successCount, processed.length, detectedLanguage)}`
+              : `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+            const formattedResponse = USE_TEMPLATE_CONFIRM_TRANSLATION
+              ? message.trim()
+              : await t(message.trim(), detectedLanguage, requestId);
+            await sendMessageDedup(From, formattedResponse, { lang: detectedLanguage, requestId });
     
     // Clear state after processing
     await clearUserState(From);
@@ -21509,16 +21801,18 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window (informational only)
       const totalCount = Array.isArray(parsedUpdates) ? parsedUpdates.length : (Array.isArray(results) ? results.length : processed.length);
       if (processed.length > 0) {
-        const header = chooseHeader(processed.length, COMPACT_MODE, false);
+        const header = chooseHeader(processed.length, COMPACT_MODE, false, detectedLanguage);
         let message = header;
         let successCount = 0;
-        for (const r of processed) {
-          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+        for (const r of processed) {                  
+          const rawLine = USE_TEMPLATE_CONFIRM_TRANSLATION
+             ? formatResultLine(r, COMPACT_MODE, true, detectedLanguage)
+             : (r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false));
           if (!rawLine) continue;                    
           // PRODUCT-level total for stock suffix
                 const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
                 const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
-                const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
+                const stockPart = USE_TEMPLATE_CONFIRM_TRANSLATION ? '' : (needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '');
           message += `${String(rawLine).trim()}${stockPart}\n`;
           if (r.success) successCount++;
         }
@@ -21537,10 +21831,15 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
               });
             }
           } catch (_) { /* non-blocking */ }
-        
-        message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;
-        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-        await sendMessageDedup(From, formattedResponse);
+                      
+      message += USE_TEMPLATE_CONFIRM_TRANSLATION
+               ? `\n${composeConfirmUpdatedLine(successCount, processed.length, detectedLanguage)}`
+                : `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+              const formattedResponse = USE_TEMPLATE_CONFIRM_TRANSLATION
+                ? message.trim()
+                : await t(message.trim(), detectedLanguage, requestId);
+              await sendMessageDedup(From, formattedResponse, { lang: detectedLanguage, requestId });
+
       }
         __handled = true;
         return res.send('<Response></Response>');
@@ -21864,16 +22163,18 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   const totalCount = Array.isArray(parsedUpdates) ? parsedUpdates.length : (Array.isArray(results) ? results.length : processed.length);
        
   if (processed.length > 0) {
-      const header = chooseHeader(processed.length, COMPACT_MODE, false);
+      const header = chooseHeader(processed.length, COMPACT_MODE, false, detectedLanguage);
       let message = header;
       let successCount = 0;
       for (const r of processed) {
-        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false);
+        const rawLine = USE_TEMPLATE_CONFIRM_TRANSLATION
+             ? formatResultLine(r, COMPACT_MODE, true, detectedLanguage)
+             : (r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE, false));
         if (!rawLine) continue;                
         // PRODUCT-level total for stock suffix
               const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
               const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
-              const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
+              const stockPart = USE_TEMPLATE_CONFIRM_TRANSLATION ? '' : (needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '');
         message += `${rawLine}${stockPart}\n`;
         if (r.success) successCount++;
       }
@@ -21892,10 +22193,15 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
               });
             }
           } catch (_) { /* non-blocking */ }
-    
-      message += `\n✅ Successfully updated ${successCount} of ${totalCount} items`;
-      const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-      await sendMessageDedup(From, formattedResponse);
+                
+        message += USE_TEMPLATE_CONFIRM_TRANSLATION
+                  ? `\n${composeConfirmUpdatedLine(successCount, totalCount, detectedLanguage)}`
+                  : `\n✅ Successfully updated ${successCount} of ${totalCount} items`;
+                const formattedResponse = USE_TEMPLATE_CONFIRM_TRANSLATION
+                  ? message.trim()
+                  : await t(message.trim(), detectedLanguage, requestId);
+                await sendMessageDedup(From, formattedResponse, { lang: detectedLanguage, requestId });
+
     }
          __handled = true;
         try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: false }); } catch (_) {}
@@ -22039,18 +22345,26 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       let message2 = header2;
       let successCount2 = 0;
       for (const r of processed2) {
-        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
+        const rawLine = USE_TEMPLATE_CONFIRM_TRANSLATION
+                ? formatResultLine(r, COMPACT_MODE, true, detectedLanguage)
+                : (r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false));
         if (!rawLine) continue;                
         // PRODUCT-level total for stock suffix
             const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
             const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
-            const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
+            const stockPart = USE_TEMPLATE_CONFIRM_TRANSLATION ? '' : (needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '');
         message2 += `${rawLine}${stockPart}\n`;
         if (r.success) successCount2++;
       }
-      message2 += `\n✅ Successfully updated ${successCount2} of ${processed2.length} items`;
-      const formattedResponse2 = await t(message2.trim(), detectedLanguage, requestId);
-      await sendMessageDedup(From, formattedResponse2);
+      
+      message2 += USE_TEMPLATE_CONFIRM_TRANSLATION
+              ? `\n${composeConfirmUpdatedLine(successCount2, processed2.length, detectedLanguage)}`
+              : `\n✅ Successfully updated ${successCount2} of ${processed2.length} items`;
+            const formattedResponse2 = USE_TEMPLATE_CONFIRM_TRANSLATION
+              ? message2.trim()
+              : await t(message2.trim(), detectedLanguage, requestId);
+            await sendMessageDedup(From, formattedResponse2, { lang: detectedLanguage, requestId });
+      
       await clearUserState(From);
         __handled = true;
       res.send('<Response></Response>');
@@ -22188,22 +22502,30 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
       } else {          
     // Existing aggregated ack path retained when no inline confirms existed:
         const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-        const header = chooseHeader(processed.length, COMPACT_MODE, false);
+        const header = chooseHeader(processed.length, COMPACT_MODE, false, detectedLanguage);
         let message = header;
         let successCount = 0;
         for (const r of processed) {
-          const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
+          const rawLine = USE_TEMPLATE_CONFIRM_TRANSLATION
+                ? formatResultLine(r, COMPACT_MODE, true, detectedLanguage)
+                : (r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false));
           if (!rawLine) continue;         
           // PRODUCT-level total for stock suffix
                 const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
                 const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
-                const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
+                const stockPart = USE_TEMPLATE_CONFIRM_TRANSLATION ? '' : (needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '');
           message += `${rawLine}${stockPart}\n`;
           if (r.success) successCount++;
         }
-        message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-        const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-        await sendMessageDedup(From, formattedResponse);
+        
+         message += USE_TEMPLATE_CONFIRM_TRANSLATION
+              ? `\n${composeConfirmUpdatedLine(successCount, processed.length, detectedLanguage)}`
+              : `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+            const formattedResponse = USE_TEMPLATE_CONFIRM_TRANSLATION
+              ? message.trim()
+              : await t(message.trim(), detectedLanguage, requestId);
+            await sendMessageDedup(From, formattedResponse, { lang: detectedLanguage, requestId });
+        
       }
     
     // Clear state after processing
@@ -22283,11 +22605,13 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
                 console.log(`[${requestId}] [voice-agg-guard] Suppressed aggregated ack (inline confirmations present)`);
               } else {
                 const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-                const header = chooseHeader(processed.length, COMPACT_MODE, false);
+                const header = chooseHeader(processed.length, COMPACT_MODE, false, detectedLanguage);
                 let message = header;
                 let successCount = 0;
                 for (const r of processed) {                  
-                    const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
+                    const rawLine = USE_TEMPLATE_CONFIRM_TRANSLATION
+                ? formatResultLine(r, COMPACT_MODE, true, detectedLanguage)
+                : (r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false));
                       if (!rawLine) continue;
                       // If a previous formatter leaked 'undefined', rebuild with safe product-name fallbacks
                       if (/\bundefined\b/i.test(rawLine)) {
@@ -22317,10 +22641,15 @@ async function handleVoiceConfirmationState(Body, From, state, requestId, res) {
                       message += `${rawLine}${stockPart}\n`;
                   if (r.success) successCount++;
                 }
-                message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-                // FIX: Send via WhatsApp API instead of synchronous response
-                const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-                await sendMessageDedup(From, formattedResponse);
+                
+                 message += USE_TEMPLATE_CONFIRM_TRANSLATION
+              ? `\n${composeConfirmUpdatedLine(successCount, processed.length, detectedLanguage)}`
+              : `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+            const formattedResponse = USE_TEMPLATE_CONFIRM_TRANSLATION
+              ? message.trim()
+              : await t(message.trim(), detectedLanguage, requestId);
+            await sendMessageDedup(From, formattedResponse, { lang: detectedLanguage, requestId });
+                
               }
               // Clear state after processing (both branches)
               await clearUserState(From);
@@ -22533,23 +22862,28 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
                const shopIdLocal = String(From).replace('whatsapp:', '');
                const lastNudgeTs = globalThis.__recentPriceNudge?.get(shopIdLocal) ?? 0;
                const justNudged = lastNudgeTs && (Date.now() - lastNudgeTs) < 5000; // 5s window
-              
+                                            
                const successLines = Array.isArray(results)
-                 ? results
-                     .filter(r => r?.success)               // only successful writes
-                     .map(r => r?.inlineConfirmText)
-                     .filter(Boolean)
-                 : [];
+                                  ? results
+                                      .filter(r => r?.success)               // only successful writes
+                                      .map(r => USE_TEMPLATE_CONFIRM_TRANSLATION
+                                        ? formatResultLine(r, COMPACT_MODE, true, detectedLanguage)
+                                        : r?.inlineConfirmText
+                                      )
+                                      .filter(Boolean)
+                                  : [];
               
                // If nothing actually succeeded or we just nudged, do NOT send any confirmation
                if (justNudged || successLines.length === 0) {
                  // optional: log for diagnostics
                  console.log(`[${requestId}] agg-ack suppressed (justNudged=${justNudged}, successLines=${successLines.length})`);
               } else {
-                 // Header only when there are successful items
-                 const header = chooseHeader(successLines.length, COMPACT_MODE, /*isPrice*/ false);
-                 const message = [header, ...successLines].join('\n').trim();
-                 const formattedResponse = await t(message, detectedLanguage, requestId);
+                 // Header only when there are successful items                               
+              const header = chooseHeader(successLines.length, COMPACT_MODE, /*isPrice*/ false, detectedLanguage);
+                                const message = [header, ...successLines].join('\n').trim();
+                                const formattedResponse = USE_TEMPLATE_CONFIRM_TRANSLATION
+                                  ? message
+                                  : await t(message, detectedLanguage, requestId);
                                    
                  const lastSuccess = [...results].reverse().find(r => r?.success && r.inlineConfirmText);
                  const lastTxn = lastSuccess ? {
@@ -22560,7 +22894,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
                    compositeKey: lastSuccess.compositeKey ?? null
                  } : null;
                  
-                 await sendMessageDedup(From, formattedResponse, { requestId, lastTxn });
+                 await sendMessageDedup(From, formattedResponse, { lang: detectedLanguage, requestId, lastTxn });
                }
                 } else {
                   console.log(`[${requestId}] [text-agg-guard] Suppressed aggregated ack (inline confirmations present)`);
@@ -22736,24 +23070,32 @@ async function handleProductConfirmationState(Body, From, state, requestId, res)
     const results = await updateMultipleInventory(shopId, unknownProducts, detectedLanguage);
     
     
-const header = chooseHeader(processed.length, COMPACT_MODE, false);
+const header = chooseHeader(processed.length, COMPACT_MODE, false, detectedLanguage);
       let message = header;
       let successCount = 0;
 
       for (const r of processed) {
-        const rawLine = r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false);
+              
+      const rawLine = USE_TEMPLATE_CONFIRM_TRANSLATION
+                ? formatResultLine(r, COMPACT_MODE, true, detectedLanguage)
+                : (r.inlineConfirmText ? r.inlineConfirmText : formatResultLine(r, COMPACT_MODE,false));
+
         if (!rawLine) continue;                
         // PRODUCT-level total for stock suffix
             const finalQty = r.totalQuantityAfter ?? r.quantityAfter ?? r.newQuantity;
             const needsStock = COMPACT_MODE && finalQty !== undefined && !/\(Stock:/.test(rawLine);
-            const stockPart = needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '';
+            const stockPart = USE_TEMPLATE_CONFIRM_TRANSLATION ? '' : (needsStock ? ` (Stock: ${finalQty} ${r.unitAfter ?? r.unit ?? ''})` : '');
         message += `${rawLine}${stockPart}\n`;
         if (r.success) successCount++;
       }
 
-      message += `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
-      const formattedResponse = await t(message.trim(), detectedLanguage, requestId);
-      await sendMessageDedup(From, formattedResponse);
+      message += USE_TEMPLATE_CONFIRM_TRANSLATION
+              ? `\n${composeConfirmUpdatedLine(successCount, processed.length, detectedLanguage)}`
+              : `\n✅ Successfully updated ${successCount} of ${processed.length} items`;
+            const formattedResponse = USE_TEMPLATE_CONFIRM_TRANSLATION
+              ? message.trim()
+              : await t(message.trim(), detectedLanguage, requestId);
+            await sendMessageDedup(From, formattedResponse, { lang: detectedLanguage, requestId });
     
     // Clear state after processing
     await clearUserState(From);
