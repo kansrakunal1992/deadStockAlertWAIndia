@@ -5706,18 +5706,31 @@ function _safeBoolean(v) {
 const SEND_EARLY_ACK = String(process.env.SEND_EARLY_ACK ?? 'true').toLowerCase() === 'true';
 const EARLY_ACK_TIMEOUT_MS = Number(process.env.EARLY_ACK_TIMEOUT_MS ?? 500);
 const _recentAcks = (globalThis._recentAcks = globalThis._recentAcks ?? new Map()); // from -> {at}
-const ACK_SILENCE_WINDOW_MS = Number(process.env.ACK_SILENCE_WINDOW_MS ?? 1200);
+// Dedupe must cover observed double-ACK gaps (~4s). Keep it configurable.
+const ACK_SILENCE_WINDOW_MS = Number(process.env.ACK_SILENCE_WINDOW_MS ?? 8000);
+
+function ackKeyFrom(From) {
+  try {
+    // canonical key: "+91..." (E.164), consistent across all code paths
+    return (typeof shopIdFrom === 'function')
+      ? shopIdFrom(From)
+      : String(From ?? '').replace('whatsapp:', '');
+  } catch {
+    return String(From ?? '');
+  }
+}
+
 const EARLY_ACK = { listPicker: true, text: false, voice: true };
 const ACK_PLAN_TIMEOUT_MS = Number(process.env.ACK_PLAN_TIMEOUT_MS ?? 250);
 
 function wasAckRecentlySent(From, windowMs = ACK_SILENCE_WINDOW_MS) {
   try {
-    const prev = _recentAcks.get(String(From));
+    const prev = _recentAcks.get(ackKeyFrom(From));
     return !!(prev && Date.now() - prev.at < windowMs);
   } catch { return false; }
 }
 function markAckSent(From) {
-  try { _recentAcks.set(String(From), { at: Date.now() }); } catch {}
+  try { _recentAcks.set(ackKeyFrom(From), { at: Date.now() }); } catch {}
 }
 
 // Fast preference resolver with tiny timeout; never blocks the ack path.
@@ -5802,6 +5815,16 @@ async function sendProcessingAckQuickFromText(From, kind = 'text', sourceText = 
     if (wasAckRecentlySent(From)) return; // prevent duplicate ack
     if (!SEND_EARLY_ACK) return;    
     const t = String(sourceText || '').trim().toLowerCase();
+        
+    // If this is a mode-selection button text, update __lastStickyAction immediately (memory only).
+        // This prevents sending an early ACK with a stale footer (e.g., SALE showing PURCHASE).
+        try {
+          const shopId = ackKeyFrom(From);
+          if (/खरीद दर्ज करें/.test(sourceText)) __lastStickyAction.set(shopId, { action: 'purchased', ts: Date.now() });
+          else if (/बिक्री दर्ज करें/.test(sourceText)) __lastStickyAction.set(shopId, { action: 'sold', ts: Date.now() });
+          else if (/रिटर्न दर्ज करें/.test(sourceText)) __lastStickyAction.set(shopId, { action: 'returned', ts: Date.now() });
+        } catch { /* best-effort */ }
+    
     const isCommandOnly = ['mode','help','demo','trial','paid'].includes(t);
     let hint = isCommandOnly ? 'en' : guessLangFromInput(sourceText);
     
