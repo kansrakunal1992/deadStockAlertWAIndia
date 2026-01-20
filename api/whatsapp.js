@@ -8326,6 +8326,7 @@ function _confirmUnitDisp(unitRaw, lang = 'en') {
   return displayUnit(u || unitRaw, L);
 }
 
+
 const _CONFIRM_TPL = {
   en: {
     stock: 'Stock',
@@ -8334,61 +8335,70 @@ const _CONFIRM_TPL = {
     returned:  '↩️ Returned {qtyUnit} {product}{rate}{stockPart}',
     updated:   ({ ok, total }) => `✅ Successfully updated ${ok} of ${total} items.`
   },
+
   hi: {
     stock: 'स्टॉक',
-    purchased: '📦 {qtyUnit} {product} खरीदी गई{rate}{stockPart} non-AI',
-    sold:      '🛒 {qtyUnit} {product} बेचा गया{rate}{stockPart}',
-    returned:  '↩️ {qtyUnit} {product} वापस किया{rate}{stockPart}',
-    updated:   ({ ok, total }) => `✅ ${total} में से ${ok} आइटम सफलतापूर्वक अपडेट किया गया।`
+    // Gender-neutral, noun-led phrasing
+    purchased: '📦 {qtyUnit} {product} — खरीद दर्ज की गई{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} — बिक्री दर्ज की गई{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} — रिटर्न दर्ज की गई{rate}{stockPart}',
+    updated:   ({ ok, total }) => `✅ ${total} में से ${ok} आइटम सफलतापूर्वक अपडेट हुए।`
   },
+
   'hi-latn': {
     stock: 'Stock',
-    purchased: '📦 {qtyUnit} {product} kharidi gayi{rate}{stockPart}',
-    sold:      '🛒 {qtyUnit} {product} becha gaya{rate}{stockPart}',
-    returned:  '↩️ {qtyUnit} {product} wapas kiya{rate}{stockPart}',
+    purchased: '📦 {qtyUnit} {product} — kharid darj ki gayi{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} — bikri darj ki gayi{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} — return darj ki gayi{rate}{stockPart}',
     updated:   ({ ok, total }) => `✅ ${ok} of ${total} items update ho gaye.`
   },
+
   bn: {
     stock: 'স্টক',
-    purchased: '📦 {qtyUnit} {product} কেনা হয়েছে{rate}{stockPart}',
-    sold:      '🛒 {qtyUnit} {product} বিক্রি হয়েছে{rate}{stockPart}',
-    returned:  '↩️ {qtyUnit} {product} ফেরত দেওয়া হয়েছে{rate}{stockPart}',
+    purchased: '📦 {qtyUnit} {product} — ক্রয় রেকর্ড করা হয়েছে{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} — বিক্রি রেকর্ড করা হয়েছে{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} — রিটার্ন রেকর্ড করা হয়েছে{rate}{stockPart}',
     updated:   ({ ok, total }) => `✅ ${total}টির মধ্যে ${ok}টি আইটেম সফলভাবে আপডেট হয়েছে।`
   },
+
   ta: {
     stock: 'ஸ்டாக்',
-    purchased: '📦 {qtyUnit} {product} வாங்கப்பட்டது{rate}{stockPart}',
-    sold:      '🛒 {qtyUnit} {product} விற்கப்பட்டது{rate}{stockPart}',
-    returned:  '↩️ {qtyUnit} {product} திருப்பி அளிக்கப்பட்டது{rate}{stockPart}',
+    purchased: '📦 {qtyUnit} {product} — வாங்கல் பதிவு செய்யப்பட்டது{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} — விற்பனை பதிவு செய்யப்பட்டது{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} — ரிட்டர்ன் பதிவு செய்யப்பட்டது{rate}{stockPart}',
     updated:   ({ ok, total }) => `✅ ${total} இல் ${ok} உருப்படிகள் வெற்றிகரமாக புதுப்பிக்கப்பட்டன.`
   },
+
   te: {
     stock: 'స్టాక్',
-    purchased: '📦 {qtyUnit} {product} కొనుగోలు చేయబడింది{rate}{stockPart}',
-    sold:      '🛒 {qtyUnit} {product} అమ్మబడింది{rate}{stockPart}',
-    returned:  '↩️ {qtyUnit} {product} తిరిగి ఇవ్వబడింది{rate}{stockPart}',
+    purchased: '📦 {qtyUnit} {product} — కొనుగోలు నమోదు చేయబడింది{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} — విక్రయం నమోదు చేయబడింది{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} — రిటర్న్ నమోదు చేయబడింది{rate}{stockPart}',
     updated:   ({ ok, total }) => `✅ ${total} లో ${ok} ఐటమ్‌లు విజయవంతంగా అప్‌డేట్ అయ్యాయి.`
   },
+
   kn: {
     stock: 'ಸ್ಟಾಕ್',
-    purchased: '📦 {qtyUnit} {product} ಖರೀದಿಸಲಾಗಿದೆ{rate}{stockPart}',
-    sold:      '🛒 {qtyUnit} {product} ಮಾರಾಟವಾಗಿದೆ{rate}{stockPart}',
-    returned:  '↩️ {qtyUnit} {product} ಹಿಂತಿರುಗಿಸಲಾಗಿದೆ{rate}{stockPart}',
+    purchased: '📦 {qtyUnit} {product} — ಖರೀದಿ ದಾಖಲಾಗಿದೆ{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} — ಮಾರಾಟ ದಾಖಲಾಗಿದೆ{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} — ರಿಟರ್ನ್ ದಾಖಲಾಗಿದೆ{rate}{stockPart}',
     updated:   ({ ok, total }) => `✅ ${total}ರಲ್ಲಿ ${ok} ಐಟಂಗಳನ್ನು ಯಶಸ್ವಿಯಾಗಿ ಅಪ್ಡೇಟ್ ಮಾಡಲಾಗಿದೆ.`
   },
+
   mr: {
     stock: 'स्टॉक',
-    purchased: '📦 {qtyUnit} {product} खरेदी झाली{rate}{stockPart}',
-    sold:      '🛒 {qtyUnit} {product} विकले{rate}{stockPart}',
-    returned:  '↩️ {qtyUnit} {product} परत केले{rate}{stockPart}',
+    purchased: '📦 {qtyUnit} {product} — खरेदी नोंद झाली{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} — विक्री नोंद झाली{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} — रिटर्न नोंद झाली{rate}{stockPart}',
     updated:   ({ ok, total }) => `✅ ${total} पैकी ${ok} आयटम यशस्वीपणे अपडेट झाले.`
   },
+
   gu: {
     stock: 'સ્ટોક',
-    purchased: '📦 {qtyUnit} {product} ખરીદાયું{rate}{stockPart}',
-    sold:      '🛒 {qtyUnit} {product} વેચાયું{rate}{stockPart}',
-    returned:  '↩️ {qtyUnit} {product} પરત આપાયું{rate}{stockPart}',
-    updated:   ({ ok, total }) => `✅ ${total} માંથી ${ok} આઇટમ સફળતાપૂર્વક અપડેટ થયું.`
+    purchased: '📦 {qtyUnit} {product} — ખરીદીની નોંધ થઈ{rate}{stockPart}',
+    sold:      '🛒 {qtyUnit} {product} — વેચાણની નોંધ થઈ{rate}{stockPart}',
+    returned:  '↩️ {qtyUnit} {product} — રિટર્નની નોંધ થઈ{rate}{stockPart}',
+    updated:   ({ ok, total }) => `✅ ${total} માંથી ${ok} આઇટમ સફળતાપૂર્વક અપડેટ થયા.`
   }
 };
 
