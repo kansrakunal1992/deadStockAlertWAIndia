@@ -8302,11 +8302,11 @@ const _confirmHashGuard = new Map(); // shopId -> { at: ms, lastHash: string }
 
 // =============================================================================
 // [FLAG] Deterministic confirmation localization (NO AI translation via t()).
-// Set USE_TEMPLATE_CONFIRM_TRANSLATION=1 to bypass AI translation on confirmations.
-// Default OFF to preserve current behavior.
+// Set USE_TEMPLATE_CONFIRM_TRANSLATION=0 to ensure AI translation on confirmations.
+// Default ON.
 // =============================================================================
 const USE_TEMPLATE_CONFIRM_TRANSLATION =
-  String(process.env.USE_TEMPLATE_CONFIRM_TRANSLATION ?? '0') === '1';
+  String(process.env.USE_TEMPLATE_CONFIRM_TRANSLATION ?? '1') === '0';
 
 function _confirmLangExact(lang = 'en') {
   return String(lang ?? 'en').toLowerCase().trim();
@@ -8334,7 +8334,7 @@ const _CONFIRM_TPL = {
   },
   hi: {
     stock: 'स्टॉक',
-    purchased: '📦 {qtyUnit} {product} खरीदी गई{rate}{stockPart}',
+    purchased: '📦 {qtyUnit} {product} खरीदी गई{rate}{stockPart} non-AI',
     sold:      '🛒 {qtyUnit} {product} बेचा गया{rate}{stockPart}',
     returned:  '↩️ {qtyUnit} {product} वापस किया{rate}{stockPart}',
     updated:   ({ ok, total }) => `✅ ${total} में से ${ok} आइटम सफलतापूर्वक अपडेट किया गया।`
