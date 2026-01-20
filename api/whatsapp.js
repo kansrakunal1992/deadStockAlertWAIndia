@@ -8403,8 +8403,31 @@ function _confirmTplFor(lang) {
   return _CONFIRM_TPL[L] || _CONFIRM_TPL[_confirmLangBase(L)] || _CONFIRM_TPL.en;
 }
 
-function composeConfirmBodyTemplate(action, payload, lang, ok = 1, total = 1) {
-  console.log('[non AI path invoked]');
+// -----------------------------------------------------------------------------
+// Confirmation tracing (OFF by default). Enable with CONFIRM_TRACE=1
+// -----------------------------------------------------------------------------
+const CONFIRM_TRACE = String(process.env.CONFIRM_TRACE ?? '0') === '1';
+
+function _confirmTrace(tag, data) {
+  if (!CONFIRM_TRACE) return;
+  try {
+    // Keep log single-line, grep-friendly
+    console.log(`[confirm-trace] ${tag}`, data || {});
+  } catch (_) {}
+}
+
+function composeConfirmBodyTemplate(action, payload, lang, ok = 1, total = 1) {  
+  _confirmTrace('composeConfirmBodyTemplate', {
+    mode: 'template',
+    action: String(action ?? '').toLowerCase(),
+    lang,
+    product: payload?.product,
+    qty: payload?.qty ?? payload?.quantity,
+    unit: payload?.unit,
+    pricePerUnit: payload?.pricePerUnit,
+    stockQty: payload?.stockQty ?? payload?.newQuantity ?? payload?.overallStock ?? null
+  });
+
   const tpl = _confirmTplFor(lang);
   const act = String(action ?? '').toLowerCase().trim();
 
@@ -8485,13 +8508,27 @@ function composeConfirmUpdatedLine(ok, total, lang) {
 const CONFIRM_BODY_TTL_MS = Number(process.env.CONFIRM_BODY_TTL_MS ?? (10 * 1000));
 async function _sendConfirmOnceByBody(From, detectedLanguage, requestId, body, lastTxn = null) {
 const shopId = String(From).replace('whatsapp:', '');
-  const t0 = Date.now();
+  const t0 = Date.now();    
   console.log('[confirm-once] begin', { shopId, requestId, lang: detectedLanguage, len: body?.length ?? 0 });
+    _confirmTrace('confirmOnce.enter', {
+      req: requestId,
+      to: From,
+      shopId,
+      lang: detectedLanguage,
+      mode: USE_TEMPLATE_CONFIRM_TRANSLATION ? 'template' : 'ai',
+      bodyLen: body?.length ?? 0
+    });
   let final;
-  try {        
-    const localized = USE_TEMPLATE_CONFIRM_TRANSLATION
-          ? body
-          : await t(body, detectedLanguage ?? 'en', `${requestId}::confirm-once`);
+  try {                
+    let localized;
+        if (USE_TEMPLATE_CONFIRM_TRANSLATION) {
+          localized = body;
+          _confirmTrace('confirmOnce.translate', { req: requestId, mode: 'template', ms: 0 });
+        } else {
+          const tt0 = Date.now();
+          localized = await t(body, detectedLanguage ?? 'en', `${requestId}::confirm-once`);
+          _confirmTrace('confirmOnce.translate', { req: requestId, mode: 'ai', ms: Date.now() - tt0 });
+        }
     // Restore existing footer, then tag/badge, then labels, then script clamp + numerals.
     let withHelp = await appendSupportFooter(localized, From);
     let withTag  = await tagWithLocalizedMode(From, withHelp, detectedLanguage);
@@ -8685,7 +8722,16 @@ async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, p
     newQuantity = null
   } = payload || {};
 
-console.log('[non ai purchase confirmation path]'); 
+_confirmTrace('sendPurchaseConfirmationOnce', {
+  req: requestId,
+  to: From,
+  lang: detectedLanguage,
+  mode: USE_TEMPLATE_CONFIRM_TRANSLATION ? 'template' : 'ai',
+  product,
+  qty,
+  unit
+});
+ 
 const body = USE_TEMPLATE_CONFIRM_TRANSLATION
     ? composeConfirmBodyTemplate(
         'purchased',
@@ -8761,6 +8807,17 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
                       : '';
 
   const head = `${icon} Sold${qtyUnit ? ` ${qtyUnit}` : ''}${uiProduct ? ` ${uiProduct}` : ''}${rateText}${stockText}`;
+    
+  _confirmTrace('sendSaleConfirmationOnce', {
+      req: requestId,
+      to: From,
+      lang: detectedLanguage,
+      mode: USE_TEMPLATE_CONFIRM_TRANSLATION ? 'template' : 'ai',
+      product: uiProduct,
+      qty,
+      unit: uNorm,
+      stockQty
+    });
 
   // Localize body; keep anchors; send once    
   const bodySrc = USE_TEMPLATE_CONFIRM_TRANSLATION
