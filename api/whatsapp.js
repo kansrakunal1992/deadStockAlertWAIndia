@@ -14170,7 +14170,10 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
     let createdBatchEarly = false;
     // ⬆️ HOIST overall stock holders so they exist across all blocks
     let overallQty = null;
-    let overallUnit = null;
+    let overallUnit = null;         
+    // NEW: Hoist priceSource so every branch can set it, and it always exists when used later
+    let priceSource = null;
+
     const normalize = (u) => normalizeUnit(u || '');
     try {
       // === RAW-vs-UI split ===
@@ -14286,7 +14289,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
         const purchaseDateISO = formatDateForAirtable(new Date());
         const priceFromMsg = Number(update.price ?? 0);
-        const priceFromCatalog = Number(productMeta?.price ?? 0);
+        const priceFromCatalog = Number(productMeta?.price ?? 0);                
+        // NEW: set priceSource for purchases (message > db > null)
+        priceSource = priceFromMsg > 0 ? 'message' : (priceFromCatalog > 0 ? 'db' : null);
         const finalPrice = priceFromMsg > 0 ? priceFromMsg : (priceFromCatalog > 0 ? priceFromCatalog : 0);
 
         // Inline expiry from message (if any); else default/blank.
@@ -14316,7 +14321,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
             awaiting: 'price',
             status: 'pending',
             deferredPrice: true,
-            inlineConfirmText: ''
+            inlineConfirmText: '',
+            // NEW: expose null/derived source even on pending result for schema stability
+            priceSource
           });
           continue; // Move to next update; NO batch, NO inventory, NO state
         }
@@ -14422,8 +14429,11 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           newQuantity: stockQty,
           unitAfter: stockUnit,
           purchasePrice: finalPrice,
-          totalValue: finalPrice * Math.abs(update.quantity),
-          inlineConfirmText: confirmTextLine
+          totalValue: finalPrice * Math.abs(update.quantity),                    
+          inlineConfirmText: confirmTextLine,
+          // NEW: add observability + parity flag for purchases
+          priceSource,
+          priceUpdated: (Number(update.price) > 0) && (Number(update.price) !== Number(priceFromCatalog))
         });
                 
         // DB COMMIT POINT (Purchase + batch): arm Undo only for single‑item calls
@@ -14475,10 +14485,11 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         });
         continue;
       }
-
-      const priceSource = (Number(update.price) > 0)
-        ? 'message'
-        : (productPrice > 0 ? 'db' : null); // only mark db if it's actually > 0
+            
+      // NEW: assign to hoisted variable for sales & other non-purchase flows
+          priceSource = (Number(update.price) > 0)
+            ? 'message'
+            : (productPrice > 0 ? 'db' : null); // only mark db if it's actually > 0
 
       // Rest of the function remains the same...
       console.log(`[Update ${shopId} - ${product}] Processing update: ${update.quantity} ${update.unit}`);
@@ -14899,9 +14910,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
           && (Number(update.price) !== Number(productPrice)),
         compositeKey: selectedBatchCompositeKey ? normalizeCompositeKey(selectedBatchCompositeKey) : null
       };
-      // Debug line to verify at runtime (you can remove later)
+      // Debug line to verify at runtime (you can remove later)            
       console.log(
-        `[Update ${shopId} - ${product}] priceSource=${priceSource}, `
+          `[Update ${shopId} - ${product}] priceSource=${typeof priceSource === 'undefined' ? 'n/a' : priceSource}, `
         + `purchasePrice=${enriched.purchasePrice ?? '-'}, `
         + `salePrice=${enriched.salePrice ?? '-'}, `
         + `totalValue=${enriched.totalValue}`
