@@ -557,6 +557,16 @@ async function sendTxnConfirmationOnce(From, messageText, lang, requestId) {
   if (txnConfirmOnce.has(k)) return false;
   txnConfirmOnce.add(k);
   const tagged = await tagWithLocalizedMode(From, finalizeForSend(messageText, lang), lang);
+    
+  // [confirm-trace] generic tx-confirm-once (fallback / non-fast-path)
+    // NOTE: This log fires for any confirmation that flows through this helper.
+    console.log('[confirm-trace]', {
+      req: requestId ?? null,
+      path: 'tx-confirm-once',
+      branch: 'raw-body', // messageText already composed
+      firstLine: String(messageText).split('\n')[0].slice(0, 200)
+    });
+
   await sendMessageViaAPI(From, tagged);
   return true;
 }
@@ -17729,6 +17739,19 @@ async function sendReturnConfirmationOnce(
     const stock = (payload.newQuantity != null)
           ? ` (Stock: ${payload.newQuantity}${unit ? ' ' + unit : ''})`
           : '';
+        
+    // [confirm-trace] return path
+      console.log('[confirm-trace]', {
+        req: requestScope,
+        path: 'return-once',
+        branch: 'template', // this path composes a single-line template
+        kind: 'returned',
+        product: prod,
+        qty, unit,
+        ppu: null,
+        stock: (payload.newQuantity ?? null)
+      });
+
     const reasonLine = payload.reason ? `\nReason: ${payload.reason}` : '';
 
     const line = `↩️ Returned ${qty} ${unit} ${prod}${stock}${reasonLine}`;        
@@ -19052,12 +19075,18 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
               (String(processed[0].action).toLowerCase() === 'returned');
             let firstLineForReturn = '';
             if (isSingleReturn) {
-              const r0 = processed[0];
-              let raw0 = r0?.inlineConfirmText ? r0.inlineConfirmText : formatResultLine(r0, COMPACT_MODE, false);
+              const r0 = processed[0];                          
+            // Build first line exactly like other lines: template vs translate branch
+              let raw0 = USE_TEMPLATE_CONFIRM_TRANSLATION
+                ? formatResultLine(r0, COMPACT_MODE, true, detectedLanguage)
+                : (r0?.inlineConfirmText ? r0.inlineConfirmText : formatResultLine(r0, COMPACT_MODE, false));
               if (raw0) {
-                const needsStock0 = COMPACT_MODE && r0.newQuantity !== undefined && !/\(Stock:/.test(raw0);
-                if (needsStock0) raw0 += ` (Stock: ${r0.newQuantity} ${r0.unitAfter ?? r0.unit ?? ''})`;
-                firstLineForReturn = raw0.trim();
+                // Only add stock tail in translate branch (template line already includes it)
+                if (!USE_TEMPLATE_CONFIRM_TRANSLATION) {
+                  const needsStock0 = COMPACT_MODE && r0.newQuantity !== undefined && !/\(Stock:/.test(raw0);
+                  if (needsStock0) raw0 += ` (Stock: ${r0.newQuantity} ${r0.unitAfter ?? r0.unit ?? ''})`;
+                }
+                firstLineForReturn = String(raw0).trim();
               }
             }
             let message = isSingleReturn && firstLineForReturn
@@ -19809,6 +19838,18 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                     1
                   )
                 : `${await translateP}${stockSuffix}`;
+            
+              // [confirm-trace] single-update fast path (purchase/sale), include branch + numbers
+              console.log('[confirm-trace]', {
+                req: requestId,
+                path: 'single-update-fast',
+                branch: USE_TEMPLATE_CONFIRM_TRANSLATION ? 'template' : 'translate+suffix',
+                kind: String(u.action).toLowerCase(),
+                product: productName,
+                qty: u.quantity, unit,
+                ppu: (u.pricePerUnit ?? null),
+                stock: (finalStockQty ?? null)
+              });
 
               await _sendConfirmOnceByBody(From, langExact, requestId, finalBody);
               try { await clearUserState(From); } catch (_){}
@@ -19967,11 +20008,18 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
           let firstLineForReturn = '';
           if (isSingleReturn) {
             const r0 = processed[0];
-            let raw0 = r0?.inlineConfirmText ? r0.inlineConfirmText : formatResultLine(r0, COMPACT_MODE, false);
+                      
+          // Build first line exactly like other lines: template vs translate branch
+            let raw0 = USE_TEMPLATE_CONFIRM_TRANSLATION
+              ? formatResultLine(r0, COMPACT_MODE, true, detectedLanguage)
+              : (r0?.inlineConfirmText ? r0.inlineConfirmText : formatResultLine(r0, COMPACT_MODE, false));
             if (raw0) {
-              const needsStock0 = COMPACT_MODE && r0.newQuantity !== undefined && !/\(Stock:/.test(raw0);
-              if (needsStock0) raw0 += ` (Stock: ${r0.newQuantity} ${r0.unitAfter ?? r0.unit ?? ''})`;
-              firstLineForReturn = raw0.trim();
+              // Only add stock tail in translate branch (template line already includes it)
+              if (!USE_TEMPLATE_CONFIRM_TRANSLATION) {
+                const needsStock0 = COMPACT_MODE && r0.newQuantity !== undefined && !/\(Stock:/.test(raw0);
+                if (needsStock0) raw0 += ` (Stock: ${r0.newQuantity} ${r0.unitAfter ?? r0.unit ?? ''})`;
+              }
+              firstLineForReturn = String(raw0).trim();
             }
           }
       
@@ -21428,11 +21476,25 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
     
     
     const processed = results.filter(r => !r.needsPrice && !r.needsUserInput && !r.awaiting);
-      const header = chooseHeader(processed.length, COMPACT_MODE, false, detectedLanguage);
+    const header = chooseHeader(processed.length, COMPACT_MODE, false, detectedLanguage);
           
-      // --- Single-sale confirmation (confirmation flow): one message + return ----
+    // --- Single-sale confirmation (confirmation flow): one message + return ----
         if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
           const x = processed[0];
+                    
+          // [confirm-trace] confirmation-after-correction (single sale)
+             console.log('[confirm-trace]', {
+               req: requestId,
+               path: 'confirm-state-single-sale',
+               branch: 'template', // sendSaleConfirmationOnce uses templated line
+               kind: 'sold',
+               product: x.product,
+               qty: x.quantity,
+               unit: (x.unitAfter ?? x.unit ?? ''),
+               ppu: (x.rate ?? x.salePrice ?? x.price ?? null),
+               stock: (x.newQuantity ?? null)
+             });
+
           await sendSaleConfirmationOnce(
             From,
             detectedLanguage,
