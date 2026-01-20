@@ -8306,7 +8306,9 @@ const _confirmHashGuard = new Map(); // shopId -> { at: ms, lastHash: string }
 // Default ON.
 // =============================================================================
 const USE_TEMPLATE_CONFIRM_TRANSLATION =
-  String(process.env.USE_TEMPLATE_CONFIRM_TRANSLATION ?? '1') === '0';
+  !['0', 'false', 'off', 'no'].includes(
+    String(process.env.USE_TEMPLATE_CONFIRM_TRANSLATION ?? '1').trim().toLowerCase()
+  );
 
 function _confirmLangExact(lang = 'en') {
   return String(lang ?? 'en').toLowerCase().trim();
@@ -8723,50 +8725,63 @@ async function sendMessageDedup(From, msg, meta = {}) {
  * NEW: one-liner purchase confirmation (language-aware via t())
  * Mirrors the sale confirmation, but for “purchased”.
  */
-async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, payload) {
- const {
-    product,
+async function sendPurchaseConfirmationOnce(From, detectedLanguage, requestId, payload = {}) {
+  const {
+    productRawForDb,          // ← DB-safe
+    productDisplay,           // ← UI-friendly (optional)
+    product,                  // ← legacy; used if productRawForDb absent
     qty,
     unit = '',
     pricePerUnit = null,
     newQuantity = null
-  } = payload || {};
+  } = payload;
 
+  // Choose display name safely; never translate here.
+  const dbProduct  = String(productRawForDb ?? product ?? '').trim();
+  const uiProduct  = String((productDisplay ?? dbProduct) || 'item').trim();
+
+  // Normalize unit for display
+  const uNorm      = typeof normalizeUnit === 'function' ? normalizeUnit(unit) : unit;
 _confirmTrace('sendPurchaseConfirmationOnce', {
   req: requestId,
   to: From,
   lang: detectedLanguage,
   mode: USE_TEMPLATE_CONFIRM_TRANSLATION ? 'template' : 'ai',
-  product,
+  product: uiProduct,
   qty,
-  unit
+  unit: uNorm
 });
  
-const body = USE_TEMPLATE_CONFIRM_TRANSLATION
+const bodySrc = USE_TEMPLATE_CONFIRM_TRANSLATION
     ? composeConfirmBodyTemplate(
         'purchased',
-        { product, qty, unit, pricePerUnit, stockQty: newQuantity, stockUnit: unit },
+        { product: uiProduct, qty, unit: uNorm, pricePerUnit, stockQty: newQuantity, stockUnit: uNorm },
         detectedLanguage,
         1,
         1
       )
-    : `${composePurchaseConfirmation({ product, qty, unit, pricePerUnit, newQuantity })}\n\n✅ Successfully updated 1 of 1 items.`;
-await _sendConfirmOnceByBody(From, detectedLanguage, requestId, body); 
+    : `${composePurchaseConfirmation({ product: uiProduct, qty, unit: uNorm, pricePerUnit, newQuantity })}\n\n✅ Successfully updated 1 of 1 items.`;
+
+  const bodyLoc = USE_TEMPLATE_CONFIRM_TRANSLATION
+    ? bodySrc
+    : await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);
+  await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc); 
 // Cache sale txn for Undo (best-effort)
   try {
     const shopId = shopIdFrom(From);
     
-    globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();
+    globalThis.__lastTxnForShop = globalThis.__lastTxnForShop ?? new Map();        
+    const safeUnit = uNorm || (unit ?? 'pieces');
     globalThis.__lastTxnForShop.set(shopId, {
       action: 'purchased',
-      product: productRawForDb ?? product ?? productDisplay ?? '',
+      product: dbProduct,
       quantity: Number(qty ?? 0),
-      unit: normalizeUnit ? normalizeUnit(unit) : (unit ?? 'pieces'),
+      unit: safeUnit,
       compositeKey: generateCompositeKey(
         shopId,
         'purchased',
-        productRawForDb ?? product ?? productDisplay ?? '',
-        normalizeUnit ? normalizeUnit(unit) : (unit ?? 'pieces'),
+        dbProduct,
+        safeUnit,
         Number(qty ?? 0),
         /* writeId */ null
       )
