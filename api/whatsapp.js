@@ -8404,6 +8404,7 @@ function _confirmTplFor(lang) {
 }
 
 function composeConfirmBodyTemplate(action, payload, lang, ok = 1, total = 1) {
+  console.log('[non AI path invoked]');
   const tpl = _confirmTplFor(lang);
   const act = String(action ?? '').toLowerCase().trim();
 
@@ -8488,7 +8489,6 @@ const shopId = String(From).replace('whatsapp:', '');
   console.log('[confirm-once] begin', { shopId, requestId, lang: detectedLanguage, len: body?.length ?? 0 });
   let final;
   try {        
-    console.log('[non AI path] begin');
     const localized = USE_TEMPLATE_CONFIRM_TRANSLATION
           ? body
           : await t(body, detectedLanguage ?? 'en', `${requestId}::confirm-once`);
