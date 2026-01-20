@@ -14170,7 +14170,8 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
     let createdBatchEarly = false;
     // ⬆️ HOIST overall stock holders so they exist across all blocks
     let overallQty = null;
-    let overallUnit = null;         
+    let overallUnit = null;   
+    let selectedBatchCompositeKey = null;
     // NEW: Hoist priceSource so every branch can set it, and it always exists when used later
     let priceSource = null;
 
