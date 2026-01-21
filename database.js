@@ -76,13 +76,13 @@ async function openCorrectionWindow(shopId, lastTxn, detectedLanguage = 'en') {
       });
     } catch (_) {}
   
-  // Persist Undo window ONLY in CorrectionState (do not overwrite sticky UserState)
-  await saveCorrectionState(
-    normalizeShopIdForWrite(shopId),
-    'awaitingCorrection',
-    payload,
-    detectedLanguage
-  );
+  // Persist Undo window ONLY in CorrectionState (do not overwrite sticky UserState)   
+  saveCorrectionState(
+      normalizeShopIdForWrite(shopId),
+      'awaitingCorrection',
+      payload,
+      detectedLanguage
+    ).catch(e => { try { console.warn('[undo-arm::save]', e?.message); } catch(_) {} });
 
   return { success: true };
 }
