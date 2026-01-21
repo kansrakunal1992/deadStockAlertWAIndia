@@ -1070,8 +1070,10 @@ if (typeof globalThis.preArmUndoFromCommit !== 'function') {
                 compositeKey: txn?.compositeKey ?? null,
                 saleRecordId: txn?.saleRecordId ?? null
               };
-        if (!lastTxn.product) return;
-        await openCorrectionWindow(shopId, lastTxn, lang);
+        if (!lastTxn.product) return;                
+        // Fire-and-forget: do not block confirmation on Airtable write
+        Promise.resolve().then(() => openCorrectionWindow(shopId, lastTxn, lang))
+        .catch(e => { try { console.warn('[undo-arm]', e?.message); } catch(_) {} });
         // Shop‑scoped flag only (no reqId coupling)
         globalThis.__undoPreArmedByShop.set(shopId, { ts: Date.now(), lang });
         setTimeout(() => globalThis.__undoPreArmedByShop.delete(shopId), UNDO_PREARM_TTL_MS);
