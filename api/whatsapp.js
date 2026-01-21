@@ -670,7 +670,6 @@ const planCache = new Map();  // shopId -> { value, ts }
 const stateCache = new Map(); // shopId -> { value, ts }
 const PLAN_CACHE_TTL  = 60 * 1000;  // 60s
 const STATE_CACHE_TTL = 30 * 1000;  // 30s
-const AUTH_CACHE_TTL  = 60 * 1000; // 60s (soft auth)
 // --- NEW: quick cache for user preference (language) ---
 const prefCache = new Map(); // shopId -> { value, ts }
 const PREF_CACHE_TTL = 60 * 1000; // 60s
@@ -701,29 +700,6 @@ async function getUserStateQuick(shopId) {
   try { st = await getUserStateFromDB(shopId); } catch {}
   _cachePut(stateCache, shopId, st);
   return st;
-}
-
-// ---- NEW: fast, cache-first soft authorization (no functional compromise) ----
-async function isAuthorizedSoftFast(shopId) {
-  const cached = _cacheGet(authCache, shopId, AUTH_CACHE_TTL);
-  if (typeof cached === 'boolean') return cached;
-  // Prefer existing soft authorization helpers; bound with a tight timeout
-  let ok = false;
-  try {
-    const probe = await withTimeout(
-      (typeof isAuthorizedSoft === 'function')
-        ? isAuthorizedSoft(shopId)
-        : (typeof checkAuthorizationSoft === 'function'
-            ? checkAuthorizationSoft(shopId)
-            : Promise.resolve(true) // safest fallback: do not block flow
-          ),
-      500, // ms
-      () => false
-    );
-    ok = !!probe;
-  } catch { ok = false; }
-  _cachePut(authCache, shopId, ok);
-  return ok;
 }
 
 // --- NEW: quick preference (language) resolver with TTL ---
@@ -19726,9 +19702,17 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     // Always detect from text and override DB preference with this turn's language
     let detectedLanguage = await detectLanguageWithFallback(Body, From, requestId);
     
-    // (moved) saveUserPreference deferred to post-parse, pre-send (best-effort, non-blocking)
+    // Persist the override (update user pref to this language)
+    try {
+      await saveUserPreference(fromToShopId(From), detectedLanguage);
+      console.log(`[${requestId}] Text turn: saved DB language pref to ${detectedLanguage}`);
+    } catch (e) {
+      console.warn(`[${requestId}] Text turn: saveUserPreference failed:`, e?.message);
+    }
 
-    // (moved) language pin/save deferred to post-parse, pre-send to cut pre-AI latency
+    detectedLanguage = await checkAndUpdateLanguage(Body, From, detectedLanguage, requestId);
+    console.log(`[${requestId}] Detected language for text update: ${detectedLanguage}`);
+    
     // [PATCH A - TEXT PATH] Greeting hard-stop before any quick-query normalization/route
     // Prevent "Namaste"/"नमस्ते"/"hello" etc. from being normalized into commands like "short summary".
     if (_isGreeting(Body)) {
@@ -19763,12 +19747,8 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       } catch (_) { /* best-effort */ }
 
     // Heartbeat: keep sticky mode fresh while user is active
-      try {            
-        // State read (cache-first) before parsing; DB only if cache miss
-        let stQuick = await getUserStateQuick(shopIdFrom(From));
-        if (!stQuick && typeof getUserStateFromDB === 'function') {
-          stQuick = await getUserStateFromDB(shopIdFrom(From));
-        }
+      try {
+        const st = typeof getUserStateFromDB === 'function' ? await getUserStateFromDB(fromToShopId(From)) : null;
         if (st && st.mode === 'awaitingTransactionDetails' && typeof refreshUserStateTimestamp === 'function') {
           await refreshUserStateTimestamp(fromToShopId(From));
         }
@@ -19785,37 +19765,15 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       await sendPaidPlanCTA(From, detectedLanguage || 'en');
       return;
     }
-                  
-  // === STICKY FAST-PATH: parse first; orchestrator only if needed ===
-  // 0) AUTH & PLAN/TIER gate (must stay pre-AI) -> cache-first & bounded
-  const shopId = String(From ?? '').replace('whatsapp:', '');
-  const authOk = await isAuthorizedSoftFast(shopId);
-  if (!authOk) { /* keep existing deny/upsell flow as-is, or return */ }
-
-  // 1) QUICK sticky-state read (cache-first). Still pre-AI per your requirement.
-  //    DB read only if cache misses; avoids the slow "Checking state … in database" path on hot turns.
-  let stickyState = await getUserStateQuick(shopId);
-  let stickyAction = null;
-  if (stickyState?.mode === 'awaitingTransactionDetails') stickyAction = stickyState?.data?.action ?? null;
-  else if (stickyState?.mode === 'awaitingBatchOverride') stickyAction = 'sold';
-  else if (stickyState?.mode === 'awaitingPurchaseExpiryOverride') stickyAction = 'purchased';
-
-  // 2) Try AI parsing immediately in sticky turns (or if the text looks txn-like).
-  let parsedUpdatesEarly = [];
-  const looksTxn = (typeof looksLikeTxnLite === 'function') ? looksLikeTxnLite(Body) : false;
-  const stickyLikely = !!stickyAction || looksTxn;
-  if (stickyLikely) {
-    try { parsedUpdatesEarly = await parseMultipleUpdates({ From, Body }, requestId); } catch {}
-  }
-
-  // 3) If AI parsing returned valid updates, proceed; else fall back to orchestrator now.
-  let orch = null;
-  if (!parsedUpdatesEarly || parsedUpdatesEarly.length === 0) {
-    orch = await applyAIOrchestration(Body, From, detectedLanguage, requestId);
-  }
-
-  try {
-    const FORCE_INVENTORY = !!orch?.forceInventory;
+              
+        // PATCH: Run orchestration and parse in parallel; use parse result immediately for txn handling
+         const orchPromise = applyAIOrchestration(Body, From, detectedLanguage, requestId);
+         const parsedPromise = parseMultipleUpdates({ From, Body }, requestId);
+         let parsedUpdatesEarly = [];
+         try { parsedUpdatesEarly = await parsedPromise; } catch (_) {}
+         try {
+          const orch = await orchPromise;
+          const FORCE_INVENTORY = !!orch?.forceInventory;
         // --- BEGIN TEXT HANDLER INSERT ---
         /* TEXT_HANDLER_PATCH */
         try {
@@ -21563,29 +21521,22 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
         if (processed.length === 1 && String(processed[0].action).toLowerCase() === 'sold') {
           const x = processed[0];
                     
-          // [confirm-trace] confirmation-after-correction (single sale)                       
-          console.log('[confirm-trace]', {
-              req: requestId,
-              path: 'confirm-state-single-sale',
-              branch: 'template', // sendSaleConfirmationOnce uses templated line
-              kind: 'sold',
-              product: x.product,
-              qty: x.quantity,
-              unit: (x.unitAfter ?? x.unit ?? ''),
-              ppu: (x.rate ?? x.salePrice ?? x.price ?? null),
-              stock: (x.newQuantity ?? null)
-            });
-            // === JUST-IN-TIME LANGUAGE LOCK (post-parse, pre-send) ===
-            let _langForThisTurn = ensureLangExact(detectedLanguage ?? 'en');
-            try {
-              // Save user preference once per turn (best-effort; non-blocking)
-              saveUserPreference(shopIdFrom(From), _langForThisTurn).catch(() => {});
-              console.log(`[req-${requestId}] Using detectedLanguage=${_langForThisTurn} (post-parse, pre-send)`);
-            } catch (_) {}
+          // [confirm-trace] confirmation-after-correction (single sale)
+             console.log('[confirm-trace]', {
+               req: requestId,
+               path: 'confirm-state-single-sale',
+               branch: 'template', // sendSaleConfirmationOnce uses templated line
+               kind: 'sold',
+               product: x.product,
+               qty: x.quantity,
+               unit: (x.unitAfter ?? x.unit ?? ''),
+               ppu: (x.rate ?? x.salePrice ?? x.price ?? null),
+               stock: (x.newQuantity ?? null)
+             });
 
           await sendSaleConfirmationOnce(
             From,
-            _langForThisTurn,
+            detectedLanguage,
             requestId,
             {
               product: x.product,
