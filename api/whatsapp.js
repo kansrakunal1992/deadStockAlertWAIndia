@@ -307,7 +307,88 @@ function canonicalizeLang(code) {
    dozen:       ['dozen','dozens'],
    roll:        ['roll','rolls'],
  };
- 
+
+// =====================================================================
+// [UNIQ:UNIT-REGEX-BUILDER-001] Build a multilingual unit regex
+// Reuses UNIT_TOKENS and augments with Indic tokens + romanized variants.
+// =====================================================================
+function _rxEscape(s){return String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
+
+// Language-local unit aliases (script-native + common plurals)
+const UNIT_TOKENS_LOCALIZED = {
+  hi: { // Hindi (Devanagari)
+    kilogram:['किलो','किलोग्राम'], gram:['ग्राम'], milligram:['मिलीग्राम'],
+    litre:['लीटर'], millilitre:['मिलीलीटर','मिलिलीटर'],
+    packet:['पैकेट'], piece:['पीस','नंग','टुकड़ा','टुकड़ा','टुकड़े','टुकड़े'],
+    box:['बॉक्स'], bottle:['बोतल','बोतलें']
+  },
+  bn: { // Bengali
+    kilogram:['কেজি','কিলোগ্রাম'], gram:['গ্রাম'], milligram:['মিলিগ্রাম'],
+    litre:['লিটার'], millilitre:['মিলিলিটার'],
+    packet:['প্যাকেট'], piece:['পিস'], box:['বক্স'], bottle:['বোতল','বোতলগুলি']
+  },
+  ta: { // Tamil
+    kilogram:['கிலோ','கிலோகிராம்'], gram:['கிராம்'], milligram:['மில்லிகிராம்'],
+    litre:['லிட்டர்'], millilitre:['மில்லிலிட்டர்'],
+    packet:['பாக்கெட்'], piece:['பீஸ்'], box:['பெட்டி'], bottle:['பாட்டில்','பாட்டில்கள்']
+  },
+  te: { // Telugu
+    kilogram:['కిలో','కిలోగ్రామ్'], gram:['గ్రాము','గ్రామ'], milligram:['మిల్లీగ్రామ్'],
+    litre:['లీటరు','లీటర్లు'], millilitre:['మిల్లీలీటర్'],
+    packet:['ప్యాకెట్'], piece:['పీసు'], box:['పెట్టె'], bottle:['బాటిల్']
+  },
+  kn: { // Kannada
+    kilogram:['ಕಿಲೋ','ಕಿಲೋಗ್ರಾಂ'], gram:['ಗ್ರಾಂ'], milligram:['ಮಿಲ್ಲಿಗ್ರಾಂ'],
+    litre:['ಲೀಟರ್'], millilitre:['ಮಿಲಿಲೀಟರ್'],
+    packet:['ಪ್ಯಾಕೆಟ್'], piece:['ಪೀಸ್'], box:['ಬಾಕ್ಸ್','ಡಬ್ಬಿ'], bottle:['ಬಾಟಲಿ','ಬಾಟಲ್']
+  },
+  mr: { // Marathi (Devanagari)
+    kilogram:['किलो','किलोग्राम'], gram:['ग्राम'], milligram:['मिलीग्राम'],
+    litre:['लिटर'], millilitre:['मिलीलीटर'],
+    packet:['पॅकेट'], piece:['पीस'], box:['बॉक्स'], bottle:['बाटली','बाटल्या']
+  },
+  gu: { // Gujarati
+    kilogram:['કિલો','કિલોગ્રામ'], gram:['ગ્રામ'], milligram:['મિલિગ્રામ'],
+    litre:['લિટર'], millilitre:['મિલિલીટર'],
+    packet:['પેકેટ'], piece:['પીસ'], box:['બોક્સ'], bottle:['બાટલી','બાટલીઓ']
+  }
+};
+
+// Common romanized/English abbreviations frequently seen in chat
+const UNIT_TOKENS_ROMANIZED = [
+  'kg','kgs','kilo','kilos','g','gm','gms','mg',
+  'ml','mls','ltr','ltrs','l','liter','litre','liters','litres',
+  'packet','packets','pkt','pkts','piece','pieces','pc','pcs',
+  'box','boxes','bottle','bottles','dozen','dz'
+];
+
+function buildUnifiedUnitRegex() {
+  const bag = new Set();
+  try {
+    // 1) From existing UNIT_TOKENS
+    for (const arr of Object.values(UNIT_TOKENS)) {
+      if (Array.isArray(arr)) for (const tok of arr) if (tok) bag.add(tok);
+    }
+  } catch(_) {}
+  // 2) Localized sets
+  for (const lang of Object.keys(UNIT_TOKENS_LOCALIZED)) {
+    for (const arr of Object.values(UNIT_TOKENS_LOCALIZED[lang])) {
+      for (const tok of arr) bag.add(tok);
+    }
+  }
+  // 3) Romanized extras
+  for (const tok of UNIT_TOKENS_ROMANIZED) bag.add(tok);
+
+  // Sort by length (desc) to prefer longest match first; escape for regex
+  const parts = [...bag].filter(Boolean).map(_rxEscape).sort((a,b)=>b.length-a.length);
+  // No \\b boundaries: Indic scripts don't interact well with \\b
+  return new RegExp(`(?:${parts.join('|')})`, 'iu');
+}
+
+// Digits across scripts (ASCII + Devanagari + Bengali + Tamil + Telugu + Kannada + Gujarati)
+const MULTI_SCRIPT_DIGITS_RX = /[0-9\u0966-\u096F\u09E6-\u09EF\u0BE6-\u0BEF\u0C66-\u0C6F\u0CE6-\u0CEF\u0AE6-\u0AEF]/u;
+const UNIT_REGEX_UNIFIED = buildUnifiedUnitRegex();
+  
  const UNIT_REGEX = new RegExp(
    '\\b(?:' +
    Object.values(UNIT_TOKENS)
@@ -2402,18 +2483,17 @@ async function getStickyActionQuick(from) {
     }
   } catch { return null; }
 }
+
 function looksLikeTxnLite(s) {
-  const t = String(s ?? '').toLowerCase();    
-  // Detect ASCII digits and Indic (Devanagari) digits
-    const hasNum = /(\d|[\u0966-\u096F])/.test(t);    
-  // Reuse the unified unit taxonomy (global UNIT_REGEX) so all languages/variants work consistently
-    // NOTE: Keep the check on the original string (s) so Unicode script matching remains accurate.
-    const hasUnit = typeof UNIT_REGEX === 'object' ? UNIT_REGEX.test(s) : false;
-  const hasPrice = /\b(?:@|at)\s*\d+(?:\.\d+)?(?:\s*\/\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes))?/i.test(t)
-                 || /(?:₹|rs\.?|inr)\s*\d+(?:\.\d+)?/i.test(t);
-  // Verb-less acceptance: number + unit is sufficient in sticky mode; price is optional 
-  // We treat "price only" (e.g., ₹60+  // We treat "price only" (e.g., ₹60) as NOT transaction-like to avoid false parking.
-    return (hasNum && hasUnit) || (hasUnit && hasPrice);
+  const raw = String(s ?? '');
+  const txt = raw.toLowerCase();
+  const hasNum   = MULTI_SCRIPT_DIGITS_RX.test(raw);
+  const hasUnit  = UNIT_REGEX_UNIFIED.test(raw); // test on raw to preserve script matching
+  const hasPrice =
+    /(?:₹|rs\.?|inr|रु|৳)\s*\d+(?:[.,]\d+)?/iu.test(txt) ||
+    /@\s*\d+(?:[.,]\d+)?(?:\s*\/\s*[\p{L}]+)?/u.test(txt);
+  // Verb-less acceptance: "<num> <unit>" OR "<unit> with price" is sufficient in sticky mode.
+  return (hasNum && hasUnit) || (hasUnit && hasPrice);
 }
 
 // ===== NEW: Hindi-aware price-like detector (used to gate price handling in awaitingPriceExpiry) =====
@@ -2608,14 +2688,14 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         if (isBenefitQuestion(msg))      return 'benefits';
         return null;
       }
-
-  function looksLikeInventoryPricing(msg) {
-    const s = String(msg ?? '').toLowerCase();
-    const unitRx = /(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|बॉक्स|टुकड़ा|नंग)/i;
-    const moneyRx = /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i;
-    const brandRx = /(milk|doodh|parle\-g|maggi|amul|oreo|frooti|marie gold|good day|dabur|tata|nestle)/i;
-    return unitRx.test(s) || moneyRx.test(s) || brandRx.test(s);
-  }
+ 
+function looksLikeInventoryPricing(msg) {
+  const s = String(msg ?? '');
+  // Keep pricing & brand hints, but delegate unit detection to unified regex
+  const moneyRx = /(?:₹|rs\.?|inr|रु|৳)\s*\d+(?:[.,]\d+)?/iu;
+  const brandRx = /(milk|doodh|parle\-g|maggi|amul|oreo|frooti|marie\s+gold|good\s+day|dabur|tata|nestle)/i;
+  return UNIT_REGEX_UNIFIED.test(s) || moneyRx.test(s) || brandRx.test(s);
+}
   
   try {
     // --- LEGACY: short-circuit when orchestrator disabled (PRESERVED) ---
@@ -10451,14 +10531,15 @@ const lang = canonicalizeLang(language ?? 'en');
         if (isBenefitQuestion(msg))      return 'benefits';
         return null;
       }
-
+  
   function looksLikeInventoryPricing(msg) {
-    const s = String(msg ?? '').toLowerCase();
-    const unitRx = /(kg|kgs|g|gm|gms|ltr|ltrs|l|ml|packet|packets|piece|pieces|बॉक्स|टुकड़ा|नंग)/i;
-    const moneyRx = /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i;
-    const brandRx = /(milk|doodh|parle\-g|maggi|amul|oreo|frooti|marie gold|good day|dabur|tata|nestle)/i;
-    return unitRx.test(s) || moneyRx.test(s) || brandRx.test(s);
+    const s = String(msg ?? '');
+    // Keep pricing & brand hints, but delegate unit detection to unified regex
+    const moneyRx = /(?:₹|rs\.?|inr|रु|৳)\s*\d+(?:[.,]\d+)?/iu;
+    const brandRx = /(milk|doodh|parle\-g|maggi|amul|oreo|frooti|marie\s+gold|good\s+day|dabur|tata|nestle)/i;
+    return UNIT_REGEX_UNIFIED.test(s) || moneyRx.test(s) || brandRx.test(s);
   }
+  
   const topic = classifyQuestionTopic(question);
   let pricingFlavor = null; // 'tool_pricing' | 'inventory_pricing' | null
   if (topic === 'pricing') {
