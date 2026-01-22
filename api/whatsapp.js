@@ -2511,6 +2511,7 @@ function seenDuplicateCorrection(shopId, payload) {
  * NOTE: All business gating (ensureAccessOrOnboard, trial/paywall, template sends) stays non-AI.
  */
 async function applyAIOrchestration(text, From, detectedLanguageHint, requestId, stickyActionCached) {
+  let aiTxn = null; // avoid TDZ if referenced before later assignments
   var topicForced = null; // TDZ guard: single binding for the whole function    
   // LOCAL MUTABLE COPY: never write into function parameter (can be const/frozen in some runtimes)
     let detectedHint = String(detectedLanguageHint ?? 'en').toLowerCase();
