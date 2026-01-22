@@ -2405,12 +2405,10 @@ async function getStickyActionQuick(from) {
 function looksLikeTxnLite(s) {
   const t = String(s ?? '').toLowerCase();    
   // Detect ASCII digits and Indic (Devanagari) digits
-    const hasNum = /(\d|[\u0966-\u096F])/.test(t);
-    // English unit tokens
-    const UNIT_RX_EN = /\b(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes)\b/i;
-    // Hindi unit tokens (avoid \b because word-boundaries are unreliable on Indic scripts)
-    const UNIT_RX_HI = /(लीटर|किलो|ग्राम|एमएल|पैकेट|पीस|बॉक्स|डिब्बा)/u;
-    const hasUnit = UNIT_RX_EN.test(t) || UNIT_RX_HI.test(t);
+    const hasNum = /(\d|[\u0966-\u096F])/.test(t);    
+  // Reuse the unified unit taxonomy (global UNIT_REGEX) so all languages/variants work consistently
+    // NOTE: Keep the check on the original string (s) so Unicode script matching remains accurate.
+    const hasUnit = typeof UNIT_REGEX === 'object' ? UNIT_REGEX.test(s) : false;
   const hasPrice = /\b(?:@|at)\s*\d+(?:\.\d+)?(?:\s*\/\s*(ltr|l|liter|litre|liters|litres|kg|g|gm|ml|packet|packets|piece|pieces|box|boxes))?/i.test(t)
                  || /(?:₹|rs\.?|inr)\s*\d+(?:\.\d+)?/i.test(t);
   // Verb-less acceptance: number + unit is sufficient in sticky mode; price is optional 
@@ -2640,11 +2638,19 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
           : false;
         __activated = (__plan === 'paid') || (__plan === 'trial' && !__expired);
       } catch (_) { /* best-effort only; default false */ }
-
-      if (stickyAction && looksLikeTxnLite(text) && __activated) {
+          
+    const __txnLike = looksLikeTxnLite(text);
+     logAiFirstDecision(requestId, 'eval', {
+       stickyAction, txnLike: __txnLike, activated: __activated,
+       plan: __plan, planEnd: __end, planExpired: __expired
+     });
+     if (stickyAction && __txnLike && __activated) {
         // NOTE: per request, NO timeout bound for AI parser here.
         const aiRes = await parseInventoryUpdateWithAI(text, 'orchestrator-sticky');
-        const first = Array.isArray(aiRes) && aiRes.length ? aiRes[0] : null;
+        const first = Array.isArray(aiRes) && aiRes.length ? aiRes[0] : null;               
+        if (!first) {
+             logAiFirstDecision(requestId, 'ai-empty', { stickyAction, txnLike: __txnLike, activated: __activated, aiItems: 0 });
+           }
         if (first) {
           // Normalize & align with our write-policy (raw DB name)
           const ACTION_MAP = {
@@ -2689,14 +2695,23 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
             try {
               backend = await withTimeout(getProductPrice(upd.product, shopIdFrom(From)), 400, () => null);
             } catch {}
-            const priceKnown = !!(backend?.success && Number.isFinite(backend?.price));
+            const priceKnown = !!(backend?.success && Number.isFinite(backend?.price));                        
+            logAiFirstDecision(requestId, 'ai-partial', {
+                     product: upd.product, unit: upd.unit, priceKnown
+                   });
             if (priceKnown) {
               upd.pricePerUnit = backend.price;
               if (isCompleteUpdateForSticky(upd, finalAction)) {
                 const language = ensureLangExact(detectedLanguageHint ?? 'en');
                 console.log('[orchestrator][sticky-ai-first] price repaired from backend → early exit', {
                   requestId, action: finalAction
-                });
+                });                          
+            // We are committing after repairing price from backend — mark this as a successful AI-first completion.
+                        logAiFirstDecision(requestId, 'ai-complete', {
+                          product: upd.product,
+                          unit: upd.unit,
+                          reason: 'commit_price_from_backend'
+                        });
                 return {
                   language,
                   isQuestion: false,
@@ -2730,6 +2745,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
 
           // 3) If now complete after unit/price attempt, early-exit
           if (isCompleteUpdateForSticky(upd, finalAction)) {
+            logAiFirstDecision(requestId, 'ai-complete', { product: upd.product, unit: upd.unit, reason: 'commit' });
             const language = ensureLangExact(detectedLanguageHint ?? 'en');
             console.log('[orchestrator][sticky-ai-first] repaired to complete → early exit', {
               requestId, action: finalAction
@@ -2750,16 +2766,20 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
         } else {
           // No AI result → continue; legacy behavior will handle it
           console.log('[orchestrator][sticky-ai-first] no AI result → continuing', { requestId });
-        }
-        } else if (stickyAction && looksLikeTxnLite(text) && !__activated) {
-        // Not activated (pre-trial or post-trial non-paid): skip AI-first sticky parsing
-        console.log('[orchestrator][sticky-ai-first] skipped (plan not activated)', { requestId });
+        }     
+        } else if (stickyAction && __txnLike && !__activated) {
+         logAiFirstDecision(requestId, 'skip', { reason: 'plan_not_activated', stickyAction, txnLike: __txnLike, activated: __activated, plan: __plan, planEnd: __end, planExpired: __expired });
+         console.log('[orchestrator][sticky-ai-first] skipped (plan not activated)', { requestId });
       }
     } catch (_) { /* proceed with orchestrator */ }
 
     // ---- NEW FAST PATH (Deepseek single call) when ENABLE_FAST_CLASSIFIER=true ----
-    if (ENABLE_FAST_CLASSIFIER) {
-      console.log('[fast-classifier] on req=%s timeout=%sms model=deepseek-chat', requestId, String(FAST_CLASSIFIER_TIMEOUT_MS ?? '1200'));
+    if (ENABLE_FAST_CLASSIFIER) {            
+      console.log('[fast-classifier] on req=%s timeout=%sms model=%s', requestId, String(FAST_CLASSIFIER_TIMEOUT_MS ?? '1200'), FAST_CLASSIFIER_MODEL_DEEPSEEK);
+        if (typeof aiTxn !== 'undefined' && aiTxn) {
+          console.log('[fast-classifier] skipped — aiTxn already decided by sticky AI-first', { requestId });
+          return { language: ensureLangExact(detectedLanguageHint ?? 'en'), isQuestion: false, normalizedCommand: null, aiTxn, questionTopic: null, pricingFlavor: null, identityAsked: false };
+        }
       const out = await classifyAndRoute(text, detectedHint);
           
         // --- DEFENSIVE: do not normalize commands for greetings ---
@@ -3440,6 +3460,7 @@ async function _classifyViaDeepseek(text) {
  */
 async function classifyAndRoute(text, detectedLanguageHint) {
   if (!ENABLE_FAST_CLASSIFIER) return null;
+  console.log('[fast-classifier] gate ON (timeout=%sms, model=%s)', FAST_CLASSIFIER_TIMEOUT_MS, FAST_CLASSIFIER_MODEL_DEEPSEEK);
 
   try {
     const out = await _classifyViaDeepseek(text);
@@ -20494,6 +20515,27 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
   }
 }
 
+function logAiFirstDecision(reqId, stage, details = {}) {
+  // stage: 'eval', 'skip', 'invoke', 'ai-empty', 'ai-partial', 'ai-complete'
+  try {
+    const snapshot = {
+      requestId: String(reqId || ''),
+      stage,
+      stickyAction: details.stickyAction ?? null,
+      txnLike: details.txnLike ?? null,
+      activated: details.activated ?? null,
+      plan: details.plan ?? null,
+      planEnd: details.planEnd ?? null,
+      planExpired: details.planExpired ?? null,
+      aiItems: Array.isArray(details.aiItems) ? details.aiItems.length : (details.aiItems ?? null),
+      reason: details.reason ?? null,
+      product: details.product ?? null,
+      unit: details.unit ?? null,
+      priceKnown: details.priceKnown ?? null
+    };
+    console.log('[ai-first]', snapshot);
+  } catch (_) { /* swallow */ }
+}
 
 // Main handler (exported as default). We attach helper functions below.
  const whatsappHandler = async (req, res) => {
