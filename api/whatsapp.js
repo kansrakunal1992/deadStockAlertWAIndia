@@ -1795,6 +1795,12 @@ async function parseMultipleUpdates(reqOrText, requestId) {
           // 2) Normalize noisy "<product> <qty> <unit>"
           upd = normalizeProductQtyUnit(upd);
           upd.productRawForDb = resolveProductNameForWrite(upd.product);
+                    
+          // --- MIN FIX: AI may emit `price` (logs show `"price": 40`) but downstream expects `pricePerUnit`
+                if (!Number.isFinite(upd.pricePerUnit)) {
+                  const p = upd.price ?? upd.rate ?? upd.salePrice ?? upd.purchasePrice;
+                  if (Number.isFinite(Number(p))) upd.pricePerUnit = Number(p);
+                }
 
           // 3) If unit missing, try to infer from inventory (best-effort, bounded)
           if (!String(upd.unit ?? '').trim() && typeof inferUnitFromInventory === 'function') {
@@ -2026,7 +2032,12 @@ async function parseMultipleUpdates(reqOrText, requestId) {
     const lacking = [];
     const accepted = [];
     for (const u of updates) {
-      try {
+      try {       
+      // --- MIN FIX (optional but tiny): accept `price` aliases consistently across non-AI paths too
+      if (!Number.isFinite(u?.pricePerUnit)) {
+        const p = u?.price ?? u?.rate ?? u?.salePrice ?? u?.purchasePrice;
+        if (Number.isFinite(Number(p))) u.pricePerUnit = Number(p);
+      }
         if (String(u?.action ?? '').toLowerCase() === 'purchased') {
           const hasPrice = Number.isFinite(u?.pricePerUnit);
           let priceKnown = false, backend = null;
