@@ -14851,51 +14851,53 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
 
           if (salesResult.success) {
             console.log(`[Update ${shopId} - ${product}] Sales record created with ID: ${salesResult.id}`);
-
-            const startTime = Date.now();
-
-            // Generate and send invoice (non-blocking)
-            (async () => {
-              try {
-                console.log(`[Update ${shopId} - ${product}] Starting invoice generation process`);
-                // Get shop details
-                const shopDetailsResult = await getShopDetails(shopId);
-                if (!shopDetailsResult.success) {
-                  console.warn(`[Update ${shopId} - ${product}] Could not get shop details: ${shopDetailsResult.error}`);
-                  return;
-                }
-
-                // Prepare sale record for invoice
-                const saleRecordForInvoice = {
-                  product: product,
-                  quantity: Math.abs(update.quantity), // Convert to positive for display
-                  unit: update.unit,
-                  rate: salePrice, // Fixed: Use salePrice
-                  saleDate: new Date().toISOString()
-                };
-
-                console.log(`[Update ${shopId} - ${product}] Sale record prepared:`, saleRecordForInvoice);
-
-                // Generate invoice PDF
-                const pdfPath = await generateInvoicePDF(shopDetailsResult.shopDetails, saleRecordForInvoice);
-                console.log(`[Update ${shopId} - ${product}] Invoice generated: ${pdfPath}`);
-
-                // Verify PDF file exists
-                if (!fs.existsSync(pdfPath)) {
-                  throw new Error(`Generated PDF file not found: ${pdfPath}`);
-                }
-
-                // Send the PDF to the shop owner
-                const message = await sendPDFViaWhatsApp(`whatsapp:${shopId}`, pdfPath);
-                console.log(`[Update ${shopId} - ${product}] Invoice sent to whatsapp:${shopId}. SID: ${message.sid}`);
-
-              } catch (invoiceError) {
-                console.error(`[Update ${shopId} - ${product}] Error generating/sending invoice:`, invoiceError.message);
-                console.error(`[Update ${shopId} - ${product}] Stack trace:`, invoiceError.stack);
-              } finally {
-                // No local stop; centralized wrapper handles stopping for the whole request.
-              }
-            })();
+            
+          // === Send SALE confirmation immediately (do not block on invoice) ===
+                await sendSaleConfirmationOnce(
+                  `whatsapp:${shopId}`,
+                  lang,
+                  'sale-confirmation', // requestId scope for dedupe
+                  {
+                    product: productRawForDb,
+                    qty: Math.abs(update.quantity),
+                    unit: normalize(overallUnit ?? update.unit), // display unit
+                    pricePerUnit: salePrice,
+                    overallStock: overallQty ?? null,
+                    overallUnit: normalize(overallUnit ?? update.unit),
+                    // legacy fallback if composer needs it
+                    newQuantity: result && result.newQuantity
+                  }
+                );
+          
+                // === Generate & send invoice in BACKGROUND (fire-and-forget) ===
+                console.log(`[Update ${shopId} - ${product}] Scheduling invoice generation (background)`);
+                setImmediate(async () => {
+                  try {
+                    console.log(`[PDF Generator] Generating single-page invoice for shop ${shopId}`);
+                    const shopDetailsResult = await getShopDetails(shopId);
+                    if (!shopDetailsResult.success) {
+                      console.warn(`[Update ${shopId} - ${product}] Could not get shop details: ${shopDetailsResult.error}`);
+                      return;
+                    }
+                    const saleRecordForInvoice = {
+                      product: product,
+                      quantity: Math.abs(update.quantity),
+                      unit: update.unit,
+                      rate: salePrice,
+                      saleDate: new Date().toISOString()
+                    };
+                    console.log(`[Update ${shopId} - ${product}] Sale record prepared:`, saleRecordForInvoice);
+                    const pdfPath = await generateInvoicePDF(shopDetailsResult.shopDetails, saleRecordForInvoice);
+                    console.log(`[PDF Generator] Single-page PDF generation completed: ${pdfPath}`);
+                    if (!fs.existsSync(pdfPath)) {
+                      throw new Error(`Generated PDF file not found: ${pdfPath}`);
+                    }
+                    const message = await sendPDFViaWhatsApp(`whatsapp:${shopId}`, pdfPath);
+                    console.log(`[Update ${shopId} - ${product}] Invoice sent to whatsapp:${shopId}. SID: ${message.sid}`);
+                  } catch (invoiceError) {
+                    console.error(`[PDF Generator] background invoice failed`, invoiceError?.message || invoiceError);
+                  }
+                });
 
             // Update batch quantity if a batch was selected
             // --- BEGIN: guard to avoid double-deduction when DB layer handled batch spreading (2b/2c)
@@ -14959,22 +14961,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                 }
               } catch (_) {}
 
-          // Send a single confirmation (dedup) and append stock if we have it
-          await sendSaleConfirmationOnce(
-            `whatsapp:${shopId}`,
-            lang,
-            'sale-confirmation', // requestId scope for dedupe
-            {
-              product: productRawForDb,
-              qty: Math.abs(update.quantity),
-              unit: normalize(overallUnit ?? update.unit), // display unit for the line
-              pricePerUnit: salePrice,
-              overallStock: overallQty ?? null,
-              overallUnit: normalize(overallUnit ?? update.unit),
-              // keep legacy fallback if composer needs it
-              newQuantity: result && result.newQuantity
-            }
-          );
+          // (Confirmation already sent above; keep the rest of the flow unchanged)
 
           // --- NEW: start a short override window (5 min) only if multiple batches exist ---  
           try {
