@@ -1137,9 +1137,9 @@ const UNDO_PREARM_TTL_MS = 12_000; // keep ordering tight; prevent carry‑over
  * (DB layer usually calls this; WhatsApp may call when it has post‑commit result objects)
  */
 if (typeof globalThis.preArmUndoFromCommit !== 'function') {
-  globalThis.preArmUndoFromCommit = async function preArmUndoFromCommit(shopId, txn, lang = 'en') {
+  globalThis.preArmUndoFromCommit = function preArmUndoFromCommit(shopId, txn, lang = 'en') {
       try {
-        if (typeof openCorrectionWindow !== 'function') return;            
+        if (typeof openCorrectionWindow !== 'function') return false;   
         const a0 = String(txn?.action ?? '').toLowerCase().trim();
               // Canonicalize to nouns expected by Undo: sale | purchase | return
               const action = a0 === 'sold' ? 'sale' : a0 === 'purchased' ? 'purchase' : a0 === 'returned' ? 'return' : a0;
@@ -1150,16 +1150,21 @@ if (typeof globalThis.preArmUndoFromCommit !== 'function') {
                 unit: normalizeUnit(txn?.unit ?? 'pieces'),
                 compositeKey: txn?.compositeKey ?? null,
                 saleRecordId: txn?.saleRecordId ?? null
-              };
-        if (!lastTxn.product) return;                
-        // Fire-and-forget: do not block confirmation on Airtable write
-        Promise.resolve().then(() => openCorrectionWindow(shopId, lastTxn, lang))
-        .catch(e => { try { console.warn('[undo-arm]', e?.message); } catch(_) {} });
-        // Shop‑scoped flag only (no reqId coupling)
-        globalThis.__undoPreArmedByShop.set(shopId, { ts: Date.now(), lang });
-        setTimeout(() => globalThis.__undoPreArmedByShop.delete(shopId), UNDO_PREARM_TTL_MS);
+              };                  
+          if (!lastTxn.product) return false;
+                  // Fire-and-forget: do not block confirmation on Airtable write
+                  Promise.resolve()
+                    .then(() => openCorrectionWindow(shopId, lastTxn, lang))
+                    .catch(e => { try { console.warn('[undo-arm]', e?.message); } catch(_) {} });
+                  // Shop‑scoped flag only (no reqId coupling)
+                  globalThis.__undoPreArmedByShop = globalThis.__undoPreArmedByShop ?? new Map();
+                  const _ttl = (typeof UNDO_PREARM_TTL_MS === 'number' ? UNDO_PREARM_TTL_MS : 12_000);
+                  globalThis.__undoPreArmedByShop.set(shopId, { ts: Date.now(), lang });
+                  setTimeout(() => globalThis.__undoPreArmedByShop.delete(shopId), _ttl);
+                  return true;
       } catch (e) {
         console.warn('[preArmUndo] failed:', e?.message);
+        return false;
       }
     };
   }
@@ -9109,27 +9114,7 @@ const bodySrc = USE_TEMPLATE_CONFIRM_TRANSLATION
 
   const bodyLoc = USE_TEMPLATE_CONFIRM_TRANSLATION
     ? bodySrc
-    : await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);    
-  // ---- Fire-and-forget: arm Undo/Correction window (Airtable) without blocking send ----
-    try {
-      // Minimal background runner; fall back safely if helper isn't present.
-      const _bg = (fn) => { try { Promise.resolve().then(fn).catch(() => {}); } catch {} };
-      if (typeof preArmUndoFromCommit === 'function') {
-        const shopId = shopIdFrom(From);
-        const txn = {
-          action: 'purchased',
-          product: dbProduct,
-          quantity: Number(qty ?? 0),
-          unit: uNorm,
-          compositeKey: generateCompositeKey(
-            shopId, 'purchased', dbProduct, uNorm, Number(qty ?? 0), /* writeId */ null
-          ),
-          saleRecordId: null
-        };
-        _bg(() => preArmUndoFromCommit(shopId, txn, detectedLanguage));
-      }
-    } catch { /* never block confirmation */ }
-  
+    : await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);      
     // Send the confirmation now (never await Airtable/correction work)
     await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);
  
@@ -14491,9 +14476,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   // Calls openCorrectionWindow(...) and sets a short-lived in-memory flag used by the sender.
   globalThis.__undoPreArmedByShop = globalThis.__undoPreArmedByShop ?? new Map();
   const UNDO_PREARM_TTL_MS = 12_000;
-  async function preArmUndoFromCommit(shopIdArg, txn, langArg = 'en') {
+  function preArmUndoFromCommit(shopIdArg, txn, langArg = 'en') {
     try {
-      if (typeof openCorrectionWindow !== 'function') return;
+      if (typeof openCorrectionWindow !== 'function') return false;
       const a0 = String(txn?.action ?? '').toLowerCase().trim();
       // Canonical nouns expected by Undo: sale | purchase | return
       const action = a0 === 'sold' ? 'sale' : a0 === 'purchased' ? 'purchase' : a0 === 'returned' ? 'return' : a0;
@@ -14505,13 +14490,20 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         compositeKey: txn?.compositeKey ?? null,
         saleRecordId: txn?.saleRecordId ?? null
       };
-      if (!lastTxn.product) return;
-      await openCorrectionWindow(shopIdArg, lastTxn, langArg);
+            
+      if (!lastTxn.product) return false;
+          // Strictly fire-and-forget: never block confirmation on Airtable
+          Promise.resolve()
+            .then(() => openCorrectionWindow(shopIdArg, lastTxn, langArg))
+            .catch(e => { try { console.warn('[undo-arm]', e?.message); } catch(_) {} });
+
       // sender emit-only: short-lived flag keyed by shop
       globalThis.__undoPreArmedByShop.set(shopIdArg, { ts: Date.now(), lang: langArg });
       setTimeout(() => globalThis.__undoPreArmedByShop.delete(shopIdArg), UNDO_PREARM_TTL_MS);
+      return true;
     } catch (e) {
       console.warn('[preArmUndo@DB] failed:', e?.message);
+      return false;
     }
   }
 
@@ -14604,7 +14596,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         // DB COMMIT POINT (Return): arm Undo only for single‑item calls
             try {
               if (isSingleItemCall && !!result?.success) {
-                await preArmUndoFromCommit(shopId, {
+                preArmUndoFromCommit(shopId, {
                   action: 'returned',
                   productRawForDb,
                   quantity: Math.abs(update.quantity),
@@ -14798,7 +14790,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         // DB COMMIT POINT (Purchase + batch): arm Undo only for single‑item calls
             try {
               if (isSingleItemCall) {
-                await preArmUndoFromCommit(shopId, {
+                preArmUndoFromCommit(shopId, {
                   action: 'purchased',
                   productRawForDb,
                   quantity: Number(update.quantity),
@@ -15118,7 +15110,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               try {
                 if (isSingleItemCall && result?.success) {
                   const composite = (saleGuard?.selectedBatchCompositeKey ?? selectedBatchCompositeKey) || null;
-                  await preArmUndoFromCommit(
+                  preArmUndoFromCommit(
                     shopId,
                     {
                       action: 'sold',
