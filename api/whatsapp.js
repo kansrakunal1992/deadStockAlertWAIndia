@@ -2607,6 +2607,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
   // LOCAL MUTABLE COPY: never write into function parameter (can be const/frozen in some runtimes)
     let detectedHint = String(detectedLanguageHint ?? 'en').toLowerCase();
     let hintedLang = ensureLangExact(detectedHint ?? 'en');
+  
 // LEGACY: pinned language from onboarding_trial_capture (PRESERVED) — run BEFORE deriving hintedLang
  try {
    const shopIdTmp = String(From ?? '').replace('whatsapp:', '');
@@ -2865,9 +2866,25 @@ function looksLikeInventoryPricing(msg) {
          console.log('[orchestrator][sticky-ai-first] skipped (plan not activated)', { requestId });
       }
     } catch (_) { /* proceed with orchestrator */ }
-
+        
     // ---- NEW FAST PATH (Deepseek single call) when ENABLE_FAST_CLASSIFIER=true ----
-    if (ENABLE_FAST_CLASSIFIER) {                        
+    // SKIP classifier entirely when: sticky mode is set AND plan is activated (paid or active trial)
+    // AND the text is transaction-like. This avoids ~1.2–1.5s latency with no routing benefit.
+      let __fcSkip = false;
+      try {
+        // Re-evaluate quickly with a tight timeout so this guard never becomes a bottleneck.
+        const planInfoFC = await withTimeout(getUserPlanQuick(shopId), 300, () => null);
+        let __planActivated = false;
+        if (planInfoFC) {
+          const p = String(planInfoFC.plan ?? '').toLowerCase();
+          const end = getUnifiedEndDate?.(planInfoFC);
+          const trialActive = (p === 'trial') && end && (new Date(end).getTime() > Date.now());
+          __planActivated = (p === 'paid') || trialActive;
+        }
+        __fcSkip = !!(stickyActionCached && __planActivated && looksLikeTxnLite(text));
+      } catch { /* safe default: do not skip */ }
+    
+    if (ENABLE_FAST_CLASSIFIER && !__fcSkip) {         
       if (classifierSeen(requestId)) {
           console.log('[fast-classifier] skipped duplicate for req=%s', requestId);
         } else {
@@ -9092,8 +9109,30 @@ const bodySrc = USE_TEMPLATE_CONFIRM_TRANSLATION
 
   const bodyLoc = USE_TEMPLATE_CONFIRM_TRANSLATION
     ? bodySrc
-    : await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);
-  await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc); 
+    : await t(bodySrc, detectedLanguage, requestId).catch(() => bodySrc);    
+  // ---- Fire-and-forget: arm Undo/Correction window (Airtable) without blocking send ----
+    try {
+      // Minimal background runner; fall back safely if helper isn't present.
+      const _bg = (fn) => { try { Promise.resolve().then(fn).catch(() => {}); } catch {} };
+      if (typeof preArmUndoFromCommit === 'function') {
+        const shopId = shopIdFrom(From);
+        const txn = {
+          action: 'purchased',
+          product: dbProduct,
+          quantity: Number(qty ?? 0),
+          unit: uNorm,
+          compositeKey: generateCompositeKey(
+            shopId, 'purchased', dbProduct, uNorm, Number(qty ?? 0), /* writeId */ null
+          ),
+          saleRecordId: null
+        };
+        _bg(() => preArmUndoFromCommit(shopId, txn, detectedLanguage));
+      }
+    } catch { /* never block confirmation */ }
+  
+    // Send the confirmation now (never await Airtable/correction work)
+    await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);
+ 
 // Cache sale txn for Undo (best-effort)
   try {
     const shopId = shopIdFrom(From);
