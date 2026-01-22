@@ -2776,11 +2776,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
 
     // ---- NEW FAST PATH (Deepseek single call) when ENABLE_FAST_CLASSIFIER=true ----
     if (ENABLE_FAST_CLASSIFIER) {            
-      console.log('[fast-classifier] on req=%s timeout=%sms model=%s', requestId, String(FAST_CLASSIFIER_TIMEOUT_MS ?? '1200'), FAST_CLASSIFIER_MODEL_DEEPSEEK);
-        if (typeof aiTxn !== 'undefined' && aiTxn) {
-          console.log('[fast-classifier] skipped — aiTxn already decided by sticky AI-first', { requestId });
-          return { language: ensureLangExact(detectedLanguageHint ?? 'en'), isQuestion: false, normalizedCommand: null, aiTxn, questionTopic: null, pricingFlavor: null, identityAsked: false };
-        }
+      console.log('[fast-classifier] on req=%s timeout=%sms model=deepseek-chat', requestId, String(FAST_CLASSIFIER_TIMEOUT_MS ?? '1200'));
       const out = await classifyAndRoute(text, detectedHint);
           
         // --- DEFENSIVE: do not normalize commands for greetings ---
