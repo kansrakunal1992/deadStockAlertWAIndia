@@ -1679,58 +1679,135 @@ async function parseMultipleUpdates(reqOrText, requestId) {
             return []; // already consumed in price-first block above
           }
         } catch {}
-        const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
-    // Only accept AI results if they are valid inventory updates (qty > 0 + valid action)
-    if (aiUpdate && aiUpdate.length > 0) {          
-    const cleaned = aiUpdate.map(update => {
+  const aiUpdate = await parseInventoryUpdateWithAI(transcript, 'ai-parsing');
+    // === Non-sticky AI-first inline repair + enforcement ===
+    if (aiUpdate && aiUpdate.length > 0) {
+      const ACTION_MAP = {
+        purchase: 'purchased', purchased: 'purchased', buy: 'purchased', bought: 'purchased',
+        sold: 'sold', sale: 'sold',
+        return: 'returned', returned: 'returned'
+      };
+      const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
+      const finalActionFromState = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
+      const langHintAi = await detectLanguageWithFallback(transcript, from ?? `whatsapp:${shopId}`, 'ai-nudge');
+
+      const aiAccepted = [];
+      const lackingPrice = [];     // [{product, unit}]
+      const missingAction = [];    // [{product, unit, quantity}]
+
+      for (let raw of aiUpdate) {
         try {
-          // Apply state override with validation            
-          const normalizedPendingAction = String(pendingAction ?? '').toLowerCase();
-          const ACTION_MAP = {                     
-            purchase: 'purchased',
-            purchased: 'purchased',
-            buy: 'purchased',
-            bought: 'purchased',
-            sold: 'sold',
-            sale: 'sold',
-            return: 'returned',
-            returned: 'returned'
-          };
-          
-          const finalAction = ACTION_MAP[normalizedPendingAction] ?? normalizedPendingAction;
-          
-          if (['purchased', 'sold', 'returned'].includes(finalAction)) {
-            update.action = finalAction;
-            console.log(`[AI Parsing] Overriding AI action with normalized state action: ${update.action}`);
-          } else {
-            console.warn(`[AI Parsing] Invalid action in state: ${pendingAction}`);
-          }          
-          // NEW: salvage noisy "<product> <qty> <unit>" from AI
-          update = normalizeProductQtyUnit(update);
-                    
-          // NEW: stamp DB-safe product for downstream (parity with rule-based path)
-          update.productRawForDb = resolveProductNameForWrite(update.product);
+          let upd = { ...(raw || {}) };
 
-          return update;
-        } catch (error) {
-          console.warn(`[AI Parsing] Error processing update:`, error.message);
-          return update;
+          // 1) Resolve/normalize action: prefer sticky/pending if present; else AI; else infer from text
+          let act = upd.action ?? null;
+          if (['purchased','sold','returned'].includes(finalActionFromState)) {
+            act = finalActionFromState;
+          } else if (!act && inferredAction) {
+            act = inferredAction; // resolveActionFromText(t)
+          } else if (act) {
+            const lc = String(act).toLowerCase();
+            act = ACTION_MAP[lc] ?? lc;
+          }
+          upd.action = act ?? null;
+
+          // 2) Normalize noisy "<product> <qty> <unit>"
+          upd = normalizeProductQtyUnit(upd);
+          upd.productRawForDb = resolveProductNameForWrite(upd.product);
+
+          // 3) If unit missing, try to infer from inventory (best-effort, bounded)
+          if (!String(upd.unit ?? '').trim() && typeof inferUnitFromInventory === 'function') {
+            try {
+              const inferredUnit = await withTimeout(inferUnitFromInventory(shopId, upd.product), 300, () => null);
+              if (inferredUnit) upd.unit = inferredUnit;
+            } catch {}
+          }
+
+          // 4) Hard completeness check (non-sticky):
+          //    product, qty>0, unit required; if action missing → ask user to resend with action
+          const productOk = !!String(upd.product ?? '').trim();
+          const qtyOk = Number.isFinite(Number(upd.quantity)) && Number(upd.quantity) > 0;
+          const unitOk = !!String(upd.unit ?? '').trim();
+          if (!(productOk && qtyOk && unitOk)) continue; // still unusable → skip to next AI item
+
+          if (!upd.action) {
+            missingAction.push({ product: upd.product, unit: upd.unit, quantity: upd.quantity });
+            continue;
+          }
+
+          // 5) STRICT price for purchases: try backend price; if unknown → nudge to resend FULL line incl. price
+          if (String(upd.action).toLowerCase() === 'purchased') {
+            const hasPrice = Number.isFinite(upd.pricePerUnit) && upd.pricePerUnit > 0;
+            if (!hasPrice) {
+              let backend = null;
+              try { backend = await withTimeout(getProductPrice(upd.product, shopId), 400, () => null); } catch {}
+              const priceKnown = !!(backend?.success && Number.isFinite(backend?.price));
+              if (priceKnown) {
+                upd.pricePerUnit = backend.price;
+              } else {
+                lackingPrice.push({ product: upd.product, unit: upd.unit });
+                continue; // do not accept this update
+              }
+            }
+          }
+
+          // 6) If we reach here, we consider the AI item acceptable
+          if (isValidInventoryUpdate(upd)) {
+            aiAccepted.push(upd);
+          }
+        } catch (e) {
+          console.warn(`[AI Parsing][non-sticky] item repair failed:`, e?.message);
         }
-      }).filter(isValidInventoryUpdate);
-      if (cleaned.length > 0) {
-        console.log(`[AI Parsing] Successfully parsed ${cleaned.length} valid updates using AI`);              
-        //if (userState?.mode === 'awaitingTransactionDetails') {
-        //          await deleteUserStateFromDB(userState.id);
-        //        }
-        // STICKY MODE: keep awaitingTransactionDetails until user switches/resets
-        return cleaned;
-      } else {
-        console.log(`[AI Parsing] AI produced ${aiUpdate.length} updates but none were valid. Falling back to rule-based parsing.`);
       }
-    }
 
-    
-    console.log(`[AI Parsing] No valid AI results, falling back to rule-based parsing`);
+      // 7) Emit nudges (action / price) using existing UX style, then decide return vs fallback
+      try {
+        if (missingAction.length > 0) {
+          // Single message asking to resend full line WITH action (purchased/sold/returned) — examples localized
+          const uDisp = (u) => displayUnit(u ?? 'unit', langHintAi);
+          const sample = missingAction[0];
+          const examples = [
+            `• purchased ${sample.product} ${sample.quantity} ${uDisp(sample.unit)} @ ₹70/${uDisp(sample.unit)}`,
+            `• sold ${sample.product} ${sample.quantity} ${uDisp(sample.unit)}`,
+            `• returned ${sample.product} ${sample.quantity} ${uDisp(sample.unit)}`
+          ].join('\n');
+          const bodySrc = [
+            `🟡 Action required for “${sample.product}”.`,
+            `Please resend in one line STARTING with purchased/sold/returned (do not send action alone).`,
+            ``,
+            `Examples (type or speak a voice note):`,
+            examples
+          ].join('\n');
+          let msg0 = await t(bodySrc, langHintAi, 'action-required::single');
+          msg0 = nativeglishWrap(msg0, langHintAi);
+          const tagged = await tagWithLocalizedMode(from, finalizeForSend(msg0, langHintAi), langHintAi);
+          await sendMessageViaAPI(from, tagged);
+        }
+      } catch (_) {}
+
+      try {
+        if (lackingPrice.length === 1) {
+          await sendPriceRequiredNudge(from, lackingPrice[0].product, lackingPrice[0].unit, langHintAi);
+        } else if (lackingPrice.length > 1) {
+          await sendMultiPriceRequiredNudge(from, lackingPrice, langHintAi);
+        }
+      } catch (_) {}
+
+      if (aiAccepted.length > 0) {
+        console.log(`[AI Parsing][non-sticky] accepted ${aiAccepted.length} AI updates (post-repair)`);
+        return aiAccepted; // early return: no rule-based fallback
+      }
+
+      if (missingAction.length > 0 || lackingPrice.length > 0) {
+        // We nudged already; let user resend; do not fall back to rule-based now
+        return [];
+      }
+
+      // else: proceed to legacy rule-based fallback (no usable AI items)
+      console.log(`[AI Parsing] AI produced items but none repairable; falling back to rule-based parsing.`);
+    } else {
+      console.log(`[AI Parsing] No AI results; falling back to rule-based parsing`);
+    }
   } catch (error) {
     console.warn(`[AI Parsing] Failed, falling back to rule-based parsing:`, error.message);
   }
@@ -2540,37 +2617,145 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
     const brandRx = /(milk|doodh|parle\-g|maggi|amul|oreo|frooti|marie gold|good day|dabur|tata|nestle)/i;
     return unitRx.test(s) || moneyRx.test(s) || brandRx.test(s);
   }
-
+  
   try {
-    // (duplicate pinned-language override removed; handled above)
     // --- LEGACY: short-circuit when orchestrator disabled (PRESERVED) ---
     if (!USE_AI_ORCHESTRATOR) {
       return { language: detectedHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
     }
-
     const shopId = shopIdFrom(From);
-
-    // --- LEGACY: sticky-mode clamp before any AI (PRESERVED) ---
+    // --- STICKY MODE: AI parser FIRST; but only for activated users (paid or active trial) ---
     try {
-      const stickyAction = await getStickyActionQuick(From);
-      if (stickyAction && looksLikeTxnLite(text)) {              
-      const language = ensureLangExact(detectedLanguageHint ?? 'en');
-            console.log('[orchestrator]', {
-              requestId, language, kind: 'transaction', normalizedCommand: '—',
-              topicForced: null, pricingFlavor: null, sticky: stickyAction
+      const stickyAction = stickyActionCached ?? await getStickyActionQuick(From);
+      // === Activation Gate (paid OR trial not expired) ===
+      let __activated = false;
+      try {
+        const __shopId = shopIdFrom(From);
+        // Prefer quick cache; compute "activated" exactly as in other parts of the file
+        const __planInfo = await getUserPlanQuick(__shopId);
+        const __plan = String(__planInfo?.plan ?? '').toLowerCase();
+        const __end  = getUnifiedEndDate(__planInfo);   // shared helper already defined
+        const __expired = (__plan === 'trial' && __end)
+          ? (new Date(__end).getTime() < Date.now())
+          : false;
+        __activated = (__plan === 'paid') || (__plan === 'trial' && !__expired);
+      } catch (_) { /* best-effort only; default false */ }
+
+      if (stickyAction && looksLikeTxnLite(text) && __activated) {
+        // NOTE: per request, NO timeout bound for AI parser here.
+        const aiRes = await parseInventoryUpdateWithAI(text, 'orchestrator-sticky');
+        const first = Array.isArray(aiRes) && aiRes.length ? aiRes[0] : null;
+        if (first) {
+          // Normalize & align with our write-policy (raw DB name)
+          const ACTION_MAP = {
+            purchase: 'purchased', buy: 'purchased', bought: 'purchased',
+            sold: 'sold', sale: 'sold',
+            return: 'returned', returned: 'returned'
+          };
+          const finalAction = ACTION_MAP[String(stickyAction).toLowerCase()] ?? String(stickyAction).toLowerCase();
+          let upd = normalizeProductQtyUnit({ ...first, action: finalAction });
+          upd.productRawForDb = resolveProductNameForWrite(upd.product);
+
+          // Fast acceptance when AI is already complete
+          if (isCompleteUpdateForSticky(upd, finalAction)) {
+            const language = ensureLangExact(detectedLanguageHint ?? 'en');
+            console.log('[orchestrator][sticky-ai-first] complete AI parse → early exit', {
+              requestId, action: finalAction
             });
-            // HARD RETURN: no classifier, no AI; inventory parser consumes this turn.
             return {
               language,
               isQuestion: false,
               normalizedCommand: null,
-              aiTxn: null,
+              aiTxn: upd,
               questionTopic: null,
               pricingFlavor: null,
               forceInventory: true
             };
+          }
+
+          // === INLINE REPAIR (no new helper) ===
+          // 1) If unit is missing, best-effort infer from inventory (short timeout)
+          if (!String(upd.unit ?? '').trim() && typeof inferUnitFromInventory === 'function') {
+            try {
+              const inferred = await withTimeout(inferUnitFromInventory(shopIdFrom(From), upd.product), 300, () => null);
+              if (inferred) upd.unit = inferred;
+            } catch {}
+          }
+          // 2) If PURCHASE and price missing → try backend price; else nudge to resend full line and EARLY-RETURN
+          const isPurchase = finalAction === 'purchased';
+          const hasPrice = Number.isFinite(upd.pricePerUnit) && upd.pricePerUnit > 0;
+          if (isPurchase && !hasPrice) {
+            let backend = null;
+            try {
+              backend = await withTimeout(getProductPrice(upd.product, shopIdFrom(From)), 400, () => null);
+            } catch {}
+            const priceKnown = !!(backend?.success && Number.isFinite(backend?.price));
+            if (priceKnown) {
+              upd.pricePerUnit = backend.price;
+              if (isCompleteUpdateForSticky(upd, finalAction)) {
+                const language = ensureLangExact(detectedLanguageHint ?? 'en');
+                console.log('[orchestrator][sticky-ai-first] price repaired from backend → early exit', {
+                  requestId, action: finalAction
+                });
+                return {
+                  language,
+                  isQuestion: false,
+                  normalizedCommand: null,
+                  aiTxn: upd,
+                  questionTopic: null,
+                  pricingFlavor: null,
+                  forceInventory: true
+                };
+              }
+            } else {
+              // Backend doesn't know price → ask user to resend the ENTIRE line with price (consistent with policy)
+              try {
+                const langHint = ensureLangExact(detectedLanguageHint ?? 'en');
+                await sendPriceRequiredNudge(From, upd.product, upd.unit, langHint);
+                try { handledRequests.add(requestId); } catch {}
+              } catch {}
+              // EARLY RETURN: do not run the rest of the orchestrator
+              return {
+                language: ensureLangExact(detectedLanguageHint ?? 'en'),
+                isQuestion: false,
+                normalizedCommand: null,
+                aiTxn: null,
+                questionTopic: null,
+                pricingFlavor: null,
+                // not forcing inventory since we didn't commit; we already nudged the user
+                forceInventory: false
+              };
+            }
+          }
+
+          // 3) If now complete after unit/price attempt, early-exit
+          if (isCompleteUpdateForSticky(upd, finalAction)) {
+            const language = ensureLangExact(detectedLanguageHint ?? 'en');
+            console.log('[orchestrator][sticky-ai-first] repaired to complete → early exit', {
+              requestId, action: finalAction
+            });
+            return {
+              language,
+              isQuestion: false,
+              normalizedCommand: null,
+              aiTxn: upd,
+              questionTopic: null,
+              pricingFlavor: null,
+              forceInventory: true
+            };
+          }
+
+          // Still partial → continue into orchestrator (fast/legacy) as usual
+          console.log('[orchestrator][sticky-ai-first] partial after repair → continuing', { requestId });
+        } else {
+          // No AI result → continue; legacy behavior will handle it
+          console.log('[orchestrator][sticky-ai-first] no AI result → continuing', { requestId });
+        }
+        } else if (stickyAction && looksLikeTxnLite(text) && !__activated) {
+        // Not activated (pre-trial or post-trial non-paid): skip AI-first sticky parsing
+        console.log('[orchestrator][sticky-ai-first] skipped (plan not activated)', { requestId });
       }
-    } catch (_) { /* fall through to AI orchestrator */ }
+    } catch (_) { /* proceed with orchestrator */ }
 
     // ---- NEW FAST PATH (Deepseek single call) when ENABLE_FAST_CLASSIFIER=true ----
     if (ENABLE_FAST_CLASSIFIER) {
@@ -2783,7 +2968,6 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
 
     const identityAsked = (typeof isNameQuestion === 'function') ? isNameQuestion(text) : false;
     return { language, isQuestion, normalizedCommand, aiTxn, questionTopic: topicForced, pricingFlavor, identityAsked };
-
   } catch (e) {
     console.warn('[applyAIOrchestration] fallback due to error:', e?.message);        
     console.warn('[applyAIOrchestration] stack:', e?.stack);
