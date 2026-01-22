@@ -2628,16 +2628,17 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
       const stickyAction = stickyActionCached ?? await getStickyActionQuick(From);
       // === Activation Gate (paid OR trial not expired) ===
       let __activated = false;
+      let __plan = null, __end = null, __expired = null;
       try {
         const __shopId = shopIdFrom(From);
         // Prefer quick cache; compute "activated" exactly as in other parts of the file
-        const __planInfo = await getUserPlanQuick(__shopId);
-        const __plan = String(__planInfo?.plan ?? '').toLowerCase();
-        const __end  = getUnifiedEndDate(__planInfo);   // shared helper already defined
-        const __expired = (__plan === 'trial' && __end)
-          ? (new Date(__end).getTime() < Date.now())
-          : false;
-        __activated = (__plan === 'paid') || (__plan === 'trial' && !__expired);
+              
+      const __planInfo = await getUserPlanQuick(__shopId);
+          __plan = String(__planInfo?.plan ?? '').toLowerCase();
+          __end  = getUnifiedEndDate(__planInfo);   // shared helper already defined
+          __expired = (__plan === 'trial' && __end) ? (new Date(__end).getTime() < Date.now()) : false;
+          __activated = (__plan === 'paid') || (__plan === 'trial' && !__expired);
+
       } catch (_) { /* best-effort only; default false */ }
           
     const __txnLike = looksLikeTxnLite(text);
@@ -2775,9 +2776,13 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
     } catch (_) { /* proceed with orchestrator */ }
 
     // ---- NEW FAST PATH (Deepseek single call) when ENABLE_FAST_CLASSIFIER=true ----
-    if (ENABLE_FAST_CLASSIFIER) {            
-      console.log('[fast-classifier] on req=%s timeout=%sms model=deepseek-chat', requestId, String(FAST_CLASSIFIER_TIMEOUT_MS ?? '1200'));
-      const out = await classifyAndRoute(text, detectedHint);
+    if (ENABLE_FAST_CLASSIFIER) {                        
+      if (classifierSeen(requestId)) {
+          console.log('[fast-classifier] skipped duplicate for req=%s', requestId);
+        } else {
+          console.log('[fast-classifier] on req=%s timeout=%sms model=deepseek-chat',
+                      requestId, String(FAST_CLASSIFIER_TIMEOUT_MS ?? '1200'));
+          const out = await classifyAndRoute(text, detectedHint);
           
         // --- DEFENSIVE: do not normalize commands for greetings ---
         if (_isGreeting(text)) {
@@ -2892,6 +2897,7 @@ async function applyAIOrchestration(text, From, detectedLanguageHint, requestId,
             pricingFlavor: pricingFlavorLocal,
             identityAsked
        };
+      }
     }
 
     // ---- LEGACY PATH (Gate OFF): original Deepseek orchestrator call (PRESERVED) ----
@@ -3414,6 +3420,23 @@ const ENABLE_FAST_CLASSIFIER = __bool(process.env.ENABLE_FAST_CLASSIFIER ?? 'tru
 const FAST_CLASSIFIER_TIMEOUT_MS = Number(process.env.FAST_CLASSIFIER_TIMEOUT_MS ?? 1200);  // 1.2s default
 const FAST_CLASSIFIER_MODEL_DEEPSEEK = process.env.FAST_CLASSIFIER_MODEL_DEEPSEEK ?? 'deepseek-chat';
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+
+// ---- Per-request classifier guard (skip duplicates) ----
+const __CLASSIFIER_SEEN = globalThis.__CLASSIFIER_SEEN ?? new Map();
+globalThis.__CLASSIFIER_SEEN = __CLASSIFIER_SEEN;
+const CLASSIFIER_GC_LIMIT = 1000;
+function classifierSeen(requestId) {
+  const k = String(requestId ?? '');
+  if (!k) return false;
+  const now = Date.now();
+  if (__CLASSIFIER_SEEN.has(k)) return true;
+  __CLASSIFIER_SEEN.set(k, now);
+  // cheap GC
+  if (__CLASSIFIER_SEEN.size > CLASSIFIER_GC_LIMIT) {
+    for (const [kk, ts] of __CLASSIFIER_SEEN) if (now - ts > 60_000) __CLASSIFIER_SEEN.delete(kk);
+  }
+  return false;
+}
 
 // ---- Deepseek unified classification ----
 async function _classifyViaDeepseek(text) {
