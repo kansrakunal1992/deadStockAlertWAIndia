@@ -2719,10 +2719,24 @@ function looksLikeInventoryPricing(msg) {
     if (!USE_AI_ORCHESTRATOR) {
       return { language: detectedHint, isQuestion: null, normalizedCommand: null, aiTxn: null };
     }
-    const shopId = shopIdFrom(From);
+    const shopId = shopIdFrom(From);        
+    // [PATCH:FC-SKIP-STICKY-UNIFIED] Capture the *effective* sticky/plan/txnLike evaluation once.
+         // Reason: some call sites may pass stickyActionCached as null/undefined; sticky mode can still be
+         // detected internally (getStickyActionQuick). Fast-classifier skip MUST use the effective value.
+         const __stickyEval = {
+           stickyAction: (typeof stickyActionCached !== 'undefined' ? stickyActionCached : null),
+           stickySource: (typeof stickyActionCached !== 'undefined' ? 'param' : 'missing'),
+           activated: false,
+           plan: null,
+           planEnd: null,
+           planExpired: null,
+           txnLike: null
+         };
     // --- STICKY MODE: AI parser FIRST; but only for activated users (paid or active trial) ---
     try {
-      const stickyAction = stickyActionCached ?? await getStickyActionQuick(From);
+      const stickyAction = stickyActionCached ?? await getStickyActionQuick(From);            
+      __stickyEval.stickyAction = stickyAction;
+      __stickyEval.stickySource = (stickyActionCached ? 'param' : 'resolved');
       // === Activation Gate (paid OR trial not expired) ===
       let __activated = false;
       let __plan = null, __end = null, __expired = null;
@@ -2737,8 +2751,15 @@ function looksLikeInventoryPricing(msg) {
           __activated = (__plan === 'paid') || (__plan === 'trial' && !__expired);
 
       } catch (_) { /* best-effort only; default false */ }
+      
+      // Persist evaluation for downstream fast-classifier skip guard
+             __stickyEval.activated = !!__activated;
+             __stickyEval.plan = __plan;
+             __stickyEval.planEnd = __end;
+             __stickyEval.planExpired = __expired;
           
     const __txnLike = looksLikeTxnLite(text);
+      __stickyEval.txnLike = __txnLike;
      logAiFirstDecision(requestId, 'eval', {
        stickyAction, txnLike: __txnLike, activated: __activated,
        plan: __plan, planEnd: __end, planExpired: __expired
@@ -2876,17 +2897,39 @@ function looksLikeInventoryPricing(msg) {
     // SKIP classifier entirely when: sticky mode is set AND plan is activated (paid or active trial)
     // AND the text is transaction-like. This avoids ~1.2–1.5s latency with no routing benefit.
       let __fcSkip = false;
-      try {
+      try {        
+        // Use the *effective* sticky/activation eval if we already computed it above.
+                 const __txnLikeFc = (__stickyEval.txnLike != null) ? !!__stickyEval.txnLike : looksLikeTxnLite(text);
+                 let __planActivated = !!__stickyEval.activated;
+         
+                 // If activation wasn't computed (or was false due to transient failures), do a bounded re-check.
+                 if (!__planActivated) {
         // Re-evaluate quickly with a tight timeout so this guard never becomes a bottleneck.
         const planInfoFC = await withTimeout(getUserPlanQuick(shopId), 300, () => null);
-        let __planActivated = false;
         if (planInfoFC) {
           const p = String(planInfoFC.plan ?? '').toLowerCase();
           const end = getUnifiedEndDate?.(planInfoFC);
           const trialActive = (p === 'trial') && end && (new Date(end).getTime() > Date.now());
           __planActivated = (p === 'paid') || trialActive;
         }
-        __fcSkip = !!(stickyActionCached && __planActivated && looksLikeTxnLite(text));
+                 }        
+        const __stickyForFc = __stickyEval.stickyAction ?? stickyActionCached ?? null;
+                 __fcSkip = !!(__stickyForFc && __planActivated && __txnLikeFc);
+         
+                 // MIN LOG (only on anomaly): classifier is about to run when it *should* have been skipped.
+                 if (ENABLE_FAST_CLASSIFIER && !__fcSkip && __stickyForFc && __planActivated && __txnLikeFc) {
+                   console.warn('[fast-classifier][unexpected-run]', {
+                     requestId,
+                     shopId,
+                     stickyActionCached: (typeof stickyActionCached !== 'undefined' ? stickyActionCached : undefined),
+                     stickyEffective: __stickyForFc,
+                     stickySource: __stickyEval.stickySource,
+                     planActivated: __planActivated,
+                     plan: __stickyEval.plan ?? null,
+                     planEnd: __stickyEval.planEnd ?? null,
+                     txnLike: __txnLikeFc
+                   });
+                 }
       } catch { /* safe default: do not skip */ }
     
 // right after computing __planActivated + __fcSkip, just before the ENABLE_FAST_CLASSIFIER check:
