@@ -2764,129 +2764,21 @@ function looksLikeInventoryPricing(msg) {
        stickyAction, txnLike: __txnLike, activated: __activated,
        plan: __plan, planEnd: __end, planExpired: __expired
      });
-     if (stickyAction && __txnLike && __activated) {
-        // NOTE: per request, NO timeout bound for AI parser here.
-        const aiRes = await parseInventoryUpdateWithAI(text, 'orchestrator-sticky');
-        const first = Array.isArray(aiRes) && aiRes.length ? aiRes[0] : null;               
-        if (!first) {
-             logAiFirstDecision(requestId, 'ai-empty', { stickyAction, txnLike: __txnLike, activated: __activated, aiItems: 0 });
-           }
-        if (first) {
-          // Normalize & align with our write-policy (raw DB name)
-          const ACTION_MAP = {
-            purchase: 'purchased', buy: 'purchased', bought: 'purchased',
-            sold: 'sold', sale: 'sold',
-            return: 'returned', returned: 'returned'
-          };
-          const finalAction = ACTION_MAP[String(stickyAction).toLowerCase()] ?? String(stickyAction).toLowerCase();
-          let upd = normalizeProductQtyUnit({ ...first, action: finalAction });
-          upd.productRawForDb = resolveProductNameForWrite(upd.product);
-
-          // Fast acceptance when AI is already complete
-          if (isCompleteUpdateForSticky(upd, finalAction)) {
-            const language = ensureLangExact(detectedLanguageHint ?? 'en');
-            console.log('[orchestrator][sticky-ai-first] complete AI parse → early exit', {
-              requestId, action: finalAction
-            });
-            return {
-              language,
-              isQuestion: false,
-              normalizedCommand: null,
-              aiTxn: upd,
-              questionTopic: null,
-              pricingFlavor: null,
-              forceInventory: true
-            };
-          }
-
-          // === INLINE REPAIR (no new helper) ===
-          // 1) If unit is missing, best-effort infer from inventory (short timeout)
-          if (!String(upd.unit ?? '').trim() && typeof inferUnitFromInventory === 'function') {
-            try {
-              const inferred = await withTimeout(inferUnitFromInventory(shopIdFrom(From), upd.product), 300, () => null);
-              if (inferred) upd.unit = inferred;
-            } catch {}
-          }
-          // 2) If PURCHASE and price missing → try backend price; else nudge to resend full line and EARLY-RETURN
-          const isPurchase = finalAction === 'purchased';
-          const hasPrice = Number.isFinite(upd.pricePerUnit) && upd.pricePerUnit > 0;
-          if (isPurchase && !hasPrice) {
-            let backend = null;
-            try {
-              backend = await withTimeout(getProductPrice(upd.product, shopIdFrom(From)), 400, () => null);
-            } catch {}
-            const priceKnown = !!(backend?.success && Number.isFinite(backend?.price));                        
-            logAiFirstDecision(requestId, 'ai-partial', {
-                     product: upd.product, unit: upd.unit, priceKnown
-                   });
-            if (priceKnown) {
-              upd.pricePerUnit = backend.price;
-              if (isCompleteUpdateForSticky(upd, finalAction)) {
-                const language = ensureLangExact(detectedLanguageHint ?? 'en');
-                console.log('[orchestrator][sticky-ai-first] price repaired from backend → early exit', {
-                  requestId, action: finalAction
-                });                          
-            // We are committing after repairing price from backend — mark this as a successful AI-first completion.
-                        logAiFirstDecision(requestId, 'ai-complete', {
-                          product: upd.product,
-                          unit: upd.unit,
-                          reason: 'commit_price_from_backend'
-                        });
-                return {
-                  language,
-                  isQuestion: false,
-                  normalizedCommand: null,
-                  aiTxn: upd,
-                  questionTopic: null,
-                  pricingFlavor: null,
-                  forceInventory: true
-                };
-              }
-            } else {
-              // Backend doesn't know price → ask user to resend the ENTIRE line with price (consistent with policy)
-              try {
-                const langHint = ensureLangExact(detectedLanguageHint ?? 'en');
-                await sendPriceRequiredNudge(From, upd.product, upd.unit, langHint);
-                try { handledRequests.add(requestId); } catch {}
-              } catch {}
-              // EARLY RETURN: do not run the rest of the orchestrator
-              return {
-                language: ensureLangExact(detectedLanguageHint ?? 'en'),
-                isQuestion: false,
-                normalizedCommand: null,
-                aiTxn: null,
-                questionTopic: null,
-                pricingFlavor: null,
-                // not forcing inventory since we didn't commit; we already nudged the user
-                forceInventory: false
-              };
-            }
-          }
-
-          // 3) If now complete after unit/price attempt, early-exit
-          if (isCompleteUpdateForSticky(upd, finalAction)) {
-            logAiFirstDecision(requestId, 'ai-complete', { product: upd.product, unit: upd.unit, reason: 'commit' });
-            const language = ensureLangExact(detectedLanguageHint ?? 'en');
-            console.log('[orchestrator][sticky-ai-first] repaired to complete → early exit', {
-              requestId, action: finalAction
-            });
-            return {
-              language,
-              isQuestion: false,
-              normalizedCommand: null,
-              aiTxn: upd,
-              questionTopic: null,
-              pricingFlavor: null,
-              forceInventory: true
-            };
-          }
-
-          // Still partial → continue into orchestrator (fast/legacy) as usual
-          console.log('[orchestrator][sticky-ai-first] partial after repair → continuing', { requestId });
-        } else {
-          // No AI result → continue; legacy behavior will handle it
-          console.log('[orchestrator][sticky-ai-first] no AI result → continuing', { requestId });
-        }     
+     if (stickyAction && __txnLike && __activated) {              
+      // [PATCH:SKIP-STICKY-AI-PREFETCH] Sticky txn turns do not need orchestrator-sticky AI pre-parse.
+               // We will force the inventory parse downstream (parseMultipleUpdates) which drives the DB commit.
+               // This removes ~6s of redundant work seen in logs.
+               console.log('[orchestrator][sticky-ai-first] skipping pre-AI parse; forcing inventory parse', { requestId });
+               return {
+                 language: ensureLangExact(detectedLanguageHint ?? 'en'),
+                 isQuestion: false,
+                 normalizedCommand: null,
+                 aiTxn: null,
+                 questionTopic: null,
+                 pricingFlavor: null,
+                 identityAsked: typeof isNameQuestion === 'function' ? isNameQuestion(text) : false,
+                 forceInventory: true
+               };
         } else if (stickyAction && __txnLike && !__activated) {
          logAiFirstDecision(requestId, 'skip', { reason: 'plan_not_activated', stickyAction, txnLike: __txnLike, activated: __activated, plan: __plan, planEnd: __end, planExpired: __expired });
          console.log('[orchestrator][sticky-ai-first] skipped (plan not activated)', { requestId });
