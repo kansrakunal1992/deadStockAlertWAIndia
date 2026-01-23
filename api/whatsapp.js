@@ -2889,6 +2889,61 @@ function looksLikeInventoryPricing(msg) {
         __fcSkip = !!(stickyActionCached && __planActivated && looksLikeTxnLite(text));
       } catch { /* safe default: do not skip */ }
     
+// right after computing __planActivated + __fcSkip, just before the ENABLE_FAST_CLASSIFIER check:
+const __txnLikeNow = false;
+let __plan = null;
+let __end = null;
+let __trialActive = false;
+let __planTimedOut = false;
+let __planMs = null;
+
+try {
+  const t0 = Date.now();
+  const planInfoFC = await withTimeout(
+    getUserPlanQuick(shopId),
+    300,
+    () => { __planTimedOut = true; return null; }
+  );
+  __planMs = Date.now() - t0;
+
+  if (planInfoFC) {
+    __plan = String(planInfoFC.plan ?? '').toLowerCase();
+    __end = getUnifiedEndDate?.(planInfoFC) ?? null;
+    __trialActive = (__plan === 'trial') && __end && (new Date(__end).getTime() > Date.now());
+    __planActivated = (__plan === 'paid') || __trialActive;
+  }
+
+  // keep txnLike eval local to this block so we log what THIS block sees
+  __txnLikeNow = looksLikeTxnLite(text);
+
+  __fcSkip = !!(stickyActionCached && __planActivated && __txnLikeNow);
+} catch (e) {
+  // existing behavior: safe default is not skip
+}
+
+// MIN LOG: only log when it is “unexpectedly going to run”
+if (
+  ENABLE_FAST_CLASSIFIER &&
+  stickyActionCached &&
+  __txnLikeNow &&
+  __planActivated &&
+  !__fcSkip
+) {
+  console.warn('[fast-classifier][unexpected-run]', {
+    requestId,
+    shopId,
+    stickyActionCached,
+    txnLike: __txnLikeNow,
+    plan: __plan,
+    planEnd: __end,
+    trialActive: __trialActive,
+    planActivated: __planActivated,
+    planTimedOut: __planTimedOut,
+    planMs: __planMs,
+    fcSkip: __fcSkip
+  });
+}
+
     if (ENABLE_FAST_CLASSIFIER && !__fcSkip) {         
       if (classifierSeen(requestId)) {
           console.log('[fast-classifier] skipped duplicate for req=%s', requestId);
