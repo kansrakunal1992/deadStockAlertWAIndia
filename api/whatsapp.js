@@ -3110,6 +3110,26 @@ if (
        };
       }
     }
+    
+    // [PATCH:SKIP-AIORCH-STICKY-TXN] Skip aiOrchestrate entirely for sticky transaction turns
+         // sticky + txnLike + activated => downstream will force inventory parse; aiOrchestrate adds latency/noise
+         try {
+           const __txnLikeNow = (__stickyEval?.txnLike != null) ? !!__stickyEval.txnLike : looksLikeTxnLite(text);
+           const __activatedNow = !!(__stickyEval?.activated);
+           const __stickyNow = __stickyEval?.stickyAction ?? stickyActionCached ?? null;
+           if (__stickyNow && __activatedNow && __txnLikeNow) {
+             return {
+               language: ensureLangExact(detectedLanguageHint ?? 'en'),
+               isQuestion: false,
+               normalizedCommand: null,
+               aiTxn: null,
+               questionTopic: null,
+               pricingFlavor: null,
+               identityAsked: (typeof isNameQuestion === 'function') ? isNameQuestion(text) : false,
+               forceInventory: true
+             };
+           }
+         } catch (_) { /* best-effort; fall through */ }
 
     // ---- LEGACY PATH (Gate OFF): original Deepseek orchestrator call (PRESERVED) ----
     console.log('[fast-classifier] off req=%s (calling aiOrchestrate with 8s timeout)', requestId);
