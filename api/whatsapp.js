@@ -1139,7 +1139,6 @@ const UNDO_PREARM_TTL_MS = 12_000; // keep ordering tight; prevent carry‑over
 if (typeof globalThis.preArmUndoFromCommit !== 'function') {
   globalThis.preArmUndoFromCommit = function preArmUndoFromCommit(shopId, txn, lang = 'en') {
       try {
-        if (typeof openCorrectionWindow !== 'function') return false;   
         const a0 = String(txn?.action ?? '').toLowerCase().trim();
               // Canonicalize to nouns expected by Undo: sale | purchase | return
               const action = a0 === 'sold' ? 'sale' : a0 === 'purchased' ? 'purchase' : a0 === 'returned' ? 'return' : a0;
@@ -1152,14 +1151,14 @@ if (typeof globalThis.preArmUndoFromCommit !== 'function') {
                 saleRecordId: txn?.saleRecordId ?? null
               };                  
           if (!lastTxn.product) return false;
-                  // Fire-and-forget: do not block confirmation on Airtable write
-                  Promise.resolve()
-                    .then(() => openCorrectionWindow(shopId, lastTxn, lang))
-                    .catch(e => { try { console.warn('[undo-arm]', e?.message); } catch(_) {} });
+                  
                   // Shop‑scoped flag only (no reqId coupling)
                   globalThis.__undoPreArmedByShop = globalThis.__undoPreArmedByShop ?? new Map();
-                  const _ttl = (typeof UNDO_PREARM_TTL_MS === 'number' ? UNDO_PREARM_TTL_MS : 12_000);
-                  globalThis.__undoPreArmedByShop.set(shopId, { ts: Date.now(), lang });
+                  const _ttl = (typeof UNDO_PREARM_TTL_MS === 'number' ? UNDO_PREARM_TTL_MS : 12_000);    
+        
+                  // Store lastTxn; CorrectionState will be written AFTER confirmation is sent.
+                  globalThis.__undoPreArmedByShop.set(shopId, { ts: Date.now(), lang, lastTxn });
+
                   setTimeout(() => globalThis.__undoPreArmedByShop.delete(shopId), _ttl);
                   return true;
       } catch (e) {
@@ -14488,7 +14487,6 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
   const UNDO_PREARM_TTL_MS = 12_000;
   function preArmUndoFromCommit(shopIdArg, txn, langArg = 'en') {
     try {
-      if (typeof openCorrectionWindow !== 'function') return false;
       const a0 = String(txn?.action ?? '').toLowerCase().trim();
       // Canonical nouns expected by Undo: sale | purchase | return
       const action = a0 === 'sold' ? 'sale' : a0 === 'purchased' ? 'purchase' : a0 === 'returned' ? 'return' : a0;
@@ -14502,13 +14500,11 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
       };
             
       if (!lastTxn.product) return false;
-          // Strictly fire-and-forget: never block confirmation on Airtable
-          Promise.resolve()
-            .then(() => openCorrectionWindow(shopIdArg, lastTxn, langArg))
-            .catch(e => { try { console.warn('[undo-arm]', e?.message); } catch(_) {} });
 
-      // sender emit-only: short-lived flag keyed by shop
-      globalThis.__undoPreArmedByShop.set(shopIdArg, { ts: Date.now(), lang: langArg });
+      // sender emit-only: short-lived flag keyed by shop            
+      // Store lastTxn; CorrectionState will be written AFTER confirmation is sent.
+      globalThis.__undoPreArmedByShop.set(shopIdArg, { ts: Date.now(), lang: langArg, lastTxn });
+
       setTimeout(() => globalThis.__undoPreArmedByShop.delete(shopIdArg), UNDO_PREARM_TTL_MS);
       return true;
     } catch (e) {
@@ -17996,11 +17992,21 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
         const shopKey = shopIdFrom(formattedTo);
                 const pre = globalThis.__undoPreArmedByShop?.get?.(shopKey);
                 if (pre && (Date.now() - pre.ts) <= UNDO_PREARM_TTL_MS) {
-                  console.log(`[confirm->undo] pre-armed; emitting CTA lang=${lang} shop=${shopKey}`);
-                  await new Promise(r => setTimeout(r, 350));
+                  console.log(`[confirm->undo] pre-armed; emitting CTA lang=${lang} shop=${shopKey}`);                                    
+                  // [PATCH:CORRSTATE-AFTER-CONFIRM] Create/refresh CorrectionState AFTER confirmation is sent.
+                                     // Fire-and-forget so it never blocks confirmation. This runs during the existing 600ms CTA delay.
+                                    try {
+                                       if (typeof openCorrectionWindow === 'function' && pre?.lastTxn) {
+                                         Promise.resolve()
+                                           .then(() => openCorrectionWindow(shopKey, pre.lastTxn, lang))
+                                           .catch(e => { try { console.warn('[undo-arm]', e?.message); } catch(_) {} });
+                                       }
+                                     } catch (_) {}
+                  await new Promise(r => setTimeout(r, 600));
                   await sendUndoCTAQuickReply(formattedTo, lang, String(opts?.requestId ?? opts?.req ?? '').trim());
                   globalThis.__undoPreArmedByShop.delete(shopKey);
                   console.log(`[confirm->undo] CTA sent (pre-armed) shop=${shopKey}`);
+                  
                 }
       } catch (e) {
         console.warn('[confirm->undo] failed:', e?.message);
@@ -18060,7 +18066,7 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
                     const pre = globalThis.__undoPreArmedByShop?.get?.(shopKey);
                     if (pre && (Date.now() - pre.ts) <= UNDO_PREARM_TTL_MS) {
                       console.log(`[confirm->undo] pre-armed(multi); emitting CTA lang=${lang} shop=${shopKey}`);
-                      await new Promise(r => setTimeout(r, 350));
+                      await new Promise(r => setTimeout(r, 600));
                       await sendUndoCTAQuickReply(formattedTo, lang, String(opts?.requestId ?? opts?.req ?? '').trim());
                       globalThis.__undoPreArmedByShop.delete(shopKey);
                       console.log(`[confirm->undo] done(multi) shop=${shopKey}`);
