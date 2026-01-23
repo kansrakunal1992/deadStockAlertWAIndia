@@ -21293,6 +21293,28 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
     const shopId = fromToShopId(From);
     
+    // [PATCH:PREFETCH-TXN-PARSE] Start parsing early for txn-like sticky turns (overlaps auth/state latency).
+         // This is safe because we will still enforce auth BEFORE committing DB writes.
+         try {
+           globalThis.__prefetchTxnParseByReq = globalThis.__prefetchTxnParseByReq ?? new Map();
+           if (!globalThis.__prefetchTxnParseByReq.has(requestId)) {
+             const p = Promise.resolve().then(async () => {
+               try {
+                 if (typeof getStickyActionQuick !== 'function') return null;
+                 const stickyActionPref = await getStickyActionQuick(From);
+                 if (!stickyActionPref) return null;
+                 if (!looksLikeTxnLite(Body)) return null;
+                 if (typeof parseMultipleUpdates !== 'function') return null;
+                 return await parseMultipleUpdates({ From, Body }, requestId);
+               } catch { return null; }
+             });
+             globalThis.__prefetchTxnParseByReq.set(requestId, p);
+             setTimeout(() => {
+               try { globalThis.__prefetchTxnParseByReq.delete(requestId); } catch (_) {}
+             }, 30_000);
+           }
+         } catch (_) { /* best-effort */ }
+
     // AUTHENTICATION / SOFT GATE
         // ==========================
         console.log(`[${requestId}] Checking authentication for ${shopId}`);
@@ -22282,7 +22304,17 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
     if (stickyAction && looksLikeTxnLite(Body)) {
       console.log(`[${requestId}] [sticky] mode active=${stickyAction} → forcing inventory parse`);
       // COPILOT-PATCH-STICKY-PARSE-FROM
-      const parsedUpdates = await parseMultipleUpdates({ From, Body },requestId);
+     
+      let parsedUpdates = null;
+             try {
+               const p = globalThis.__prefetchTxnParseByReq?.get?.(requestId) ?? null;
+               parsedUpdates = p ? await p : null;
+               try { globalThis.__prefetchTxnParseByReq?.delete?.(requestId); } catch (_) {}
+             } catch { parsedUpdates = null; }
+             if (!parsedUpdates) {
+               parsedUpdates = await parseMultipleUpdates({ From, Body }, requestId);
+             }
+
       if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
         console.log(`[${requestId}] [sticky] Parsed ${parsedUpdates.length} updates`);                    
            
