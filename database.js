@@ -662,126 +662,113 @@ async function airtableProductsRequest(config, context = 'Airtable Products Requ
 }
 
 // Update inventory using DELETE AND RECREATE approach is REPLACED BY PATCH STRATEGY
-async function updateInventory(shopId, product, quantityChange, unit = '') {
+async function updateInventory(shopId, product, quantityChange, unit = '', opts = {}) {
   if (isMissingProductToken(product)) {
-    logMissingProduct(`Update ${normalizeShopIdForWrite(shopId)} - <undefined>`, { quantityChange, unit });
-      console.warn(`[Update ${normalizeShopIdForWrite(shopId)} - <undefined>] skipped: missing product`);
-      return { success: false, error: 'missing product' };
-  }
-  
+    logMissingProduct(`Update ${normalizeShopIdForWrite(shopId)} - <undefined>`, { quantityChange, unit });          
+    console.warn(`[Update ${normalizeShopIdForWrite(shopId)} - <undefined>] skipped: missing product`);
+        return { success: false, error: 'missing product' };
+      }
+
   // Robust context (avoid undefined product; normalize ShopID for display)
   const displayProduct = (String(product ?? '').trim() || '(unknown)');
-  const context = `Update ${normalizeShopIdForWrite(shopId)} - ${displayProduct}`;
+  const context = `Update ${normalizeShopIdForWrite(shopId)} - ${displayProduct}`;    
+  // Optional: choose unit for aggregate stock display (confirmation UI)
+  const preferTotalUnit = normalizeUnit(opts.preferTotalUnit ?? unit ?? 'pieces');
+
   try {
     console.log(`[${context}] Starting update: ${quantityChange} ${unit}`);
 
     // Normalize unit before processing
     const normalizedUnit = normalizeUnit(unit);
     const preferredShopId = normalizeShopIdForWrite(shopId);
-        
-    // 1. Find the FIRST matching inventory record using shop-scoped filter
+    
+    // 1) Single GET snapshot (aggregate + first record)
     const agg = await getProductInventoryAggregate(shopId, product);
     
-    // 2. We'll use the first record found
-    let existingRecordId = null;
-    let existingRecord = null;
+    const existingRecordId = agg?.firstRecordId ?? null;
+        const existingRecord = agg?.firstRecord ?? null;
     
-    if (agg.firstRecordId) {
-        existingRecordId = agg.firstRecordId;
-        // Fetch the specific record to ensure we have the latest data
-        const specificResult = await airtableRequest({
-            method: 'get',
-            url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_NAME}/${existingRecordId}`
-        }, `${context} - FetchFirstRecord`);
-                      
-        // Airtable GET-by-ID returns a single record object, not {records:[...]}
-            if (specificResult && specificResult.id && specificResult.fields) {
-              existingRecord = specificResult;
-            } else {
-            // Fallback: fetch by formula if specific fetch failed
-            const pname = String(product).trim().toLowerCase();
-            const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)}, LOWER(TRIM({Product}))='${pname.replace(/'/g,"''")}')`;
-            const formulaResult = await airtableRequest({
-                method: 'get',
-                params: { filterByFormula: filterFormula, maxRecords: 1 }
-            }, `${context} - FetchFirstByFormula`);
-            
-            if (formulaResult.records && formulaResult.records.length > 0) {
-                existingRecord = formulaResult.records[0];
-            }
-        }
-    }
+        // 2) Calculate the new quantity in the record's existing unit
+        let newQuantity;
+        let patchedRecordId = null;
     
-    // 3. Calculate the new quantity in the record's existing unit
-    let newQuantity;
-    if (existingRecord) {
-        const currentQuantity = Number(existingRecord.fields.Quantity || 0);
-        const currentUnit = existingRecord.fields.Units || 'pieces';            
-            
-    // Convert both to base family (numeric) and compute
-         const currentBaseQty = convertToBaseUnit(currentQuantity, currentUnit); // number
-          const changeBaseQty  = convertToBaseUnit(quantityChange, normalizedUnit); // number
-          const newBaseQty     = Math.max(0, currentBaseQty + changeBaseQty);
+        if (existingRecord && existingRecordId) {
+          const currentQuantity = Number(existingRecord.fields.Quantity || 0);
+          const currentUnit = existingRecord.fields.Units || 'pieces';
+    
+          // Convert both to base family (numeric) and compute
+          const currentBaseQty = convertToBaseUnit(currentQuantity, currentUnit); // number
+          const changeBaseQty = convertToBaseUnit(quantityChange, normalizedUnit); // number
+    
+          // Clamp so we never go below 0
+          const newBaseQty = Math.max(0, currentBaseQty + changeBaseQty);
+    
           // Convert back to the record's unit
-          const unitOneBase    = convertToBaseUnit(1, currentUnit) || 1;
-          newQuantity          = newBaseQty / unitOneBase;    
-     } else {
-       // First insert: clamp non-negative in base units, then convert to storage unit
-       const changeBaseQty = convertToBaseUnit(quantityChange, normalizedUnit);
-       const newBaseQty = Math.max(0, changeBaseQty);
-       const unitOneBase = convertToBaseUnit(1, normalizedUnit) || 1;
-       newQuantity = newBaseQty / unitOneBase;
-     }
+          const unitOneBase = convertToBaseUnit(1, currentUnit) || 1;
+          newQuantity = newBaseQty / unitOneBase;
     
-    // 4. Prepare the PATCH data
-    const patchData = {
-      fields: {
-        Quantity: newQuantity,
-        Units: normalizedUnit
-      }
-    };
-
-    // 5. PERFORM THE PATCH (This replaces Delete & Recreate)
-    if (existingRecord) {
-        await airtableRequest({
+          // IMPORTANT: compute total-after based on what we actually applied (clamp-aware)
+          const totalBaseBefore = Number(agg?.sumBase ?? 0);
+          const deltaAppliedBase = (newBaseQty - currentBaseQty);
+          const totalBaseAfter = Math.max(0, totalBaseBefore + deltaAppliedBase);
+          const totalUnitOneBase = convertToBaseUnit(1, preferTotalUnit) || 1;
+          const totalAfter = totalBaseAfter / totalUnitOneBase;
+    
+          const patchData = {
+            fields: {
+              Quantity: newQuantity,
+              Units: currentUnit || normalizedUnit || 'pieces'
+            }
+          };
+    
+          await airtableRequest({
             method: 'patch',
             url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_NAME}/${existingRecordId}`,
             data: patchData
-        }, `${context} - PatchRecord`);
-        
-        console.log(`[${context}] Patched existing record ${existingRecordId} with new quantity: ${newQuantity} ${normalizedUnit}`);
-        
-        // Compute aggregate after first insert for user messaging
-        const overall = await getProductTotalQuantity(shopId, product, normalizedUnit || 'pieces');
-        if (overall.success) {
-            console.log(`[${context}] Overall ${product} stock: ${overall.total} ${overall.unit} (rows=${overall.rows})`);
+          }, `${context} - PatchRecord`);
+    
+          patchedRecordId = existingRecordId;
+          console.log(`[${context}] Patched existing record ${existingRecordId} with new quantity: ${newQuantity} ${patchData.fields.Units}`);
+          console.log(`[${context}] Overall ${product} stock: ${Number(totalAfter.toFixed(3))} ${preferTotalUnit} (rows=${agg?.rows ?? 0})`);
+    
+          const overall = {
+            success: true,
+            total: Number(totalAfter.toFixed(3)),
+            unit: normalizeUnit(preferTotalUnit),
+            rows: agg?.rows ?? 0
+          };
+    
+          return { success: true, newQuantity, unit: patchData.fields.Units, aggregate: overall, recordId: patchedRecordId };
         }
-        
-        return { success: true, newQuantity, unit: normalizedUnit, aggregate: overall };
-    } else {
-        // CREATE a new record (Fallback, not recommended for sales)
+    
+        // CREATE a new record (Fallback)
+        const changeBaseQty = convertToBaseUnit(quantityChange, normalizedUnit);
+        const newBaseQty = Math.max(0, changeBaseQty);
+        const unitOneBase = convertToBaseUnit(1, normalizedUnit) || 1;
+        newQuantity = newBaseQty / unitOneBase;
+    
         const createData = {
-            fields: {
-                ShopID: preferredShopId,
-                Product: product,
-                Quantity: newQuantity,
-                Units: normalizedUnit
-            }
+          fields: {
+            ShopID: preferredShopId,
+            Product: product,
+            Quantity: newQuantity,
+            Units: normalizedUnit
+          }
         };
-        
-        await airtableRequest({
-            method: 'post',
-            data: createData
+    
+        const created = await airtableRequest({
+          method: 'post',
+          data: createData
         }, `${context} - Create`);
-        
-        // NEW: compute aggregate after first insert for user messaging
-        const overall = await getProductTotalQuantity(shopId, product, normalizedUnit || 'pieces');
-        if (overall.success) {
-            console.log(`[${context}] Overall ${product} stock: ${overall.total} ${overall.unit} (rows=${overall.rows})`);
-        }
-        
-        return { success: true, newQuantity, unit: normalizedUnit, aggregate: overall };
-    }
+    
+        const overall = {
+          success: true,
+          total: Number(newQuantity.toFixed(3)),
+          unit: normalizeUnit(preferTotalUnit || normalizedUnit),
+          rows: 1
+        };
+    
+        return { success: true, newQuantity, unit: normalizedUnit, aggregate: overall, recordId: created?.id ?? null };
   } catch (error) {
     logError(context, error);
     return { success: false, error: error.message };
@@ -867,51 +854,47 @@ async function createBatchRecord(batchData) {
     
     console.log(`[${context}] Batch record created with ID: ${result.id}`);
     
-    // NEW: Link the batch to the inventory record
-    try {
-      // Find the inventory record for this shop and product            
-      const pname = String(batchData.product ?? '').trim().toLowerCase();
+    // NEW: Link the batch to the inventory record    
+    setImmediate(async () => {
+        try {
+          // Find the inventory record for this shop and product
+          const pname = String(batchData.product ?? '').trim().toLowerCase();
           const filterFormula = 'AND(' + buildShopIdVariantFilter('ShopID', batchData.shopId)
             + ", LOWER(TRIM({Product})) = '" + pname.replace(/'/g,"''") + "')";
-      const inventoryResult = await airtableRequest({
-        method: 'get',
-        params: { filterByFormula: filterFormula }
-      }, `${context} - Find Inventory`);
-      
-      if (inventoryResult.records.length > 0) {
-        const inventoryRecord = inventoryResult.records[0];
-        console.log(`[${context}] Found inventory record ${inventoryRecord.id}, linking to batch`);
-        
-        // Get current batch links (if any)
-        const currentBatches = inventoryRecord.fields.Batches || [];
-        
-        // Avoid duplicate links
-        if (!currentBatches.includes(result.id)) {
-          const updatedBatches = [...currentBatches, result.id];
-          
-          const inventoryUpdateData = {
-            fields: {
-              Batches: updatedBatches
+          const inventoryResult = await airtableRequest({
+            method: 'get',
+            params: { filterByFormula: filterFormula }
+          }, `${context} - Find Inventory`);
+          if (inventoryResult.records.length > 0) {
+            const inventoryRecord = inventoryResult.records[0];
+            console.log(`[${context}] Found inventory record ${inventoryRecord.id}, linking to batch`);
+            // Get current batch links (if any)
+            const currentBatches = inventoryRecord.fields.Batches || [];
+            // Avoid duplicate links
+            if (!currentBatches.includes(result.id)) {
+              const updatedBatches = [...currentBatches, result.id];
+              const inventoryUpdateData = {
+                fields: {
+                  Batches: updatedBatches
+                }
+              };
+              await airtableRequest({
+                method: 'patch',
+                url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_NAME}/${inventoryRecord.id}`,
+                data: inventoryUpdateData
+              }, `${context} - Link Batch to Inventory`);
+              console.log(`[${context}] Successfully linked batch to inventory record`);
+            } else {
+              console.log(`[${context}] Batch already linked to inventory record`);
             }
-          };
-          
-          await airtableRequest({
-            method: 'patch',
-            url: `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${TABLE_NAME}/${inventoryRecord.id}`,
-            data: inventoryUpdateData
-          }, `${context} - Link Batch to Inventory`);
-          
-          console.log(`[${context}] Successfully linked batch to inventory record`);
-        } else {
-          console.log(`[${context}] Batch already linked to inventory record`);
+          } else {
+            console.log(`[${context}] No inventory record found to link batch to`);
+          }
+        } catch (linkError) {
+          console.warn(`[${context}] Warning: Could not link batch to inventory:`, linkError.message);
+          // Don't fail the whole operation if linking fails
         }
-      } else {
-        console.log(`[${context}] No inventory record found to link batch to`);
-      }
-    } catch (linkError) {
-      console.warn(`[${context}] Warning: Could not link batch to inventory:`, linkError.message);
-      // Don't fail the whole operation if linking fails
-    }
+      });
     
     return { success: true, id: result.id, compositeKey };
   } catch (error) {
@@ -1023,6 +1006,7 @@ function convertToBaseUnit(quantity, unit) {
   if (['kg','kilogram','kilograms','g','gram','grams'].includes(u)) family = 'kg';
   else if (['l','liter','litre','liters','litres','ltr','ml','milliliter','millilitre','milliliters','millilitres'].includes(u)) family = 'l';
   // Factors per family
+  const DEBUG_CONVERSIONS = String(process.env.DEBUG_CONVERSIONS ?? '0') === '1';
   const factors = {
     kg: { kg: 1, kilogram: 1, kilograms: 1, g: 0.001, gram: 0.001, grams: 0.001 },
     l : { l: 1, liter: 1, litre: 1, liters: 1, litres: 1, ltr: 1, ml: 0.001,
@@ -1034,7 +1018,7 @@ function convertToBaseUnit(quantity, unit) {
   else if (family === 'l') factor = factors.l[u] ?? 1;
   else factor = factors.pieces[u] ?? 1;
   const out = q * factor;
-  console.log(`[Conversion] Converted ${q} ${unit} to ${out} ${family}`);
+  if (DEBUG_CONVERSIONS) console.log(`[Conversion] Converted ${q} ${unit} to ${out} ${family}`);
   return out; // <--- number
 }
 
@@ -1220,25 +1204,40 @@ async function getProductInventoryAggregate(shopId, productName) {
     const filterFormula = `AND(${buildShopIdVariantFilter('ShopID', shopId)},
       LOWER(TRIM({Product}))='${pname.replace(/'/g,"''")}' )`;
     const result = await airtableRequest({ method: 'get', params: { filterByFormula: filterFormula } }, context);
-    let sumBase = 0, unitForDisplay = 'pieces', firstId = null;
-    for (const rec of (result.records ?? [])) {
+        
+    let sumBase = 0;
+        let unitForDisplay = 'pieces';
+        let firstId = null;
+        let firstRecord = null;
+     
+      for (const rec of (result.records ?? [])) {
       const qty = Number(rec.fields.Quantity ?? 0);
       const unit = rec.fields.Units ?? 'pieces';
-      sumBase += convertToBaseUnit(qty, unit);
-      if (!firstId) { firstId = rec.id; unitForDisplay = unit; }
+      sumBase += convertToBaseUnit(qty, unit);            
+      if (!firstId) {
+              firstId = rec.id;
+              unitForDisplay = unit;
+              firstRecord = rec;
+            }
     }
     // Return in display unit (of first record) for continuity        
-    const oneBase = convertToBaseUnit(1, unitForDisplay) || 1;
-      const qtyDisplay = sumBase / oneBase;
-      const unitDisp = String(unitForDisplay ?? 'pieces').toLowerCase();
-      const isPieces = unitDisp === 'pieces';
-      return {
-        success: true,
-        quantity: isPieces ? Math.round(qtyDisplay) : Number(qtyDisplay.toFixed(3)),
-        unit: unitForDisplay,
-        firstRecordId: firstId,
-        rows: (result.records ?? []).length
-      };
+    const oneBase = convertToBaseUnit(1, unitForDisplay) || 1;          
+    const qtyDisplay = sumBase / oneBase;
+        const unitDisp = String(unitForDisplay ?? 'pieces').toLowerCase();
+        const isPieces = unitDisp === 'pieces';
+    
+        return {
+          success: true,
+          quantity: isPieces ? Math.round(qtyDisplay) : Number(qtyDisplay.toFixed(3)),
+          unit: unitForDisplay,
+          firstRecordId: firstId,
+          rows: (result.records ?? []).length,
+    
+          // NEW (backward compatible): extra snapshot fields for faster write paths
+          sumBase,
+          firstRecord,
+          records: (result.records ?? [])
+        };
   } catch (e) {
     logError(context, e);
     return { success: false, quantity: 0, unit: 'pieces', rows: 0 };
