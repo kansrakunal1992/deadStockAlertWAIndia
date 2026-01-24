@@ -21318,7 +21318,36 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     // AUTHENTICATION / SOFT GATE
         // ==========================
         console.log(`[${requestId}] Checking authentication for ${shopId}`);
-        const authCheck = await checkUserAuthorization(From, Body, requestId);
+        
+        // [PATCH:PARALLEL-PREFETCH] Prefetch independent reads in parallel with auth
+             // NOTE: We still enforce auth BEFORE any DB commits (no behavior change).
+             const shopIdState = fromToShopId(From);
+             const __stateP = Promise.resolve()
+               .then(() => (typeof getUserStateFromDB === 'function') ? getUserStateFromDB(shopIdState) : getUserState(shopIdState))
+               .catch(() => null);
+             const __stickyP = Promise.resolve()
+               .then(() => (typeof getStickyActionQuick === 'function') ? getStickyActionQuick(From) : null)
+               .catch(() => null);
+         
+             // [PATCH:AUTH-TTL-CACHE] Cache positive auth result briefly to avoid repeated DB hits per shop
+             globalThis.__authCacheByShop = globalThis.__authCacheByShop ?? new Map(); // shopId -> { ts, val }
+             const __AUTH_TTL_MS = Number(process.env.AUTH_CACHE_TTL_MS ?? 60_000); // default 60s
+             const __authKey = shopId;
+             const __cached = globalThis.__authCacheByShop.get(__authKey);
+             let authCheck = null;
+             if (__cached && (Date.now() - __cached.ts) <= __AUTH_TTL_MS) {
+               authCheck = __cached.val;
+             } else {
+               authCheck = await checkUserAuthorization(From, Body, requestId);
+               // Cache only authorized outcomes strongly; restricted outcomes very briefly (2s) or near-expired.
+               try {
+                 if (authCheck?.authorized) {
+                   globalThis.__authCacheByShop.set(__authKey, { ts: Date.now(), val: authCheck });
+                 } else {
+                   globalThis.__authCacheByShop.set(__authKey, { ts: Date.now() - (__AUTH_TTL_MS - 2000), val: authCheck });
+                 }
+               } catch (_) {}
+             }
         
         // Only block truly restricted states (deactivated/blacklisted/blocked)
         if (!authCheck.authorized) {
@@ -21515,17 +21544,27 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     }
             
     // 2. Get current user state (normalize to shopIdState — no "whatsapp:")
-        const shopIdState = fromToShopId(From);
         console.log(`[${requestId}] Checking state for ${shopIdState} in database...`);
-        // Use the DB-backed helper; fallback to shim if needed
-        const currentState = (typeof getUserStateFromDB === 'function')
-            ? await getUserStateFromDB(shopIdState)
-            : await getUserState(shopIdState);
+            
+    // [PATCH:PARALLEL-PREFETCH] Reuse prefetched state (already in-flight during auth)
+            let currentState = null;
+            try { currentState = await __stateP; } catch (_) { currentState = null; }
+            if (!currentState) {
+              // Fallback (preserves existing behavior if prefetch failed)
+              currentState = (typeof getUserStateFromDB === 'function')
+                ? await getUserStateFromDB(shopIdState)
+                : await getUserState(shopIdState);
+            }
+    
         console.log(
           `[${requestId}] Current state for ${shopIdState}:`,
           currentState ? currentState.mode : 'none'
         );
-               
+        
+    // [PATCH:PARALLEL-PREFETCH] StickyAction is also in-flight (optional reuse for downstream)
+            // We don't change logic here; this just warms the value so later code can use it if needed.
+            try { await __stickyP; } catch (_) {}
+     
     // Heartbeat: if sticky, refresh timestamp so 5–10 min idle doesn't clear it
         if (currentState && currentState.mode === 'awaitingTransactionDetails' && typeof refreshUserStateTimestamp === 'function') {
           try { await refreshUserStateTimestamp(shopIdState); } catch (_) {}
@@ -22217,9 +22256,12 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
   console.log(`[${requestId}] Using detectedLanguage=${detectedLanguage} for new interaction`);    
     // Persist override for TEXT input (Body present). Voice path below remains unchanged.
     try {
-      if (Body && Body.trim().length > 0) {
-        await saveUserPreference(shopId, detectedLanguage);
-        console.log(`[${requestId}] New interaction (text): saved DB language pref to ${detectedLanguage}`);
+      if (Body && Body.trim().length > 0) {      
+      // [PATCH:SAVE-PREF-NONBLOCK] Do not block the turn on preference persistence
+              Promise.resolve()
+                .then(() => saveUserPreference(shopId, detectedLanguage))
+                .then(() => console.log(`[${requestId}] New interaction (text): saved DB language pref to ${detectedLanguage}`))
+                .catch(() => {});
       }
     } catch (e) {
       console.warn(`[${requestId}] New interaction: saveUserPreference failed:`, e?.message);
