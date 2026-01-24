@@ -1744,15 +1744,93 @@ async function parseMultipleUpdates(reqOrText, requestId) {
     return [];
   }
   
+  // ----------------------------------------------------------------------
+  // MIN PATCH: deterministic single-line extraction (FAST) + AI fallback (ACCURATE)
+  // Goal: Never bounce to "mode/buttons" just because the sentence is natural.
+  // Works for both text & voice because both pass transcript into this function.
+  // ----------------------------------------------------------------------
+  function _tryDeterministicTxnExtract(text0, actionHint) {
+    try {
+      const s = String(text0 || '').trim();
+      if (!s) return null;
+
+      // Price (optional): ₹60, Rs 60, rupees 60
+      const priceM = s.match(/(?:₹|rs\.?|rupees)\s*([0-9]+(?:\.[0-9]+)?)/i);
+      const price = priceM ? Number(priceM[1]) : null;
+
+      // Unit (optional) and quantity near it
+      const u = UNIT_REGEX_UNIFIED.exec(s);
+      let unit = u ? String(u[0]) : null;
+      let qty = null;
+      if (u) {
+        const left = s.slice(0, u.index);
+        const nums = left.match(/([0-9]+(?:\.[0-9]+)?)/g);
+        if (nums && nums.length) qty = Number(nums[nums.length - 1]);
+      }
+      if (qty == null) {
+        // fallback: first number anywhere
+        const q0 = s.match(/([0-9]+(?:\.[0-9]+)?)/);
+        if (q0) qty = Number(q0[1]);
+      }
+
+      // Action: use sticky/inferred action if provided
+      const action = (actionHint && String(actionHint).toLowerCase()) || null;
+
+      // Product: strip common filler words + action words + qty/unit + price fragments
+      let product = s
+        .replace(/(?:₹|rs\.?|rupees)\s*[0-9]+(?:\.[0-9]+)?/ig, ' ')
+        .replace(/\b(today|yesterday|tonight|now|just|pls|please|bhai|sir|madam)\b/ig, ' ')
+        .replace(/\b(i|we|me|my|our|aaj|kal)\b/ig, ' ')
+        .replace(/\b(purchased|purchase|bought|buy|sold|sell|sale|returned|return|refund|exchange)\b/ig, ' ')
+        .replace(/\b(of|for|the|an|a)\b/ig, ' ')
+        .replace(/[0-9]+(?:\.[0-9]+)?/g, ' ')
+        .replace(UNIT_REGEX_UNIFIED, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      // Require at least a product token to accept deterministic extraction
+      if (!product) return null;
+
+      // If we have no qty, let AI handle (or later clarifier); deterministic should not guess
+      if (!Number.isFinite(qty) || qty <= 0) return null;
+
+      // Unit can be missing; downstream can ask/repair, but prefer AI if unit absent and text is complex
+      return { product, quantity: qty, unit: unit || null, price, action: action || null };
+    } catch {
+      return null;
+    } finally {
+      try { UNIT_REGEX_UNIFIED.lastIndex = 0; } catch {}
+    }
+  }
+
   // ===== NEW: Auto-park previous item when awaiting price and a new transaction arrives =====
   // --- STRICT PRICE ENFORCEMENT: removed old price-await flow -----------
-
- // NEW: only attempt update parsing if message looks like a transaction   
- // Relax when we already have a sticky mode OR an inferred action (consume verb-less lines)
+   
+  // MIN PATCH: do NOT hard-skip parsing for natural language.
+    // If not "txn-like" by regex, still attempt:
+    //  1) deterministic extract (fast)
+    //  2) else AI parse (accurate) if message contains an action hint / qty / unit signals
     if (!looksLikeTransaction(t) && !hasAnyAction) {
-    console.log('[Parser] Not transaction-like; skipping update parsing.');
-    return [];
-  }
+      const det = _tryDeterministicTxnExtract(t, inferredAction);
+      if (det && det.product) {
+        // Normalize into the shape expected downstream
+        if (!det.action && inferredAction) det.action = inferredAction;
+        return [{ ...det, action: det.action || 'purchased' }]; // action repaired later if needed
+      }
+      // If the user expressed an action intent (purchase/sale/return) or used numbers/units, let AI try.
+      const hasSignal =
+        !!inferredAction ||
+        regexPatterns.digits.test(t) ||
+        UNIT_REGEX_UNIFIED.test(t) ||
+        /(?:₹|rs\.?|rupees)/i.test(t);
+      try { regexPatterns.digits.lastIndex = 0; } catch {}
+      try { UNIT_REGEX_UNIFIED.lastIndex = 0; } catch {}
+      if (!hasSignal) {
+        console.log('[Parser] No inventory intent signal; skipping update parsing.');
+        return [];
+      }
+      // else: fall through to AI parsing below (do not return)
+    }
         
   // Try AI-based parsing first  
   try {
@@ -8070,8 +8148,11 @@ function looksLikeTransaction(text) {
     ||
     /\b(opening|received|recd|restock|purchase|bought|sold)\b/i.test(s);
 
-  // ✅ Tightened condition: must have verb AND digits AND unit/money
-  return hasTxnVerb && hasDigits && (mentionsMoney || hasUnit);
+    
+  // ✅ Loosened for NL promise:
+    // Accept natural language where one of digits/unit/money may be missing.
+    // (Missing fields are handled downstream via your existing nudges/clarifiers.)
+    return hasTxnVerb && (hasDigits || mentionsMoney || hasUnit);
 }
 
 // NOTE: function declaration (not const arrow) so it's hoisted and available everywhere.
