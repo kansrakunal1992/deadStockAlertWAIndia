@@ -14716,8 +14716,9 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
         try {
           invResult = await updateInventory(shopId, productRawForDb, update.quantity, update.unit);
         } catch (_) {}
-        const stockQty = invResult?.newQuantity;
-        const stockUnit = invResult?.unit ?? update.unit;
+                
+        const stockQty = invResult?.aggregate?.total ?? invResult?.newQuantity;
+        const stockUnit = invResult?.aggregate?.unit ?? invResult?.unit ?? update.unit;
 
         // Save price if known now
         if (finalPrice > 0) {
