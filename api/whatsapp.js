@@ -1752,7 +1752,15 @@ async function parseMultipleUpdates(reqOrText, requestId) {
   function _tryDeterministicTxnExtract(text0, actionHint) {
     try {
       const s = String(text0 || '').trim();
-      if (!s) return null;
+      if (!s) return null;      
+
+      // --------------------------------------------------------------
+      // IMPORTANT: Deterministic extraction is ONLY safe for Latin/ASCII
+      // because stripping verbs/fillers in native scripts can corrupt
+      // product names. For non-ASCII, let AI parse handle it.
+      // --------------------------------------------------------------
+      const isAscii = /^[\x00-\x7F]+$/.test(s);
+      if (!isAscii) return null;
 
       // Price (optional): ₹60, Rs 60, rupees 60
       const priceM = s.match(/(?:₹|rs\.?|rupees)\s*([0-9]+(?:\.[0-9]+)?)/i);
@@ -1776,12 +1784,17 @@ async function parseMultipleUpdates(reqOrText, requestId) {
       // Action: use sticky/inferred action if provided
       const action = (actionHint && String(actionHint).toLowerCase()) || null;
 
-      // Product: strip common filler words + action words + qty/unit + price fragments
+      // Product: strip fillers + action verbs (multilingual where available) + qty/unit/price fragments
       let product = s
         .replace(/(?:₹|rs\.?|rupees)\s*[0-9]+(?:\.[0-9]+)?/ig, ' ')
         .replace(/\b(today|yesterday|tonight|now|just|pls|please|bhai|sir|madam)\b/ig, ' ')
-        .replace(/\b(i|we|me|my|our|aaj|kal)\b/ig, ' ')
-        .replace(/\b(purchased|purchase|bought|buy|sold|sell|sale|returned|return|refund|exchange)\b/ig, ' ')
+        .replace(/\b(i|we|me|my|our|aaj|kal)\b/ig, ' ')              
+      // Use your existing keyword regexes (covers Hindi + Gujarati + roman variants already in file)
+        .replace(regexPatterns.purchaseKeywords, ' ')
+        .replace(regexPatterns.salesKeywords, ' ')
+        .replace(regexPatterns.returnKeywords, ' ')
+      // Extra English nouns (not all are in regexPatterns.*)
+        .replace(/\b(purchase|sale|refund|exchange)\b/ig, ' ')
         .replace(/\b(of|for|the|an|a)\b/ig, ' ')
         .replace(/[0-9]+(?:\.[0-9]+)?/g, ' ')
         .replace(UNIT_REGEX_UNIFIED, ' ')
@@ -1798,7 +1811,10 @@ async function parseMultipleUpdates(reqOrText, requestId) {
       return { product, quantity: qty, unit: unit || null, price, action: action || null };
     } catch {
       return null;
-    } finally {
+    } finally {            
+      try { regexPatterns.purchaseKeywords.lastIndex = 0; } catch {}
+      try { regexPatterns.salesKeywords.lastIndex = 0; } catch {}
+      try { regexPatterns.returnKeywords.lastIndex = 0; } catch {}
       try { UNIT_REGEX_UNIFIED.lastIndex = 0; } catch {}
     }
   }
@@ -1817,14 +1833,36 @@ async function parseMultipleUpdates(reqOrText, requestId) {
         if (!det.action && inferredAction) det.action = inferredAction;
         return [{ ...det, action: det.action || 'purchased' }]; // action repaired later if needed
       }
-      // If the user expressed an action intent (purchase/sale/return) or used numbers/units, let AI try.
-      const hasSignal =
-        !!inferredAction ||
-        regexPatterns.digits.test(t) ||
-        UNIT_REGEX_UNIFIED.test(t) ||
-        /(?:₹|rs\.?|rupees)/i.test(t);
-      try { regexPatterns.digits.lastIndex = 0; } catch {}
-      try { UNIT_REGEX_UNIFIED.lastIndex = 0; } catch {}
+         
+    // If user expressed action intent or any inventory signal (multi-lang), let AI try.
+        // Use broader digit detection + multilingual verb keywords already present in regexPatterns.
+        let hasSignal = false;
+        try {
+          const hasMoney = /(?:₹|rs\.?|rupees)/i.test(t);
+          const hasUnit  = UNIT_REGEX_UNIFIED.test(t);
+          let hasDigits  = false;
+          try {
+            if (typeof MULTI_SCRIPT_DIGITS_RX !== 'undefined' && MULTI_SCRIPT_DIGITS_RX) {
+              hasDigits = MULTI_SCRIPT_DIGITS_RX.test(t);
+            } else {
+              hasDigits = regexPatterns.digits.test(t);
+            }
+          } catch (_) {
+            hasDigits = /\d/.test(t);
+          }
+          const hasVerb =
+            regexPatterns.purchaseKeywords.test(t) ||
+            regexPatterns.salesKeywords.test(t) ||
+            regexPatterns.returnKeywords.test(t);
+          hasSignal = !!inferredAction || hasMoney || hasUnit || hasDigits || hasVerb;
+        } finally {
+          try { regexPatterns.purchaseKeywords.lastIndex = 0; } catch {}
+          try { regexPatterns.salesKeywords.lastIndex = 0; } catch {}
+          try { regexPatterns.returnKeywords.lastIndex = 0; } catch {}
+          try { regexPatterns.digits.lastIndex = 0; } catch {}
+          try { UNIT_REGEX_UNIFIED.lastIndex = 0; } catch {}
+          try { if (typeof MULTI_SCRIPT_DIGITS_RX !== 'undefined') MULTI_SCRIPT_DIGITS_RX.lastIndex = 0; } catch {}
+        }
       if (!hasSignal) {
         console.log('[Parser] No inventory intent signal; skipping update parsing.');
         return [];
@@ -8122,6 +8160,22 @@ function isReadOnlyQuery(text) {
 
 function looksLikeTransaction(text) {
   const s = String(text ?? '').toLowerCase();
+    
+  // ------------------------------------------------------------------
+    // MULTI-LANG DIGITS: prefer the broader multi-script digit regex if
+    // available in this file; fallback to regexPatterns.digits.
+    // ------------------------------------------------------------------
+    function _hasAnyDigitMulti(str) {
+      try {
+        // MULTI_SCRIPT_DIGITS_RX exists earlier in this file (covers Indic scripts)
+        if (typeof MULTI_SCRIPT_DIGITS_RX !== 'undefined' && MULTI_SCRIPT_DIGITS_RX) {
+          return MULTI_SCRIPT_DIGITS_RX.test(String(str ?? ''));
+        }
+      } catch (_) {}
+      try { return regexPatterns.digits.test(String(str ?? '')); } catch (_) {}
+      return /\d/.test(String(str ?? ''));
+    }
+  
   try { regexPatterns.purchaseKeywords.lastIndex = 0; } catch (_) {}
   try { regexPatterns.salesKeywords.lastIndex = 0; } catch (_) {}
   try { regexPatterns.remainingKeywords.lastIndex = 0; } catch (_) {}
@@ -8132,7 +8186,7 @@ function looksLikeTransaction(text) {
      // - Accept worded numbers OR digits
      // - Use unified UNIT_REGEX (includes metre/meter + extended units)
      // ======================================================================
-     const hasDigits = regexPatterns.digits.test(s) ||
+     const hasDigits = _hasAnyDigitMulti(s) ||
        /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|lakh|million|crore|point)\b/i.test(s);
      const mentionsMoney =
        /(?:₹|rs\.?|rupees)\s*\d+(?:\.\d+)?/i.test(s)
