@@ -7974,8 +7974,7 @@ async function handleInteractiveSelection(req) {
   if (payload === 'activate_paid') {
     const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
     const body =
-      `To activate the paid plan, pay ₹${PAID_PRICE_INR} via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\n` +
-      `Or pay at: ${PAYMENT_LINK}\nClick on "paid" after payment ✅`;
+      `To activate the paid plan, pay at: ${PAYMENT_LINK}\nClick on "paid" after payment ✅`;
     let localized = await t(NO_FOOTER_MARKER + body, lang, `cta-paid-${shopId}`);
     await sendMessageViaAPI(from, finalizeForSend(localized, lang));
     try {
@@ -10453,19 +10452,19 @@ async function composePricingAnswer(lang = 'en', flavor = 'tool_pricing', shopId
     en: {
       tool: `Free trial is for ${trialDays} days • Post Trial, paid plan at ₹${price}/month`,            
       how: activated
-              ? `Pay via Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) or ${process.env.PAYMENT_LINK}`
+              ? `Pay via ${process.env.PAYMENT_LINK}`
               : `` // no link pre-trial
     },
     hi: {
       tool: `मुफ़्त ट्रायल ${trialDays} दिन • पेड प्लान ₹${price}/महीना`,            
       how: activated
-              ? `पेमेंट: Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) या ${process.env.PAYMENT_LINK}`
+              ? `पेमेंट: ${process.env.PAYMENT_LINK}`
               : `` // no link pre-trial
     },
     'hi-latn': {
       tool: `Free trial ${trialDays} din • Trial ke baad, paid plan ₹${price}/mahina`,            
       how: activated
-              ? `Payment: Paytm → ${process.env.PAYTM_NUMBER} (${process.env.PAYTM_NAME}) ya ${process.env.PAYMENT_LINK}`
+              ? `Payment: ${process.env.PAYMENT_LINK}`
               : `` // no link pre-trial
     }
   };
@@ -10978,7 +10977,7 @@ const lang = canonicalizeLang(language ?? 'en');
             if (pricingFlavor === 'inventory_pricing') {
               return `Inventory item ka rate set/dekhne ke liye entry me ₹rate likho: "purchased Parle-G 12 packets ₹10", ya "prices" command use karo.`;
             } else {
-              return `Free trial ${TRIAL_DAYS} din ka hai; uske baad ₹${PAID_PRICE_INR}/month. Payment Paytm ${PAYTM_NUMBER} par ya link se ho sakta hai.`;
+              return `Free trial ${TRIAL_DAYS} din ka hai; uske baad ₹${PAID_PRICE_INR}/month. Payment link se ho sakta hai.`;
             }
           }
           if (topic === 'benefits') {                                            
@@ -11199,7 +11198,7 @@ async function sendTrialExpiryReminders() {
       let lang = 'en';
       try { const pref = await getUserPreference(u.shopId); if (pref?.success && pref.language) lang = String(pref.language).toLowerCase(); } catch {}
       const body = await t(
-        `⚠️ Your Saamagrii.AI trial ends today.\nPay ₹11 at: ${PAYMENT_LINK}\nOr Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nReply "paid" to activate ✅`,
+        `⚠️ Your Saamagrii.AI trial ends today.\nPay ₹11 at: ${PAYMENT_LINK}\nReply "paid" to activate ✅`,
         lang, `trial-reminder-${u.shopId}`
       );
       await sendMessageViaAPI(`whatsapp:${u.shopId}`, body);
@@ -13218,8 +13217,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
                     case 'trial_ended':
                     case 'inactive':
                       body = await t(
-                        `To continue, pay ₹11 via Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})
-            Or pay at: ${PAYMENT_LINK}
+                        `To continue, pay ₹11 at: ${PAYMENT_LINK}
             Reply "paid" after payment ✅`,
                         detectedLanguage, `${requestId}::up-pay`
                       );
@@ -21582,7 +21580,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
           let lang = 'en';
           try { const p = await getUserPreference(shopId); if (p?.success && p.language) lang = p.language; } catch {}
           const payMsg = await t(
-            `⚠️ Your Saamagrii.AI trial has ended.\nPay ₹11 at: ${PAYMENT_LINK}\nOr Paytm → ${PAYTM_NUMBER} (${PAYTM_NAME})\nReply "paid" to activate ✅`,
+            `⚠️ Your Saamagrii.AI trial has ended.\nPay ₹11 at: ${PAYMENT_LINK}\nReply "paid" to activate ✅`,
             lang,
             `${requestId}::paywall`
           );
