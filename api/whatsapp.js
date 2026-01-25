@@ -2622,9 +2622,17 @@ function looksLikeTxnLite(s) {
   const hasUnit  = UNIT_REGEX_UNIFIED.test(raw); // test on raw to preserve script matching
   const hasPrice =
     /(?:₹|rs\.?|inr|रु|৳)\s*\d+(?:[.,]\d+)?/iu.test(txt) ||
-    /@\s*\d+(?:[.,]\d+)?(?:\s*\/\s*[\p{L}]+)?/u.test(txt);
-  // Verb-less acceptance: "<num> <unit>" OR "<unit> with price" is sufficient in sticky mode.
-  return (hasNum && hasUnit) || (hasUnit && hasPrice);
+    /@\s*\d+(?:[.,]\d+)?(?:\s*\/\s*[\p{L}]+)?/u.test(txt);    
+  // Also accept sentence-style transactions (e.g., "I purchased 4 bottles of Milton today")
+    // so we still route into the parser even if unit detection is imperfect.
+    const hasTxnVerb =
+      /\b(purchase|purchased|buy|bought|restock|restocked|sold|sell|selling|returned|return|exchanged)\b/i.test(txt);
+    const hasOfPattern = /\bof\b/i.test(txt); // common in "X bottles of Y"
+    // Verb-less acceptance: "<num> <unit>" OR "<unit> with price" is sufficient in sticky mode.
+    // Sentence acceptance: txn verb + (num or price) + (unit or "of" pattern) → txn-like
+    return (hasNum && hasUnit) ||
+           (hasUnit && hasPrice) ||
+           (hasTxnVerb && (hasNum || hasPrice) && (hasUnit || hasOfPattern));
 }
 
 // ===== NEW: Hindi-aware price-like detector (used to gate price handling in awaitingPriceExpiry) =====
