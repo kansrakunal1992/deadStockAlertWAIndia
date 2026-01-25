@@ -12287,7 +12287,7 @@ async function handleAwaitingBatchOverride(From, Body, detectedLanguage, request
 // Self-heal: ensure action is present for any consumers that rely on state.data.action
   if (!state.data || !state.data.action) {
     try {
-      await saveUserStateToDB(shopId, 'awaitingBatchOverride', { ...(state.data ?? {}), action: 'sold' });
+      saveUserStateToDB(shopId, 'awaitingBatchOverride', { ...(state.data ?? {}), action: 'sold' });
     } catch (_) { /* best effort */ }
   }
  
@@ -14901,7 +14901,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                   batchId: batchResult?.id ?? null, expiryToUse, nowISO, windowEndsAtISO
                 });                
         // 🔧 Persist a revertable payload alongside the window (consumed by applyUndoLastTxn)
-            await saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
+            saveUserStateToDB(shopId, 'awaitingPurchaseExpiryOverride', {
               // --- Existing fields (kept for compatibility) ---
               batchId: batchResult?.id ?? null,
               product: productRawForDb,
@@ -14928,7 +14928,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
               },
               // --- NEW: TTL mirror for Undo layer (msLeft computation) ---
               ttlSec: timeoutSec
-            });
+            }).catch((e) => { try { console.warn(`[CorrectionWindow ${shopId} - ${productRawForDb}] Failed to persist purchase-expiry window`, { error: e?.message }); } catch (_) {} });
               } catch (e) {
                 console.warn(`[CorrectionWindow ${shopId} - ${productRawForDb}] Failed to arm purchase-expiry window`, { error: e?.message });
               }
@@ -15303,7 +15303,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                     console.log(`[CorrectionWindow ${shopId} - ${productRawForDb}] Arming sale-batch window (${timeoutSec}s)`, {
                       saleRecordId: salesResult.id, nowISO, windowEndsAtISO
                     });
-                    await saveUserStateToDB(shopId, 'awaitingBatchOverride', {
+                    saveUserStateToDB(shopId, 'awaitingBatchOverride', {
                       saleRecordId: salesResult.id,
                       product,
                       action: 'sold',
@@ -15315,7 +15315,7 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                       windowEndsAtISO,
                       armed: true,
                       source: 'sale'
-                    });
+                    }).catch((e) => { try { console.warn(`[CorrectionWindow ${shopId} - ${productRawForDb}] Failed to persist sale-batch window`, { error: e?.message }); } catch (_) {} });
                   } else {
                     console.log(`[CorrectionWindow ${shopId} - ${productRawForDb}] Skipping sale-batch window (only one batch or none)`);
                   }
@@ -21485,7 +21485,15 @@ async function handleRequest(req, res, response, requestId, requestStart) {
              const __stickyP = Promise.resolve()
                .then(() => (typeof getStickyActionQuick === 'function') ? getStickyActionQuick(From) : null)
                .catch(() => null);
-         
+
+              // [PATCH:PARALLEL-PREFETCH] Prefetch plan & user preference (language) in parallel too
+                       const __planP = Promise.resolve()
+                         .then(() => (typeof getUserPlanQuick === 'function') ? getUserPlanQuick(shopIdState) : (typeof getUserPlan === 'function' ? getUserPlan(shopIdState) : null))
+                         .catch(() => null);
+                       const __prefP = Promise.resolve()
+                         .then(() => (typeof getUserPrefQuick === 'function') ? getUserPrefQuick(shopIdState) : (typeof getUserPreference === 'function' ? getUserPreference(shopIdState) : null))
+                         .catch(() => null);
+
              // [PATCH:AUTH-TTL-CACHE] Cache positive auth result briefly to avoid repeated DB hits per shop
              globalThis.__authCacheByShop = globalThis.__authCacheByShop ?? new Map(); // shopId -> { ts, val }
              const __AUTH_TTL_MS = Number(process.env.AUTH_CACHE_TTL_MS ?? 60_000); // default 60s
