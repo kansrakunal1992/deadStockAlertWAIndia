@@ -823,23 +823,10 @@ const TTL_AWAITING_BATCH_OVERRIDE_SEC =
 const TTL_AWAITING_PURCHASE_EXP_OVERRIDE_SEC =
   Number(process.env.TTL_PURCHASE_EXP_OVERRIDE ?? 120); // default 120s
 
-// ============================================================================
-// [PATCH:MODE-MISMATCH-STATE-001]
-// Purpose: New ephemeral state for "intent beats mode" correction.
-// If user is in sticky mode but message strongly implies another action,
-// we store parsedTxn (if possible), ask them to switch mode using existing buttons,
-// and auto-apply txn after button tap.
-// ============================================================================
-EPHEMERAL_OVERRIDE_MODES.add('awaitingModeConfirm');
-const TTL_AWAITING_MODE_CONFIRM_SEC =
-  Number(process.env.TTL_MODE_CONFIRM ?? 45); // short window to keep UX tight
-
 function _ttlForMode(mode) {
   const m = String(mode ?? '').toLowerCase();
   if (m === 'awaitingbatchoverride') return TTL_AWAITING_BATCH_OVERRIDE_SEC * 1000;
-  if (m === 'awaitingpurchaseexpiryoverride') return TTL_AWAITING_PURCHASE_EXP_OVERRIDE_SEC * 1000;  
-  // [PATCH:MODE-MISMATCH-STATE-002] TTL for mismatch mode-confirm window
-  if (m === 'awaitingmodeconfirm') return TTL_AWAITING_MODE_CONFIRM_SEC * 1000;
+  if (m === 'awaitingpurchaseexpiryoverride') return TTL_AWAITING_PURCHASE_EXP_OVERRIDE_SEC * 1000;
   return 0;
 }
 
@@ -1671,9 +1658,7 @@ async function parseMultipleUpdates(reqOrText, requestId) {
   // ----------------------------------------------------------------------
      // [UNIQ:WORDS-TO-DIGITS-002] Normalize spelled numbers → digits for STT
      // ----------------------------------------------------------------------
-     let t = String(transcript ?? '').trim();               
-     // [PATCH:MESSY-INPUT-FAST-NORMALIZERS-002] Apply inline correction early
-       t = applyInlineCorrection(t);
+     let t = String(transcript ?? '').trim();        
     // [PATCH] Normalize Hindi roman number words first (e.g., "bees litre dudh" -> "20 litre dudh")
       t = hindiRomanWordsToDigits(t);
       // Existing English words-to-number normalizer (keeps support for "twenty litre dudh")
@@ -1723,50 +1708,8 @@ async function parseMultipleUpdates(reqOrText, requestId) {
       if (pendingAction) {
         console.log(`[parseMultipleUpdates] Using pending action from state: ${pendingAction}`);
       }
-    }    
-
-  // ==========================================================================
-  // [PATCH:INTENT-BEATS-MODE-002]
-  // Purpose:
-  // If sticky mode exists but message strongly implies a different action,
-  // do NOT commit inventory now. Ask user to switch mode via existing buttons.
-  // Store parsedTxn (if possible) to auto-apply after the tap.
-  // ==========================================================================
-  try {
-    if (pendingAction && looksLikeTxnLite(t)) {
-      const strong = detectStrongActionIntent(t);
-      const desired = strong?.action;
-      const pending = String(pendingAction).toLowerCase();
-      if (desired && desired !== pending && strong.confidence >= 4) {
-        // Try deterministic parse quickly (avoid AI latency)
-        const det = _tryDeterministicTxnExtract(t, desired) || _tryDeterministicTxnExtract(t, pending);
-        const parsedTxn = det && det.product ? {
-          action: desired,
-          product: det.product,
-          quantity: det.quantity,
-          unit: det.unit || 'pieces',
-          // allow various price key spellings (you already do this elsewhere)
-          pricePerUnit: Number.isFinite(det.pricePerUnit) ? det.pricePerUnit : (Number.isFinite(det.price) ? det.price : null),
-          expiry: det.expiry || null
-        } : null;
-
-        const langHint = await detectLanguageWithFallback(t, from, `mm-lang::${requestId}`).catch(() => 'en');
-
-        await setEphemeralOverrideState(from, 'awaitingModeConfirm', {
-          desiredAction: desired,
-          priorAction: pending,
-          parsedTxn,
-          rawText: t
-        }).catch(() => null);
-
-        await sendModeMismatchPrompt(from, langHint, desired, parsedTxn, requestId);
-        return markConsumed([]); // prevent outer routing from sending additional messages
-      }
     }
-  } catch (e) {
-    console.warn('[mode-mismatch] detect failed:', e?.message);
-  }
-  
+    
   // ----------------------------------------------------------------------
      // [UNIQ:ACTION-INFER-004] Infer action directly from text if no sticky mode
      // ----------------------------------------------------------------------
@@ -1785,29 +1728,6 @@ async function parseMultipleUpdates(reqOrText, requestId) {
     
   // Never treat summary commands as inventory messages
     if (resolveSummaryIntent(t)) return [];
-  
-  // ==========================================================================
-  // [PATCH:STICKY-DETERMINISTIC-FIRST-001]
-  // Purpose:
-  // In sticky mode, run deterministic parse FIRST for txn-like short inputs
-  // (e.g., "milton 5", "wapas 2") to avoid AI latency. [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/contentCache.js.txt)
-  // ==========================================================================
-  try {
-    if (pendingAction && looksLikeTxnLite(t)) {
-      const det = _tryDeterministicTxnExtract(t, pendingAction);
-      if (det && det.product && Number.isFinite(det.quantity) && det.quantity > 0) {
-        return [{
-          action: pendingAction,
-          product: det.product,
-          quantity: det.quantity,
-          unit: det.unit || 'pieces',
-          pricePerUnit: Number.isFinite(det.pricePerUnit) ? det.pricePerUnit : (Number.isFinite(det.price) ? det.price : null),
-          expiry: det.expiry || null
-        }];
-      }
-    }
-  } catch (_) {}
-
     // --- BEGIN: early skip for command aliases (e.g., "reorder sujhav") ---
     try {
       // Language hint optional; safe to pass undefined here
@@ -2705,136 +2625,6 @@ function looksLikeTxnLite(s) {
     /@\s*\d+(?:[.,]\d+)?(?:\s*\/\s*[\p{L}]+)?/u.test(txt);
   // Verb-less acceptance: "<num> <unit>" OR "<unit> with price" is sufficient in sticky mode.
   return (hasNum && hasUnit) || (hasUnit && hasPrice);
-}
-
-// ============================================================================
-// [PATCH:PARSE-CONSUME-SIGNAL-001]
-// Purpose:
-// parseMultipleUpdates sometimes sends its own message (onboarding/skip/price nudge/mismatch prompt). 
-// To avoid the outer handler sending extra messages, we mark the returned array as "__consumed".
-// ============================================================================
-function markConsumed(updatesArray) {
-  try {
-    Object.defineProperty(updatesArray, '__consumed', { value: true, enumerable: false });
-  } catch {}
-  return updatesArray;
-}
-
-// ============================================================================
-// [PATCH:MESSY-INPUT-FAST-NORMALIZERS-001]
-// Purpose: handle mid-sentence corrections across languages (e.g., "milton 5 nahi 6", "3... sorry 2")
-// Cheap + effective; improves deterministic parse success without AI latency.
-// ============================================================================
-function applyInlineCorrection(text) {
-  try {
-    const s = String(text ?? '');
-    // common correction tokens in en/hinglish + supported Indic scripts (non-exhaustive)
-    const CORR = '(nahi|nahin|galat|wrong|sorry|sry|undo|cancel|नहीं|गलत|माफ|रद्द|ભૂલ|નહીં|ખોટું|மன்னி|தவறு|இல்ல|తప్పు|రద్దు|ಕ್ಷಮೆ|ತಪ್ಪು|ಚ್ಯ|চাপ|ভুল)';
-    const m = s.match(new RegExp(`(.+?)\\b${CORR}\\b[\\s\\S]*?(\\d+(?:\\.\\d+)?)`, 'i'));
-    if (!m) return s;
-    return `${m[1]} ${m[2]}`.trim();
-  } catch {
-    return String(text ?? '');
-  }
-}
-
-// ============================================================================
-// [PATCH:INTENT-BEATS-MODE-001]
-// Purpose:
-// Detect strong action intent (purchase/sale/return) from messy multilingual inputs.
-// Implementation notes:
-// - Reuses your existing multilingual regexPatterns.* (already used elsewhere) [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/contentCache.js.txt)
-// - Adds extra lightweight Roman tokens for kirana-style verbs.
-// ============================================================================
-function detectStrongActionIntent(text) {
-  const s = String(text ?? '').trim();
-  const low = s.toLowerCase();
-
-  const score = { purchased: 0, sold: 0, returned: 0 };
-
-  // 1) Use your multilingual regexPatterns buckets (covers multiple languages/scripts)
-  try {
-    if (regexPatterns?.purchaseKeywords?.test(s)) score.purchased += 3;
-    if (regexPatterns?.salesKeywords?.test(s)) score.sold += 3;
-    if (regexPatterns?.returnKeywords?.test(s)) score.returned += 3;
-  } catch {}
-  // reset lastIndex for safety if any are /g
-  try { regexPatterns.purchaseKeywords.lastIndex = 0; } catch {}
-  try { regexPatterns.salesKeywords.lastIndex = 0; } catch {}
-  try { regexPatterns.returnKeywords.lastIndex = 0; } catch {}
-
-  // 2) Extra Roman tokens (India shop reality: "wapas", "diya", "mila", etc.)
-  // Return
-  if (/\b(wapas|wapis|vaapas|vapas|return|returned|refund|exchange)\b/i.test(low)) score.returned += 2;
-  // Sale
-  if (/\b(becha|bechi|bikri|sold|sale|nikala|nikaala|nikla|gaya|gya|diya|gave|issue|issued)\b/i.test(low)) score.sold += 2;
-  // Purchase
-  if (/\b(kharida|khareeda|liya|mila|aaya|aya|new stock|restock|received|recd|company se)\b/i.test(low)) score.purchased += 2;
-
-  // 3) Small boosters (optional)
-  if (/\bcustomer\b/i.test(low) && score.returned > 0) score.returned += 1;
-  if (/\bgodown\b/i.test(low) && score.purchased > 0) score.purchased += 1;
-  if (/\bcounter\b/i.test(low) && score.sold > 0) score.sold += 1;
-
-  const best = Object.entries(score).sort((a, b) => b[1] - a[1])[0];
-  if (!best || best[1] <= 0) return { action: null, confidence: 0 };
-  return { action: best[0], confidence: best[1] };
-}
-
-// ============================================================================
-// [PATCH:MODE-MISMATCH-PROMPT-001]
-// Purpose:
-// Ask user to switch mode using existing Purchase/Sale/Return buttons + Query list picker.
-// Must be multi-language: we pass an English base string through t() so your translator handles it. 
-// ============================================================================
-function actionToHuman(action) {
-  const a = String(action ?? '').toLowerCase();
-  if (a === 'returned') return 'Return';
-  if (a === 'sold') return 'Sale';
-  return 'Purchase';
-}
-
-async function sendModeMismatchPrompt(From, lang, desiredAction, parsedTxn, requestId) {
-  try {
-    const L = String(lang ?? 'en').toLowerCase();
-    const human = actionToHuman(desiredAction);
-
-    // Keep product line unmodified (avoid translations). Just embed as-is.
-    const lineHint =
-      parsedTxn?.product && Number(parsedTxn.quantity) > 0
-        ? `"${parsedTxn.product} ${parsedTxn.quantity} ${parsedTxn.unit || ''}".trim()`
-        : null;
-
-    // Base message in English; t() localizes for all supported languages. 
-    const base = [
-      `🟡 This looks like a ${human} update.`,
-      lineHint ? `Tap ${human} to record: ${lineHint}` : `Tap ${human} to record it.`,
-    ].filter(Boolean).join('\n');
-
-    const msg = await t(base, L, `mode-mismatch::${requestId}`);
-    await sendMessageViaAPI(From, finalizeForSend(msg, L));
-
-    // Send existing action buttons + query inventory picker
-    // [PATCH:MODE-MISMATCH-PROMPT-002] Prewarm templates and send quick replies + list picker. [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/contentCache.js.txt)
-    await ensureLangTemplates(L).catch(() => null);
-    const sids = getLangSids(L) || {};
-    if (sids.quickReplySid) {
-      await sendContentTemplateQueuedOnce({
-        toWhatsApp: From,
-        contentSid: sids.quickReplySid,
-        requestId: `mm-qr::${requestId}`
-      }).catch(() => null);
-    }
-    if (sids.listPickerSid) {
-      await sendContentTemplateQueuedOnce({
-        toWhatsApp: From,
-        contentSid: sids.listPickerSid,
-        requestId: `mm-lp::${requestId}`
-      }).catch(() => null);
-    }
-  } catch (e) {
-    console.warn('[mode-mismatch] prompt failed:', e?.message);
-  }
 }
 
 // ===== NEW: Hindi-aware price-like detector (used to gate price handling in awaitingPriceExpiry) =====
@@ -7507,64 +7297,6 @@ async function handleInteractiveSelection(req) {
     raw.ButtonPayload ?? raw.ButtonId ?? raw.PostbackData ?? raw.EventId ?? ''
   ).toLowerCase();
 
-  // ============================================================================
-  // [PATCH:MODE-MISMATCH-ON-TAP-001]
-  // Purpose:
-  // If user tapped qr_purchase/qr_sale/qr_return after we prompted for a mode switch
-  // (state = 'awaitingModeConfirm'), auto-apply the stored transaction NOW.
-  //
-  // Notes:
-  // - Uses stable button ids: qr_purchase / qr_sale / qr_return. [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
-  // - Leaves your existing "examples" flow untouched if there's no pending mismatch state.
-  // - Requires you already stored { parsedTxn } in userState.data when mismatch was detected.
-  // ============================================================================
-  async function maybeApplyStoredModeMismatchTxn(actionTapped, langUiHint) {
-    try {
-      const st = await getUserStateFromDB(shopIdTop).catch(() => null);
-      if (!st || String(st.mode).toLowerCase() !== 'awaitingmodeconfirm') return false;
-
-      const data = st.data || {};
-      const tx = data.parsedTxn || null; // { action, product, quantity, unit, pricePerUnit, expiry }
-
-      // Switch sticky first so footer/examples align
-      await setStickyMode(from, actionTapped).catch(() => null);
-
-      // Clear the mismatch state window (best-effort)
-      await clearEphemeralOverrideStateByShopId(shopIdTop).catch(() => null);
-
-      // If we have a usable parsed txn, commit now (no resend)
-      if (tx && tx.product && Number(tx.quantity) > 0) {
-        const upd = {
-          ...tx,
-          action: actionTapped,      // user-tap is final truth
-          unit: tx.unit || 'pieces'
-        };
-        const results = await updateMultipleInventory(shopIdTop, [upd], langUiHint).catch(() => null);
-        const r0 = Array.isArray(results) ? results[0] : (results?.results?.[0] || results?.processed?.[0]);
-        if (r0) {
-          // Confirmation uses your existing formatters (already multi-language aware). [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
-          const header = chooseHeader(1, /*compact*/true, /*isPrice*/false);
-          const line = formatResultLine(r0, /*compact*/true, /*includeStock*/true, langUiHint);
-          const body = [header, line].filter(Boolean).join('\n');
-          await sendTxnConfirmationOnce(from, body, langUiHint, raw.requestId ?? Date.now());
-        }
-        return true;
-      }
-
-      // If we couldn't parse enough fields, ask user to resend (localized)
-      const hint = await t(
-        `Mode switched. Please resend like: "${actionTapped === 'purchased' ? 'milton 2 bottles ₹60' : 'milton 2 bottles'}"`,
-        langUiHint,
-        `mm-resend::${raw.requestId ?? Date.now()}`
-      );
-      await sendMessageViaAPI(from, finalizeForSend(hint, langUiHint));
-      return true;
-    } catch (e) {
-      console.warn('[mode-mismatch] apply stored txn failed:', e?.message);
-      return false;
-    }
-  }
-
   // Route Undo on id 'undo_last_txn' (localized titles like "ठीक करें" won't match "undo")
   const isUndoTap =
     payloadStable === 'undo_last_txn'
@@ -8113,10 +7845,7 @@ async function handleInteractiveSelection(req) {
   const isRecentlyActivated = !!recentTs && (Date.now() - recentTs < RECENT_ACTIVATION_MS);
   const allowExamples = activated || isRecentlyActivated;
 
-  if (payload === 'qr_purchase') {    
-    // [PATCH:MODE-MISMATCH-ON-TAP-002] Apply stored mismatch txn (if any) before example flow
-    if (await maybeApplyStoredModeMismatchTxn('purchased', lang)) return true;
-
+  if (payload === 'qr_purchase') {
     await setStickyMode(from, 'purchased'); // keep sticky
     if (allowExamples) {
       try {
@@ -8137,10 +7866,7 @@ async function handleInteractiveSelection(req) {
     return true;
   }
 
-  if (payload === 'qr_sale') {    
-   // [PATCH:MODE-MISMATCH-ON-TAP-003]
-   if (await maybeApplyStoredModeMismatchTxn('sold', lang)) return true;
-
+  if (payload === 'qr_sale') {
     await setStickyMode(from, 'sold'); // keep sticky
     if (allowExamples) {
       try {
@@ -8162,9 +7888,6 @@ async function handleInteractiveSelection(req) {
   }
 
   if (payload === 'qr_return') {
-   // [PATCH:MODE-MISMATCH-ON-TAP-004]
-   if (await maybeApplyStoredModeMismatchTxn('returned', lang)) return true;
-
     await setStickyMode(from, 'returned'); // keep sticky
     if (allowExamples) {
       try {
@@ -18569,20 +18292,7 @@ async function sendReturnConfirmationOnce(
 
 // Async processing for voice messages
 async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversationState) {
-  try {    
-  // ==========================================================================
-    // [PATCH:VOICE-CONSUMED-GUARD-000]
-    // Purpose:
-    // parseMultipleUpdates() may itself send a reply (e.g., mode-mismatch prompt, onboarding step,
-    // price-required nudge). In such cases, we must STOP the voice flow to avoid:
-    // - double replies (prompt + parse-error)
-    // - accidental DB writes in wrong mode
-    //
-    // Contract:
-    // - parseMultipleUpdates returns an Array with a hidden flag: updates.__consumed === true
-    // - Voice handler must return immediately when consumed.
-    // ==========================================================================
-  
+  try {            
     // Safe probe for optional global "guidance" without introducing TDZ or shadowing.
         // If some downstream code accesses globalThis.guidance, it will exist (possibly null).
         try {
@@ -19799,20 +19509,8 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       
     // First, try to parse as inventory update (higher priority)
     try {
-      console.log(`[${requestId}] Attempting to parse as inventory update`);                          
-      const parsedUpdates = await parseMultipleUpdates({ From, Body: cleanTranscript },requestId); 
-      
-         // ================================================================
-         // [PATCH:VOICE-CONSUMED-GUARD-001]
-         // Purpose:
-         // If parseMultipleUpdates already handled this turn (sent prompt/CTA),
-         // do NOT proceed to updateMultipleInventory or confirmations.
-         // ================================================================
-         if (parsedUpdates && parsedUpdates.__consumed) {
-           try { handledRequests.add(requestId); } catch (_) {}
-           return;
-         }
-      
+      console.log(`[${requestId}] Attempting to parse as inventory update`);            
+        const parsedUpdates = await parseMultipleUpdates({ From, Body: cleanTranscript },requestId);
             if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
         console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from voice message`);        
          
@@ -20094,20 +19792,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       try {
                 
         // Parse the transcript
-                    
-        const updates = await parseMultipleUpdates({ From, Body: cleanTranscript },requestId); 
-        
-            // ================================================================
-            // [PATCH:VOICE-CONSUMED-GUARD-002]
-            // Purpose:
-            // Same consumed-turn guard for the second parseMultipleUpdates call.
-            // If the parser already sent a message, stop here.
-            // ================================================================
-            if (updates && updates.__consumed) {
-              try { handledRequests.add(requestId); } catch (_) {}
-              return;
-            }
-
+            const updates = await parseMultipleUpdates({ From, Body: cleanTranscript },requestId);
             // Check if any updates are for unknown products (guard against null)
             const unknownProducts = Array.isArray(updates) ? updates.filter(u => !u.isKnown) : [];
 
@@ -20572,19 +20257,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
          const orchPromise = applyAIOrchestration(Body, From, detectedLanguage, requestId);
          const parsedPromise = parseMultipleUpdates({ From, Body }, requestId);
          let parsedUpdatesEarly = [];
-         try { parsedUpdatesEarly = await parsedPromise; } catch (_) {}          
-      
-        // ==========================================================================
-        // [PATCH:PARSE-CONSUME-SIGNAL-TEXT-001]
-        // Purpose:
-        // If parseMultipleUpdates already handled this turn (e.g., it sent a mode-mismatch prompt,
-        // or consumed onboarding/skip), stop further routing to avoid double replies. [1](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/whatsapp.js.txt)
-        // ==========================================================================
-        if (parsedUpdatesEarly && parsedUpdatesEarly.__consumed) {
-          handledRequests.add(requestId);
-          return;
-        }
-
+         try { parsedUpdatesEarly = await parsedPromise; } catch (_) {}
          try {
           const orch = await orchPromise;
           const FORCE_INVENTORY = !!orch?.forceInventory;
@@ -20778,17 +20451,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
     
     // First, try to parse as inventory update (higher priority)          
     // COPILOT-PATCH-TEXT-PARSE-FROM-1
-      const parsedUpdates = await parseMultipleUpdates({ From, Body },requestId); // pass req-like object with From      
-  
-    // ==========================================================================
-    // [PATCH:PARSE-CONSUME-SIGNAL-TEXT-002]
-    // Purpose: same as above; second parse call must also honor consumed turns.
-    // ==========================================================================
-    if (parsedUpdates && parsedUpdates.__consumed) {
-      handledRequests.add(requestId);
-      return true;
-    }
-
+      const parsedUpdates = await parseMultipleUpdates({ From, Body },requestId); // pass req-like object with From
       if (Array.isArray(parsedUpdates) && parsedUpdates.length > 0) {
       console.log(`[${requestId}] Parsed ${parsedUpdates.length} updates from text message`);          
          
@@ -21190,17 +20853,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
   // --- NEW: in-memory per-request dedupe guard (keep near the top) ---
   globalThis.handledRequests = globalThis.handledRequests || new Set();
   const hasBeenHandled = () => globalThis.handledRequests.has(requestId);
-  const markHandled    = () => globalThis.handledRequests.add(requestId);  
-  // ==========================================================================
-  // [PATCH:WEBHOOK-CATCHALL-HANDLED-GUARD-001]
-  // Purpose:
-  // Many replies (templates, mode-mismatch prompts, CTA cards, Q&A answers) are sent via
-  // Programmable Messaging API (sendMessageViaAPI / Content API), NOT via webhook response.
-  // In those cases, resp.alreadySent() may remain false.
-  //
-  // This guard prevents the webhook FINAL CATCH-ALL parse error from firing after we already
-  // sent an appropriate response during this same request (and marked it handled).
-  // ==========================================================================
+  const markHandled    = () => globalThis.handledRequests.add(requestId);
 
   // --- NEW: single-source inventory ack builder --- 
  async function sendInventoryAck(toWhatsApp, results, languageCode) {
@@ -21705,24 +21358,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
     await handleRequest(req, res, response, requestId, requestStart);
 
     // --- FINAL CATCH-ALL: If nothing above handled the message, send examples ---           
-    if (!resp.alreadySent()) {      
-    // ================================================================
-        // [PATCH:WEBHOOK-CATCHALL-HANDLED-GUARD-002]
-        // Purpose:
-        // If a sub-handler already replied via API and marked this request as handled,
-        // suppress parse-error/default messaging here.
-        // ================================================================
-        try {
-          if (hasBeenHandled()) {
-            const twiml = new twilio.twiml.MessagingResponse();
-            twiml.message(''); // quiet ack; API already sent the visible response
-            res.type('text/xml');
-            resp.safeSend(200, twiml.toString());
-            safeTrackResponseTime(requestStart, requestId);
-            return;
-          }
-        } catch (_) {}
-
+    if (!resp.alreadySent()) {
         // COPILOT-PATCH-ROOT-PARSEERROR-GUARD (extended)
         // Do NOT send parse-error if:
         //  - start-trial intent is present (typed), or
