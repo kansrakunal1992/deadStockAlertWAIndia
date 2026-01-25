@@ -9321,7 +9321,11 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
     pricePerUnit = null,
     newQuantity = null,       // legacy stock fallback
     overallStock = null,      // preferred stock value (aggregate)
-    overallUnit = null        // preferred stock unit (aggregate)
+    overallUnit = null        // preferred stock unit (aggregate)   
+    ,
+    // [PATCH:UNDO-SALE] optional fields so Undo can revert both inventory + Sales record
+    saleRecordId = null,
+    batchCompositeKey = null
   } = payload;
 
   // Choose display name safely; never translate here.
@@ -9334,6 +9338,23 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
   const stockUnit  = typeof normalizeUnit === 'function'
                        ? normalizeUnit(overallUnit ?? unit)
                        : (overallUnit ?? unit);
+  
+  // [PATCH:UNDO-SALE] Pre-arm Undo BEFORE sending the confirmation so confirm->undo can emit the button.
+  // This uses your existing globalThis.preArmUndoFromCommit helper. [2](blob:https://m365.cloud.microsoft/0f575186-39f3-4edf-aaaa-7c84a08f32dc)[3](blob:https://m365.cloud.microsoft/26d62f39-04fa-4cfa-8014-1591f9b74d71)
+  try {
+    const shopKey = shopIdFrom(From);
+    if (saleRecordId || batchCompositeKey) {
+      globalThis.preArmUndoFromCommit?.(shopKey, {
+        action: 'sold',
+        productRawForDb: dbProduct,
+        product: dbProduct,
+        quantity: Number(qty ?? 0),
+        unit: uNorm || unit || 'pieces',
+        compositeKey: batchCompositeKey ?? null,
+        saleRecordId: saleRecordId ?? null
+      }, detectedLanguage);
+    }
+  } catch (_) { /* non-blocking */ }
 
   // Compose the one-liner head (mirrors purchase/return format)
   const icon       = '🛒';
@@ -15188,7 +15209,10 @@ async function updateMultipleInventory(shopId, updates, languageCode) {
                     unit: normalize(overallUnit ?? update.unit), // display unit
                     pricePerUnit: salePrice,
                     overallStock: overallQty ?? null,
-                    overallUnit: normalize(overallUnit ?? update.unit),
+                    overallUnit: normalize(overallUnit ?? update.unit),                                        
+                    // [UNDO] Provide sale anchors so Undo can revert sale + batch
+                    saleRecordId: salesResult.id,
+                    batchCompositeKey: selectedBatchCompositeKey,
                     // legacy fallback if composer needs it
                     newQuantity: result && result.newQuantity
                   }
@@ -20867,6 +20891,11 @@ function logAiFirstDecision(reqId, stage, details = {}) {
     (req.body && (req.body.From || req.body.from)) ||
     (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
   const shopId = fromToShopId(From);
+  // [PATCH:AUTH-EARLY-START] Start auth immediately (parallel with ACK / parsing).
+  // Safe: still enforce authCheck BEFORE any DB commit paths. [7](blob:https://m365.cloud.microsoft/f31b00e0-57aa-4700-b936-597e379a6b12)[4](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/logs.1769364363756.log)
+  const __authP_early = Promise.resolve()
+    .then(() => checkUserAuthorization(From, Body, requestId))
+    .catch(() => null);
   let __handled = false;
   
   // --- NEW: in-memory per-request dedupe guard (keep near the top) ---
@@ -21501,7 +21530,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
              if (__cached && (Date.now() - __cached.ts) <= __AUTH_TTL_MS) {
                authCheck = __cached.val;
              } else {
-               authCheck = await checkUserAuthorization(From, Body, requestId);
+               authCheck = (await __authP_early) || (await checkUserAuthorization(From, Body, requestId));
                // Cache only authorized outcomes strongly; restricted outcomes very briefly (2s) or near-expired.
                try {
                  if (authCheck?.authorized) {
