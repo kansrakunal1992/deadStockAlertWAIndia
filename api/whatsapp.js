@@ -2622,17 +2622,30 @@ function looksLikeTxnLite(s) {
   const hasUnit  = UNIT_REGEX_UNIFIED.test(raw); // test on raw to preserve script matching
   const hasPrice =
     /(?:₹|rs\.?|inr|रु|৳)\s*\d+(?:[.,]\d+)?/iu.test(txt) ||
-    /@\s*\d+(?:[.,]\d+)?(?:\s*\/\s*[\p{L}]+)?/u.test(txt);    
-  // Also accept sentence-style transactions (e.g., "I purchased 4 bottles of Milton today")
-    // so we still route into the parser even if unit detection is imperfect.
+    /@\s*\d+(?:[.,]\d+)?(?:\s*\/\s*[\p{L}]+)?/u.test(txt);        
+  // Sentence-style transactions:
+    //  - "I purchased Milton today" (verb + product, no qty/price/unit)
+    //  - "Purchased Milton for ₹120" (verb + price, unit optional)
+    //  - "I purchased 4 bottles of Milton today" (verb + num + unit/of-pattern)
     const hasTxnVerb =
-      /\b(purchase|purchased|buy|bought|restock|restocked|sold|sell|selling|returned|return|exchanged)\b/i.test(txt);
+      /\b(purchase|purchased|buy|bought|restock|restocked|sold|sell|selling|return|returned|exchanged)\b/i.test(txt);
     const hasOfPattern = /\bof\b/i.test(txt); // common in "X bottles of Y"
-    // Verb-less acceptance: "<num> <unit>" OR "<unit> with price" is sufficient in sticky mode.
-    // Sentence acceptance: txn verb + (num or price) + (unit or "of" pattern) → txn-like
+    // Try to find a plausible product token AFTER the txn verb (avoid treating "today/ok/mode" as product)
+    const hasProductAfterVerb = new RegExp(
+      String.raw`\b(?:purchase|purchased|buy|bought|restock|restocked|sold|sell|selling|return|returned|exchanged)\b[\s\S]{0,40}?\b(?!today|yesterday|tomorrow|now|ok|okay|pls|please|mode|help|trial|paid|reset|cancel|skip|clear)\p{L}{2,}[\p{L}\p{N}\-]*\b`,
+      'iu'
+    ).test(txt);
+  
+    // Original verb-less acceptance: "<num> <unit>" OR "<unit> with price"
+    // Expanded acceptance:
+    //   - txn verb + price (unit optional)
+    //   - txn verb + number (unit optional)
+    //   - txn verb + plausible product token (qty/price/unit optional)
     return (hasNum && hasUnit) ||
            (hasUnit && hasPrice) ||
-           (hasTxnVerb && (hasNum || hasPrice) && (hasUnit || hasOfPattern));
+           (hasTxnVerb && hasPrice) ||
+           (hasTxnVerb && hasNum) ||
+           (hasTxnVerb && (hasUnit || hasOfPattern || hasProductAfterVerb));
 }
 
 // ===== NEW: Hindi-aware price-like detector (used to gate price handling in awaitingPriceExpiry) =====
