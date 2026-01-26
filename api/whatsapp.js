@@ -20891,11 +20891,19 @@ function logAiFirstDecision(reqId, stage, details = {}) {
     (req.body && (req.body.From || req.body.from)) ||
     (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
   const shopId = fromToShopId(From);
+    
   // [PATCH:AUTH-EARLY-START] Start auth immediately (parallel with ACK / parsing).
-  // Safe: still enforce authCheck BEFORE any DB commit paths. [7](blob:https://m365.cloud.microsoft/f31b00e0-57aa-4700-b936-597e379a6b12)[4](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/logs.1769364363756.log)
-  const __authP_early = Promise.resolve()
-    .then(() => checkUserAuthorization(From, Body, requestId))
-    .catch(() => null);
+    // Safe: still enforce authCheck BEFORE any DB commit paths.
+    // [PATCH] Always define early-auth promise (prevents ReferenceError on scope/merge issues)
+    let __authP_early = Promise.resolve(null);
+    try {
+      __authP_early = Promise.resolve()
+        .then(() => checkUserAuthorization(From, Body, requestId))
+        .catch(() => null);
+    } catch (_) {
+      __authP_early = Promise.resolve(null);
+    }
+
   let __handled = false;
   
   // --- NEW: in-memory per-request dedupe guard (keep near the top) ---
@@ -21529,8 +21537,11 @@ async function handleRequest(req, res, response, requestId, requestStart) {
              let authCheck = null;
              if (__cached && (Date.now() - __cached.ts) <= __AUTH_TTL_MS) {
                authCheck = __cached.val;
-             } else {
-               authCheck = (await __authP_early) || (await checkUserAuthorization(From, Body, requestId));
+             } else {                            
+             // [PATCH] Guard: if __authP_early is missing in some future merge/deploy, don't crash
+                           const __earlyAuth =
+                             (typeof __authP_early !== 'undefined') ? (await __authP_early) : null;
+                           authCheck = __earlyAuth || (await checkUserAuthorization(From, Body, requestId));
                // Cache only authorized outcomes strongly; restricted outcomes very briefly (2s) or near-expired.
                try {
                  if (authCheck?.authorized) {
