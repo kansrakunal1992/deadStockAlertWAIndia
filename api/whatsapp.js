@@ -12851,72 +12851,13 @@ function _norm(s) { return String(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,''
 async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
   const startTime = Date.now();
   const text = String(rawBody || '').trim();    
-  const shopId = String(From).replace('whatsapp:', '');  
-  
-  // ======================================================================
-  // COPILOT-PATCH-B-EARLY-PARSE-20260127
-  // Start parsing + access checks immediately (in parallel), then only
-  // wait for AI orchestration if we still need it.
-  // ======================================================================
-  const __withTimeout = (p, ms, fallback) =>
-    Promise.race([
-      Promise.resolve(p),
-      new Promise((resolve) => setTimeout(() => resolve(fallback), ms)),
-    ]);
-
-  // Only do early parse when message is transaction-like (avoid wasting work on Q&A)
-  const __txnLikeEarly = (typeof looksLikeTxnLite === 'function')
-    ? !!looksLikeTxnLite(text)
-    : (/\d/.test(text) && /\b(kg|g|gm|ml|l|ltr|piece|pieces|packet|packets|bottle|bottles|box|boxes)\b/i.test(text));
-
-  const __earlyParseP = __txnLikeEarly
-    ? parseMultipleUpdates({ From, Body: text }, requestId)
-        .then((u) => (Array.isArray(u) ? u : []))
-        .catch(() => [])
-    : Promise.resolve([]);
-
-  // Access gate can run in parallel too; we MUST still await it before DB writes.
-  const __gateP = (typeof ensureAccessOrOnboard === 'function')
-    ? ensureAccessOrOnboard(From, text, detectedLanguage)
-        .catch(() => ({ ok: true })) // best-effort; keep existing downstream checks
-    : Promise.resolve({ ok: true });
+  const shopId = String(From).replace('whatsapp:', '');   
 
 // ===== EARLY EXIT: questions win before any inventory/transaction parse =====
   let _lang = String(detectedLanguage ?? 'en').toLowerCase();
   let _orch = { language: _lang, kind: null, isQuestion: null, normalizedCommand: null };
-  try {          
-      // Run orchestration in parallel; don't block on it if early parse succeeds.
-          const __orchP = applyAIOrchestration(text, From, _lang, requestId)
-            .catch(() => _orch);
-      
-          // Wait briefly for early parse results; if we got updates, we can skip waiting for orch.
-          const __earlyUpdates = await __withTimeout(__earlyParseP, 1500, []);
-          if (Array.isArray(__earlyUpdates) && __earlyUpdates.length > 0) {
-            const gate = await __gateP;
-            // If your ensureAccessOrOnboard returns {ok:false}, preserve your existing behavior:
-            if (gate && gate.ok === false) {
-              // fall back to existing unauthorized handling paths
-              // (do NOT return here; let existing logic respond)
-            } else {
-              // Continue into your existing inventory update pipeline.
-              // IMPORTANT: Do not send confirmation here; reuse the existing flow.
-              _lang = _lang; // keep original detected lang; existing code may adjust later                            
-              // IMPORTANT: return early so downstream orchestration & handlers do not run
-                    return await handleParsedInventoryUpdates({
-                      From,
-                      shopId,
-                      updates: __earlyUpdates,
-                      detectedLanguage: _lang,
-                      requestId,
-                      res: null,          // keep Twilio response behavior as your existing flow expects
-                      startTime,
-                      source: 'early-parse',
-                    });
-            }
-          }
-      
-          // No early inventory updates found, proceed with orchestration as before.
-          _orch = await __orchP;
+  try {
+    _orch = await applyAIOrchestration(text, From, _lang, requestId);
     _lang = _orch.language ?? _lang;
   } catch (_) { /* best-effort */ }
     
@@ -16200,90 +16141,6 @@ async function parseOrReturn(transcript, from, detectedLanguage, requestId) {
   const didReturn = await tryHandleReturnText(transcript, from, detectedLanguage, requestId);
   if (didReturn) return []; // already handled via API; caller should short-circuit
   return [];
-}
-
-// ======================================================================
-// COPILOT-PATCH: handleParsedInventoryUpdates (B/C support)
-// Anchor: inserted right after parseOrReturn(...) and before allPendingPrice(...)
-// Purpose:
-//  - Centralize “parsedUpdates -> DB write -> confirmation send” in one place
-//  - Provide requestId idempotency so early-parse cannot double-process
-// ======================================================================
-async function handleParsedInventoryUpdates({
-  From,
-  shopId,
-  updates,
-  detectedLanguage,
-  requestId,
-  // Optional: allow caller to decide whether to send HTTP response here
-  res = null,
-  startTime = null,
-  source = 'unknown', // 'early-parse' | 'normal-flow' | etc.
-} = {}) {
-  try {
-    if (!shopId) shopId = String(From ?? '').replace('whatsapp:', '');
-    if (!shopId) return { ok: false, reason: 'missing-shopId' };
-
-    // ---- Idempotency guard: prevents double-processing for same requestId ----
-    // handledRequests already exists in your file: const handledRequests = new Set();
-    // We key by requestId only (not shopId) because requestId is already globally unique in logs.
-    if (requestId && handledRequests.has(requestId)) {
-      console.log('[handleParsedInventoryUpdates] skip duplicate', { requestId, shopId, source });
-      return { ok: true, skipped: true, reason: 'already-handled' };
-    }
-
-    if (!Array.isArray(updates) || updates.length === 0) {
-      return { ok: false, reason: 'no-updates' };
-    }
-
-    // Mark as handled *before* doing work to prevent re-entry from parallel branches.
-    if (requestId) handledRequests.add(requestId);
-
-    // ---- Core DB write (existing function in your file) ----
-    const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
-
-    // Your existing downstream logic likely filters out pending/needs-input updates.
-    const processed = (Array.isArray(results) ? results : []).filter(r =>
-      r && r.success && !r.needsPrice && !r.needsUserInput && !r.awaiting
-    );
-
-    // If nothing fully processed, we still return results (downstream states may have been set).
-    // Don’t force a confirmation here; your existing flows handle prompts for price/expiry/etc.
-    if (processed.length === 0) {
-      return { ok: true, processed: 0, results };
-    }
-
-    // ---- Confirmation send ----
-    // In your logs, confirmations are sent via sendMessageViaAPI / sendMessageDedup, and there
-    // is a “confirm-once” path to prevent duplicates. Keep using your existing sender.
-    // Minimal implementation: send a compact aggregated confirmation (or call your existing
-    // per-item confirmation helper if present).
-    //
-    // NOTE: If your existing flow already sends confirmations inside updateMultipleInventory,
-    // you can skip this block to avoid double messages. If not, keep it.
-    //
-    // Safer default: send only when your system does NOT auto-confirm inside updateMultipleInventory.
-    if (typeof sendInventoryUpdateAck === 'function') {
-      await sendInventoryUpdateAck(From, processed, detectedLanguage, requestId);
-    }
-
-    // Respond to Twilio quickly if res provided
-    if (res && typeof res.send === 'function') {
-      res.send('<Response></Response>');
-    }
-
-    // Optional perf tracking if you have it
-    try {
-      if (startTime && typeof trackResponseTime === 'function') {
-        trackResponseTime(startTime, requestId);
-      }
-    } catch (_) {}
-
-    return { ok: true, processed: processed.length, results };
-  } catch (e) {
-    console.warn('[handleParsedInventoryUpdates] failed', requestId, e?.message);
-    return { ok: false, error: e?.message || 'unknown' };
-  }
 }
 
 // Helper: check if every result is still pending price
