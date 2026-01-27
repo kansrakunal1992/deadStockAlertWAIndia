@@ -5,6 +5,19 @@ const CORRECTION_STATE_TABLE_NAME = process.env.AIRTABLE_CORRECTION_STATE_TABLE_
 const USER_STATE_TABLE_NAME = process.env.AIRTABLE_USER_STATE_TABLE_NAME || 'UserState';
 const TRANSLATIONS_TABLE_NAME = process.env.AIRTABLE_TRANSLATIONS_TABLE_NAME || 'Translations';
 const STATE_TIMEOUT = Number(process.env.USER_STATE_TTL_MS ?? (60 * 60 * 1000)); // 60 minutes
+
+// ==========================================================
+// Sticky user state must NEVER expire automatically.
+// Only truly-temporary conversation flows should expire.
+// ==========================================================
+// NOTE: WhatsApp "sticky mode" is represented by:
+//   mode: 'awaitingTransactionDetails'
+//   data: { action: 'purchased'|'sold'|'returned', ... }
+// So we bypass TTL for this StateMode.
+const NON_EXPIRING_STATE_MODES = new Set([
+  'awaitingTransactionDetails'
+]);
+
 const CORRECTION_WINDOW_TTL_SEC = Number(process.env.TTL_CORRECTION ?? 300);
 
 // Canonicalize ShopID to digits-only (no whatsapp:, +91, 91, 0 prefixes)
@@ -2171,8 +2184,10 @@ async function getUserStateFromDB(shopId) {
       const stateData = record.fields.StateData ? JSON.parse(record.fields.StateData) : {};
       const timestamp = new Date(record.fields.Timestamp);      
             
-      // If TTL is set (> 0) and expired, return null (do not delete here)
-            if (STATE_TIMEOUT > 0 && (Date.now() - timestamp.getTime() > STATE_TIMEOUT)) {
+      // If TTL is set (> 0) and expired, return null (do not delete here)                  
+      // IMPORTANT: Do NOT expire sticky modes (e.g., awaitingTransactionDetails).
+            const isSticky = NON_EXPIRING_STATE_MODES.has(String(stateMode ?? '').trim());
+            if (!isSticky && STATE_TIMEOUT > 0 && (Date.now() - timestamp.getTime() > STATE_TIMEOUT)) {
               return null; // caller can decide UX (e.g., prompt to continue or exit)
             }
 
