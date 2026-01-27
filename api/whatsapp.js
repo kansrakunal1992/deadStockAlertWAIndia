@@ -817,14 +817,22 @@ const shopIdFrom = (From) => toE164(From);
 
 // ===== Ephemeral overrides (auto-clear only for these modes) ===================
 // We will auto-stamp TTLs, auto-expire on read, and schedule a best-effort timer.
-const EPHEMERAL_OVERRIDE_MODES = new Set(['awaitingBatchOverride','awaitingPurchaseExpiryOverride']);
+
+// Option A: Make override modes persistent until explicitly resolved.
+// Keep a separate set for "override workflows" that should NOT expire by time.
+const PERSISTENT_OVERRIDE_MODES = new Set(['awaitingBatchOverride','awaitingPurchaseExpiryOverride']);
+// Keep EPHEMERAL_OVERRIDE_MODES for any truly short-lived modes you may add later.
+const EPHEMERAL_OVERRIDE_MODES = new Set([]);
+
 const TTL_AWAITING_BATCH_OVERRIDE_SEC =
   Number(process.env.TTL_BATCH_OVERRIDE ?? 120); // default 120s
 const TTL_AWAITING_PURCHASE_EXP_OVERRIDE_SEC =
   Number(process.env.TTL_PURCHASE_EXP_OVERRIDE ?? 120); // default 120s
 
 function _ttlForMode(mode) {
-  const m = String(mode ?? '').toLowerCase();
+  const m = String(mode ?? '').toLowerCase();    
+  // Persistent override modes do not expire by time.
+  if (PERSISTENT_OVERRIDE_MODES.has(m)) return 0;
   if (m === 'awaitingbatchoverride') return TTL_AWAITING_BATCH_OVERRIDE_SEC * 1000;
   if (m === 'awaitingpurchaseexpiryoverride') return TTL_AWAITING_PURCHASE_EXP_OVERRIDE_SEC * 1000;
   return 0;
@@ -849,8 +857,10 @@ function _isExpiredEphemeral(st) {
 
 async function clearEphemeralOverrideStateByShopId(shopId) {
   try {
-    const st = await getUserStateFromDB(shopId);
-    if (st && _isEphemeralOverride(st)) {            
+    const st = await getUserStateFromDB(shopId);        
+    const modeLc = String(st?.mode ?? '').toLowerCase();
+    // Clear BOTH persistent override modes and ephemeral override modes.
+    if (st && (PERSISTENT_OVERRIDE_MODES.has(modeLc) || _isEphemeralOverride(st))) {        
       try {
               const ttlMs = _ttlForMode(st?.mode);
               const createdISO = st?.data?.createdAtISO ?? st?.createdAtISO ?? st?.createdAt ?? null;
@@ -871,7 +881,14 @@ async function clearEphemeralOverrideStateByShopId(shopId) {
 
 async function setEphemeralOverrideState(fromOrShopId, mode, data = {}) {
   try {
-    const shopId = String(fromOrShopId ?? '').replace('whatsapp:', '');
+    const shopId = String(fromOrShopId ?? '').replace('whatsapp:', '');       
+    const modeLc = String(mode ?? '').toLowerCase();
+    
+        // Option A: persistent override modes (no TTL, no createdAtISO/timeoutSec, no timer)
+        if (PERSISTENT_OVERRIDE_MODES.has(modeLc)) {
+          await setUserState(shopId, mode, { ...data });
+          return { success: true };
+        }
     const payload = {
       ...data,
       createdAtISO: new Date().toISOString(),
