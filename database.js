@@ -14,8 +14,11 @@ const STATE_TIMEOUT = Number(process.env.USER_STATE_TTL_MS ?? (60 * 60 * 1000));
 //   mode: 'awaitingTransactionDetails'
 //   data: { action: 'purchased'|'sold'|'returned', ... }
 // So we bypass TTL for this StateMode.
-const NON_EXPIRING_STATE_MODES = new Set([
-  'awaitingTransactionDetails'
+const NON_EXPIRING_STATE_MODES = new Set([  
+  'awaitingTransactionDetails',
+  // Option A: keep override workflows persistent until explicitly resolved
+  'awaitingPurchaseExpiryOverride',
+  'awaitingBatchOverride'
 ]);
 
 const CORRECTION_WINDOW_TTL_SEC = Number(process.env.TTL_CORRECTION ?? 300);
