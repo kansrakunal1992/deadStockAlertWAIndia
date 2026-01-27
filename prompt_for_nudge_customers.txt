@@ -1,0 +1,124 @@
+Below is a **ready-to-use sending map**: **which numbers should receive which template** (from the templates I shared), based strictly on **what the logs show each user did** (trial activated vs onboarding-only vs demo-seeker vs interrupted vs Marathi). [\[airindiane...epoint.com\]](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/logs.1769504504399.log)
+
+***
+
+## 1) Cohort → Template pack → Numbers to send
+
+### ✅ Cohort 1: **Trial Activated** (push “first success”)
+
+**Who:** Users already triggered **trial activation** (clicked `ट्रायल शुरू करें`) and/or started purchase flow.
+
+**Send these templates:**
+
+*   **Primary:** **Template 1B (Hindi First Action Nudge)**
+*   **If they clicked “खरीद दर्ज करें” but didn’t type item details:** **Template 1C (Hindi “you clicked Record Purchase… now send 1 line”)**
+
+**Numbers**
+
+*   **+918700598069 → Send Template 1B** (trial activated; Hindi onboarding + trial activation confirmed)
+*   **+919145966685 → Send Template 1C first**, then Template 1B if needed (trial activated + clicked “खरीद दर्ज करें” and state moved to awaitingTransactionDetails)
+
+***
+
+### 🟨 Cohort 2: **Onboarding Received, No Trial Click** (largest conversion opportunity)
+
+**Who:** Users who said hello / language selection and received onboarding but **did not click Start Trial (`activate_trial`)**.
+
+**Send these templates:**
+
+*   **Primary:**
+    *   Hindi users → **Template 2B (Hindi CTA reminder)**
+    *   English users → **Template 2A (English CTA reminder)**
+*   **Follow-up if no response:** **Template 2C (super short 2-step confusion buster)**
+
+**Numbers**
+
+*   **+917906663838 → Template 2B** (Hindi + Hi, onboarding only; no activation noted)
+*   **+918572871417 → Template 2B** (onboarding-only pattern; no activation noted)
+*   **+919451862831 → Template 2A** (Hello/greeting onboarding-only; English pattern)
+*   **+919569559046 → Template 2A** (“Hii”, English onboarding-only; plan stayed free\_demo)
+*   **+919216891243 → Template 2A** (“English”, onboarding-only; plan stayed free\_demo)
+
+***
+
+### 🟦 Cohort 3: **Demo Seekers** (convert demo → trial)
+
+**Who:** Users who interacted with **Demo/डेमो** behavior and then stopped without trial activation.
+
+**Send these templates:**
+
+*   Hindi demo seekers → **Template 3B (Hindi demo → trial conversion)**
+*   Follow-up → **Template 3C (guided setup offer)**
+
+**Numbers**
+
+*   **+917983627352 → Template 3B** (Hindi + demo intent noted; onboarding + demo-type behavior)
+*   **+919131847962 → Template 3B** (Hindi + demo intent noted; onboarding + demo-type behavior, no activation)
+
+***
+
+### 🟪 Cohort 4: **Language-only / Possibly Interrupted Session** (restart-risk recovery)
+
+**Who:** User only did **language selection** and may not have completed onboarding/CTA due to reliability window. Logs show **container start/stop + SIGTERM** events around that period (system instability risk). [\[airindiane...epoint.com\]](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/logs.1769504504399.log)
+
+**Send these templates:**
+
+*   Hindi user → **Template 4A (Hindi apology + restart flow)**
+*   Follow-up → **Template 4C (minimal “Tap Start Trial + 1-line format”)**
+
+**Numbers**
+
+*   **+919827838707 → Template 4A** (only “हिन्दी” seen; plus infra restart/SIGTERM risk window in logs) [\[airindiane...epoint.com\]](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/logs.1769504504399.log)
+
+***
+
+### 🟧 Cohort 5: **Marathi onboarding / content-quality sensitivity**
+
+**Who:** Marathi user received Marathi onboarding; logs also flagged mixed-script handling for Marathi output.
+
+**Send these templates:**
+
+*   **Primary:** **Template 5A (Marathi CTA + example)**
+*   **Follow-up:** **Template 5B (Marathi 2-step format)**
+
+**Numbers**
+
+*   **+919175513349 → Template 5A** (मराठी onboarding; mixed-script warning + slow onboarding)
+
+***
+
+## 2) “Send-now” checklist (one message per user)
+
+### Send **right now**
+
+*   +918700598069 → **1B**
+*   +919145966685 → **1C**
+*   +919827838707 → **4A** [\[airindiane...epoint.com\]](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/logs.1769504504399.log)
+*   +919175513349 → **5A**
+*   +917906663838 → **2B**
+*   +919131847962 → **3B**
+*   +918572871417 → **2B**
+*   +919451862831 → **2A**
+*   +917983627352 → **3B**
+*   +919569559046 → **2A**
+*   +919216891243 → **2A**
+
+***
+
+## 3) Simple follow-up rule (manual, low effort)
+
+If **no reply in \~4–6 hours**:
+
+*   Cohort 1 (trial activated): send **1B** again (or a shorter variant)
+*   Cohort 2 (onboarding-only): send **2C** (2-step confusion buster)
+*   Cohort 3 (demo seekers): send **3C** (guided setup offer)
+*   Cohort 4 (interrupted risk): send **4C** (minimal restart) [\[airindiane...epoint.com\]](https://airindianew-my.sharepoint.com/personal/kunal_kansra_airindia_com/Documents/Microsoft%20Copilot%20Chat%20Files/logs.1769504504399.log)
+*   Cohort 5 (Marathi): send **5B** (clear 2-step format)
+
+***
+
+## Quick note (why this mapping should work)
+
+Your logs show a big share of users are stuck at **onboarding-only** and many sessions have **slow response warnings**, which commonly cause drop-offs before the CTA click. The templates above are short and “next-step” oriented to reduce friction.
+
+If you want, I can also rewrite these templates in **one consistent tone** (more formal vs more friendly) while keeping the same cohort mapping.
