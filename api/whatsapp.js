@@ -6019,7 +6019,7 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
      const isActivated = (plan === 'trial' || plan === 'paid');
           
       if (!isActivated) {
-             // NEW: Send 3‑button Onboarding Quick‑Reply (Start Trial • Demo • Help)
+             // NEW: Send 3‑button Onboarding Quick‑Reply (Start Free Trial • Demo • Help)
              let sent = false;
              const ONBOARDING_QR_SID = String(process.env.ONBOARDING_QR_SID || '').trim();
                                                        
@@ -6030,7 +6030,7 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
                 const startTrialLabel  = getStaticLabel('startTrialBtn', detectedLanguage);
                 // Keep the label in native script directly in the source text; avoid quotes getting emptied.
                 const introSrc = await composeAIOnboarding('en'); // deterministic English skeleton
-                const introSrcWithLabel = introSrc.replace(/"Start Trial"/g, `"${startTrialLabel}"`);                                
+                const introSrcWithLabel = introSrc.replace(/"Start Free Trial"/g, `"${startTrialLabel}"`);                                
                 // Translate once with canonical markers, then finalize and send.
                       let introText = await t(NO_CLAMP_MARKER + NO_FOOTER_MARKER + introSrcWithLabel, detectedLanguage ?? 'en', introKey);
                       introText = nativeglishWrap(introText, detectedLanguage ?? 'en'); // keep anchors readable
@@ -9850,7 +9850,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       const allowed = await isFeatureAvailable(shopId, 'ai_summary');
       if (!allowed) {
         const prompt = await t(
-          'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+          'To use summaries, please activate your FREE trial.\nReply "Start Free Trial" or tap the trial button.',
           lang,
           `cta-summary-${shopId}`
         );
@@ -10318,7 +10318,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
 
 // ---------------------------------------------------------------------------
 // STEP 3: After any AI Sales Q&A answer, send appropriate buttons.
-// - Unactivated (no plan / demo): Onboarding QR (Start Trial / Demo / Help)
+// - Unactivated (no plan / demo): Onboarding QR (Start Free Trial / Demo / Help)
 // - Activated (trial|paid): Purchase/Sale/Return Quick-Reply + Demo/Help CTA text
 // ---------------------------------------------------------------------------
 async function sendSalesQAButtons(From, lang, isActivated) {
@@ -10328,7 +10328,7 @@ async function sendSalesQAButtons(From, lang, isActivated) {
     const sids = getLangSids(lang);
 
     if (!isActivated) {
-      // Show onboarding quick-replies (Start Trial / Demo / Help)
+      // Show onboarding quick-replies (Start Free Trial / Demo / Help)
       if (sids?.onboardingQrSid) {
         await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.onboardingQrSid });
         return;
@@ -10575,7 +10575,7 @@ async function composeAIOnboarding(language = 'en') {
     `Language: ${lang}\n` +
     `MANIFEST: ${manifest}\n` +      
     `Task: Write ONLY in ${lang} script. Produce 2 short lines of benefits from MANIFEST.capabilities, in natural ${lang}. ` +
-    `Then a third line CTA: say how to start trial via the “Start Trial” button. ` +
+    `Then a third line CTA: say how to start free trial via the “Start Free Trial” button. ` +
     `If later asked product questions, answer only using MANIFEST.quickCommands; otherwise say "I'm not sure yet" and show 3 example commands. Maintain respectful “aap” tone and polite plurals.`;
   try {
     console.log('AI_AGENT_PRE_CALL', { kind: 'onboarding', language: lang });
@@ -15611,7 +15611,7 @@ if (isShortGreeting && (
                   "low stock", "reorder suggestions", "expiring 0", "expiring 7", "expiring 30",
                   "short summary", "full summary", "sales today", "sales week", "sales month",
                   "top 5 products month", "inventory value", "stock value", "value summary",
-                  "start trial", "demo", "help", "paid", "activate paid", "activate trial".
+                  "start trial", "start free trial", "demo", "help", "paid", "activate paid", "activate trial".
                 - This quoting applies across all language variants (keep the translated term, but put it inside "double quotes").
                 
                 OTHER RULES:
@@ -16320,12 +16320,12 @@ async function generateInstantSummary(shopId, languageCode, requestId) {
     const activated = (plan === 'trial' || plan === 'paid');
     if (!activated) {
       // Localized prompt to activate trial; no enterprise wording
-      const prompt = 'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.';
+      const prompt = 'To use summaries, please activate your FREE trial.\nReply "Start Free Trial" or tap the trial button.';
       return await t(prompt, languageCode, requestId);
     }
   } catch (_e) {
     // If plan lookup fails, be conservative and prompt to activate
-    const prompt = 'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.';
+    const prompt = 'To use summaries, please activate your FREE trial.\nReply "Start Free Trial" or tap the trial button.';
     return await t(prompt, languageCode, requestId);
   }
     try {
@@ -16419,12 +16419,12 @@ async function generateFullScaleSummary(shopId, languageCode, requestId) {
     const activated = (plan === 'trial' || plan === 'paid');
     if (!activated) {
       // Localized prompt to activate trial; no enterprise wording
-      const prompt = 'To use full summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.';
+      const prompt = 'To use full summaries, please activate your FREE trial.\nReply "Start Free Trial" or tap the trial button.';
       return await t(prompt, languageCode, requestId);
     }
   } catch (_e) {
     // If plan lookup fails, be conservative and prompt to activate
-    const prompt = 'To use full summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.';
+    const prompt = 'To use full summaries, please activate your FREE trial.\nReply "Start Free Trial" or tap the trial button.';
     return await t(prompt, languageCode, requestId);
   }
   try {    
@@ -19257,7 +19257,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                   const allowed = await isFeatureAvailable(shopId, 'ai_summary');
                   if (!allowed) {
                     let prompt = await t(
-                      'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+                      'To use summaries, please activate your FREE trial.\nReply "Start Free Trial" or tap the trial button.',
                       uiLangExact,
                       `cta-summary-${shopId}`
                     );
@@ -19278,7 +19278,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
                           const allowed = await isFeatureAvailable(shopId, 'ai_summary');
                           if (!allowed) {
                             let prompt = await t(
-                              'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+                              'To use summaries, please activate your FREE trial.\nReply "Start Free Trial" or tap the trial button.',
                               uiLangExact,
                               `cta-summary-${shopId}`
                             );                                                        
@@ -22865,7 +22865,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
             // Not activated OR plain text answer → send Q&A message
             const aiNative = enforceSingleScriptSafe(
               String(ans).startsWith('ROUTE:')
-                ? await t('🔒 Reports are available during trial or paid plan. Tap “Start Trial” to enable, or ask a short question (e.g., “benefits?”).', langExact, `${requestId}::qa-lock`)
+                ? await t('🔒 Reports are available during trial or paid plan. Tap “Start Free Trial” to enable, or ask a short question (e.g., “benefits?”).', langExact, `${requestId}::qa-lock`)
                 : ans,
               langExact
             );
@@ -22920,7 +22920,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
                 if (isActivated2) {
                   await routeQuickQueryRaw(orch.normalizedCommand, From, langExact, `${requestId}::ai-norm-text`);
                 } else {
-                  const lockMsg = await t('🔒 Detailed reports are available during trial or paid plan. Tap “Start Trial” to enable. You can ask general questions and get help here.', langExact, `${requestId}::ai-norm-lock`);
+                  const lockMsg = await t('🔒 Detailed reports are available during trial or paid plan. Tap “Start Free Trial” to enable. You can ask general questions and get help here.', langExact, `${requestId}::ai-norm-lock`);
                   await sendMessageDedup(From, normalizeNumeralsToLatin(nativeglishWrap(lockMsg, langExact)));
                 }
               }
@@ -23081,7 +23081,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
                       return res.send('<Response></Response>'); // reply already sent via API
                     }
                   } else {
-                    const lockMsg2 = await t('🔒 Reports are available during trial or paid plan. Tap “Start Trial” to enable. Ask “benefits?” or “how does it help?” to learn more.', detectedLanguage, `${requestId}::qq-lock`);
+                    const lockMsg2 = await t('🔒 Reports are available during trial or paid plan. Tap “Start Free Trial” to enable. Ask “benefits?” or “how does it help?” to learn more.', detectedLanguage, `${requestId}::qq-lock`);
                     await sendMessageViaAPI(From, normalizeNumeralsToLatin(nativeglishWrap(lockMsg2, detectedLanguage)));
                     __handled = true;
                     return res.send('<Response></Response>');
