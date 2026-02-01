@@ -1468,6 +1468,7 @@ async function composeAndSendExpiringList(From, shopId, lang, requestId, days = 
 function isSafeAnchor(text) {
     const safePatterns = [
         /start trial/i,
+        /start free trial/i,
         /activate trial/i,
         /activate paid/i,
         /paid confirm/i,              
@@ -1598,7 +1599,7 @@ function chooseRenderMode(languageCode) {
 }
 
 // Canonical commands & button labels we want in "double quotes" in any language
-const QUOTE_TERMS = ['low stock','reorder suggestions','expiring 0','expiring 7','expiring 30','short summary','full summary','sales today','sales week','sales month','top 5 products month','inventory value','stock value','value summary','start trial','demo','help','paid','activate paid','activate trial'];
+const QUOTE_TERMS = ['low stock','reorder suggestions','expiring 0','expiring 7','expiring 30','short summary','full summary','sales today','sales week','sales month','top 5 products month','inventory value','stock value','value summary','start trial','start free trial','demo','help','paid','activate paid','activate trial'];
 
 // === Single-block formatter with de-duplication for echoes ===================
 function normalizeTwoBlockFormat(raw, languageCode) {          
@@ -3840,15 +3841,15 @@ const STATIC_LABELS = {
         gu: '“mode” ટાઈપ કરો અથવા વૉઇસ નોટ બોલો—સંદર્ભ બદલવા અથવા સારાંશ માગવા.'
   },   
   // --- Localized captions for interactive buttons (used in onboarding text too)
-    startTrialBtn: {
-      en: 'Start Trial',
-      hi: 'ट्रायल शुरू करें',
-      bn: 'ট্রায়াল শুরু করুন',
-      ta: 'ட்ரயல் தொடங்கவும்',
-      te: 'ట్రయల్ ప్రారంభించండి',
-      kn: 'ಟ್ರಯಲ್ ಪ್ರಾರಂಭಿಸಿ',
-      mr: 'ट्रायल सुरू करा',
-      gu: 'ટ્રાયલ શરૂ કરો'
+    startTrialBtn: {            
+      en: '🆓 Start Free Trial',
+      hi: '🆓 फ्री ट्रायल शुरू करें',
+      bn: '🆓 ফ্রি ট্রায়াল',
+      ta: '🆓 இலவச ட்ரயல்',
+      te: '🆓 ఉచిత ట్రయల్',
+      kn: '🆓 ಉಚಿತ ಟ್ರಯಲ್',
+      mr: '🆓 फ्री ट्रायल सुरू करा',
+      gu: '🆓 ફ્રી ટ્રાયલ શરૂ કરો'
     },
     demoBtn: {
       en: 'Demo',
@@ -9724,7 +9725,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       const allowed = await isFeatureAvailable(shopId, 'ai_summary');
       if (!allowed) {
         const prompt = await t(
-          'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+          'To use summaries, please start your FREE trial.\nTap "Start Free Trial" — no payment/card needed.',
           lang,
           `cta-summary-${shopId}`
         );
@@ -9739,7 +9740,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       const allowed = await isFeatureAvailable(shopId, 'ai_summary');
       if (!allowed) {
         const prompt = await t(
-          'To use summaries, please activate your FREE trial.\nReply "Start Trial" or tap the trial button.',
+          'To use summaries, please start your FREE trial.\nTap "Start Free Trial" — no payment/card needed.',
           lang,
           `cta-summary-${shopId}`
         );
@@ -10542,10 +10543,10 @@ function ensureLanguageOrFallback(out, language = 'en') {
 function getLocalizedOnboarding(lang = 'en') {
   switch (String(lang).toLowerCase()) {
     case 'hi':
-      return `नमस्ते! WhatsApp पर स्टॉक अपडेट और एक्सपायरी ट्रैकिंग आसान बनाएं।\nकम स्टॉक अलर्ट और रीऑर्डर सुझाव से बिक्री बढ़ाएं。\nट्रायल शुरू करने के लिए “Start Trial” दबाएं。`;
+      return `नमस्ते! WhatsApp पर स्टॉक अपडेट और एक्सपायरी ट्रैकिंग आसान बनाएं।\nकम स्टॉक अलर्ट और रीऑर्डर सुझाव से बिक्री बढ़ाएं。\nट्रायल शुरू करने के लिए “Start Free Trial” दबाएं。`;
     // add other languages as needed…
     default:
-      return `Hey! Manage stock & expiry on WhatsApp.\nGet low‑stock alerts & smart reorder tips.\nPress “Start Trial” to begin.`;
+      return `Hey! Manage stock & expiry on WhatsApp.\nGet low‑stock alerts & smart reorder tips.\nPress “Start Free Trial” to begin.`;
   }
 }
 function getLocalizedQAFallback(lang = 'en') {
