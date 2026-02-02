@@ -85,13 +85,126 @@ async function _isUserActivated(shopId) {
   } catch { return false; }
 }
 
-function _detectShopType(text='') {
-  const t = String(text ?? '').toLowerCase();
-  if (/\b(medical|pharma|chemist|दवा|मेडिकल)\b/i.test(t)) return 'medical';
-  if (/\b(kirana|grocery|general store|किराना)\b/i.test(t)) return 'kirana';
-  if (/\b(cosmetics|beauty|cosmetic|कॉस्मेटिक)\b/i.test(t)) return 'cosmetics';
-  if (/\b(garments|कपड़े|कपडे|clothes|apparel|boutique)\b/i.test(t)) return 'garments';
-  if (/\b(mobile|phone|accessories|charger|earphone)\b/i.test(t)) return 'mobile';
+function _detectShopType(text='') {    
+const t = String(text ?? '').toLowerCase().trim();
+  if (!t) return null;
+
+  // Normalize some punctuation to spaces so “mobile,shop” still matches
+  const s = t.replace(/[,_|/]+/g, ' ').replace(/\s+/g, ' ');
+
+  // ---- Multilingual patterns per shop type ----
+  // Include: English + Hinglish + native scripts (hi/mr, bn, gu, ta, te, kn)
+  // Add/extend tokens as you discover user phrasing.
+  const SHOP_TYPE_PATTERNS = {
+    // 1) Kirana / Grocery / General Store
+    kirana: [
+      // EN / Hinglish
+      /\b(kirana|grocery|general\s*store|ration\s*shop|provision\s*store|mini\s*mart|super\s*market|departmental\s*store)\b/i,
+      /\b(kirana\s*shop|grocery\s*shop|general\s*store|ration\s*dukaan|kirana\s*dukaan)\b/i,
+      // Hindi/Marathi (Devanagari)
+      /किराना|परचून|जनरल\s*स्टोर|राशन\s*दुकान|किराणा|दैनिक\s*उपयोग/i,
+      /किराणा\s*दुकान|परचून\s*दुकान/i,
+      // Bengali
+      /মুদিখানা|কিরানা|জেনারেল\s*স্টোর|রেশন\s*দোকান/i,
+      // Gujarati
+      /કિરાણા|કિરાણા\s*દુકાન|રાશન\s*દુકાન|જનરલ\s*સ્ટોર|કરિયાણું/i,
+      // Tamil
+      /மளிகை|கிரோசரி|ஜெனரல்\s*ஸ்டோர்|ரேஷன்\s*கடை/i,
+      // Telugu
+      /కిరాణా|గ్రోసరీ|జెనరల్\s*స్టోర్|రేషన్\s*దుకాణం/i,
+      // Kannada
+      /ಕಿರಾಣಿ|ಗ್ರಾಸರಿ|ಜನರಲ್\s*ಸ್ಟೋರ್|ರೇಷನ್\s*ಅಂಗಡಿ/i,
+    ],
+
+    // 2) Medical / Pharmacy
+    medical: [
+      /\b(medical|pharma|pharmacy|chemist|drug\s*store|medicine\s*shop|clinic)\b/i,
+      /\b(medical\s*shop|pharmacy\s*shop|chemist\s*shop|dawai\s*dukaan|dava\s*shop)\b/i,
+      /मेडिकल|दवा|दवाई|फार्मेसी|केमिस्ट|मेडिसिन|औषधि/i,
+      /মেডিকেল|ফার্মেসি|কেমিস্ট|ওষুধ\s*দোকান|ড্রাগ\s*স্টোর/i,
+      /મેડિકલ|ફાર્મસી|કેમિસ્ટ|દવા\s*દુકાન|મેડિસિન/i,
+      /மருந்தகம்|மெடிக்கல்|ஃபார்மசி|மருந்து\s*கடை/i,
+      /మెడికల్|ఫార్మసీ|కెమిస్ట్|మందుల\s*దుకాణం/i,
+      /ಮೆಡಿಕಲ್|ಫಾರ್ಮಸಿ|ಕೇಮಿಸ್ಟ್|ಔಷಧಿ\s*ಅಂಗಡಿ/i,
+    ],
+
+    // 3) Mobile / Electronics accessories
+    mobile: [
+      /\b(mobile|phone|smart\s*phone|cell\s*phone|accessories|accessory|charger|chargers|earphone|earphones|headphone|headphones|tempered\s*glass|screen\s*guard|cover|case)\b/i,
+      /\b(mobile\s*shop|mobile\s*store|phone\s*shop|phone\s*store|accessories\s*shop)\b/i,
+      /मोबाइल|फ़ोन|फोन|मोबाइल\s*दुकान|मोबाइल\s*शॉप|फोन\s*दुकान|एक्सेसरी|कवर|चार्जर|ईयरफोन|टेम्पर्ड\s*ग्लास/i,
+      /মোবাইল|ফোন|মোবাইল\s*দোকান|মোবাইল\s*শপ|চার্জার|কভার|ইয়ারফোন|টেম্পারড\s*গ্লাস/i,
+      /મોબાઇલ|ફોન|મોબાઇલ\s*દુકાન|મોબાઇલ\s*શોપ|ચાર્જર|કવર|ઈયરફોન|ટેમ્પર્ડ\s*ગ્લાસ/i,
+      /மொபைல்|போன்|மொபைல்\s*கடை|சார்ஜர்|கவர்|இயர்போன்|டெம்பர்டு\s*கிளாஸ்/i,
+      /మొబైల్|ఫోన్|మొబైల్\s*షాప్|చార్జర్|కవర్|ఇయర్‌ఫోన్|టెంపర్డ్\s*గ్లాస్/i,
+      /ಮೊಬೈಲ್|ಫೋನ್|ಮೊಬೈಲ್\s*ಅಂಗಡಿ|ಚಾರ್ಜರ್|ಕವರ್|ಇಯರ್‌ಫೋನ್|ಟೆಂಪರ್ಡ್\s*ಗ್ಲಾಸ್/i,
+    ],
+
+    // 4) Garments / Boutique / Tailoring
+    garments: [
+      /\b(garment|garments|clothes|apparel|boutique|tailor|tailoring|fashion|ready\s*made|readymade)\b/i,
+      /\b(shirt|t-?shirt|jeans|kurta|saree|salwar|dress|hoodie|sweater|kids\s*wear|mens\s*wear|ladies\s*wear)\b/i,
+      /कपड़े|रेडीमेड|गारमेंट्स|बुटीक|दर्जी|टेलर|फैशन|साड़ी|कुर्ता|जीन्स|शर्ट/i,
+      /কাপড়|গার্মেন্টস|বুটিক|দর্জি|শাড়ি|কুর্তা|জিন্স|শার্ট/i,
+      /કપડા|ગાર્મેન્ટ્સ|બુટિક|દરજી|સાડી|કુરતા|જીન્સ|શર્ટ/i,
+      /ஆடை|கார்மென்ட்ஸ்|புட்டிக்|தையல்|சேலை|சட்டை|ஜீன்ஸ்/i,
+      /బట్టలు|గార్మెంట్స్|బుటిక్|దర్జీ|శారీ|షర్ట్|జీన్స్/i,
+      /ಬಟ್ಟೆ|ಗಾರ್ಮೆಂಟ್ಸ್|ಬುಟಿಕ್|ಟೈಲರ್|ಸೀರೆ|ಶರ್ಟ್|ಜೀನ್ಸ್/i,
+    ],
+
+    // 5) Cosmetics / Beauty / Salon products
+    cosmetics: [
+      /\b(cosmetic|cosmetics|beauty|makeup|skincare|salon|parlour|perfume|deodorant)\b/i,
+      /कॉस्मेटिक|ब्यूटी|मेकअप|स्किनकेयर|परफ्यूम|डिओ|सैलून|पार्लर/i,
+      /কসমেটিক|বিউটি|মেকআপ|স্কিনকেয়ার|পারফিউম|সেলুন|পার্লার/i,
+      /કોસ્મેટિક|બ્યૂટી|મેકઅપ|સ્કિનકેર|પરફ્યુમ|સેલૂન|પાર્લર/i,
+      /காஸ்மெட்டிக்|பியூட்டி|மேக்கப்|ஸ்கின் கேர்|பர்ஃப்யூம்|சலூன்/i,
+      /కాస్మెటిక్స్|బ్యూటీ|మేకప్|స్కిన్‌కేర్|పర్ఫ్యూమ్|సెలూన్/i,
+      /ಕಾಸ್ಮೆಟಿಕ್ಸ್|ಬ್ಯೂಟಿ|ಮೇಕಪ್|ಸ್ಕಿನ್‌ಕೇರ್|ಪರ್ಫ್ಯೂಮ್|ಸಲೂನ್/i,
+    ],
+
+    // 6) Stationery / Book shop
+    stationery: [
+      /\b(stationery|book\s*shop|bookstore|books|notebook|pen|pencil|xerox|photocopy|print)\b/i,
+      /स्टेशनरी|किताब|बुक\s*शॉप|कॉपी|पेन|पेंसिल|ज़ेरॉक्स|फोटो\s*कॉपी|प्रिंट/i,
+      /স্টেশনারি|বই\s*দোকান|পেন|পেন্সিল|জেরক্স|ফটো\s*কপি|প্রিন্ট/i,
+      /સ્ટેશનરી|પુસ્તક\s*દુકાન|પેન|પેન્સિલ|ઝેરોક્ષ|ફોટો\s*કોપી|પ્રિન્ટ/i,
+      /ஸ்டேஷனரி|புத்தகம்\s*கடை|பேன்|பென்சில்|ஜெராக்ஸ்|பிரிண்ட்/i,
+      /స్టేషనరీ|పుస్తక\s*దుకాణం|జెరాక్స్|ప్రింట్/i,
+      /ಸ್ಟೇಷನರಿ|ಪುಸ್ತಕ\s*ಅಂಗಡಿ|ಜೆರಾಕ್ಸ್|ಪ್ರಿಂಟ್/i,
+    ],
+
+    // 7) Hardware / Paint / Electrical
+    hardware: [
+      /\b(hardware|tools|tool\s*shop|paint|paints|sanitary|plumbing|electricals|switch|wire|cable|bulb)\b/i,
+      /हार्डवेयर|टूल्स|पेंट|सेनेटरी|प्लंबिंग|इलेक्ट्रिकल|स्विच|वायर|केबल|बल्ब/i,
+      /হার্ডওয়্যার|টুলস|পেইন্ট|স্যানিটারি|প্লাম্বিং|ইলেকট্রিক|ওয়্যার|কেবল|বাল্ব/i,
+      /હાર্ডવેર|ટૂલ્સ|પેઇન્ટ|સેનેટરી|પ્લમ્બિંગ|ઇલેક્ટ્રિકલ|વાયર|કેબલ|બલ્બ/i,
+      /ஹார்ட்வேர்|கருவிகள்|பெயிண்ட்|சானிட்டரி|ப்ளம்பிங்|எலக்ட்ரிக்கல்|வைர்|கேபிள்|பல்பு/i,
+      /హార్డ్‌వేర్|టూల్స్|పెయింట్|సానిటరీ|ప్లంబింగ్|ఎలక్ట్రికల్|వైర్|కేబుల్|బల్బ్/i,
+      /ಹಾರ್ಡ್‌ವೇರ್|ಟೂಲ್ಸ್|ಪೇಂಟ್|ಸ್ಯಾನಿಟರಿ|ಪ್ಲಂಬಿಂಗ್|ಎಲೆಕ್ಟ್ರಿಕಲ್|ವೈರ್|ಕೇಬಲ್|ಬಲ್ಬ್/i,
+    ],
+
+    // 8) Bakery / Sweet shop
+    bakery: [
+      /\b(bakery|bake\s*shop|cake|pastry|bread|sweet\s*shop|mithai)\b/i,
+      /बेकरी|केक|पेस्ट्री|ब्रेड|मिठाई|हलवाई/i,
+      /বেকারি|কেক|পেস্ট্রি|রুটি|মিষ্টি|মিঠাই/i,
+      /બેકરી|કેક|પેસ્ટ્રી|બ્રેડ|મીઠાઈ/i,
+      /பேக்கரி|கேக்|பேஸ்ட்ரி|பிரெட்|இனிப்பு/i,
+      /బేకరీ|కేక్|పేస్ట్రీ|బ్రెడ్|మిఠాయి/i,
+      /ಬೇಕರಿ|ಕೇಕ್|ಪೇಸ್ಟ್ರಿ|ಬ್ರೆಡ್|ಮಿಠಾಯಿ/i,
+    ],
+  };
+
+  // Evaluate patterns in a stable priority order
+  const ORDER = ['medical','kirana','mobile','garments','cosmetics','stationery','hardware','bakery'];
+  for (const k of ORDER) {
+    const arr = SHOP_TYPE_PATTERNS[k] || [];
+    for (const rx of arr) {
+      if (rx.test(s)) return k;
+    }
+  }
   return null;
 }
 
@@ -257,6 +370,28 @@ async function sendOnboardVideoAsync(From, langExact='en') {
   }
 }
 
+function _benefitsForShopType(type, langExact='en') {
+  const L = String(langExact ?? 'en').toLowerCase();
+  const startLbl = _startTrialLabel(langExact);
+  const t = String(type ?? '').toLowerCase();
+  const isHi = L.startsWith('hi');
+  const isHiLatn = L === 'hi-latn';
+
+  if (t === 'mobile') {
+    if (isHiLatn) {
+      return `📱 Mobile shop: cover/charger/earphones stock track + low-stock alerts + sales summary.\nTry: purchased Charger 10 pcs @ ₹120\n“${startLbl}” dabao (free ${TRIAL_DAYS} days).`;
+    }
+    if (isHi) {
+      return `📱 मोबाइल शॉप: कवर/चार्जर/ईयरफोन स्टॉक ट्रैक + कम-स्टॉक अलर्ट + बिक्री सारांश।\nTry: purchased Charger 10 pcs @ ₹120\n“${startLbl}” दबाएँ (free ${TRIAL_DAYS} days).`;
+    }
+    return `📱 Mobile shops: track covers/chargers/earphones stock + low-stock alerts + sales summary.\nTry: purchased Charger 10 pcs @ ₹120\nTap “${startLbl}” (free ${TRIAL_DAYS} days).`;
+  }
+
+  // fallback: use generic micro-demo
+  const pack = _langPack(langExact);
+  return pack.microDemo(TRIAL_DAYS, startLbl);
+}
+
 function _renderPreActSalesReply({ shopId, langExact, userText }) {
   const pack = _langPack(langExact);
   const startLbl = _startTrialLabel(langExact);
@@ -274,7 +409,11 @@ function _renderPreActSalesReply({ shopId, langExact, userText }) {
 
   const st = _leadGet(shopId) ?? _leadSet(shopId, { stage: 'S0', lastLang: langExact });
   const type = _detectShopType(userText);
-
+  // If user already mentioned shop type (e.g., “मेरे मोबाइल फ़ोन की दुकान…”, or “मोबाइल”), reply tailored benefits immediately.
+    if (type) {
+      _leadSet(shopId, { stage: 'S2', shopType: type, lastLang: langExact });
+      return _withStartFreeTrialLabel(_stripUncertainPhrases(_benefitsForShopType(type, langExact)), langExact);
+    }
   if (st.stage === 'S0') {
     _leadSet(shopId, { stage: 'S1', lastLang: langExact });
     return _withStartFreeTrialLabel(_stripUncertainPhrases([
@@ -21286,7 +21425,74 @@ function logAiFirstDecision(reqId, stage, details = {}) {
     (req.body && (req.body.From || req.body.from)) ||
     (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
   const shopId = fromToShopId(From);
-    
+  
+  // =====================================================================
+  // ULTRA-EARLY HANDLING (fast exits)
+  // 1) Meta Ads language-first choice (“हिन्दी”, “বাংলা”, “ગુજરાતી”, “मराठी”, “English”)
+  // 2) Shop-type short reply (e.g., “मोबाइल”) when lead stage expects shop type
+  // =====================================================================
+
+  // 1) Meta Ads language selection: reply immediately and send welcome async
+  try {
+    if (typeof _isLanguageChoice === 'function' && _isLanguageChoice(Body)) {
+      const langChoice = ensureLangExact(canonicalizeLang(String(Body).trim()));
+
+      // Respond immediately to Twilio (fast webhook)
+      try {
+        const twiml = new twilio.twiml.MessagingResponse();
+        twiml.message('');
+        if (!res.headersSent) res.type('text/xml');
+        resp.safeSend(200, twiml.toString());
+      } catch (_) {
+        resp.safeSend(200, '');
+      }
+
+      // Async welcome send (does not block webhook)
+      setImmediate(() =>
+        sendWelcomeFlowLocalized(From, langChoice, requestId)
+          .catch(e => console.warn('[welcome] async failed', e?.message))
+      );
+      return;
+    }
+  } catch (_) {}
+
+  // 2) If playbook asked shop type (lead stage S1) and user replies “मोबाइल” etc.
+  try {
+    const stLead = _leadGet(shopId);
+    if (stLead?.stage === 'S1') {
+      const type = _detectShopType(Body);
+      if (type) {
+        const langGuess = ensureLangExact(
+          await detectLanguageWithFallback(Body, From, `${requestId}::lead-lang`).catch(() => 'en')
+        );
+
+        // Respond immediately to Twilio
+        try {
+          const twiml = new twilio.twiml.MessagingResponse();
+          twiml.message('');
+          if (!res.headersSent) res.type('text/xml');
+          resp.safeSend(200, twiml.toString());
+        } catch (_) {
+          resp.safeSend(200, '');
+        }
+
+        // Async send tailored benefits (prevents "मोबाइल" from being normalized to "products")
+        setImmediate(async () => {
+          try {
+            const msg = _withStartFreeTrialLabel(
+              _stripUncertainPhrases(_benefitsForShopType(type, langGuess)),
+              langGuess
+            );
+            await sendMessageQueued(From, finalizeForSend(msg, langGuess));
+          } catch (e) {
+            console.warn('[lead] shopType async failed', e?.message);
+          }
+        });
+        return;
+      }
+    }
+  } catch (_) {} 
+   
   // [PATCH:AUTH-EARLY-START] Start auth immediately (parallel with ACK / parsing).
     // Safe: still enforce authCheck BEFORE any DB commit paths.
     // [PATCH] Always define early-auth promise (prevents ReferenceError on scope/merge issues)
@@ -21979,13 +22185,23 @@ async function handleRequest(req, res, response, requestId, requestStart) {
             // Answer first via sales‑QA (qa‑sales mode)
             try {
               console.log('[route] new_user + question → sales-qa');
+              try {
+              const twiml = new twilio.twiml.MessagingResponse();
+              twiml.message('');
+              if (!res.headersSent) res.type('text/xml');
+              res.send(twiml.toString());
+            } catch (_) {
+              res.status(200).end();
+            }
+            setImmediate(async () => {
+              try {
               const ans = await composeAISalesAnswer(shopId, text, detectedLanguage);
               const msg = await t(ans, detectedLanguage, `${requestId}::sales-qa-first`);
               await sendMessageQueued(From, msg);
-              handledRequests.add(requestId);
-              const twiml = new twilio.twiml.MessagingResponse();
-              twiml.message('');
-              res.type('text/xml').send(twiml.toString());
+            } catch (e2) {
+              console.warn('[route] async sales-qa send failed:', e2?.message);
+            }
+          });
               return;
             } catch (e) {
               console.warn('[route] sales-qa failed, falling back to welcome:', e?.message);
@@ -21995,15 +22211,19 @@ async function handleRequest(req, res, response, requestId, requestStart) {
           // Show concise onboarding only for greeting/language taps
           if (isGreetingOrLang) {
             console.log('[route] new_user + greeting/lang → onboarding');
-            await sendWelcomeFlowLocalized(From, detectedLanguage, requestId);
             try { handledRequests.add(requestId); } catch (_) {}
             try {
               const twiml = new twilio.twiml.MessagingResponse();
               twiml.message('');
-              res.type('text/xml').send(twiml.toString());
+              if (!res.headersSent) res.type('text/xml');
+              res.send(twiml.toString());
             } catch (_) {
               res.status(200).end();
             }
+            setImmediate(() => {
+            sendWelcomeFlowLocalized(From, detectedLanguage, requestId)
+              .catch(e2 => console.warn('[welcome] async failed', e2?.message));
+          });
             return;
           }
           // Neither a question nor greeting/lang: let downstream normal routers handle it.
