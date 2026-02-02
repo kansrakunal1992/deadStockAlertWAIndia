@@ -24,6 +24,261 @@ const fs = require('fs');
 
 const crypto = require('crypto');
 const path = require('path');
+
+// =============================================================================
+// [PATCH: META-AD-LANG-FIRST + FAST-ONBOARDING]
+// Context: Meta click-to-WhatsApp Ads sends exact language tokens first:
+//   "English", "हिन्दी", "বাংলা", "ગુજરાતી", "मराठी"
+// Goal: first onboarding message within seconds, no LLM/translate blocking,
+//       no spam/duplicates, QR/video async.
+// =============================================================================
+
+// Dedupe fast welcome bursts (Hi/Meta retries/parallel webhooks)
+const FAST_WELCOME_DEDUP_TTL_MS = Number(process.env.FAST_WELCOME_DEDUP_TTL_MS ?? 90_000);
+const __fastWelcomeLastSent = new Map();  // shopId -> ts
+const __fastWelcomeInFlight = new Set();  // shopId
+
+// Video behavior:
+// - AUTO_SEND_ONBOARD_VIDEO=1  => auto-send benefits video async after welcome
+// - AUTO_SEND_ONBOARD_VIDEO=0  => do NOT auto-send; optionally mention "Reply: video"
+const AUTO_SEND_ONBOARD_VIDEO = String(process.env.AUTO_SEND_ONBOARD_VIDEO ?? '0') === '1';
+const AUTO_SEND_ONBOARD_VIDEO_DELAY_MS = Number(process.env.AUTO_SEND_ONBOARD_VIDEO_DELAY_MS ?? 1200);
+const ASK_VIDEO_IN_WELCOME = String(process.env.ASK_VIDEO_IN_WELCOME ?? '1') === '1';
+
+// Lead playbook TTL (pre-activation)
+const LEAD_STAGE_TTL_MS = Number(process.env.LEAD_STAGE_TTL_MS ?? 15 * 60_000);
+const __leadStage = new Map(); // shopId -> { stage, ts, shopType, lastLang }
+
+function _leadGet(shopId) {
+  const st = __leadStage.get(String(shopId));
+  if (!st) return null;
+  if (Date.now() - (st.ts ?? 0) > LEAD_STAGE_TTL_MS) { __leadStage.delete(String(shopId)); return null; }
+  return st;
+}
+function _leadSet(shopId, patch) {
+  const key = String(shopId);
+  const prev = _leadGet(key) ?? { stage: 'S0', ts: Date.now(), shopType: null, lastLang: 'en' };
+  const next = { ...prev, ...patch, ts: Date.now() };
+  __leadStage.set(key, next);
+  return next;
+}
+
+function _fastWelcomeAllowed(shopId) {
+  const key = String(shopId);
+  const now = Date.now();
+  const prev = __fastWelcomeLastSent.get(key);
+  if (prev && (now - prev) < FAST_WELCOME_DEDUP_TTL_MS) return false;
+  __fastWelcomeLastSent.set(key, now);
+  return true;
+}
+
+function _looksLikeVideoRequest(text='') {
+  const t = String(text ?? '').toLowerCase();
+  return /\b(video|demo video|show video|वीडियो|डेमो वीडियो)\b/i.test(t);
+}
+
+async function _isUserActivated(shopId) {
+  try {
+    const pref = await getUserPreference(String(shopId));
+    const plan = String(pref?.plan ?? '').toLowerCase();
+    return (plan === 'trial' || plan === 'paid');
+  } catch { return false; }
+}
+
+function _detectShopType(text='') {
+  const t = String(text ?? '').toLowerCase();
+  if (/\b(medical|pharma|chemist|दवा|मेडिकल)\b/i.test(t)) return 'medical';
+  if (/\b(kirana|grocery|general store|किराना)\b/i.test(t)) return 'kirana';
+  if (/\b(cosmetics|beauty|cosmetic|कॉस्मेटिक)\b/i.test(t)) return 'cosmetics';
+  if (/\b(garments|कपड़े|कपडे|clothes|apparel|boutique)\b/i.test(t)) return 'garments';
+  if (/\b(mobile|phone|accessories|charger|earphone)\b/i.test(t)) return 'mobile';
+  return null;
+}
+
+function _detectObjectionIntent(text='') {
+  const t = String(text ?? '').toLowerCase();
+  if (/\b(what is this|what is it|ye kya|ye,? kiya|kya hai|ये क्या|क्या है)\b/i.test(t)) return 'what';
+  if (/\b(price|cost|charges|pricing|kitna|कितना|कीमत|मूल्य|भाव|लागत)\b/i.test(t)) return 'price';
+  if (/\b(how to|how do i|kaise|कैसे|use|चलाना|चलाते)\b/i.test(t)) return 'how';
+  if (/\b(data|privacy|safe|trust|secure|भरोसा|डेटा|प्राइवसी)\b/i.test(t)) return 'trust';
+  if (/\b(time|busy|later|kal|baad me|फुर्सत|समय)\b/i.test(t)) return 'time';
+  return null;
+}
+
+function _stripUncertainPhrases(out='') {
+  // Hard guard: never output uncertainty/apology in sales-qa
+  return String(out ?? '')
+    .replace(/i['’]?m not sure[^.\n]*[\.!]?/ig, '')
+    .replace(/not sure[^.\n]*[\.!]?/ig, '')
+    .replace(/sorry[^.\n]*[\.!]?/ig, '')
+    .replace(/i don['’]?t know[^.\n]*[\.!]?/ig, '')
+    .trim();
+}
+
+function _startTrialLabel(langExact='en') {
+  try {
+    if (typeof getStaticLabel === 'function') return String(getStaticLabel('startTrialBtn', langExact) || 'Start Trial');
+  } catch {}
+  return 'Start Trial';
+}
+
+function _langPack(langExact='en') {
+  const L = String(langExact ?? 'en').toLowerCase();
+  return LANG_PACK[L] ?? LANG_PACK[L.replace(/-latn$/, '')] ?? LANG_PACK.en;
+}
+
+// Static templates (no translate/LLM). Keep CTA consistent with your button label.
+const LANG_PACK = {
+  en: {
+    welcome: (trialDays, startLbl, includeVideoAsk) =>
+      `👋 Welcome to Saamagrii.AI!\n` +
+      `Track stock + expiry + sales on WhatsApp.\n` +
+      `✅ Low-stock alerts • ✅ Expiry reminders • ✅ Sales summary\n\n` +
+      `Tap “${startLbl}” (free ${trialDays} days).` +
+      (includeVideoAsk ? `\nWant a 20s demo video? Reply: video` : ''),
+    microDemo: (trialDays, startLbl) =>
+      `⚡ Quick demo (10s):\n` +
+      `Send: purchased Milk 10 ltr @ ₹60 exp 30d\n` +
+      `Then: low stock\n\n` +
+      `Tap “${startLbl}” (free ${trialDays} days).`,
+    askShopType: `Your shop type? Reply: kirana / medical / cosmetics / garments / mobile`,
+    objection: {
+      what: `Saamagrii.AI helps you manage inventory on WhatsApp—stock, expiry & sales with alerts.`,
+      price: `Trial is free. Tap “Start Trial” to see plan options inside.`,
+      how: `Just message like: sold Parle-G 3 packets @ ₹10\nOr: purchased Milk 10 ltr @ ₹60 exp 30d`,
+      trust: `Your data stays private to your shop. No public sharing.`,
+      time: `Takes <10 seconds/day. Start with 1 product and see summary instantly.`
+    }
+  },
+  hi: {
+    welcome: (trialDays, startLbl, includeVideoAsk) =>
+      `👋 Saamagrii.AI में स्वागत है!\n` +
+      `WhatsApp पर स्टॉक + एक्सपायरी + बिक्री ट्रैक करें।\n` +
+      `✅ कम-स्टॉक अलर्ट • ✅ एक्सपायरी रिमाइंडर • ✅ बिक्री सारांश\n\n` +
+      `“${startLbl}” दबाएँ (${trialDays} दिन फ्री)।` +
+      (includeVideoAsk ? `\n20 सेकंड का डेमो वीडियो? लिखें: video` : ''),
+    microDemo: (trialDays, startLbl) =>
+      `⚡ 10 सेकंड का डेमो:\n` +
+      `भेजें: purchased Milk 10 ltr @ ₹60 exp 30d\n` +
+      `फिर: low stock\n\n` +
+      `सब फीचर्स के लिए “${startLbl}” दबाएँ (${trialDays} दिन फ्री)।`,
+    askShopType: `आपकी दुकान किसकी है? लिखें: kirana / medical / cosmetics / garments / mobile`,
+    objection: {
+      what: `Saamagrii.AI WhatsApp पर स्टॉक, एक्सपायरी और बिक्री मैनेज करता है—अलर्ट के साथ।`,
+      price: `ट्रायल फ्री है। “Start Trial” दबाकर प्लान विकल्प देखें।`,
+      how: `ऐसे लिखें: sold Parle-G 3 packets @ ₹10\nया: purchased Milk 10 ltr @ ₹60 exp 30d`,
+      trust: `डेटा सिर्फ आपकी दुकान के लिए है। पब्लिक शेयर नहीं।`,
+      time: `दिन में <10 सेकंड। 1 प्रोडक्ट से शुरू करें।`
+    }
+  },
+  mr: {
+    welcome: (d, startLbl, v) =>
+      `👋 Saamagrii.AI मध्ये स्वागत!\nWhatsApp वर stock+expiry+sales track करा.\n✅ Low-stock alert • ✅ Expiry reminder • ✅ Sales summary\n\n“${startLbl}” (free ${d} days).` + (v ? `\n20s demo video? Reply: video` : ''),
+    microDemo: (d, startLbl) =>
+      `⚡ 10s demo:\nSend: purchased Milk 10 ltr @ ₹60 exp 30d\nThen: low stock\n\n“${startLbl}” (free ${d} days).`,
+    askShopType: `Shop type? Reply: kirana / medical / cosmetics / garments / mobile`,
+    objection: { what:`Saamagrii.AI WhatsApp वर stock/expiry/sales manage करतो—alerts सह.`, price:`Trial free. “Start Trial” करून plan options बघा.`, how:`Type: sold Parle-G 3 packets @ ₹10\nOr: purchased Milk 10 ltr @ ₹60 exp 30d`, trust:`Data private. Public share नाही.`, time:`<10s/day. 1 product ने start करा.` }
+  },
+  bn: {
+    welcome: (d, startLbl, v) =>
+      `👋 Saamagrii.AI-এ স্বাগতম!\nWhatsApp-এ স্টক+মেয়াদ+বিক্রি ট্র্যাক করুন।\n✅ Low-stock alert • ✅ Expiry reminder • ✅ Sales summary\n\n“${startLbl}” (ফ্রি ${d} দিন)।` + (v ? `\n20s ডেমো ভিডিও? লিখুন: video` : ''),
+    microDemo: (d, startLbl) =>
+      `⚡ 10s ডেমো:\nSend: purchased Milk 10 ltr @ ₹60 exp 30d\nThen: low stock\n\n“${startLbl}” (ফ্রি ${d} দিন)।`,
+    askShopType: `আপনার দোকান টাইপ? লিখুন: kirana / medical / cosmetics / garments / mobile`,
+    objection: { what:`Saamagrii.AI WhatsApp-এ স্টক/মেয়াদ/বিক্রি ম্যানেজ করে—অ্যালার্টসহ।`, price:`Trial free. “Start Trial” ট্যাপ করে plan options দেখুন।`, how:`Type: sold Parle-G 3 packets @ ₹10\nOr: purchased Milk 10 ltr @ ₹60 exp 30d`, trust:`Data private. Public share নয়।`, time:`<10s/day. 1 product দিয়ে শুরু করুন।` }
+  },
+  gu: {
+    welcome: (d, startLbl, v) =>
+      `👋 Saamagrii.AI માં સ્વાગત!\nWhatsApp પર stock+expiry+sales track કરો.\n✅ Low-stock alert • ✅ Expiry reminder • ✅ Sales summary\n\n“${startLbl}” (free ${d} days).` + (v ? `\n20s demo video? Reply: video` : ''),
+    microDemo: (d, startLbl) =>
+      `⚡ 10s demo:\nSend: purchased Milk 10 ltr @ ₹60 exp 30d\nThen: low stock\n\n“${startLbl}” (free ${d} days).`,
+    askShopType: `Shop type? Reply: kirana / medical / cosmetics / garments / mobile`,
+    objection: { what:`Saamagrii.AI WhatsApp પર stock/expiry/sales manage કરે છે—alerts સાથે.`, price:`Trial free. “Start Trial” કરીને plan options જુઓ.`, how:`Type: sold Parle-G 3 packets @ ₹10\nOr: purchased Milk 10 ltr @ ₹60 exp 30d`, trust:`Data private. Public share નથી.`, time:`<10s/day. 1 product થી start કરો.` }
+  }
+};
+
+// Async helper: send QR template buttons without blocking first message.
+async function sendOnboardQrAsync(From, langExact='en') {
+  const toNumber = String(shopIdFrom(From)).replace('whatsapp:', '');
+  const ONBOARDING_QR_SID = String(process.env.ONBOARDING_QR_SID || '').trim();
+  let sent = false;
+  try {
+    if (ONBOARDING_QR_SID) {
+      const resp = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: ONBOARDING_QR_SID });
+      console.log('[onboard-qr] env ContentSid send OK', { sid: resp?.sid, to: toNumber, contentSid: ONBOARDING_QR_SID });
+      sent = true;
+    }
+  } catch (e) {
+    console.warn('[onboard-qr] env ContentSid send FAILED', { status: e?.response?.status, data: e?.response?.data, sid: ONBOARDING_QR_SID, to: toNumber });
+  }
+  if (!sent) {
+    try {
+      await ensureLangTemplates(langExact);
+      const sids = getLangSids(langExact);
+      if (sids?.onboardingQrSid) {
+        const resp2 = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.onboardingQrSid });
+        console.log('[onboard-qr] per-language send OK', { sid: resp2?.sid, to: toNumber, contentSid: sids.onboardingQrSid });
+        sent = true;
+      } else {
+        console.warn('[onboard-qr] missing per-language onboardingQrSid', { lang: langExact });
+      }
+    } catch (e) {
+      console.warn('[onboard-qr] per-language send FAILED', { status: e?.response?.status, data: e?.response?.data, lang: langExact });
+    }
+  }
+  return sent;
+}
+
+async function sendOnboardVideoAsync(From, langExact='en') {
+  try {
+    // existing function in file: sendOnboardingBenefitsVideo(From, lang)
+    await sendOnboardingBenefitsVideo(From, langExact);
+    return true;
+  } catch (e) {
+    console.warn('[onboard-video] async send failed', e?.message);
+    return false;
+  }
+}
+
+function _renderPreActSalesReply({ shopId, langExact, userText }) {
+  const pack = _langPack(langExact);
+  const startLbl = _startTrialLabel(langExact);
+
+  const intent = _detectObjectionIntent(userText);
+  if (intent) {
+    return _stripUncertainPhrases([
+      pack.objection?.[intent] ?? pack.welcome(TRIAL_DAYS, startLbl, ASK_VIDEO_IN_WELCOME),
+      '',
+      pack.microDemo(TRIAL_DAYS, startLbl),
+      '',
+      pack.askShopType
+    ].join('\n'));
+  }
+
+  const st = _leadGet(shopId) ?? _leadSet(shopId, { stage: 'S0', lastLang: langExact });
+  const type = _detectShopType(userText);
+
+  if (st.stage === 'S0') {
+    _leadSet(shopId, { stage: 'S1', lastLang: langExact });
+    return _stripUncertainPhrases([
+      pack.welcome(TRIAL_DAYS, startLbl, ASK_VIDEO_IN_WELCOME),
+      pack.askShopType
+    ].join('\n'));
+  }
+
+  if (st.stage === 'S1') {
+    if (type) _leadSet(shopId, { stage: 'S2', shopType: type, lastLang: langExact });
+    return _stripUncertainPhrases([
+      pack.microDemo(TRIAL_DAYS, startLbl),
+      '',
+      pack.askShopType
+    ].join('\n'));
+  }
+
+  // S2+
+  return _stripUncertainPhrases(pack.microDemo(TRIAL_DAYS, startLbl));
+}
+
 const { execSync } = require('child_process');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
@@ -260,7 +515,13 @@ function canonicalizeLang(code) {
   const s = String(code ?? 'en').trim().toLowerCase();
   const map = {        
     // English
-    'english': 'en',
+    'english': 'en',        
+    // Meta Ads exact script tokens
+    'हिन्दी': 'hi',
+    'हिंदी': 'hi',
+    'বাংলা': 'bn',
+    'ગુજરાતી': 'gu',
+    'मराठी': 'mr',
     // Hindi / Hinglish
     'hindi': 'hi',
     'hinglish': 'hi-latn',
@@ -6007,8 +6268,41 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
 {
   const toNumber = From.replace('whatsapp:', '');   
   // Mark this request as handled (suppresses parse-error apologies later in this cycle)
-  try { if (requestId) handledRequests.add(requestId); } catch {}
-  
+  try { if (requestId) handledRequests.add(requestId); } catch {}  
+
+  // ===========================================================================
+  // [FAST WELCOME PATH] for Meta Ads language-first onboarding
+  // Send first message immediately, then QR/video async.
+  // ===========================================================================
+  const langExact = ensureLangExact(canonicalizeLang(detectedLanguage ?? 'en'));
+  const startLbl = _startTrialLabel(langExact);
+
+  // In-flight guard prevents duplicate welcome from parallel webhook calls
+  if (__fastWelcomeInFlight.has(toNumber)) return;
+  __fastWelcomeInFlight.add(toNumber);
+  try {
+    // Only fast-path non-activated users
+    const activated = await _isUserActivated(toNumber).catch(() => false);
+    if (!activated) {
+      if (_fastWelcomeAllowed(toNumber)) {
+        const pack = _langPack(langExact);
+        const welcomeText = pack.welcome(TRIAL_DAYS, startLbl, ASK_VIDEO_IN_WELCOME);
+        await sendMessageQueued(From, finalizeForSend(welcomeText, langExact));
+      }
+
+      // Send QR buttons async (so it never delays first message)
+      setTimeout(() => { sendOnboardQrAsync(From, langExact).catch(() => {}); }, 650);
+
+      // Video: either auto-send async or send on demand when user types "video"
+      if (AUTO_SEND_ONBOARD_VIDEO) {
+        setTimeout(() => { sendOnboardVideoAsync(From, langExact).catch(() => {}); }, AUTO_SEND_ONBOARD_VIDEO_DELAY_MS);
+      }
+      return; // important: skip legacy slow onboarding path
+    }
+  } finally {
+    __fastWelcomeInFlight.delete(toNumber);
+  }
+
   // 2) Plan gating: only show menus for activated users (trial/paid).
      //    Unactivated users receive a concise CTA to start the trial/paid plan.
      let plan = 'demo';
@@ -8699,8 +8993,9 @@ function _isLanguageChoice(text) {
     if (!t) return false;
     // use existing token matcher if available
     if (typeof _matchLanguageToken === 'function') return !!_matchLanguageToken(t);
-    // fallback: common words
-    return (/^\s*(english|hindi|marathi|gujarati|bengali|tamil|telugu|kannada)\s*$/i).test(t);
+    // fallback: common words        
+    // Meta Ads exact tokens can be script-native (e.g., "हिन्दी", "বাংলা", "ગુજરાતી", "मराठी")
+    return (/^\\s*(english|hindi|marathi|gujarati|bengali|bangla|tamil|telugu|kannada|हिंदी|हिन्दी|বাংলা|ગુજરાતી|मराठी)\\s*$/i).test(t);
   } catch { return false; }
 }
 
@@ -10640,7 +10935,33 @@ const SALES_QA_ROUTE_PREFIX = 'ROUTE:'; // allows AI to hand off canonical comma
 
 // Fast-pricing detector (English + Hindi)
   const q = String(question ?? '').trim();
-  const isPricing = /\b(price|cost|charges?)\b/i.test(q) || /क़ीमत|कीमत|मूल्य|भाव|लागत/i.test(q);
+  const isPricing = /\b(price|cost|charges?)\b/i.test(q) || /क़ीमत|कीमत|मूल्य|भाव|लागत/i.test(q);  
+
+  // ===========================================================================
+  // [SALES AGENT MODE] for pre-activation users:
+  // - Objection handlers + playbook + micro-demo (no LLM)
+  // - Keep language flip based on last message (Meta + user's typed language)
+  // ===========================================================================
+  const langExact = ensureLangExact(canonicalizeLang(language ?? 'en'));
+  const activated = await _isUserActivated(shopId).catch(() => false);
+
+  // If user asks for demo video, send async + respond quickly
+  if (_looksLikeVideoRequest(q)) {
+    setTimeout(() => { sendOnboardVideoAsync(`whatsapp:${shopId}`, langExact).catch(() => {}); }, 120);
+    const pack = _langPack(langExact);
+    const startLbl = _startTrialLabel(langExact);
+    return _stripUncertainPhrases([
+      pack.welcome(TRIAL_DAYS, startLbl, false),
+      '',
+      pack.microDemo(TRIAL_DAYS, startLbl)
+    ].join('\n'));
+  }
+
+  // For non-activated leads, run deterministic sales playbook first.
+  if (!activated && !isPricing) {
+    return _renderPreActSalesReply({ shopId, langExact, userText: q });
+  }
+
   if (isPricing) {
     // Pick flavor based on activation + whether question seems inventory-related
     let activated = false;
@@ -10877,7 +11198,37 @@ const lang = canonicalizeLang(language ?? 'en');
       console.log('AI_AGENT_PRE_CALL', {
         kind: 'sales-qa', language: langExactAgent, topic: topicForced, pricingFlavor: flavor, promptHash
       });
-      
+          
+    // =========================================================================
+          // [CONVERSION PROMPT] (LLM fallback only):
+          // - Confident, no apologies, no uncertainty
+          // - 1-line value, 2-3 benefits, 1 micro-demo command, end with Start Trial CTA
+          // =========================================================================
+          const startLbl = _startTrialLabel(langExactAgent);
+          const targetScriptNote = (langExactAgent === 'hi')
+            ? 'Reply in Hindi (Devanagari).'
+            : (langExactAgent === 'mr')
+              ? 'Reply in Marathi (Devanagari).'
+              : (langExactAgent === 'bn')
+                ? 'Reply in Bengali.'
+                : (langExactAgent === 'gu')
+                  ? 'Reply in Gujarati.'
+                  : 'Reply in the user’s language.';
+    
+          const SALES_AGENT_RULES =
+            `You are Saamagrii.AI’s TOP SALES AGENT on WhatsApp.\n` +
+            `Goal: convert user to tap “${startLbl}”.\n\n` +
+            `Rules (mandatory):\n` +
+            `1) Never apologize. Never say you are unsure.\n` +
+            `2) Under 450 characters.\n` +
+            `3) ${targetScriptNote}\n` +
+            `4) Structure:\n` +
+            `   - One line: what Saamagrii.AI does\n` +
+            `   - 2-3 benefits for small shops\n` +
+            `   - One micro-demo command user can copy\n` +
+            `   - End: Tap “${startLbl}” (free ${TRIAL_DAYS} days)\n` +
+            `5) Ask max ONE question only if needed (shop type).\n`;
+    
     // [UNIQ:QA-PROMPT-PRICING-004] Topic-aware system prompt
       // Strengthen pricing so the model includes actual price tokens.
       // -------------------------------------------------------------------
@@ -11000,8 +11351,11 @@ const lang = canonicalizeLang(language ?? 'en');
               out = out + line;
             }
         } catch (_) { /* no-op */ }    
-    // Final single-script guard for any residual mixed content          
-      let finalOut = enforceSingleScriptSafe(out, lang);
+    // Final single-script guard for any residual mixed content                    
+    // Hard post-processor: remove harmful uncertainty/apology phrases
+          out = _stripUncertainPhrases(out);
+          let finalOut = enforceSingleScriptSafe(out, lang);
+    
       // Final brand guard: ensure Saamagrii.AI literal appears unchanged
       if (!/Saamagrii\.AI/.test(finalOut)) {
         finalOut = `Saamagrii.AI — ${finalOut}`;
@@ -11010,7 +11364,13 @@ const lang = canonicalizeLang(language ?? 'en');
       return finalOut;
   } catch {
     // --- NEW: contextual fallbacks (Hinglish-aware) ---
-        console.warn('AI_AGENT_FALLBACK_USED', { kind: 'sales-qa', topic, pricingFlavor });
+        console.warn('AI_AGENT_FALLBACK_USED', { kind: 'sales-qa', topic, pricingFlavor });        
+    // If LLM fails, fall back to deterministic pre-activation playbook if not activated
+        try {
+          const activated2 = await _isUserActivated(shopId).catch(() => false);
+          const langExact2 = ensureLangExact(canonicalizeLang(language ?? 'en'));
+          if (!activated2) return _renderPreActSalesReply({ shopId, langExact: langExact2, userText: q });
+        } catch (_) {}
         if (lang === 'hi-latn') {
           if (topic === 'pricing') {
             if (pricingFlavor === 'inventory_pricing') {
