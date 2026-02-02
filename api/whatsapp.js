@@ -116,10 +116,27 @@ function _stripUncertainPhrases(out='') {
 }
 
 function _startTrialLabel(langExact='en') {
-  try {
-    if (typeof getStaticLabel === 'function') return String(getStaticLabel('startTrialBtn', langExact) || 'Start Trial');
-  } catch {}
-  return 'Start Trial';
+  // Primary CTA: localized "🆓 Start Free Trial" from STATIC_LABELS.startTrialBtn
+  try {         
+    const lbl = (typeof getStaticLabel === 'function')
+          ? String(getStaticLabel('startTrialBtn', langExact) || '')
+          : '';
+        if (lbl && lbl.trim()) return lbl.trim();
+  } catch {}    
+  return '🆓 Start Free Trial';
+  }
+  
+  // Ensure any hard-coded Start Trial/Start Free Trial mention matches the button label
+  function _withStartFreeTrialLabel(msg, langExact='en') {
+    const lbl = _startTrialLabel(langExact);
+    const s = String(msg ?? '');
+    return s
+      .replace(/“Start Trial”/g, `“${lbl}”`)
+      .replace(/“Start Free Trial”/g, `“${lbl}”`)
+      .replace(/\"Start Trial\"/g, `\"${lbl}\"`)
+      .replace(/\"Start Free Trial\"/g, `\"${lbl}\"`)
+      .replace(/Start Trial/g, lbl)
+      .replace(/Start Free Trial/g, lbl);
 }
 
 function _langPack(langExact='en') {
@@ -246,13 +263,13 @@ function _renderPreActSalesReply({ shopId, langExact, userText }) {
 
   const intent = _detectObjectionIntent(userText);
   if (intent) {
-    return _stripUncertainPhrases([
+    return _withStartFreeTrialLabel(_stripUncertainPhrases([
       pack.objection?.[intent] ?? pack.welcome(TRIAL_DAYS, startLbl, ASK_VIDEO_IN_WELCOME),
       '',
       pack.microDemo(TRIAL_DAYS, startLbl),
       '',
       pack.askShopType
-    ].join('\n'));
+    ].join('\n')), langExact);
   }
 
   const st = _leadGet(shopId) ?? _leadSet(shopId, { stage: 'S0', lastLang: langExact });
@@ -260,23 +277,23 @@ function _renderPreActSalesReply({ shopId, langExact, userText }) {
 
   if (st.stage === 'S0') {
     _leadSet(shopId, { stage: 'S1', lastLang: langExact });
-    return _stripUncertainPhrases([
+    return _withStartFreeTrialLabel(_stripUncertainPhrases([
       pack.welcome(TRIAL_DAYS, startLbl, ASK_VIDEO_IN_WELCOME),
       pack.askShopType
-    ].join('\n'));
+    ].join('\n')), langExact);
   }
 
   if (st.stage === 'S1') {
     if (type) _leadSet(shopId, { stage: 'S2', shopType: type, lastLang: langExact });
-    return _stripUncertainPhrases([
+    return _withStartFreeTrialLabel(_stripUncertainPhrases([
       pack.microDemo(TRIAL_DAYS, startLbl),
       '',
       pack.askShopType
-    ].join('\n'));
+    ].join('\n')), langExact);
   }
 
   // S2+
-  return _stripUncertainPhrases(pack.microDemo(TRIAL_DAYS, startLbl));
+  return _withStartFreeTrialLabel(_stripUncertainPhrases(pack.microDemo(TRIAL_DAYS, startLbl)), langExact);
 }
 
 const { execSync } = require('child_process');
@@ -6287,7 +6304,7 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
       if (_fastWelcomeAllowed(toNumber)) {
         const pack = _langPack(langExact);
         const welcomeText = pack.welcome(TRIAL_DAYS, startLbl, ASK_VIDEO_IN_WELCOME);
-        await sendMessageQueued(From, finalizeForSend(welcomeText, langExact));
+        await sendMessageQueued(From, finalizeForSend(_withStartFreeTrialLabel(welcomeText, langExact), langExact));
       }
 
       // Send QR buttons async (so it never delays first message)
@@ -10950,11 +10967,11 @@ const SALES_QA_ROUTE_PREFIX = 'ROUTE:'; // allows AI to hand off canonical comma
     setTimeout(() => { sendOnboardVideoAsync(`whatsapp:${shopId}`, langExact).catch(() => {}); }, 120);
     const pack = _langPack(langExact);
     const startLbl = _startTrialLabel(langExact);
-    return _stripUncertainPhrases([
+    return _withStartFreeTrialLabel(_stripUncertainPhrases([
       pack.welcome(TRIAL_DAYS, startLbl, false),
       '',
       pack.microDemo(TRIAL_DAYS, startLbl)
-    ].join('\n'));
+    ].join('\n')), langExact);
   }
 
   // For non-activated leads, run deterministic sales playbook first.
