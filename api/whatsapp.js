@@ -402,20 +402,6 @@ async function sendTrialCtaAsync(From, langExact='en') {
   return false;
 }
 
-function schedulePreTrialButtons(shopId, langExact, q='') {
-  try {
-    const keyBase = `${shopId}::${String(q).slice(0,120)}`;
-    const key = crypto.createHash('sha1').update(keyBase).digest('hex');
-    const now = Date.now();
-    const prev = globalThis._preTrialButtonsGrace.get(key);
-    if (prev && (now - prev) < PRETRIAL_BUTTONS_TTL_MS) return;
-    globalThis._preTrialButtonsGrace.set(key, now);
-    // send QR + trial CTA after the message is sent (async, non-blocking)
-    setTimeout(() => { sendOnboardQrAsync(`whatsapp:${shopId}`, langExact).catch(() => {}); }, 350);
-    setTimeout(() => { sendTrialCtaAsync(`whatsapp:${shopId}`, langExact).catch(() => {}); }, 650);
-  } catch {}
-}
-
 async function sendOnboardVideoAsync(From, langExact='en') {
   try {
     // existing function in file: sendOnboardingBenefitsVideo(From, lang)
@@ -6502,9 +6488,9 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
         const welcomeText = pack.welcome(TRIAL_DAYS, startLbl, ASK_VIDEO_IN_WELCOME);
         await sendMessageQueued(From, finalizeForSend(_withStartFreeTrialLabel(welcomeText, langExact), langExact));
       }
-
-      // Send QR buttons async (so it never delays first message)
-      setTimeout(() => { sendOnboardQrAsync(From, langExact).catch(() => {}); }, 650);
+            
+      // Send ONLY the trial CTA buttons once on welcome (pre-trial). Avoid QR template spam.
+      setTimeout(() => { sendTrialCtaAsync(From, langExact).catch(() => {}); }, 650);
 
       // Video: either auto-send async or send on demand when user types "video"
       if (AUTO_SEND_ONBOARD_VIDEO) {
@@ -11147,8 +11133,10 @@ async function composeAISalesAnswer(shopId, question, language = 'en') {
 const SALES_QA_ROUTE_PREFIX = 'ROUTE:'; // allows AI to hand off canonical commands
 
 // Fast-pricing detector (English + Hindi)
-  const q = String(question ?? '').trim();
-  const isPricing = /\b(price|cost|charges?)\b/i.test(q) || /क़ीमत|कीमत|मूल्य|भाव|लागत/i.test(q);  
+  const q = String(question ?? '').trim();    
+  const isPricing =
+     /\b(price|cost|charges?|pricing|fee|fees|plan|subscription|kitna|kitne|paisa|paise|daam|dam|rs\.?|inr)\b/i.test(q) ||
+     /(क़ीमत|कीमत|मूल्य|भाव|लागत|पैसा|पैसे|दाम|फीस|चार्ज|₹|कितना|कितने)/i.test(q);
 
   // ===========================================================================
   // [SALES AGENT MODE] for pre-activation users:
@@ -11163,7 +11151,6 @@ const SALES_QA_ROUTE_PREFIX = 'ROUTE:'; // allows AI to hand off canonical comma
   // If user asks for demo video, send async + respond quickly
   if (_looksLikeVideoRequest(q)) {
     setTimeout(() => { sendOnboardVideoAsync(`whatsapp:${shopId}`, langExact).catch(() => {}); }, 120);
-    if (!activated) schedulePreTrialButtons(shopId, langExact, q);
     const pack = _langPack(langExact);
     const startLbl = _startTrialLabel(langExact);
     return _withStartFreeTrialLabel(_stripUncertainPhrases([
@@ -11175,12 +11162,10 @@ const SALES_QA_ROUTE_PREFIX = 'ROUTE:'; // allows AI to hand off canonical comma
 
   // For non-activated leads, run deterministic sales playbook first.
   if (!activated && !isPricing) {
-    schedulePreTrialButtons(shopId, langExact, q);
     return _renderPreActSalesReply({ shopId, langExact, userText: q });
   }
 
   if (isPricing) {
-    if (!activated) schedulePreTrialButtons(shopId, langExact, q);
     // Pick flavor based on activation + whether question seems inventory-related
     let activated = false;
     try {
