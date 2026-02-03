@@ -38,6 +38,10 @@ const FAST_WELCOME_DEDUP_TTL_MS = Number(process.env.FAST_WELCOME_DEDUP_TTL_MS ?
 const __fastWelcomeLastSent = new Map();  // shopId -> ts
 const __fastWelcomeInFlight = new Set();  // shopId
 
+// Pre-trial CTA buttons dedupe (avoid duplicates on webhook retries)
+globalThis._preTrialButtonsGrace = globalThis._preTrialButtonsGrace ?? new Map(); // key -> ts
+const PRETRIAL_BUTTONS_TTL_MS = Number(process.env.PRETRIAL_BUTTONS_TTL_MS ?? 7000);
+
 // Video behavior:
 // - AUTO_SEND_ONBOARD_VIDEO=1  => auto-send benefits video async after welcome
 // - AUTO_SEND_ONBOARD_VIDEO=0  => do NOT auto-send; optionally mention "Reply: video"
@@ -59,7 +63,12 @@ function _leadSet(shopId, patch) {
   const key = String(shopId);
   const prev = _leadGet(key) ?? { stage: 'S0', ts: Date.now(), shopType: null, lastLang: 'en' };
   const next = { ...prev, ...patch, ts: Date.now() };
-  __leadStage.set(key, next);
+  __leadStage.set(key, next);    
+  try {
+      if (prev.stage !== next.stage || prev.shopType !== next.shopType) {
+        console.log('[lead-stage]', { shopId: key, from: prev.stage, to: next.stage, shopType: next.shopType, lang: next.lastLang });
+      }
+    } catch {}
   return next;
 }
 
@@ -209,12 +218,13 @@ const t = String(text ?? '').toLowerCase().trim();
 }
 
 function _detectObjectionIntent(text='') {
-  const t = String(text ?? '').toLowerCase();
-  if (/\b(what is this|what is it|ye kya|ye,? kiya|kya hai|ये क्या|क्या है)\b/i.test(t)) return 'what';
-  if (/\b(price|cost|charges|pricing|kitna|कितना|कीमत|मूल्य|भाव|लागत)\b/i.test(t)) return 'price';
-  if (/\b(how to|how do i|kaise|कैसे|use|चलाना|चलाते)\b/i.test(t)) return 'how';
-  if (/\b(data|privacy|safe|trust|secure|भरोसा|डेटा|प्राइवसी)\b/i.test(t)) return 'trust';
-  if (/\b(time|busy|later|kal|baad me|फुर्सत|समय)\b/i.test(t)) return 'time';
+  const t = String(text ?? '').toLowerCase();  
+  // NOTE: Avoid \b word boundaries for Indic scripts; they can fail on Devanagari/Bengali.
+  if (/(what is this|what is it|ye kya|ye,?\s*kiya|kya hai|ये क्या|क्या है)/i.test(t)) return 'what';
+  if (/(price|cost|charges|pricing|kitna|कितना|कीमत|मूल्य|भाव|लागत)/i.test(t)) return 'price';
+  if (/(how to|how do i|kaise|कैसे|use|चलाना|चलाते)/i.test(t)) return 'how';
+  if (/(data|privacy|safe|trust|secure|भरोसा|डेटा|प्राइवसी|प्राइवेट|निजता|गोपनीय|गोपनीयता|सुरक्षित)/i.test(t)) return 'trust';
+  if (/(time|busy|later|kal|baad me|फुर्सत|समय)/i.test(t)) return 'time';
   return null;
 }
 
@@ -289,14 +299,14 @@ const LANG_PACK = {
       (includeVideoAsk ? `\n20 सेकंड का डेमो वीडियो? लिखें: video` : ''),
     microDemo: (trialDays, startLbl) =>
       `⚡ 10 सेकंड का डेमो:\n` +
-      `भेजें: purchased Milk 10 ltr @ ₹60 exp 30d\n` +
-      `फिर: low stock\n\n` +
+      `भेजें: दूध 10 लीटर खरीदा @ ₹60 (एक्सपायरी 30 दिन)\n` +
+      `फिर: कम स्टॉक\n\n` +
       `सब फीचर्स के लिए “${startLbl}” दबाएँ (${trialDays} दिन फ्री)।`,
-    askShopType: `आपकी दुकान किसकी है? लिखें: kirana / medical / cosmetics / garments / mobile`,
+    askShopType: `आपकी दुकान किसकी है? लिखें: किराना / मेडिकल / कॉस्मेटिक्स / गारमेंट्स / मोबाइल`,
     objection: {
       what: `Saamagrii.AI WhatsApp पर स्टॉक, एक्सपायरी और बिक्री मैनेज करता है—अलर्ट के साथ।`,
       price: `ट्रायल फ्री है। “Start Trial” दबाकर प्लान विकल्प देखें।`,
-      how: `ऐसे लिखें: sold Parle-G 3 packets @ ₹10\nया: purchased Milk 10 ltr @ ₹60 exp 30d`,
+      how: `ऐसे लिखें: पार्ले-जी 3 पैकेट बेचा @ ₹10\nया: दूध 10 लीटर खरीदा @ ₹60 (एक्सपायरी 30 दिन)`,
       trust: `डेटा सिर्फ आपकी दुकान के लिए है। पब्लिक शेयर नहीं।`,
       time: `दिन में <10 सेकंड। 1 प्रोडक्ट से शुरू करें।`
     }
@@ -304,26 +314,41 @@ const LANG_PACK = {
   mr: {
     welcome: (d, startLbl, v) =>
       `👋 Saamagrii.AI मध्ये स्वागत!\nWhatsApp वर stock+expiry+sales track करा.\n✅ Low-stock alert • ✅ Expiry reminder • ✅ Sales summary\n\n“${startLbl}” (free ${d} days).` + (v ? `\n20s demo video? Reply: video` : ''),
-    microDemo: (d, startLbl) =>
-      `⚡ 10s demo:\nSend: purchased Milk 10 ltr @ ₹60 exp 30d\nThen: low stock\n\n“${startLbl}” (free ${d} days).`,
-    askShopType: `Shop type? Reply: kirana / medical / cosmetics / garments / mobile`,
-    objection: { what:`Saamagrii.AI WhatsApp वर stock/expiry/sales manage करतो—alerts सह.`, price:`Trial free. “Start Trial” करून plan options बघा.`, how:`Type: sold Parle-G 3 packets @ ₹10\nOr: purchased Milk 10 ltr @ ₹60 exp 30d`, trust:`Data private. Public share नाही.`, time:`<10s/day. 1 product ने start करा.` }
+    microDemo: (d, startLbl) =>         
+      `⚡ 10 सेकंदाचा डेमो:\n` +
+            `पाठवा: दूध 10 लिटर खरेदी @ ₹60 (एक्सपायरी 30 दिवस)\n` +
+            `नंतर: कमी स्टॉक\n\n` +
+            `सगळ्या फीचर्ससाठी “${startLbl}” (फ्री ${d} दिवस).`,
+          askShopType: `तुमचे दुकान कोणते? लिहा: किराणा / मेडिकल / कॉस्मेटिक्स / गारमेंट्स / मोबाइल`,
+    objection: { 
+what:`Saamagrii.AI WhatsApp वर स्टॉक/एक्सपायरी/विक्री मॅनेज करतो—अलर्टसह.`,
+      price:`ट्रायल फ्री आहे. “Start Trial” टॅप करून प्लॅन पर्याय पहा.`,
+      how:`असे लिहा: पार्ले-जी 3 पॅकेट विकले @ ₹10\nकिंवा: दूध 10 लिटर खरेदी @ ₹60 (एक्सपायरी 30 दिवस)`,
+      trust:`तुमचा डेटा फक्त तुमच्या दुकानासाठी खाजगी राहतो. सार्वजनिक शेअर नाही.`,
+      time:`दररोज <10 सेकंद. 1 प्रोडक्टपासून सुरुवात करा.`
+ }
   },
   bn: {
     welcome: (d, startLbl, v) =>
       `👋 Saamagrii.AI-এ স্বাগতম!\nWhatsApp-এ স্টক+মেয়াদ+বিক্রি ট্র্যাক করুন।\n✅ Low-stock alert • ✅ Expiry reminder • ✅ Sales summary\n\n“${startLbl}” (ফ্রি ${d} দিন)।` + (v ? `\n20s ডেমো ভিডিও? লিখুন: video` : ''),
-    microDemo: (d, startLbl) =>
-      `⚡ 10s ডেমো:\nSend: purchased Milk 10 ltr @ ₹60 exp 30d\nThen: low stock\n\n“${startLbl}” (ফ্রি ${d} দিন)।`,
-    askShopType: `আপনার দোকান টাইপ? লিখুন: kirana / medical / cosmetics / garments / mobile`,
-    objection: { what:`Saamagrii.AI WhatsApp-এ স্টক/মেয়াদ/বিক্রি ম্যানেজ করে—অ্যালার্টসহ।`, price:`Trial free. “Start Trial” ট্যাপ করে plan options দেখুন।`, how:`Type: sold Parle-G 3 packets @ ₹10\nOr: purchased Milk 10 ltr @ ₹60 exp 30d`, trust:`Data private. Public share নয়।`, time:`<10s/day. 1 product দিয়ে শুরু করুন।` }
+    microDemo: (d, startLbl) =>            
+      `⚡ 10 সেকেন্ডের ডেমো:\n` +
+            `লিখুন: দুধ 10 লিটার কিনেছি @ ₹60 (মেয়াদ 30 দিন)\n` +
+            `তারপর: কম স্টক\n\n` +
+            `সব ফিচারের জন্য “${startLbl}” (ফ্রি ${d} দিন)।`,
+          askShopType: `আপনার দোকান কী ধরনের? লিখুন: কিরানা / মেডিক্যাল / কসমেটিক্স / গার্মেন্টস / মোবাইল`,
+    objection: { what:`Saamagrii.AI WhatsApp-এ স্টক/মেয়াদ/বিক্রি ম্যানেজ করে—অ্যালার্টসহ।`, price:`Trial free. “Start Trial” ট্যাপ করে plan options দেখুন।`, how:`এভাবে লিখুন: পারলে-জি 3 প্যাকেট বিক্রি @ ₹10\nঅথবা: দুধ 10 লিটার কিনেছি @ ₹60 (মেয়াদ 30 দিন)`, trust:`Data private. Public share নয়।`, time:`<10s/day. 1 product দিয়ে শুরু করুন।` }
   },
   gu: {
     welcome: (d, startLbl, v) =>
       `👋 Saamagrii.AI માં સ્વાગત!\nWhatsApp પર stock+expiry+sales track કરો.\n✅ Low-stock alert • ✅ Expiry reminder • ✅ Sales summary\n\n“${startLbl}” (free ${d} days).` + (v ? `\n20s demo video? Reply: video` : ''),
-    microDemo: (d, startLbl) =>
-      `⚡ 10s demo:\nSend: purchased Milk 10 ltr @ ₹60 exp 30d\nThen: low stock\n\n“${startLbl}” (free ${d} days).`,
-    askShopType: `Shop type? Reply: kirana / medical / cosmetics / garments / mobile`,
-    objection: { what:`Saamagrii.AI WhatsApp પર stock/expiry/sales manage કરે છે—alerts સાથે.`, price:`Trial free. “Start Trial” કરીને plan options જુઓ.`, how:`Type: sold Parle-G 3 packets @ ₹10\nOr: purchased Milk 10 ltr @ ₹60 exp 30d`, trust:`Data private. Public share નથી.`, time:`<10s/day. 1 product થી start કરો.` }
+    microDemo: (d, startLbl) =>              
+        `⚡ 10 સેકંડનો ડેમો:\n` +
+              `લખો: દૂધ 10 લિટર ખરીદ્યું @ ₹60 (એક્સપાયરી 30 દિવસ)\n` +
+              `પછી: ઓછી સ્ટોક\n\n` +
+              `બધા ફીચર્સ માટે “${startLbl}” (ફ્રી ${d} દિવસ).`,
+            askShopType: `તમારી દુકાન કઈ છે? લખો: કિરાણા / મેડિકલ / કોસ્મેટિક્સ / ગારમેન્ટ્સ / મોબાઇલ`,
+    objection: { what:`Saamagrii.AI WhatsApp પર stock/expiry/sales manage કરે છે—alerts સાથે.`, price:`Trial free. “Start Trial” કરીને plan options જુઓ.`, how:`આવું લખો: પાર્લે-જી 3 પેકેટ વેચ્યું @ ₹10\nઅથવા: દૂધ 10 લિટર ખરીદ્યું @ ₹60 (એક્સપાયરી 30 દિવસ)`, trust:`Data private. Public share નથી.`, time:`<10s/day. 1 product થી start કરો.` }
   }
 };
 
@@ -357,6 +382,38 @@ async function sendOnboardQrAsync(From, langExact='en') {
     }
   }
   return sent;
+}
+
+// NEW: Send Activate-Trial CTA buttons (content template) without blocking message latency.
+async function sendTrialCtaAsync(From, langExact='en') {
+  const toNumber = String(shopIdFrom(From)).replace('whatsapp:', '');
+  try {
+    await ensureLangTemplates(langExact);
+    const sids = getLangSids(langExact);
+    if (sids?.trialCtaSid) {
+      const resp = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.trialCtaSid });
+      console.log('[trial-cta] send OK', { sid: resp?.sid, to: toNumber, contentSid: sids.trialCtaSid, lang: langExact });
+      return true;
+    }
+    console.warn('[trial-cta] missing trialCtaSid', { lang: langExact });
+  } catch (e) {
+    console.warn('[trial-cta] send FAILED', { status: e?.response?.status, data: e?.response?.data, lang: langExact });
+  }
+  return false;
+}
+
+function schedulePreTrialButtons(shopId, langExact, q='') {
+  try {
+    const keyBase = `${shopId}::${String(q).slice(0,120)}`;
+    const key = crypto.createHash('sha1').update(keyBase).digest('hex');
+    const now = Date.now();
+    const prev = globalThis._preTrialButtonsGrace.get(key);
+    if (prev && (now - prev) < PRETRIAL_BUTTONS_TTL_MS) return;
+    globalThis._preTrialButtonsGrace.set(key, now);
+    // send QR + trial CTA after the message is sent (async, non-blocking)
+    setTimeout(() => { sendOnboardQrAsync(`whatsapp:${shopId}`, langExact).catch(() => {}); }, 350);
+    setTimeout(() => { sendTrialCtaAsync(`whatsapp:${shopId}`, langExact).catch(() => {}); }, 650);
+  } catch {}
 }
 
 async function sendOnboardVideoAsync(From, langExact='en') {
@@ -11097,13 +11154,16 @@ const SALES_QA_ROUTE_PREFIX = 'ROUTE:'; // allows AI to hand off canonical comma
   // [SALES AGENT MODE] for pre-activation users:
   // - Objection handlers + playbook + micro-demo (no LLM)
   // - Keep language flip based on last message (Meta + user's typed language)
-  // ===========================================================================
-  const langExact = ensureLangExact(canonicalizeLang(language ?? 'en'));
+  // ===========================================================================  
+  // Prefer script-based guess when classifier returns en for Devanagari/Bengali inputs
+  const langGuess = guessLangFromInput(q);
+  const langExact = ensureLangExact(canonicalizeLang(language ?? langGuess ?? 'en'));
   const activated = await _isUserActivated(shopId).catch(() => false);
 
   // If user asks for demo video, send async + respond quickly
   if (_looksLikeVideoRequest(q)) {
     setTimeout(() => { sendOnboardVideoAsync(`whatsapp:${shopId}`, langExact).catch(() => {}); }, 120);
+    if (!activated) schedulePreTrialButtons(shopId, langExact, q);
     const pack = _langPack(langExact);
     const startLbl = _startTrialLabel(langExact);
     return _withStartFreeTrialLabel(_stripUncertainPhrases([
@@ -11115,10 +11175,12 @@ const SALES_QA_ROUTE_PREFIX = 'ROUTE:'; // allows AI to hand off canonical comma
 
   // For non-activated leads, run deterministic sales playbook first.
   if (!activated && !isPricing) {
+    schedulePreTrialButtons(shopId, langExact, q);
     return _renderPreActSalesReply({ shopId, langExact, userText: q });
   }
 
   if (isPricing) {
+    if (!activated) schedulePreTrialButtons(shopId, langExact, q);
     // Pick flavor based on activation + whether question seems inventory-related
     let activated = false;
     try {
