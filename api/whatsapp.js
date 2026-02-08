@@ -22189,7 +22189,8 @@ async function handleRequest(req, res, response, requestId, requestStart) {
             
     const { MediaUrl0, NumMedia, SpeechResult, From, Body, ButtonText } = req.body;
     const shopId = fromToShopId(From);
-    
+    // FIX: ensure `text` exists for all branches (trial_ended block was using it)
+    const text = String(ButtonText ?? Body ?? '').trim();
     // [PATCH:PREFETCH-TXN-PARSE] Start parsing early for txn-like sticky turns (overlaps auth/state latency).
          // This is safe because we will still enforce auth BEFORE committing DB writes.
          try {
