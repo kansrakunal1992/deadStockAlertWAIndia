@@ -1853,6 +1853,21 @@ async function composeLowStockLocalized(shopId, lang, requestId) {
 // WhatsApp list-picker supports max 10 items; paginate product pickers accordingly.
 const PRODUCT_PICKER_PAGE_SIZE = 10;
 
+async function _resolveProductNameById(shopId, productId) {
+  try {
+    const all = await getAllProducts(shopId).catch(() => []);
+    const arr = Array.isArray(all) ? all : (Array.isArray(all?.products) ? all.products : (Array.isArray(all?.items) ? all.items : []));
+    const hit = arr.find(p =>
+      String(p?.id ?? '') === String(productId) ||
+      String(p?.fields?.Id ?? '') === String(productId) ||
+      String(p?.fields?.RecordId ?? '') === String(productId)
+    );
+    return String(hit?.name ?? hit?.fields?.Product ?? hit?.fields?.Name ?? productId);
+  } catch {
+    return String(productId);
+  }
+}
+
 function _prodPickerLabels(lang) {
   const L = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
   const map = {
@@ -1870,15 +1885,15 @@ function _prodPickerLabels(lang) {
 
 function _modeTextLabels(lang) {
   const L = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
-  const map = {
-    en: { add: 'Okay. Add a new product like:', selected: 'Selected product:', now: 'Now send quantity/price:' , want: 'Want to add a new product? Just type:' },
-    hi: { add: 'ठीक है। नया प्रोडक्ट ऐसे जोड़ें:', selected: 'चुना गया प्रोडक्ट:', now: 'अब मात्रा/कीमत भेजें:', want: 'नया प्रोडक्ट जोड़ना है? सीधे लिखें:' },
-    bn: { add: 'ঠিক আছে। নতুন পণ্য এভাবে যোগ করুন:', selected: 'নির্বাচিত পণ্য:', now: 'এখন পরিমাণ/দাম পাঠান:', want: 'নতুন পণ্য যোগ করতে চান? লিখে পাঠান:' },
-    ta: { add: 'சரி. புதிய பொருளை இப்படி சேர்க்கவும்:', selected: 'தேர்ந்த பொருள்:', now: 'இப்போது அளவு/விலை அனுப்பவும்:', want: 'புதிய பொருள் சேர்க்க வேண்டுமா? இப்படி எழுதுங்கள்:' },
-    te: { add: 'సరే. కొత్త ప్రోడక్ట్ ఇలా జోడించండి:', selected: 'ఎంచుకున్న ప్రోడక్ట్:', now: 'ఇప్పుడు పరిమాణం/ధర పంపండి:', want: 'కొత్త ప్రోడక్ట్ జోడించాలా? ఇలా టైప్ చేయండి:' },
-    kn: { add: 'ಸರಿ. ಹೊಸ ಪ್ರೊಡಕ್ಟ್ ಹೀಗೆ ಸೇರಿಸಿ:', selected: 'ಆಯ್ದ ಪ್ರೊಡಕ್ಟ್:', now: 'ಇప్పుడు ಪ್ರಮಾಣ/ಬೆಲೆ ಕಳುಹಿಸಿ:', want: 'ಹೊಸ ಪ್ರೊಡಕ್ಟ್ ಸೇರಿಸಬೇಕಾ? ಹೀಗೆ ಟೈಪ್ ಮಾಡಿ:' },
-    mr: { add: 'ठीक आहे. नवीन प्रॉडक्ट असं जोडा:', selected: 'निवडलेला प्रॉडक्ट:', now: 'आता प्रमाण/किंमत पाठवा:', want: 'नवीन प्रॉडक्ट जोडायचा? असं लिहा:' },
-    gu: { add: 'ઠીક છે. નવું પ્રોડક્ટ આમ ઉમેરો:', selected: 'પસંદ થયેલું પ્રોડક્ટ:', now: 'હવે જથ્થો/ભાવ મોકલો:', want: 'નવું પ્રોડક્ટ ઉમેરવું છે? આમ લખો:' }
+  const map = {          
+          en: { add: 'Okay. Add a new product like:', selected: 'Selected product:', nowBuy: 'Now send qty + price:', nowQty: 'Now send quantity:', exBuy: '• 10 ltr @ ₹60 exp 30d', exQty: '• 2 pcs', want: 'Want to add a new product? Just type:' },
+          hi: { add: 'ठीक है। नया प्रोडक्ट ऐसे जोड़ें:', selected: 'चुना गया प्रोडक्ट:', nowBuy: 'अब मात्रा+कीमत भेजें:', nowQty: 'अब मात्रा भेजें:', exBuy: '• 10 लीटर @ ₹60 समाप्ति 30 दिन', exQty: '• 2 पीस', want: 'नया प्रोडक्ट जोड़ना है? सीधे लिखें:' },
+          bn: { add: 'ঠিক আছে। নতুন পণ্য এভাবে যোগ করুন:', selected: 'নির্বাচিত পণ্য:', nowBuy: 'এখন পরিমাণ+দাম পাঠান:', nowQty: 'এখন পরিমাণ পাঠান:', exBuy: '• 10 লিটার @ ₹60 মেয়াদ 30 দিন', exQty: '• 2 পিস', want: 'নতুন পণ্য যোগ করতে চান? লিখে পাঠান:' },
+          ta: { add: 'சரி. புதிய பொருளை இப்படி சேர்க்கவும்:', selected: 'தேர்ந்த பொருள்:', nowBuy: 'இப்போது அளவு+விலை:', nowQty: 'இப்போது அளவு:', exBuy: '• 10 லிட்டர் @ ₹60 காலாவதி 30நாள்', exQty: '• 2 பீஸ்', want: 'புதிய பொருள் சேர்க்க வேண்டுமா? இப்படி எழுதுங்கள்:' },
+          te: { add: 'సరే. కొత్త ప్రోడక్ట్ ఇలా జోడించండి:', selected: 'ఎంచుకున్న ప్రోడక్ట్:', nowBuy: 'ఇప్పుడు పరిమాణం+ధర:', nowQty: 'ఇప్పుడు పరిమాణం:', exBuy: '• 10 లీటర్ @ ₹60 గడువు 30రోజులు', exQty: '• 2 పీసులు', want: 'కొత్త ప్రోడక్ట్ జోడించాలా? ఇలా టైప్ చేయండి:' },
+          kn: { add: 'ಸರಿ. ಹೊಸ ಪ್ರೊಡಕ್ಟ್ ಹೀಗೆ ಸೇರಿಸಿ:', selected: 'ಆಯ್ದ ಪ್ರೊಡಕ್ಟ್:', nowBuy: 'ಇప్పుడు ಪ್ರಮಾಣ+ಬೆಲೆ:', nowQty: 'ಇப்போது ಪ್ರಮಾಣ:', exBuy: '• 10 ಲೀಟರ್ @ ₹60 ಅವಧಿ 30 ದಿನ', exQty: '• 2 ಪೀಸ್', want: 'ಹೊಸ ಪ್ರೊಡಕ್ಟ್ ಸೇರಿಸಬೇಕಾ? ಹೀಗೆ ಟೈಪ್ ಮಾಡಿ:' },
+          mr: { add: 'ठीक आहे. नवीन प्रॉडक्ट असं जोडा:', selected: 'निवडलेला प्रॉडक्ट:', nowBuy: 'आता प्रमाण+किंमत:', nowQty: 'आता प्रमाण:', exBuy: '• 10 लिटर @ ₹60 कालबाह्य 30दिवस', exQty: '• 2 पीस', want: 'नवीन प्रॉडक्ट जोडायचा? असं लिहा:' },
+          gu: { add: 'ઠીક છે. નવું પ્રોડક્ટ આમ ઉમેરો:', selected: 'પસંદ થયેલું પ્રોડક્ટ:', nowBuy: 'હવે જથ્થો+ભાવ:', nowQty: 'હવે જથ્થો:', exBuy: '• 10 લિટર @ ₹60 સમાપ્ત 30 દિવસ', exQty: '• 2 પીસ', want: 'નવું પ્રોડક્ટ ઉમેરવું છે? આમ લખો:' }
   };
   return map[L] ?? map.en;
 }
@@ -2235,7 +2250,18 @@ async function parseMultipleUpdates(reqOrText, requestId) {
   // ----------------------------------------------------------------------
      // [UNIQ:WORDS-TO-DIGITS-002] Normalize spelled numbers → digits for STT
      // ----------------------------------------------------------------------
-     let t = String(transcript ?? '').trim();        
+     let t = String(transcript ?? '').trim();       
+      
+    // NEW: If user selected a product earlier, allow qty-only inputs by prefixing product name.
+      try {
+        if (userState?.mode === 'awaitingTransactionDetails' && userState?.data?.product) {
+          const startsWithNumber = /^[0-9\u0966-\u096F\u09E6-\u09EF\u0BE6-\u0BEF\u0C66-\u0C6F\u0CE6-\u0CEF\u0AE6-\u0AEF]/.test(t);
+          if (startsWithNumber) {
+            t = `${String(userState.data.product).trim()} ${t}`;
+          }
+        }
+      } catch (_) {}
+
     // [PATCH] Normalize Hindi roman number words first (e.g., "bees litre dudh" -> "20 litre dudh")
       t = hindiRomanWordsToDigits(t);
       // Existing English words-to-number normalizer (keeps support for "twenty litre dudh")
@@ -8386,10 +8412,10 @@ async function handleInteractiveSelection(req) {
       const T = _modeTextLabels(langUi2);
   
       if (payload === 'add_new_product_as_is') {
-        await setUserState(shopIdTop, 'awaitingTransactionDetails', { action });
-        const ex = action === 'sold' ? 'sold Milk 2 ltr @ ₹60' : action === 'returned' ? 'returned Milk 1 ltr @ ₹60' : 'purchased Milk 10 ltr @ ₹60 exp 30d';
-        const msg = await t(`${T.add}\n• ${ex}`, langUi2);
-        await sendMessageViaAPI(from, finalizeForSend(msg, langUi2));
+        await setUserState(shopIdTop, 'awaitingTransactionDetails', { action });                
+        // Redirect to the existing examples flow (same as normal QR path)
+        const examples = getStickyExamplesLocalized(action, langUi2);
+        await sendExamplesWithAck(from, langUi2, examples, `chooser-add-new-${shopIdTop}`);
         return true;
       }
   
@@ -8410,14 +8436,19 @@ async function handleInteractiveSelection(req) {
       } catch (_) {}
       langUi3 = String(langUi3).replace(/-latn$/, '');
   
+      
       const st = await getUserStateFromDB(shopIdTop).catch(() => null);
       const action = st?.data?.action ?? 'purchased';
-      const productKey = listId.slice('prod:'.length);
+      const productId = listId.slice('prod:'.length);
+      const productName = await _resolveProductNameById(shopIdTop, productId);
       const T = _modeTextLabels(langUi3);
-  
-      await setUserState(shopIdTop, 'awaitingTransactionDetails', { action, product: productKey });
-      const ex = action === 'sold' ? `sold ${productKey} 2 pcs @ ₹10` : action === 'returned' ? `returned ${productKey} 1 pcs @ ₹10` : `purchased ${productKey} 10 pcs @ ₹10 exp 30d`;
-      const msg = await t(`${T.selected} ${productKey}\n${T.now}\n• ${ex}`, langUi3);
+              
+      // Save selected product so the next message can be qty-only
+      await setUserState(shopIdTop, 'awaitingTransactionDetails', { action, product: productName, productId });
+      
+      const nowLine = (action === 'purchased') ? T.nowBuy : T.nowQty;
+      const exLine = (action === 'purchased') ? T.exBuy : T.exQty;
+      const msg = await t(`${T.selected} ${productName}\n${nowLine}\n${exLine}`, langUi3);
       await sendMessageViaAPI(from, finalizeForSend(msg, langUi3));
       return true;
     }
