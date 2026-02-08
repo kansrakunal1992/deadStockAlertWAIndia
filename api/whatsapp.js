@@ -8333,7 +8333,8 @@ async function handleInteractiveSelection(req) {
       msgFinal = normalizeNumeralsToLatin(msgFinal).trim();
       await sendMessageViaAPI(from, msgFinal);
       return; // consumed: prevent legacy "Examples (purchase)" path
-    } catch(_){}
+    } 
+  } catch(_) {}
 
   const _isInventoryListSelection = /^list_/.test(_payloadId);
 
