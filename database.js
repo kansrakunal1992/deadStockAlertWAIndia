@@ -1583,16 +1583,18 @@ async function isFeatureAvailable(shopId, feature) {
   try {
     const { plan, trialEndDate } = await getUserPlan(shopId);
     const planKey = String(plan ?? 'free_demo').toLowerCase();
-
-    const isTrialExpired =
-      (planKey === 'trial' || planKey === 'free_demo_first_50') &&
-      !!trialEndDate && new Date() > trialEndDate;
+        
+    // FIX: trial is expired only if trialEndDate exists AND now > trialEndDate
+        const isTrialExpired =
+          (planKey === 'trial' || planKey === 'free_demo_first_50') &&
+          !!trialEndDate && new Date() > trialEndDate;
 
     // Add explicit 'trial' behavior
     const featureMatrix = {
       // Daily summaries: allowed on paid/standard/enterprise; trial allowed until expiry; free_demo limited
-      'daily_summary': {
-        'free_demo': true,                // e.g., one per day if you enforce elsewhere
+      'daily_summary': {              
+      // You want daily AI summary to STOP after trial expiry; keep free_demo off
+      'free_demo': false,
         'free_demo_first_50': !isTrialExpired,
         'trial': !isTrialExpired,
         'standard': true,
@@ -1600,14 +1602,56 @@ async function isFeatureAvailable(shopId, feature) {
         'paid': true
       },
       // AI summaries: allow on paid/standard/enterprise; trial allowed; tweak free_demo as you want
-      'ai_summary': {
-        'free_demo': true,                // keep your current behavior; change to false if needed
+      'ai_summary': {                
+        // tighten: AI is not free forever; trial ok until expiry; paid ok
+        'free_demo': false,
         'free_demo_first_50': true,
         'trial': true,
         'standard': true,
         'enterprise': true,
         'paid': true
       },
+      
+      // Short summary should keep working forever (basic)
+            'short_summary': {
+              'free_demo': true,
+              'free_demo_first_50': true,
+              'trial': true,
+              'standard': true,
+              'enterprise': true,
+              'paid': true
+            },
+      
+            // Full summary should be blocked after trial expiry and for free_demo
+            'full_summary': {
+              'free_demo': false,
+              'free_demo_first_50': !isTrialExpired,
+              'trial': !isTrialExpired,
+              'standard': true,
+              'enterprise': true,
+              'paid': true
+            },
+      
+            // Daily AI summary (scheduled)
+            'daily_ai_summary': {
+              'free_demo': false,
+              'free_demo_first_50': !isTrialExpired,
+              'trial': !isTrialExpired,
+              'standard': true,
+              'enterprise': true,
+              'paid': true
+            },
+      
+            // 8 AM price reminders (scheduled)
+            'price_reminders_8am': {
+              'free_demo': false,
+              'free_demo_first_50': !isTrialExpired,
+              'trial': !isTrialExpired,
+              'standard': true,
+              'enterprise': true,
+              'paid': true
+            },
+
       // Replies: allow broadly; trial allowed until expiry
       'replies': {
         'free_demo': true,
