@@ -1823,6 +1823,79 @@ async function composeLowStockLocalized(shopId, lang, requestId) {
     return nativeglishWrap(taggedOnce, lang);
 }
 
+// ===== [UNIQ:PRODUCT-PICKER-LISTS-20260208] BEGIN =====
+// WhatsApp list-picker supports max 10 items; paginate product pickers accordingly.
+const PRODUCT_PICKER_PAGE_SIZE = 10;
+
+function _prodPickerLabels(lang) {
+  const L = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
+  const map = {
+    en: { body: (p,t)=>`Select a product (${p}/${t})`, button: 'Choose' },
+    hi: { body: (p,t)=>`प्रोडक्ट चुनें (${p}/${t})`, button: 'चुनें' },
+    bn: { body: (p,t)=>`পণ্য বাছুন (${p}/${t})`, button: 'বাছুন' },
+    ta: { body: (p,t)=>`பொருள் தேர்வு (${p}/${t})`, button: 'தேர்வு' },
+    te: { body: (p,t)=>`ప్రోడక్ట్ ఎంచుకోండి (${p}/${t})`, button: 'ఎంచుకోండి' },
+    kn: { body: (p,t)=>`ಉತ್ಪನ್ನ ಆಯ್ಕೆ (${p}/${t})`, button: 'ಆಯ್ಕೆ' },
+    mr: { body: (p,t)=>`प्रॉडक्ट निवडा (${p}/${t})`, button: 'निवडा' },
+    gu: { body: (p,t)=>`પ્રોડક્ટ પસંદ કરો (${p}/${t})`, button: 'પસંદ કરો' }
+  };
+  return map[L] ?? map.en;
+}
+
+function _modeTextLabels(lang) {
+  const L = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
+  const map = {
+    en: { add: 'Okay. Add a new product like:', selected: 'Selected product:', now: 'Now send quantity/price:' , want: 'Want to add a new product? Just type:' },
+    hi: { add: 'ठीक है। नया प्रोडक्ट ऐसे जोड़ें:', selected: 'चुना गया प्रोडक्ट:', now: 'अब मात्रा/कीमत भेजें:', want: 'नया प्रोडक्ट जोड़ना है? सीधे लिखें:' },
+    bn: { add: 'ঠিক আছে। নতুন পণ্য এভাবে যোগ করুন:', selected: 'নির্বাচিত পণ্য:', now: 'এখন পরিমাণ/দাম পাঠান:', want: 'নতুন পণ্য যোগ করতে চান? লিখে পাঠান:' },
+    ta: { add: 'சரி. புதிய பொருளை இப்படி சேர்க்கவும்:', selected: 'தேர்ந்த பொருள்:', now: 'இப்போது அளவு/விலை அனுப்பவும்:', want: 'புதிய பொருள் சேர்க்க வேண்டுமா? இப்படி எழுதுங்கள்:' },
+    te: { add: 'సరే. కొత్త ప్రోడక్ట్ ఇలా జోడించండి:', selected: 'ఎంచుకున్న ప్రోడక్ట్:', now: 'ఇప్పుడు పరిమాణం/ధర పంపండి:', want: 'కొత్త ప్రోడక్ట్ జోడించాలా? ఇలా టైప్ చేయండి:' },
+    kn: { add: 'ಸರಿ. ಹೊಸ ಪ್ರೊಡಕ್ಟ್ ಹೀಗೆ ಸೇರಿಸಿ:', selected: 'ಆಯ್ದ ಪ್ರೊಡಕ್ಟ್:', now: 'ಇప్పుడు ಪ್ರಮಾಣ/ಬೆಲೆ ಕಳುಹಿಸಿ:', want: 'ಹೊಸ ಪ್ರೊಡಕ್ಟ್ ಸೇರಿಸಬೇಕಾ? ಹೀಗೆ ಟೈಪ್ ಮಾಡಿ:' },
+    mr: { add: 'ठीक आहे. नवीन प्रॉडक्ट असं जोडा:', selected: 'निवडलेला प्रॉडक्ट:', now: 'आता प्रमाण/किंमत पाठवा:', want: 'नवीन प्रॉडक्ट जोडायचा? असं लिहा:' },
+    gu: { add: 'ઠીક છે. નવું પ્રોડક્ટ આમ ઉમેરો:', selected: 'પસંદ થયેલું પ્રોડક્ટ:', now: 'હવે જથ્થો/ભાવ મોકલો:', want: 'નવું પ્રોડક્ટ ઉમેરવું છે? આમ લખો:' }
+  };
+  return map[L] ?? map.en;
+}
+
+async function createProductPickerContentSid(lang, pageNo, totalPages, items) {
+  const ACCOUNT_SID = process.env.ACCOUNT_SID ?? process.env.TWILIO_ACCOUNT_SID;
+  const AUTH_TOKEN = process.env.AUTH_TOKEN ?? process.env.TWILIO_AUTH_TOKEN;
+  const L = _prodPickerLabels(lang);
+  const payload = {
+    friendly_name: `saamagrii_prod_picker_${String(lang ?? 'en').replace(/-latn$/, '')}_${Date.now()}_${pageNo}`,
+    language: String(lang ?? 'en').replace(/-latn$/, ''),
+    types: {
+      'twilio/list-picker': {
+        body: L.body(pageNo, totalPages),
+        button: L.button,
+        items
+      }
+    }
+  };
+  const { data } = await axios.post('https://content.twilio.com/v1/Content', payload, {
+    auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
+  });
+  return data.sid;
+}
+
+async function sendPaginatedProductPickers(From, shopId, lang, products) {
+  const arr = Array.isArray(products) ? products : [];
+  const toNumber = String(shopIdFrom(From)).replace('whatsapp:', '');
+  const totalPages = Math.max(1, Math.ceil(arr.length / PRODUCT_PICKER_PAGE_SIZE));
+  for (let i = 0, pageNo = 1; i < arr.length; i += PRODUCT_PICKER_PAGE_SIZE, pageNo++) {
+    const chunk = arr.slice(i, i + PRODUCT_PICKER_PAGE_SIZE);
+    const items = chunk.map((p, idx) => ({
+      item: String(p.name ?? p.fields?.Name ?? p.fields?.Product ?? `Product ${idx + 1}`).slice(0, 24),
+      id: `prod:${String(p.id ?? p.fields?.Id ?? p.fields?.Product ?? p.name ?? idx)}`,
+      description: String(p.unit ?? p.fields?.Unit ?? '').slice(0, 72)
+    }));
+    const sid = await createProductPickerContentSid(lang, pageNo, totalPages, items);
+    await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sid });
+  }
+  return { pagesSent: totalPages, count: arr.length };
+}
+// ===== [UNIQ:PRODUCT-PICKER-LISTS-20260208] END =====
+
 // ===== [UNIQ:PAGINATE-LISTS-20260109] BEGIN =====
 /**
  * Send a long inventory list using pagination (20 per WhatsApp message by default).
@@ -7984,6 +8057,38 @@ async function handleInteractiveSelection(req) {
       if (pref?.success && pref.language) langUi = String(pref.language).toLowerCase();
     } catch(_) {}
     langUi = langUi.replace(/-latn$/, ''); // e.g., hi-latn -> hi
+    // --- NEW: Existing-user chooser buttons ---
+        if (_payloadId === 'pick_existing_products' || _payloadId === 'add_new_product_as_is') {
+          const st = await getUserStateFromDB(shopIdTop).catch(() => null);
+          const action = st?.data?.action ?? 'purchased';
+          const T = _modeTextLabels(langUi);
+          if (_payloadId === 'add_new_product_as_is') {
+            await setUserState(shopIdTop, 'awaitingTransactionDetails', { action });
+            const ex = action === 'sold' ? 'sold Milk 2 ltr @ ₹60' : action === 'returned' ? 'returned Milk 1 ltr @ ₹60' : 'purchased Milk 10 ltr @ ₹60 exp 30d';
+            const msg = await t(`${T.add}\n• ${ex}`, langUi);
+            await sendMessageViaAPI(from, finalizeForSend(msg, langUi));
+            return true;
+          }
+          // pick_existing_products
+          await setUserState(shopIdTop, 'awaitingProductSelection', { action, lang: langUi });
+          const all = await getAllProducts(shopIdTop).catch(() => []);
+          const products = Array.isArray(all) ? all : (Array.isArray(all?.products) ? all.products : (Array.isArray(all?.items) ? all.items : []));
+          await sendPaginatedProductPickers(from, shopIdTop, langUi, products);
+          return true;
+        }
+    
+        // Product selection from list-picker
+        if (typeof _payloadId === 'string' && _payloadId.startsWith('prod:')) {
+          const st = await getUserStateFromDB(shopIdTop).catch(() => null);
+          const action = st?.data?.action ?? 'purchased';
+          const productKey = _payloadId.slice('prod:'.length);
+          const T = _modeTextLabels(langUi);
+          await setUserState(shopIdTop, 'awaitingTransactionDetails', { action, product: productKey });
+          const ex = action === 'sold' ? `sold ${productKey} 2 pcs @ ₹10` : action === 'returned' ? `returned ${productKey} 1 pcs @ ₹10` : `purchased ${productKey} 10 pcs @ ₹10 exp 30d`;
+          const msg = await t(`${T.selected} ${productKey}\n${T.now}\n• ${ex}`, langUi);
+          await sendMessageViaAPI(from, finalizeForSend(msg, langUi));
+          return true;
+        }
 
     const isPurchase = _payloadId === 'qr_purchase';
     const isSale = _payloadId === 'qr_sale';
@@ -8017,6 +8122,25 @@ async function handleInteractiveSelection(req) {
     }
 
     if (isPurchase || isSale || isReturn) {
+    // NEW: Existing activated users get a choice: pick from saved products (list) or continue as-is to add new
+      const activated = await _isUserActivated(shopIdTop).catch(() => false);
+      if (activated) {
+        const action = isPurchase ? 'purchased' : isSale ? 'sold' : 'returned';
+        const T = _modeTextLabels(langUi);
+        await setUserState(shopIdTop, 'awaitingProductModeChoice', { action, lang: langUi });
+        try {
+          await ensureLangTemplates(langUi);
+          const sids = getLangSids(langUi);
+          if (sids?.existingProductModeQrSid) {
+            const toNumber = String(shopIdFrom(from)).replace('whatsapp:', '');
+            await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.existingProductModeQrSid });
+          }
+        } catch (_) {}
+        const ex = action === 'sold' ? 'sold Milk 2 ltr @ ₹60' : action === 'returned' ? 'returned Milk 1 ltr @ ₹60' : 'purchased Milk 10 ltr @ ₹60 exp 30d';
+        const msg = await t(`${T.want}\n• ${ex}`, langUi);
+        await sendMessageViaAPI(from, finalizeForSend(msg, langUi));
+        return true;
+      }
       // Localized header: Example (Purchase|Sale|Return)
       const header = (function () {
         switch (langUi) {
