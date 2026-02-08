@@ -8595,6 +8595,56 @@ async function handleInteractiveSelection(req) {
 
   if (payload === 'qr_purchase') {
     await setStickyMode(from, 'purchased'); // keep sticky
+    
+    // [CHOOSER-DEBUG] confirm we are in the payload-router branch (this is the one your logs show)
+      try {
+        console.log('[chooser-debug] payload-branch', {
+          payload,
+          shopIdTop,
+          lang,
+          allowExamples,
+          activated,
+          plan,
+          trialExpired,
+          isNewUser
+        });
+      } catch (_) {}
+    
+      // [CHOOSER-DEBUG] try sending Existing-User chooser QR (Pick products vs Add new product)
+      // Only for post-trial users (same gate you already use for allowing examples)
+      if (allowExamples) {
+        try {
+          await ensureLangTemplates(lang);
+          const sids = getLangSids(lang);
+          try {
+            console.log('[chooser-debug] chooser-sids', {
+              shopIdTop,
+              lang,
+              existingProductModeQrSid: sids?.existingProductModeQrSid ?? null
+            });
+          } catch (_) {}
+    
+          if (sids?.existingProductModeQrSid) {
+            try { console.log('[chooser-debug] sending-chooser', { shopIdTop, to: shopIdTop, contentSid: sids.existingProductModeQrSid }); } catch (_) {}
+            await sendContentTemplate({ toWhatsApp: shopIdTop, contentSid: sids.existingProductModeQrSid });
+            try { console.log('[chooser-debug] chooser-sent', { shopIdTop, contentSid: sids.existingProductModeQrSid }); } catch (_) {}
+            return true; // IMPORTANT: stop here; do not send examples
+          } else {
+            try { console.warn('[chooser-debug] chooser-missing-sid', { shopIdTop, lang }); } catch (_) {}
+          }
+        } catch (e) {
+          try {
+            console.warn('[chooser-debug] chooser-send-failed', {
+              shopIdTop,
+              lang,
+              status: e?.response?.status ?? null,
+              data: e?.response?.data ?? null,
+              message: e?.message ?? null
+            });
+          } catch (_) {}
+        }
+      }
+
     if (allowExamples) {
       try {
         const check = await _isActivated(shopIdTop);
