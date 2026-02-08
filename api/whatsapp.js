@@ -22336,20 +22336,25 @@ async function handleRequest(req, res, response, requestId, requestStart) {
           // Neither a question nor greeting/lang: let downstream normal routers handle it.
           console.log('[route] new_user + other text → defer to normal handlers');
         }
-    
-        // TRIAL ENDED: gentle paywall prompt and end
-        if (authCheck.upsellReason === 'trial_ended') {
-          let lang = 'en';
-          try { const p = await getUserPreference(shopId); if (p?.success && p.language) lang = p.language; } catch {}
-          const payMsg = await t(
-            `⚠️ Your Saamagrii.AI trial has ended.\nPay ₹11 at: ${PAYMENT_LINK}\nReply "paid" to activate ✅`,
-            lang,
-            `${requestId}::paywall`
-          );
-          await sendMessageViaAPI(From, payMsg);
-          res.send('<Response></Response>');
-          return;
-        }
+                    
+        // TRIAL ENDED: do NOT block basic record keeping / inventory queries.
+                // Only hard-block paid-only commands (e.g., Full Summary).
+                if (authCheck.upsellReason === 'trial_ended') {
+                  const _txtLc = String(text ?? '').toLowerCase().trim();
+                  if (_txtLc === 'full summary') {
+                    let lang = 'en';
+                    try { const p = await getUserPreference(shopId); if (p?.success && p.language) lang = p.language; } catch {}
+                    const payMsg = await t(
+                      `⚠️ Your Saamagrii.AI trial has ended.\nPay ₹11 at: ${PAYMENT_LINK}\nReply "paid" to activate ✅`,
+                      lang,
+                      `${requestId}::paywall`
+                    );
+                    await sendMessageViaAPI(From, payMsg);
+                    res.send('<Response></Response>');
+                    return;
+                  }
+                  // Otherwise continue processing (txn logging, stock queries, short summary, etc.)
+                }
    
     console.log(`[${requestId}] User ${shopId} is authorized, proceeding with request`);
     if (authCache.has(shopId) && Date.now() - authCache.get(shopId) < 5000) {
