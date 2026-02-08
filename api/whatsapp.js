@@ -1870,15 +1870,15 @@ async function _resolveProductNameById(shopId, productId) {
 
 function _prodPickerLabels(lang) {
   const L = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
-  const map = {
-    en: { body: (p,t)=>`Select a product (${p}/${t})`, button: 'Choose' },
-    hi: { body: (p,t)=>`प्रोडक्ट चुनें (${p}/${t})`, button: 'चुनें' },
-    bn: { body: (p,t)=>`পণ্য বাছুন (${p}/${t})`, button: 'বাছুন' },
-    ta: { body: (p,t)=>`பொருள் தேர்வு (${p}/${t})`, button: 'தேர்வு' },
-    te: { body: (p,t)=>`ప్రోడక్ట్ ఎంచుకోండి (${p}/${t})`, button: 'ఎంచుకోండి' },
-    kn: { body: (p,t)=>`ಉತ್ಪನ್ನ ಆಯ್ಕೆ (${p}/${t})`, button: 'ಆಯ್ಕೆ' },
-    mr: { body: (p,t)=>`प्रॉडक्ट निवडा (${p}/${t})`, button: 'निवडा' },
-    gu: { body: (p,t)=>`પ્રોડક્ટ પસંદ કરો (${p}/${t})`, button: 'પસંદ કરો' }
+  const map = {        
+        en: { body: (p,t)=>`Choose existing product (${p}/${t})`, button: 'Choose' },
+        hi: { body: (p,t)=>`पुराना प्रोडक्ट चुनें (${p}/${t})`, button: 'चुनें' },
+        bn: { body: (p,t)=>`আগের পণ্য বাছুন (${p}/${t})`, button: 'বাছুন' },
+        ta: { body: (p,t)=>`இருக்கும் பொருள் தேர்வு (${p}/${t})`, button: 'தேர்வு' },
+        te: { body: (p,t)=>`ఉన్న ప్రోడక్ట్ ఎంచుకోండి (${p}/${t})`, button: 'ఎంచుకోండి' },
+        kn: { body: (p,t)=>`ಇರಿರುವ ಉತ್ಪನ್ನ ಆಯ್ಕೆ (${p}/${t})`, button: 'ಆಯ್ಕೆ' },
+        mr: { body: (p,t)=>`जुने प्रॉडक्ट निवडा (${p}/${t})`, button: 'निवडा' },
+        gu: { body: (p,t)=>`હાલનું પ્રોડક્ટ પસંદ કરો (${p}/${t})`, button: 'પસંદ કરો' }
   };
   return map[L] ?? map.en;
 }
@@ -8649,8 +8649,13 @@ async function handleInteractiveSelection(req) {
           
     // Send chooser for activated users (same eligibility you already use via allowExamples)
         if (allowExamples) {
-          try {                      
-          // NEW: chooser QR not needed — directly send existing-products list pickers
+          try {                                    
+                // Send single-button chooser: "Add new product"
+                await ensureLangTemplates(lang);
+                const sids = getLangSids(lang);
+                 if (sids?.existingProductModeQrSid) {
+                  await sendContentTemplate({ toWhatsApp: shopIdTop, contentSid: sids.existingProductModeQrSid });
+                 }
                 await setUserState(shopIdTop, 'awaitingProductSelection', { action: 'purchased', lang });
                 const products = await getAllProducts(shopIdTop).catch(() => []);
                 await sendPaginatedProductPickers(from, shopIdTop, lang, products);
@@ -8681,7 +8686,13 @@ async function handleInteractiveSelection(req) {
     await setStickyMode(from, 'sold'); // keep sticky
         
     if (allowExamples) {
-          try {                        
+          try {       
+            // Send single-button chooser: "Add new product"
+                await ensureLangTemplates(lang);
+                const sids = getLangSids(lang);
+                 if (sids?.existingProductModeQrSid) {
+                  await sendContentTemplate({ toWhatsApp: shopIdTop, contentSid: sids.existingProductModeQrSid });
+                 }
             await setUserState(shopIdTop, 'awaitingProductSelection', { action: 'sold', lang });
             const products = await getAllProducts(shopIdTop).catch(() => []);
             await sendPaginatedProductPickers(from, shopIdTop, lang, products);
@@ -8712,7 +8723,13 @@ async function handleInteractiveSelection(req) {
     await setStickyMode(from, 'returned'); // keep sticky
         
     if (allowExamples) {
-          try {                      
+          try {         
+            // Send single-button chooser: "Add new product"
+                await ensureLangTemplates(lang);
+                const sids = getLangSids(lang);
+                 if (sids?.existingProductModeQrSid) {
+                  await sendContentTemplate({ toWhatsApp: shopIdTop, contentSid: sids.existingProductModeQrSid });
+                 }
               await setUserState(shopIdTop, 'awaitingProductSelection', { action: 'returned', lang });
               const products = await getAllProducts(shopIdTop).catch(() => []);
               await sendPaginatedProductPickers(from, shopIdTop, lang, products);
