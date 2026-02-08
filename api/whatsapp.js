@@ -8185,51 +8185,52 @@ async function handleInteractiveSelection(req) {
         const action = isPurchase ? 'purchased' : isSale ? 'sold' : 'returned';
         const T = _modeTextLabels(langUi);
         await setUserState(shopIdTop, 'awaitingProductModeChoice', { action, lang: langUi });
-        try {
-          await ensureLangTemplates(langUi);
-          const sids = getLangSids(langUi);
-                    
-          // [CHOOSER-DEBUG] sids snapshot
-                    try {
-                      console.log('[chooser-debug] template-sids', {
-                        requestId,
-                        shopIdTop,
-                        langUi,
-                        existingProductModeQrSid: sids?.existingProductModeQrSid ?? null
-                      });
-                    } catch (_) {}
+                
+        try { 
+          await ensureLangTemplates(langUi); 
+          const sids = getLangSids(langUi); 
+          // [CHOOSER-DEBUG] sids snapshot 
+          try { 
+            console.log('[chooser-debug] template-sids', { 
+              requestId, 
+              shopIdTop, 
+              langUi, 
+              existingProductModeQrSid: sids?.existingProductModeQrSid ?? null 
+            }); 
+          } catch (_) {} 
+        
+          if (sids?.existingProductModeQrSid) { 
+            const toNumber = String(shopIdFrom(from)).replace('whatsapp:', ''); 
+            // [CHOOSER-DEBUG] about to send chooser template 
+            try { 
+              console.log('[chooser-debug] sending-chooser', { 
+                requestId, 
+                shopIdTop, 
+                toNumber, 
+                contentSid: sids.existingProductModeQrSid 
+              }); 
+            } catch (_) {} 
+        
+            await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.existingProductModeQrSid }); 
+        
+            // [CHOOSER-DEBUG] chooser template sent 
+            try { 
+              console.log('[chooser-debug] chooser-sent', { requestId, shopIdTop, contentSid: sids.existingProductModeQrSid }); 
+            } catch (_) {} 
+          } 
+        } catch (e) { 
+          // [CHOOSER-DEBUG] chooser template send failed (keep e in-scope)
+          try { 
+            console.warn('[chooser-debug] send-chooser-failed', { 
+              requestId, 
+              shopIdTop, 
+              status: e?.response?.status ?? null, 
+              data: e?.response?.data ?? null, 
+              message: e?.message ?? null 
+            }); 
+          } catch (_) {} 
+        } 
 
-          if (sids?.existingProductModeQrSid) {
-            const toNumber = String(shopIdFrom(from)).replace('whatsapp:', '');
-                        
-            // [CHOOSER-DEBUG] about to send chooser template
-                        try {
-                          console.log('[chooser-debug] sending-chooser', {
-                            requestId,
-                            shopIdTop,
-                            toNumber,
-                            contentSid: sids.existingProductModeQrSid
-                          });
-                        } catch (_) {}
-
-            await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.existingProductModeQrSid });
-                        
-            // [CHOOSER-DEBUG] chooser template sent
-            try { console.log('[chooser-debug] chooser-sent', { requestId, shopIdTop, contentSid: sids.existingProductModeQrSid }); } catch (_) {}
-          }
-        } catch (_) {}
-                  
-        // [CHOOSER-DEBUG] chooser template send failed
-                  try {
-                    console.warn('[chooser-debug] send-chooser-failed', {
-                      requestId,
-                      shopIdTop,
-                      status: e?.response?.status ?? null,
-                      data: e?.response?.data ?? null,
-                      message: e?.message ?? null
-                    });
-                  } catch (_) {}
-        }
         const ex = action === 'sold' ? 'sold Milk 2 ltr @ ₹60' : action === 'returned' ? 'returned Milk 1 ltr @ ₹60' : 'purchased Milk 10 ltr @ ₹60 exp 30d';
         const msg = await t(`${T.want}\n• ${ex}`, langUi);
         await sendMessageViaAPI(from, finalizeForSend(msg, langUi));
@@ -8332,8 +8333,7 @@ async function handleInteractiveSelection(req) {
       msgFinal = normalizeNumeralsToLatin(msgFinal).trim();
       await sendMessageViaAPI(from, msgFinal);
       return; // consumed: prevent legacy "Examples (purchase)" path
-    }
-  } catch(_){}
+    } catch(_){}
 
   const _isInventoryListSelection = /^list_/.test(_payloadId);
 
