@@ -5120,7 +5120,7 @@ let out = String(text ?? '');
   }
 
   try {
-    // NOTE: badge will be shown only if the user is activated (paid or trial & not expired)        
+    // NOTE: badge will be shown for Paid users and for Trial users (even if trial is expired)      
         // 🔧 Strip footer-suppressor markers (raw "<>" or escaped) and finalize immediately
         if (/^(?:\s*(?:<>|&lt;&gt;))+/.test(String(text))) {
           const withoutMarker = String(text).replace(/^(?:\s*(?:<>|&lt;&gt;))+/, '');
@@ -5152,7 +5152,7 @@ let out = String(text ?? '');
           const expired = (plan === 'trial' && end)
             ? (new Date(end).getTime() < Date.now())
             : false;
-          activated = (plan === 'paid') || (plan === 'trial' && !expired);
+          activated = (plan === 'paid') || (plan === 'trial');
         } catch (_) { /* best-effort only */ }
     
     // 2) Read current state and derive the *effective* action used for footer
@@ -6776,9 +6776,9 @@ async function isActivatedForAckQuick(shopId, timeoutMs = ACK_PLAN_TIMEOUT_MS) {
      if (!planInfo) return null; // unknown within timeout → treat as not safe to ACK
      const plan = String(planInfo?.plan ?? '').toLowerCase();
      const end  = getUnifiedEndDate(planInfo);
-     const activated =
-       (plan === 'paid') ||
-       (plan === 'trial' && end && new Date(end).getTime() > Date.now());
+     const activated =                 
+          (plan === 'paid') ||
+          (plan === 'trial');
      return activated;
    } catch {
      return null;
