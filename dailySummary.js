@@ -411,8 +411,10 @@ async function processShopSummary(shopId) {
   try {
     console.log(`[${context}] Starting processing`);
     
-    // Check plan and feature availability
-    const canSendSummary = await isFeatureAvailable(shopId, 'daily_summary');
+    // Check plan and feature availability        
+    // Daily AI Summary should be gated post-trial expiry (paid-only after expiry)
+    const canSendSummary = await isFeatureAvailable(shopId, 'daily_ai_summary');
+
     if (!canSendSummary) {
       const planInfo = await getUserPlan(shopId);
       let errorMessage = 'Daily summaries are not available on your current plan.';
@@ -420,7 +422,15 @@ async function processShopSummary(shopId) {
       if (planInfo.plan === 'free_demo') {
         errorMessage = 'You have reached your daily summary limit for the Free Demo plan.';
       } else if (planInfo.plan === 'free_demo_first_50') {
-        errorMessage = 'Your trial period has expired. Please upgrade to continue using daily summaries.';
+        errorMessage = 'Your trial period has expired. Please upgrade to continue using daily summaries.';              
+    } else if (planInfo.plan === 'trial') {
+            // If trial exists but feature is not available, treat it as expired
+            try {
+              const te = planInfo.trialEndDate ? new Date(planInfo.trialEndDate).getTime() : null;
+              if (te && Date.now() > te) {
+                errorMessage = 'Your free trial has ended. Please upgrade to activate Daily AI Summary.';
+              }
+            } catch { /* noop */ }
       }
       
       // Send error message to user
