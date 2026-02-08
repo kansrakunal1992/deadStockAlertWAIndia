@@ -22562,7 +22562,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
     res.headersSent = true;
     
   } catch (error) {
-    console.error(`[${requestId}] Processing Error:`, error.message);
+    console.error(`[${requestId}] Processing Error:`, error.message, error?.stack);
     const errorMessage = await t(
       'System error. Please try again with a clear message.',
       'en',
@@ -23131,6 +23131,7 @@ Reply with:
 async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, res) {  
   console.log(`[${requestId}] Handling new interaction`);
   const shopId = fromToShopId(From);
+  const text = String(Body ?? ''); // guard: prevents "text is not defined" in downstream helpers
    
   // 🔒 Early guard: if trial-onboarding capture is active, consume & stop
      try {
