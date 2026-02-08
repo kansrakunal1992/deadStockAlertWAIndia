@@ -574,7 +574,10 @@ async function actuallyCreateOrFetchTemplates(language) {
     }
   try { onboardingQrSid = await createOnboardingQuickReplyForLang(language); } catch (e) {
       console.warn('[contentCache] Onboarding QR create failed:', e?.response?.data ?? e?.message);
-    }  
+    }      
+  try { existingProductModeQrSid = await createExistingUserProductModeQRForLang(language); } catch (e) {
+      console.warn('[contentCache] Existing-User Product Mode QR create failed:', e?.response?.data ?? e?.message);
+    }
   // NEW: Undo CTA
   try { correctionUndoSid = await createUndoCorrectionCTAForLang(language); } catch (e) { console.warn('[contentCache] Undo-Correction CTA create failed:', e?.response?.data ?? e?.message); }
   return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, onboardingQrSid, paidConfirmSid, correctionUndoSid, existingProductModeQrSid };
