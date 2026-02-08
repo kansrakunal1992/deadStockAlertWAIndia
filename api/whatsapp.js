@@ -2300,6 +2300,7 @@ async function parseMultipleUpdates(reqOrText, requestId) {
   
   // Get pending action from user state if available    
   let pendingAction = null;
+  let selectedProduct = null;
     if (userState) {
       if (userState.mode === 'awaitingTransactionDetails' && userState.data?.action) {
         pendingAction = userState.data.action;              // purchased | sold | returned
@@ -2311,6 +2312,11 @@ async function parseMultipleUpdates(reqOrText, requestId) {
       if (pendingAction) {
         console.log(`[parseMultipleUpdates] Using pending action from state: ${pendingAction}`);
       }
+            
+      // NEW: if a product was picked from list picker, force parsers to treat input as qty/unit/price only
+      selectedProduct = (userState?.mode === 'awaitingTransactionDetails' && userState?.data?.product)
+      ? String(userState.data.product).trim()
+      : null;
     }
     
   // ----------------------------------------------------------------------
@@ -2517,6 +2523,14 @@ async function parseMultipleUpdates(reqOrText, requestId) {
 
           // 2) Normalize noisy "<product> <qty> <unit>"
           upd = normalizeProductQtyUnit(upd);
+                    
+          // NEW: If user selected a product from picker, override product/action from state.
+                    // This ensures AI only effectively contributes qty/unit/price.
+                    if (selectedProduct) {
+                      upd.product = selectedProduct;
+                      upd.action = pendingAction || upd.action || 'purchased';
+                    }
+
           upd.productRawForDb = resolveProductNameForWrite(upd.product);
                     
           // --- MIN FIX: AI may emit `price` (logs show `"price": 40`) but downstream expects `pricePerUnit`
@@ -8635,13 +8649,12 @@ async function handleInteractiveSelection(req) {
           
     // Send chooser for activated users (same eligibility you already use via allowExamples)
         if (allowExamples) {
-          try {
-            await ensureLangTemplates(lang);
-            const sids = getLangSids(lang);
-            if (sids?.existingProductModeQrSid) {
-              await sendContentTemplate({ toWhatsApp: shopIdTop, contentSid: sids.existingProductModeQrSid });
-              return true; // IMPORTANT: don't send examples
-            }
+          try {                      
+          // NEW: chooser QR not needed — directly send existing-products list pickers
+                await setUserState(shopIdTop, 'awaitingProductSelection', { action: 'purchased', lang });
+                const products = await getAllProducts(shopIdTop).catch(() => []);
+                await sendPaginatedProductPickers(from, shopIdTop, lang, products);
+                return true; // consumed: don't send examples
           } catch (_) {}
         }
 
@@ -8668,13 +8681,11 @@ async function handleInteractiveSelection(req) {
     await setStickyMode(from, 'sold'); // keep sticky
         
     if (allowExamples) {
-          try {
-            await ensureLangTemplates(lang);
-            const sids = getLangSids(lang);
-            if (sids?.existingProductModeQrSid) {
-              await sendContentTemplate({ toWhatsApp: shopIdTop, contentSid: sids.existingProductModeQrSid });
-              return true;
-            }
+          try {                        
+            await setUserState(shopIdTop, 'awaitingProductSelection', { action: 'sold', lang });
+            const products = await getAllProducts(shopIdTop).catch(() => []);
+            await sendPaginatedProductPickers(from, shopIdTop, lang, products);
+            return true;
           } catch (_) {}
         }
 
@@ -8701,13 +8712,11 @@ async function handleInteractiveSelection(req) {
     await setStickyMode(from, 'returned'); // keep sticky
         
     if (allowExamples) {
-          try {
-            await ensureLangTemplates(lang);
-            const sids = getLangSids(lang);
-            if (sids?.existingProductModeQrSid) {
-              await sendContentTemplate({ toWhatsApp: shopIdTop, contentSid: sids.existingProductModeQrSid });
+          try {                      
+              await setUserState(shopIdTop, 'awaitingProductSelection', { action: 'returned', lang });
+              const products = await getAllProducts(shopIdTop).catch(() => []);
+              await sendPaginatedProductPickers(from, shopIdTop, lang, products);
               return true;
-            }
           } catch (_) {}
         }
 
