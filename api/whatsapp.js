@@ -8083,51 +8083,6 @@ async function handleInteractiveSelection(req) {
       if (pref?.success && pref.language) langUi = String(pref.language).toLowerCase();
     } catch(_) {}
     langUi = langUi.replace(/-latn$/, ''); // e.g., hi-latn -> hi
-    
-    // [CHOOSER-DEBUG] baseline interactive telemetry
-        try {
-          console.log('[chooser-debug] interactive', {
-            requestId,
-            shopIdTop,
-            payloadId: _payloadId ?? null,
-            title: _payloadTitle ?? null,
-            body: raw?.Body ?? null,
-            langUi
-          });
-        } catch (_) {}
-
-    // --- NEW: Existing-user chooser buttons ---
-        if (_payloadId === 'pick_existing_products' || _payloadId === 'add_new_product_as_is') {
-          const st = await getUserStateFromDB(shopIdTop).catch(() => null);
-          const action = st?.data?.action ?? 'purchased';
-          const T = _modeTextLabels(langUi);
-          if (_payloadId === 'add_new_product_as_is') {
-            await setUserState(shopIdTop, 'awaitingTransactionDetails', { action });
-            const ex = action === 'sold' ? 'sold Milk 2 ltr @ ₹60' : action === 'returned' ? 'returned Milk 1 ltr @ ₹60' : 'purchased Milk 10 ltr @ ₹60 exp 30d';
-            const msg = await t(`${T.add}\n• ${ex}`, langUi);
-            await sendMessageViaAPI(from, finalizeForSend(msg, langUi));
-            return true;
-          }
-          // pick_existing_products
-          await setUserState(shopIdTop, 'awaitingProductSelection', { action, lang: langUi });
-          const all = await getAllProducts(shopIdTop).catch(() => []);
-          const products = Array.isArray(all) ? all : (Array.isArray(all?.products) ? all.products : (Array.isArray(all?.items) ? all.items : []));
-          await sendPaginatedProductPickers(from, shopIdTop, langUi, products);
-          return true;
-        }
-    
-        // Product selection from list-picker
-        if (typeof _payloadId === 'string' && _payloadId.startsWith('prod:')) {
-          const st = await getUserStateFromDB(shopIdTop).catch(() => null);
-          const action = st?.data?.action ?? 'purchased';
-          const productKey = _payloadId.slice('prod:'.length);
-          const T = _modeTextLabels(langUi);
-          await setUserState(shopIdTop, 'awaitingTransactionDetails', { action, product: productKey });
-          const ex = action === 'sold' ? `sold ${productKey} 2 pcs @ ₹10` : action === 'returned' ? `returned ${productKey} 1 pcs @ ₹10` : `purchased ${productKey} 10 pcs @ ₹10 exp 30d`;
-          const msg = await t(`${T.selected} ${productKey}\n${T.now}\n• ${ex}`, langUi);
-          await sendMessageViaAPI(from, finalizeForSend(msg, langUi));
-          return true;
-        }
 
     const isPurchase = _payloadId === 'qr_purchase';
     const isSale = _payloadId === 'qr_sale';
@@ -8415,6 +8370,57 @@ async function handleInteractiveSelection(req) {
   try {
     console.log(`[interact] payload=${payload ?? '—'} listId=${listId ?? '—'} body=${text ?? '—'}`);
   } catch(_) {}
+  
+  // ===== NEW: Handle chooser button clicks by stable payload id =====
+    if (payload === 'pick_existing_products' || payload === 'add_new_product_as_is') {
+      // Use user's saved preference language for UX consistency
+      let langUi2 = 'en';
+      try {
+        const pref2 = await getUserPreference(shopIdTop);
+        if (pref2?.success && pref2.language) langUi2 = String(pref2.language).toLowerCase();
+      } catch (_) {}
+      langUi2 = String(langUi2).replace(/-latn$/, '');
+  
+      const st = await getUserStateFromDB(shopIdTop).catch(() => null);
+      const action = st?.data?.action ?? 'purchased';
+      const T = _modeTextLabels(langUi2);
+  
+      if (payload === 'add_new_product_as_is') {
+        await setUserState(shopIdTop, 'awaitingTransactionDetails', { action });
+        const ex = action === 'sold' ? 'sold Milk 2 ltr @ ₹60' : action === 'returned' ? 'returned Milk 1 ltr @ ₹60' : 'purchased Milk 10 ltr @ ₹60 exp 30d';
+        const msg = await t(`${T.add}\n• ${ex}`, langUi2);
+        await sendMessageViaAPI(from, finalizeForSend(msg, langUi2));
+        return true;
+      }
+  
+      // payload === 'pick_existing_products'
+      await setUserState(shopIdTop, 'awaitingProductSelection', { action, lang: langUi2 });
+      const all = await getAllProducts(shopIdTop).catch(() => []);
+      const products = Array.isArray(all) ? all : (Array.isArray(all?.products) ? all.products : (Array.isArray(all?.items) ? all.items : []));
+      await sendPaginatedProductPickers(from, shopIdTop, langUi2, products);
+      return true;
+    }
+  
+    // ===== NEW: Handle product selection from list-pickers (listId carries the selected item id) =====
+    if (typeof listId === 'string' && listId.startsWith('prod:')) {
+      let langUi3 = 'en';
+      try {
+        const pref3 = await getUserPreference(shopIdTop);
+        if (pref3?.success && pref3.language) langUi3 = String(pref3.language).toLowerCase();
+      } catch (_) {}
+      langUi3 = String(langUi3).replace(/-latn$/, '');
+  
+      const st = await getUserStateFromDB(shopIdTop).catch(() => null);
+      const action = st?.data?.action ?? 'purchased';
+      const productKey = listId.slice('prod:'.length);
+      const T = _modeTextLabels(langUi3);
+  
+      await setUserState(shopIdTop, 'awaitingTransactionDetails', { action, product: productKey });
+      const ex = action === 'sold' ? `sold ${productKey} 2 pcs @ ₹10` : action === 'returned' ? `returned ${productKey} 1 pcs @ ₹10` : `purchased ${productKey} 10 pcs @ ₹10 exp 30d`;
+      const msg = await t(`${T.selected} ${productKey}\n${T.now}\n• ${ex}`, langUi3);
+      await sendMessageViaAPI(from, finalizeForSend(msg, langUi3));
+      return true;
+    }
 
   // --- 4B: Map localized ButtonText -> canonical payload IDs (EN + HI)
   function fixNewlines(str) {
@@ -8595,55 +8601,18 @@ async function handleInteractiveSelection(req) {
 
   if (payload === 'qr_purchase') {
     await setStickyMode(from, 'purchased'); // keep sticky
-    
-    // [CHOOSER-DEBUG] confirm we are in the payload-router branch (this is the one your logs show)
-      try {
-        console.log('[chooser-debug] payload-branch', {
-          payload,
-          shopIdTop,
-          lang,
-          allowExamples,
-          activated,
-          plan,
-          trialExpired,
-          isNewUser
-        });
-      } catch (_) {}
-    
-      // [CHOOSER-DEBUG] try sending Existing-User chooser QR (Pick products vs Add new product)
-      // Only for post-trial users (same gate you already use for allowing examples)
-      if (allowExamples) {
-        try {
-          await ensureLangTemplates(lang);
-          const sids = getLangSids(lang);
+          
+    // Send chooser for activated users (same eligibility you already use via allowExamples)
+        if (allowExamples) {
           try {
-            console.log('[chooser-debug] chooser-sids', {
-              shopIdTop,
-              lang,
-              existingProductModeQrSid: sids?.existingProductModeQrSid ?? null
-            });
-          } catch (_) {}
-    
-          if (sids?.existingProductModeQrSid) {
-            try { console.log('[chooser-debug] sending-chooser', { shopIdTop, to: shopIdTop, contentSid: sids.existingProductModeQrSid }); } catch (_) {}
-            await sendContentTemplate({ toWhatsApp: shopIdTop, contentSid: sids.existingProductModeQrSid });
-            try { console.log('[chooser-debug] chooser-sent', { shopIdTop, contentSid: sids.existingProductModeQrSid }); } catch (_) {}
-            return true; // IMPORTANT: stop here; do not send examples
-          } else {
-            try { console.warn('[chooser-debug] chooser-missing-sid', { shopIdTop, lang }); } catch (_) {}
-          }
-        } catch (e) {
-          try {
-            console.warn('[chooser-debug] chooser-send-failed', {
-              shopIdTop,
-              lang,
-              status: e?.response?.status ?? null,
-              data: e?.response?.data ?? null,
-              message: e?.message ?? null
-            });
+            await ensureLangTemplates(lang);
+            const sids = getLangSids(lang);
+            if (sids?.existingProductModeQrSid) {
+              await sendContentTemplate({ toWhatsApp: shopIdTop, contentSid: sids.existingProductModeQrSid });
+              return true; // IMPORTANT: don't send examples
+            }
           } catch (_) {}
         }
-      }
 
     if (allowExamples) {
       try {
@@ -8666,6 +8635,18 @@ async function handleInteractiveSelection(req) {
 
   if (payload === 'qr_sale') {
     await setStickyMode(from, 'sold'); // keep sticky
+        
+    if (allowExamples) {
+          try {
+            await ensureLangTemplates(lang);
+            const sids = getLangSids(lang);
+            if (sids?.existingProductModeQrSid) {
+              await sendContentTemplate({ toWhatsApp: shopIdTop, contentSid: sids.existingProductModeQrSid });
+              return true;
+            }
+          } catch (_) {}
+        }
+
     if (allowExamples) {
       try {
         const check = await _isActivated(shopIdTop);
@@ -8687,6 +8668,18 @@ async function handleInteractiveSelection(req) {
 
   if (payload === 'qr_return') {
     await setStickyMode(from, 'returned'); // keep sticky
+        
+    if (allowExamples) {
+          try {
+            await ensureLangTemplates(lang);
+            const sids = getLangSids(lang);
+            if (sids?.existingProductModeQrSid) {
+              await sendContentTemplate({ toWhatsApp: shopIdTop, contentSid: sids.existingProductModeQrSid });
+              return true;
+            }
+          } catch (_) {}
+        }
+
     if (allowExamples) {
       try {
         const check = await _isActivated(shopIdTop);
