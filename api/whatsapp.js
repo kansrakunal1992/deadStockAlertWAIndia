@@ -23748,7 +23748,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         const stickyAction = await getStickyActionQuick(From);
         const looksTxn = looksLikeTxnLite(Body);
         if (stickyAction || looksTxn) {                    
-            const isDiag = !!classifyDiagnosticPeek(text);
+            const isDiag = !!classifyDiagnosticPeek(Body);
               if (!isDiag) {
           console.log(`[${requestId}] [HNI] skipping quick-query in sticky/txn turn`);
               }
