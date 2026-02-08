@@ -94,6 +94,32 @@ async function _isUserActivated(shopId) {
   } catch { return false; }
 }
 
+// [PATCH:CHOOSER-ELIGIBILITY-POST-TRIAL]
+// Do NOT change _isUserActivated semantics globally.
+// Chooser (product picker + add-new option) should be available after user has activated trial once,
+// and should remain available even if trial later expires.
+async function _isChooserEligible(shopId) {
+  try {
+    // 1) If AuthUsers says user is active/authorized, they are post-trial eligible
+    if (typeof isUserAuthorized === 'function') {
+      const auth = await isUserAuthorized(String(shopId)).catch(() => null);
+      if (auth?.success) return true;
+    }
+    // 2) If plan ever reached trial/paid/standard/enterprise, they are post-trial eligible (ignore expiry)
+    const planInfo = (typeof getUserPlanQuick === 'function')
+      ? await getUserPlanQuick(String(shopId)).catch(() => null)
+      : (typeof getUserPlan === 'function' ? await getUserPlan(String(shopId)).catch(() => null) : null);
+    const plan = String(planInfo?.plan ?? '').toLowerCase().trim();
+    if (plan === 'trial' || plan === 'free_demo_first_50' || plan === 'paid' || plan === 'standard' || plan === 'enterprise') return true;
+
+    // 3) Final fallback: legacy preference plan field (ignore expiry)
+    const pref = await getUserPreference(String(shopId)).catch(() => null);
+    const legacy = String(pref?.plan ?? '').toLowerCase().trim();
+    if (legacy === 'trial' || legacy === 'paid') return true;
+  } catch { /* fallthrough */ }
+  return false;
+}
+
 function _detectShopType(text='') {    
 const t = String(text ?? '').toLowerCase().trim();
   if (!t) return null;
@@ -8120,11 +8146,12 @@ async function handleInteractiveSelection(req) {
       }
       return true; // handled
     }
-
+        
     if (isPurchase || isSale || isReturn) {
-    // NEW: Existing activated users get a choice: pick from saved products (list) or continue as-is to add new
-      const activated = await _isUserActivated(shopIdTop).catch(() => false);
-      if (activated) {
+          // NEW: Existing post-trial users get a choice: pick from saved products (list) or continue as-is to add new
+          // (Do not depend on _isUserActivated(), which is used elsewhere for different semantics)
+          const eligible = await _isChooserEligible(shopIdTop).catch(() => false);
+          if (eligible) {
         const action = isPurchase ? 'purchased' : isSale ? 'sold' : 'returned';
         const T = _modeTextLabels(langUi);
         await setUserState(shopIdTop, 'awaitingProductModeChoice', { action, lang: langUi });
