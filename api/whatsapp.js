@@ -8229,8 +8229,7 @@ async function handleInteractiveSelection(req) {
                       message: e?.message ?? null
                     });
                   } catch (_) {}
-                }
-      
+        }
         const ex = action === 'sold' ? 'sold Milk 2 ltr @ ₹60' : action === 'returned' ? 'returned Milk 1 ltr @ ₹60' : 'purchased Milk 10 ltr @ ₹60 exp 30d';
         const msg = await t(`${T.want}\n• ${ex}`, langUi);
         await sendMessageViaAPI(from, finalizeForSend(msg, langUi));
@@ -8334,7 +8333,7 @@ async function handleInteractiveSelection(req) {
       await sendMessageViaAPI(from, msgFinal);
       return; // consumed: prevent legacy "Examples (purchase)" path
     }
-  } catch(_) { /* best-effort; fall through to existing logic */ }
+  } catch(_){}
 
   const _isInventoryListSelection = /^list_/.test(_payloadId);
 
