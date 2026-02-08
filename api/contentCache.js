@@ -302,15 +302,15 @@ const ONBOARDING_QR_LABELS = {
 
 // ——— NEW: Existing user chooser QR (Pick existing products • Add new product) ———
 // Titles are clamped to <= 20 chars by clampTitle().
-const EXISTING_USER_PRODUCT_MODE_QR_LABELS = {
-  en: { body: 'How do you want to add items?', pick: 'Pick products', add: 'Add new product' },
-  hi: { body: 'आप कैसे जोड़ना चाहेंगे?', pick: 'लिस्ट से चुनें', add: 'नया प्रोडक्ट जोड़ें' },
-  bn: { body: 'কীভাবে যোগ করবেন?', pick: 'লিস্ট থেকে বাছুন', add: 'নতুন পণ্য যোগ' },
-  ta: { body: 'எப்படி சேர்க்க விரும்புகிறீர்?', pick: 'லிஸ்ட் தேர்வு', add: 'புதிய பொருள்' },
-  te: { body: 'ఎలా జోడించాలి?', pick: 'లిస్ట్ నుంచి', add: 'కొత్త ప్రోడక్ట్' },
-  kn: { body: 'ಹೇಗೆ ಸೇರಿಸಬೇಕು?', pick: 'ಪಟ್ಟಿಯಿಂದ ಆಯ್ಕೆ', add: 'ಹೊಸ ಪ್ರೊಡಕ್ಟ್' },
-  mr: { body: 'कसं जोडायचं?', pick: 'यादीतून निवडा', add: 'नवीन प्रॉडक्ट' },
-  gu: { body: 'કેવી રીતે ઉમેરશો?', pick: 'લિસ્ટમાંથી પસંદ', add: 'નવું પ્રોડક્ટ' }
+const EXISTING_USER_PRODUCT_MODE_QR_LABELS = {  
+  en: { body: 'How do you want to add items?', pick: 'Choose existing', add: 'Add new product' },
+  hi: { body: 'आप कैसे जोड़ना चाहेंगे?', pick: 'पुराना चुनें', add: 'नया प्रोडक्ट जोड़ें' },
+  bn: { body: 'কীভাবে যোগ করবেন?', pick: 'আগেরটা বাছুন', add: 'নতুন পণ্য যোগ' },
+  ta: { body: 'எப்படி சேர்க்க விரும்புகிறீர்?', pick: 'இருப்பதை தேர்வு', add: 'புதிய பொருள்' },
+  te: { body: 'ఎలా జోడించాలి?', pick: 'ఉన్నది ఎంచుకో', add: 'కొత్త ప్రోడక్ట్' },
+  kn: { body: 'ಹೇಗೆ ಸೇರಿಸಬೇಕು?', pick: 'ಇರಿರುವದು ಆಯ್ಕೆ', add: 'ಹೊಸ ಪ್ರೊಡಕ್ಟ್' },
+  mr: { body: 'कसं जोडायचं?', pick: 'जुने निवडा', add: 'नवीन प्रॉडक्ट' },
+  gu: { body: 'કેવી રીતે ઉમેરશો?', pick: 'હાલનું પસંદ', add: 'નવું પ્રોડક્ટ' }
 };
 
 async function createOnboardingQuickReplyForLang(lang) {
