@@ -300,6 +300,19 @@ const ONBOARDING_QR_LABELS = {
   bn: { body: 'শুরু করুন — পেমেন্ট লাগবে না',  start: 'ফ্রি ট্রায়াল', demo: 'ডেমো', help: 'সাহায্য' }
 };
 
+// ——— NEW: Existing user chooser QR (Pick existing products • Add new product) ———
+// Titles are clamped to <= 20 chars by clampTitle().
+const EXISTING_USER_PRODUCT_MODE_QR_LABELS = {
+  en: { body: 'How do you want to add items?', pick: 'Pick products', add: 'Add new product' },
+  hi: { body: 'आप कैसे जोड़ना चाहेंगे?', pick: 'लिस्ट से चुनें', add: 'नया प्रोडक्ट जोड़ें' },
+  bn: { body: 'কীভাবে যোগ করবেন?', pick: 'লিস্ট থেকে বাছুন', add: 'নতুন পণ্য যোগ' },
+  ta: { body: 'எப்படி சேர்க்க விரும்புகிறீர்?', pick: 'லிஸ்ட் தேர்வு', add: 'புதிய பொருள்' },
+  te: { body: 'ఎలా జోడించాలి?', pick: 'లిస్ట్ నుంచి', add: 'కొత్త ప్రోడక్ట్' },
+  kn: { body: 'ಹೇಗೆ ಸೇರಿಸಬೇಕು?', pick: 'ಪಟ್ಟಿಯಿಂದ ಆಯ್ಕೆ', add: 'ಹೊಸ ಪ್ರೊಡಕ್ಟ್' },
+  mr: { body: 'कसं जोडायचं?', pick: 'यादीतून निवडा', add: 'नवीन प्रॉडक्ट' },
+  gu: { body: 'કેવી રીતે ઉમેરશો?', pick: 'લિસ્ટમાંથી પસંદ', add: 'નવું પ્રોડક્ટ' }
+};
+
 async function createOnboardingQuickReplyForLang(lang) {
   const l = ONBOARDING_QR_LABELS[lang] ?? ONBOARDING_QR_LABELS.en;
   const payload = {
@@ -320,6 +333,30 @@ async function createOnboardingQuickReplyForLang(lang) {
     auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
   });
   console.log(`[contentCache] Created Onboarding QR for ${lang}: ContentSid=${data.sid}`);
+  return data.sid;
+}
+
+// ——— NEW: Existing-user product mode chooser (2-button quick reply) ———
+async function createExistingUserProductModeQRForLang(lang) {
+  const base = normalizeLangForContent(lang);
+  const l = EXISTING_USER_PRODUCT_MODE_QR_LABELS[base] ?? EXISTING_USER_PRODUCT_MODE_QR_LABELS.en;
+  const payload = {
+    friendly_name: `saamagrii_existing_product_mode_${base}_${Date.now()}`,
+    language: base,
+    types: {
+      'twilio/quick-reply': {
+        body: l.body,
+        actions: [
+          { type: 'QUICK_REPLY', title: clampTitle(l.pick), id: 'pick_existing_products' },
+          { type: 'QUICK_REPLY', title: clampTitle(l.add), id: 'add_new_product_as_is' }
+        ]
+      }
+    }
+  };
+  const { data } = await axios.post(CONTENT_API_URL, payload, {
+    auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
+  });
+  console.log(`[contentCache] Created Existing-User Product Mode QR for ${lang}: ContentSid=${data.sid}`);
   return data.sid;
 }
 
@@ -475,6 +512,7 @@ const language = normalizeLangForContent(lang);
     paidCtaSid    : created?.paidCtaSid    || null,
     paidConfirmSid: created?.paidConfirmSid ?? null,
     onboardingQrSid: created?.onboardingQrSid ?? null,
+    existingProductModeQrSid: created?.existingProductModeQrSid ?? null,
     correctionUndoSid: created?.correctionUndoSid ?? null, // NEW
     ts            : Date.now()
   };
@@ -523,6 +561,7 @@ async function actuallyCreateOrFetchTemplates(language) {
   let trialCtaSid = null, paidCtaSid = null;
   let correctionUndoSid = null; // NEW
   let onboardingQrSid = null;
+  let existingProductModeQrSid = null;
   let paidConfirmSid = null;
   try { trialCtaSid = await createActivateTrialCTAForLang(language); } catch (e) {
     console.warn('[contentCache] Trial CTA create failed:', e?.response?.data || e?.message);
@@ -538,7 +577,7 @@ async function actuallyCreateOrFetchTemplates(language) {
     }  
   // NEW: Undo CTA
   try { correctionUndoSid = await createUndoCorrectionCTAForLang(language); } catch (e) { console.warn('[contentCache] Undo-Correction CTA create failed:', e?.response?.data ?? e?.message); }
-  return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, onboardingQrSid, paidConfirmSid, correctionUndoSid };
+  return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, onboardingQrSid, paidConfirmSid, correctionUndoSid, existingProductModeQrSid };
 }
 
 module.exports = { ensureLangTemplates, getLangSids };
