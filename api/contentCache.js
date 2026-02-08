@@ -347,7 +347,6 @@ async function createExistingUserProductModeQRForLang(lang) {
       'twilio/quick-reply': {
         body: l.body,
         actions: [
-          { type: 'QUICK_REPLY', title: clampTitle(l.pick), id: 'pick_existing_products' },
           { type: 'QUICK_REPLY', title: clampTitle(l.add), id: 'add_new_product_as_is' }
         ]
       }
