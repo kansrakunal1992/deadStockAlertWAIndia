@@ -3378,7 +3378,7 @@ function looksLikeInventoryPricing(msg) {
        stickyAction, txnLike: __txnLike, activated: __activated,
        plan: __plan, planEnd: __end, planExpired: __expired
      });
-     if (stickyAction && __txnLike && __activated) {              
+     if (stickyAction && __txnLike) {           
       // [PATCH:SKIP-STICKY-AI-PREFETCH] Sticky txn turns do not need orchestrator-sticky AI pre-parse.
                // We will force the inventory parse downstream (parseMultipleUpdates) which drives the DB commit.
                // This removes ~6s of redundant work seen in logs.
@@ -3393,10 +3393,7 @@ function looksLikeInventoryPricing(msg) {
                  identityAsked: typeof isNameQuestion === 'function' ? isNameQuestion(text) : false,
                  forceInventory: true
                };
-        } else if (stickyAction && __txnLike && !__activated) {
-         logAiFirstDecision(requestId, 'skip', { reason: 'plan_not_activated', stickyAction, txnLike: __txnLike, activated: __activated, plan: __plan, planEnd: __end, planExpired: __expired });
-         console.log('[orchestrator][sticky-ai-first] skipped (plan not activated)', { requestId });
-      }
+         }
     } catch (_) { /* proceed with orchestrator */ }
         
     // ---- NEW FAST PATH (Deepseek single call) when ENABLE_FAST_CLASSIFIER=true ----
