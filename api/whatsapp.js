@@ -10211,36 +10211,46 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
 // Helper no-op: clamp removed, keep numerals-only normalization elsewhere
   const noClamp = (s) => String(s);
                   
-// -- Granular feature gate for summaries via isFeatureAvailable (ai_summary)
+// -- Granular feature gate ONLY for FULL summary (Short Summary remains available post-trial)
   try {
-    const lc = String(cmd).toLowerCase().trim();
-    const needsAiSummary = (lc === 'short summary' || lc === 'full summary');
-    if (needsAiSummary) {
-      const allowed = await isFeatureAvailable(shopId, 'ai_summary');
-      if (!allowed) {
-        const prompt = await t(
-          'To use summaries, please start your FREE trial.\nTap "Start Free Trial" — no payment/card needed.',
-          lang,
-          `cta-summary-${shopId}`
-        );
-        await sendTagged(prompt);
-        return true;
+    const lc = String(cmd).toLowerCase().trim();        
+    const needsFull = (lc === 'full summary');
+        if (needsFull) {
+          const allowed = await isFeatureAvailable(shopId, 'full_summary');
+      if (!allowed) {            
+    // decide message by plan status
+            let plan = 'free_demo', trialExpired = false;
+            try {
+              const pi = await getUserPlanQuick(shopId);
+              plan = String(pi?.plan ?? 'free_demo').toLowerCase();
+              const te = pi?.trialEndDate ? new Date(pi.trialEndDate).getTime() : null;
+              trialExpired = (plan === 'trial' && te && Date.now() > te);
+            } catch {}
+    
+            if (trialExpired) {
+              const prompt = await t(
+                '🔒 Your free trial has ended.\nFull Summary + Daily AI Summary + 8 AM reminders are on the Paid Plan (₹11).',
+                lang,
+                `cta-paid-${shopId}`
+              );
+              await sendTagged(prompt);
+              await sendPaidPlanCTA(From, lang);
+              return true;
+            }
+    
+            const prompt = await t(
+              'To use Full Summary, please start your FREE trial.\nTap \"Start Free Trial\" — no payment/card needed.',
+              lang,
+              `cta-summary-${shopId}`
+            );
+            await sendTagged(prompt);
+            try { await sendTrialCtaAsync(From, lang); } catch {}
+            return true;
       }
     }
   } catch (_e) { /* soft-fail: continue */ }
 
   if (cmd === 'short summary') {      
-  // Guard: ai_summary must be available
-      const allowed = await isFeatureAvailable(shopId, 'ai_summary');
-      if (!allowed) {
-        const prompt = await t(
-          'To use summaries, please start your FREE trial.\nTap "Start Free Trial" — no payment/card needed.',
-          lang,
-          `cta-summary-${shopId}`
-        );
-        await sendTagged(prompt);
-        return true;
-      }
     let hasAny = false;
     try {              
         const today = await getTodaySalesSummary(shopId);
@@ -10339,17 +10349,37 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       }
     return true;
   }
-  if (cmd === 'full summary') {      
-  // Guard: ai_summary must be available
-      const allowed = await isFeatureAvailable(shopId, 'ai_summary');
-      if (!allowed) {
-        const prompt = await t(
-          'To use summaries, please activate your FREE trial.\nReply "Start Free Trial" or tap the trial button.',
-          lang,
-          `cta-summary-${shopId}`
-        );
-        await sendTagged(prompt);
-        return true;
+  if (cmd === 'full summary') {          
+  // Guard: full_summary must be available (trial ok until expiry; paid ok)
+  const allowed = await isFeatureAvailable(shopId, 'full_summary');
+      if (!allowed) {                
+        let plan = 'free_demo', trialExpired = false;
+              try {
+                const pi = await getUserPlanQuick(shopId);
+                plan = String(pi?.plan ?? 'free_demo').toLowerCase();
+                const te = pi?.trialEndDate ? new Date(pi.trialEndDate).getTime() : null;
+                trialExpired = (plan === 'trial' && te && Date.now() > te);
+              } catch {}
+        
+              if (trialExpired) {
+                const prompt = await t(
+                  '🔒 Your free trial has ended.\nActivate Paid Plan (₹11) to unlock Full Summary + Daily AI Summary + 8 AM reminders.',
+                  lang,
+                  `cta-paid-${shopId}`
+                );
+                await sendTagged(prompt);
+                await sendPaidPlanCTA(From, lang);
+                return true;
+              }
+        
+              const prompt = await t(
+                'To use Full Summary, please start your FREE trial.\nTap \"Start Free Trial\" — no payment/card needed.',
+                lang,
+                `cta-summary-${shopId}`
+              );
+              await sendTagged(prompt);
+              try { await sendTrialCtaAsync(From, lang); } catch {}
+              return true;
       }
     try {          
         let langPref = lang;
@@ -17585,7 +17615,37 @@ async function sendPriceUpdateReminders() {
       console.log(`Processing batch of ${batch.length} shops (${i + 1}-${i + batch.length} of ${shopIds.length})`);
       
       const batchPromises = batch.map(async (shopId) => {
-        try {
+        try {         
+         // Gate: 8 AM reminders are Paid-only after trial expiry
+            let reminderAllowed = true;
+            try { reminderAllowed = await isFeatureAvailable(shopId, 'price_reminders_8am'); } catch {}
+            if (!reminderAllowed) {
+              // If trial expired, nudge upgrade (throttle once/24h)
+              try {
+                const pi = await getUserPlanQuick(shopId);
+                const plan = String(pi?.plan ?? 'free_demo').toLowerCase();
+                const te = pi?.trialEndDate ? new Date(pi.trialEndDate).getTime() : null;
+                const trialExpired = (plan === 'trial' && te && Date.now() > te);
+                if (trialExpired) {
+                  globalThis.__paidNudge = globalThis.__paidNudge ?? new Map();
+                  const nk = `${shopId}::price_reminders_8am`;
+                  const last = globalThis.__paidNudge.get(nk);
+                  const ttl = Number(process.env.PAID_NUDGE_TTL_MS ?? (24*60*60*1000));
+                  if (!last || (Date.now() - last) > ttl) {
+                    globalThis.__paidNudge.set(nk, Date.now());
+                    const fromWhatsApp = `whatsapp:${shopId}`;
+                    let msg = await t(
+                      '🔒 8 AM reminders are paused because your trial ended.\nActivate Paid Plan (₹11) to re-enable reminders.',
+                      userLanguage ?? 'en',
+                      `paid-nudge::price-reminder::${shopId}`
+                    );
+                    await sendMessageViaAPI(fromWhatsApp, finalizeForSend(msg, userLanguage ?? 'en'));
+                    await sendPaidPlanCTA(fromWhatsApp, userLanguage ?? 'en');
+                  }
+                }
+              } catch {}
+              return { shopId, success: true, skipped: true, reason: 'not_allowed' };
+            }
           // Get user's preferred language
           let userLanguage = 'en';
           try {
