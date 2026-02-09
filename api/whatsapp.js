@@ -8371,12 +8371,24 @@ async function handleInteractiveSelection(req) {
   } catch(_) {}
 
   // STEP 13: Summary buttons → route directly
-  if (payload === 'instant_summary' || payload === 'full_summary') {
-    let btnLang = 'en';
-    try {
-      const prefLP = await getUserPreference(shopIdTop);
-      if (prefLP?.success && prefLP.language) btnLang = String(prefLP.language).toLowerCase();
-    } catch(_) {}
+  if (payload === 'instant_summary' || payload === 'full_summary') {      
+  // Prefer language from the actual button label (prevents unexpected flips)
+      // Fallback to saved preference only if label is missing.
+      let btnLang = null;
+      try {
+        const btnText = String(raw.ButtonText ?? raw.ButtonTitle ?? raw.Body ?? '').trim();
+        if (btnText) {
+          // guessLangFromInput + ensureLangExact already exist in this file
+          btnLang = ensureLangExact(guessLangFromInput(btnText), 'en');
+        }
+      } catch (_) { /* noop */ }
+      if (!btnLang) {
+        btnLang = 'en';
+        try {
+          const prefLP = await getUserPreference(shopIdTop);
+          if (prefLP?.success && prefLP.language) btnLang = String(prefLP.language).toLowerCase();
+        } catch (_) { /* noop */ }
+      }
     const cmd = (payload === 'instant_summary') ? 'short summary' : 'full summary';
     await handleQuickQueryEN(cmd, from, btnLang, 'btn');
 
@@ -10547,7 +10559,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     
             if (trialExpired) {
               const prompt = await t(
-                '🔒 Your free trial has ended.\nFull Summary + Daily AI Summary + 8 AM reminders are on the Paid Plan (₹11).',
+                '🔒 Your free trial has ended.\nFull Summary + Daily AI Summary + 8 AM reminders are on the Paid Plan (₹11/month).',
                 lang,
                 `cta-paid-${shopId}`
               );
@@ -10681,7 +10693,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
         
               if (trialExpired) {
                 const prompt = await t(
-                  '🔒 Your free trial has ended.\nActivate Paid Plan (₹11) to unlock Full Summary + Daily AI Summary + 8 AM reminders.',
+                  '🔒 Your free trial has ended.\nActivate Paid Plan (₹11/month) to unlock Full Summary + Daily AI Summary + 8 AM reminders.',
                   lang,
                   `cta-paid-${shopId}`
                 );
@@ -12198,7 +12210,7 @@ async function sendTrialExpiryReminders() {
       let lang = 'en';
       try { const pref = await getUserPreference(u.shopId); if (pref?.success && pref.language) lang = String(pref.language).toLowerCase(); } catch {}
       const body = await t(
-        `⚠️ Your Saamagrii.AI trial ends today.\nPay ₹11 at: ${PAYMENT_LINK}\nReply "paid" to activate ✅`,
+        `⚠️ Your Saamagrii.AI trial ends today.\nPay ₹11 at: ${PAYMENT_LINK} to activate ✅ monthly plan.`,
         lang, `trial-reminder-${u.shopId}`
       );
       await sendMessageViaAPI(`whatsapp:${u.shopId}`, body);
@@ -14217,8 +14229,7 @@ async function routeQuickQueryRaw(rawBody, From, detectedLanguage, requestId) {
                     case 'trial_ended':
                     case 'inactive':
                       body = await t(
-                        `To continue, pay ₹11 at: ${PAYMENT_LINK}
-            Reply "paid" after payment ✅`,
+                        `To continue, pay ₹11 at: ${PAYMENT_LINK} to activate monthly plan ✅`,
                         detectedLanguage, `${requestId}::up-pay`
                       );
                       break;
@@ -18003,7 +18014,7 @@ async function sendPriceUpdateReminders() {
                     globalThis.__paidNudge.set(nk, Date.now());
                     const fromWhatsApp = `whatsapp:${shopId}`;
                     let msg = await t(
-                      '🔒 8 AM reminders are paused because your trial ended.\nActivate Paid Plan (₹11) to re-enable reminders.',
+                      '🔒 8 AM reminders are paused because your trial ended.\nActivate Paid Plan (₹11/month) to re-enable reminders.',
                       userLanguage ?? 'en',
                       `paid-nudge::price-reminder::${shopId}`
                     );
