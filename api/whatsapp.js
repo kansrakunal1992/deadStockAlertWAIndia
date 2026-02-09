@@ -10432,6 +10432,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
     }
   } catch (_) { /* noop */ }
   const shopId = shopIdFrom(From);  
+  const forceNoPrefOverride = (String(source || '').toLowerCase() === 'btn' || String(source || '').toLowerCase() === 'lp');
 
   const sendTagged = async (body, opts = {}) => {
       // per-command cache key (already unique & scoped)
@@ -10444,7 +10445,7 @@ async function handleQuickQueryEN(cmd, From, lang = 'en', source = 'lp') {
       const normalized = normalizeNumeralsToLatin(enforceSingleScriptSafe(labeled, lang)).trim();            
       // ⬇️ Split long messages for WhatsApp and append the footer ONLY on the last part
       // Thread through any caller-provided opts (e.g., { noPrefOverride: true })
-      await sendMultiPartWithFooter(From, normalized, lang, opts);
+      await sendMultiPartWithFooter(From, normalized, lang, { ...opts, ...(forceNoPrefOverride ? { noPrefOverride: true } : {}) });
     };
   console.log(`[qq] enter src=${source} cmd="${cmd}" lang=${lang}`);
   // ========= [UNIQ:QQ-STOCK-001] Single-product stock query =========
