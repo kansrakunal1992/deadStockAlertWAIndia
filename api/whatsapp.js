@@ -299,8 +299,9 @@ const LANG_PACK = {
     welcome: (trialDays, startLbl, includeVideoAsk) =>
       `👋 Welcome to Saamagrii.AI!\n` +
       `Track stock + expiry + sales on WhatsApp.\n` +
-      `✅ Low-stock alerts • ✅ Expiry reminders • ✅ Sales summary\n\n` +
-      `Tap “${startLbl}” (free ${trialDays} days).` +
+      `✅ Low-stock alerts • ✅ Expiry reminders • ✅ Sales summary\n\n` +            
+      `Tap “${startLbl}” (free ${trialDays} days).\n` +
+      `🆓 Basic inventory (add/update stock + inventory queries) stays FREE even after trial ends.` +
       (includeVideoAsk ? `\nWant a 20s demo video? Reply: video` : ''),
     microDemo: (trialDays, startLbl) =>
       `⚡ Quick demo (10s):\n` +
@@ -310,7 +311,7 @@ const LANG_PACK = {
     askShopType: `Your shop type? Reply: kirana / medical / cosmetics / garments / mobile`,
     objection: {
       what: `Saamagrii.AI helps you manage inventory on WhatsApp—stock, expiry & sales with alerts.`,
-      price: `Trial is free. Tap “Start Trial” to see plan options inside.`,
+      price: `Trial is free.\n🆓 Basic inventory stays FREE even after trial ends.\n₹11/month is ONLY for: Full Summary + Daily AI Summary + 8 AM price reminders.`,
       how: `Just message like: sold Parle-G 3 packets @ ₹10\nOr: purchased Milk 10 ltr @ ₹60 exp 30d`,
       trust: `Your data stays private to your shop. No public sharing.`,
       time: `Takes <10 seconds/day. Start with 1 product and see summary instantly.`
@@ -320,8 +321,9 @@ const LANG_PACK = {
     welcome: (trialDays, startLbl, includeVideoAsk) =>
       `👋 Saamagrii.AI में स्वागत है!\n` +
       `WhatsApp पर स्टॉक + एक्सपायरी + बिक्री ट्रैक करें।\n` +
-      `✅ कम-स्टॉक अलर्ट • ✅ एक्सपायरी रिमाइंडर • ✅ बिक्री सारांश\n\n` +
-      `“${startLbl}” दबाएँ (${trialDays} दिन फ्री)।` +
+      `✅ कम-स्टॉक अलर्ट • ✅ एक्सपायरी रिमाइंडर • ✅ बिक्री सारांश\n\n` +            
+      `“${startLbl}” दबाएँ (${trialDays} दिन फ्री)।\n` +
+      `🆓 Basic inventory (स्टॉक जोड़ना/अपडेट + inventory queries) ट्रायल के बाद भी FREE रहेगा।` +
       (includeVideoAsk ? `\n20 सेकंड का डेमो वीडियो? लिखें: video` : ''),
     microDemo: (trialDays, startLbl) =>
       `⚡ 10 सेकंड का डेमो:\n` +
@@ -331,7 +333,7 @@ const LANG_PACK = {
     askShopType: `आपकी दुकान किसकी है? लिखें: किराना / मेडिकल / कॉस्मेटिक्स / गारमेंट्स / मोबाइल`,
     objection: {
       what: `Saamagrii.AI WhatsApp पर स्टॉक, एक्सपायरी और बिक्री मैनेज करता है—अलर्ट के साथ।`,
-      price: `ट्रायल फ्री है। “Start Trial” दबाकर प्लान विकल्प देखें।`,
+      price: `ट्रायल फ्री है।\n🆓 Basic inventory ट्रायल के बाद भी FREE रहेगा।\n₹11/महीना सिर्फ: Full Summary + Daily AI Summary + सुबह 8 बजे price reminders के लिए है।`,
       how: `ऐसे लिखें: पार्ले-जी 3 पैकेट बेचा @ ₹10\nया: दूध 10 लीटर खरीदा @ ₹60 (एक्सपायरी 30 दिन)`,
       trust: `डेटा सिर्फ आपकी दुकान के लिए है। पब्लिक शेयर नहीं।`,
       time: `दिन में <10 सेकंड। 1 प्रोडक्ट से शुरू करें।`
@@ -339,7 +341,7 @@ const LANG_PACK = {
   },
   mr: {
     welcome: (d, startLbl, v) =>
-      `👋 Saamagrii.AI मध्ये स्वागत!\nWhatsApp वर stock+expiry+sales track करा.\n✅ Low-stock alert • ✅ Expiry reminder • ✅ Sales summary\n\n“${startLbl}” (free ${d} days).` + (v ? `\n20s demo video? Reply: video` : ''),
+      `👋 Saamagrii.AI मध्ये स्वागत!\nWhatsApp वर stock+expiry+sales track करा.\n✅ Low-stock alert • ✅ Expiry reminder • ✅ Sales summary\n\n“${startLbl}” (free ${d} days).` + `\n🆓 Basic inventory (स्टॉक अपडेट/अॅड + inventory queries) ट्रायलनंतरही FREE राहते.` + (v ? `\n20s demo video? Reply: video` : ''),
     microDemo: (d, startLbl) =>         
       `⚡ 10 सेकंदाचा डेमो:\n` +
             `पाठवा: दूध 10 लिटर खरेदी @ ₹60 (एक्सपायरी 30 दिवस)\n` +
@@ -348,7 +350,7 @@ const LANG_PACK = {
           askShopType: `तुमचे दुकान कोणते? लिहा: किराणा / मेडिकल / कॉस्मेटिक्स / गारमेंट्स / मोबाइल`,
     objection: { 
 what:`Saamagrii.AI WhatsApp वर स्टॉक/एक्सपायरी/विक्री मॅनेज करतो—अलर्टसह.`,
-      price:`ट्रायल फ्री आहे. “Start Trial” टॅप करून प्लॅन पर्याय पहा.`,
+      price: `ट्रायल फ्री आहे.\n🆓 Basic inventory ट्रायलनंतरही FREE राहते.\n₹11/महिना फक्त: Full Summary + Daily AI Summary + सकाळी 8 वाजता price reminders साठी आहे.`,
       how:`असे लिहा: पार्ले-जी 3 पॅकेट विकले @ ₹10\nकिंवा: दूध 10 लिटर खरेदी @ ₹60 (एक्सपायरी 30 दिवस)`,
       trust:`तुमचा डेटा फक्त तुमच्या दुकानासाठी खाजगी राहतो. सार्वजनिक शेअर नाही.`,
       time:`दररोज <10 सेकंद. 1 प्रोडक्टपासून सुरुवात करा.`
@@ -356,25 +358,25 @@ what:`Saamagrii.AI WhatsApp वर स्टॉक/एक्सपायरी/�
   },
   bn: {
     welcome: (d, startLbl, v) =>
-      `👋 Saamagrii.AI-এ স্বাগতম!\nWhatsApp-এ স্টক+মেয়াদ+বিক্রি ট্র্যাক করুন।\n✅ Low-stock alert • ✅ Expiry reminder • ✅ Sales summary\n\n“${startLbl}” (ফ্রি ${d} দিন)।` + (v ? `\n20s ডেমো ভিডিও? লিখুন: video` : ''),
+      `👋 Saamagrii.AI-এ স্বাগতম!\nWhatsApp-এ স্টক+মেয়াদ+বিক্রি ট্র্যাক করুন।\n✅ Low-stock alert • ✅ Expiry reminder • ✅ Sales summary\n\n“${startLbl}” (ফ্রি ${d} দিন)।` + `\n🆓 Basic inventory (স্টক add/update + inventory queries) ট্রায়াল শেষ হলেও FREE থাকবে।` + (v ? `\n20s ডেমো ভিডিও? লিখুন: video` : ''),
     microDemo: (d, startLbl) =>            
       `⚡ 10 সেকেন্ডের ডেমো:\n` +
             `লিখুন: দুধ 10 লিটার কিনেছি @ ₹60 (মেয়াদ 30 দিন)\n` +
             `তারপর: কম স্টক\n\n` +
             `সব ফিচারের জন্য “${startLbl}” (ফ্রি ${d} দিন)।`,
           askShopType: `আপনার দোকান কী ধরনের? লিখুন: কিরানা / মেডিক্যাল / কসমেটিক্স / গার্মেন্টস / মোবাইল`,
-    objection: { what:`Saamagrii.AI WhatsApp-এ স্টক/মেয়াদ/বিক্রি ম্যানেজ করে—অ্যালার্টসহ।`, price:`Trial free. “Start Trial” ট্যাপ করে plan options দেখুন।`, how:`এভাবে লিখুন: পারলে-জি 3 প্যাকেট বিক্রি @ ₹10\nঅথবা: দুধ 10 লিটার কিনেছি @ ₹60 (মেয়াদ 30 দিন)`, trust:`Data private. Public share নয়।`, time:`<10s/day. 1 product দিয়ে শুরু করুন।` }
+    objection: { what:`Saamagrii.AI WhatsApp-এ স্টক/মেয়াদ/বিক্রি ম্যানেজ করে—অ্যালার্টসহ।`, price: `Trial free.\n🆓 Basic inventory ট্রায়াল শেষ হলেও FREE থাকবে।\n₹11/month ONLY: Full Summary + Daily AI Summary + 8 AM price reminders-এর জন্য।`, how:`এভাবে লিখুন: পারলে-জি 3 প্যাকেট বিক্রি @ ₹10\nঅথবা: দুধ 10 লিটার কিনেছি @ ₹60 (মেয়াদ 30 দিন)`, trust:`Data private. Public share নয়।`, time:`<10s/day. 1 product দিয়ে শুরু করুন।` }
   },
   gu: {
     welcome: (d, startLbl, v) =>
-      `👋 Saamagrii.AI માં સ્વાગત!\nWhatsApp પર stock+expiry+sales track કરો.\n✅ Low-stock alert • ✅ Expiry reminder • ✅ Sales summary\n\n“${startLbl}” (free ${d} days).` + (v ? `\n20s demo video? Reply: video` : ''),
+      `👋 Saamagrii.AI માં સ્વાગત!\nWhatsApp પર stock+expiry+sales track કરો.\n✅ Low-stock alert • ✅ Expiry reminder • ✅ Sales summary\n\n“${startLbl}” (free ${d} days).` + `\n🆓 Basic inventory (stock add/update + inventory queries) ટ્રાયલ પછી પણ FREE રહેશે.` + (v ? `\n20s demo video? Reply: video` : ''),
     microDemo: (d, startLbl) =>              
         `⚡ 10 સેકંડનો ડેમો:\n` +
               `લખો: દૂધ 10 લિટર ખરીદ્યું @ ₹60 (એક્સપાયરી 30 દિવસ)\n` +
               `પછી: ઓછી સ્ટોક\n\n` +
               `બધા ફીચર્સ માટે “${startLbl}” (ફ્રી ${d} દિવસ).`,
             askShopType: `તમારી દુકાન કઈ છે? લખો: કિરાણા / મેડિકલ / કોસ્મેટિક્સ / ગારમેન્ટ્સ / મોબાઇલ`,
-    objection: { what:`Saamagrii.AI WhatsApp પર stock/expiry/sales manage કરે છે—alerts સાથે.`, price:`Trial free. “Start Trial” કરીને plan options જુઓ.`, how:`આવું લખો: પાર્લે-જી 3 પેકેટ વેચ્યું @ ₹10\nઅથવા: દૂધ 10 લિટર ખરીદ્યું @ ₹60 (એક્સપાયરી 30 દિવસ)`, trust:`Data private. Public share નથી.`, time:`<10s/day. 1 product થી start કરો.` }
+    objection: { what:`Saamagrii.AI WhatsApp પર stock/expiry/sales manage કરે છે—alerts સાથે.`, price: `Trial free.\n🆓 Basic inventory ટ્રાયલ પછી પણ FREE રહેશે.\n₹11/month ફક્ત: Full Summary + Daily AI Summary + 8 AM price reminders માટે છે.`, how:`આવું લખો: પાર્લે-જી 3 પેકેટ વેચ્યું @ ₹10\nઅથવા: દૂધ 10 લિટર ખરીદ્યું @ ₹60 (એક્સપાયરી 30 દિવસ)`, trust:`Data private. Public share નથી.`, time:`<10s/day. 1 product થી start કરો.` }
   }
 };
 
@@ -8674,7 +8676,7 @@ async function handleInteractiveSelection(req) {
       const msgRaw = isNewUser
         ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
         : trialExpired
-          ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+          ? await t(`✅ Basic inventory continues FREE even after trial ends.\n₹11/month is ONLY for: Full Summary + Daily AI Summary + 8 AM price reminders.\nUpgrade (optional): ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
           : await t(`ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
       await sendMessageViaAPI(from, fixNewlines(msgRaw));
     }
@@ -8711,7 +8713,7 @@ async function handleInteractiveSelection(req) {
       const msgRaw = isNewUser
         ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
         : trialExpired
-          ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+          ? await t(`✅ Basic inventory continues FREE even after trial ends.\n₹11/month is ONLY for: Full Summary + Daily AI Summary + 8 AM price reminders.\nUpgrade (optional): ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
           : await t(`ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
       await sendMessageViaAPI(from, fixNewlines(msgRaw));
     }
@@ -8748,7 +8750,7 @@ async function handleInteractiveSelection(req) {
       const msgRaw = isNewUser
         ? await t('🚀 Start your free trial to record purchases, sales, and returns.\nReply "trial" to start.', lang, `qr-trial-prompt-${shopId}`)
         : trialExpired
-          ? await t(`🔒 Your trial has ended. Activate the paid plan to continue recording transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
+          ? await t(`✅ Basic inventory continues FREE even after trial ends.\n₹11/month is ONLY for: Full Summary + Daily AI Summary + 8 AM price reminders.\nUpgrade (optional): ${PAYMENT_LINK}\nReply "paid" after payment ✅`, lang, `qr-paid-prompt-${shopId}`)
           : await t(`ℹ️ Please activate your plan to record transactions.\nPay securely via Razorpay: ${PAYMENT_LINK}`, lang, `qr-generic-prompt-${shopId}`);
       await sendMessageViaAPI(from, fixNewlines(msgRaw));
     }
@@ -11316,7 +11318,35 @@ const SALES_AI_MANIFEST = Object.freeze({
 async function composePricingAnswer(lang = 'en', flavor = 'tool_pricing', shopId = null) {
   const L = typeof canonicalizeLang === 'function' ? canonicalizeLang(lang) : String(lang ?? 'en').toLowerCase();
   const price = Number(process.env.PAID_PRICE_INR ?? 11);
-  const trialDays = Number(process.env.TRIAL_DAYS ?? 3);    
+  const trialDays = Number(process.env.TRIAL_DAYS ?? 3);
+    
+  const PREMIUM_EN = `₹${price}/month is ONLY for: Full Summary + Daily AI Summary + 8 AM price reminders.`;
+    const FREE_EN    = `🆓 Basic inventory (add/update stock + inventory queries) stays FREE even after trial ends.`;
+  
+    const PREMIUM_HI = `₹${price}/महीना सिर्फ: Full Summary + Daily AI Summary + सुबह 8 बजे price reminders के लिए है।`;
+    const FREE_HI    = `🆓 Basic inventory (स्टॉक जोड़ना/अपडेट + inventory queries) ट्रायल के बाद भी FREE रहेगा।`;
+  
+    const PREMIUM_HI_LATN = `₹${price}/month sirf: Full Summary + Daily AI Summary + 8 AM price reminders ke liye hai.`;
+    const FREE_HI_LATN    = `🆓 Basic inventory (stock add/update + inventory queries) trial ke baad bhi FREE rahega.`;
+  
+    const PREMIUM_MR = `₹${price}/महिना फक्त: Full Summary + Daily AI Summary + सकाळी 8 वाजता price reminders साठी आहे.`;
+    const FREE_MR    = `🆓 Basic inventory (स्टॉक add/update + inventory queries) ट्रायलनंतरही FREE राहते.`;
+  
+    const PREMIUM_BN = `₹${price}/month ONLY: Full Summary + Daily AI Summary + 8 AM price reminders-এর জন্য।`;
+    const FREE_BN    = `🆓 Basic inventory (স্টক add/update + inventory queries) ট্রায়াল শেষ হলেও FREE থাকবে।`;
+  
+    const PREMIUM_GU = `₹${price}/month ફક્ત: Full Summary + Daily AI Summary + 8 AM price reminders માટે છે.`;
+    const FREE_GU    = `🆓 Basic inventory (stock add/update + inventory queries) ટ્રાયલ પછી પણ FREE રહેશે.`;
+  
+    const PREMIUM_TA = `₹${price}/month ONLY: Full Summary + Daily AI Summary + 8 AM price reminders.`;
+    const FREE_TA    = `🆓 Basic inventory (stock add/update + inventory queries) trial முடிந்த பிறகும் FREE.`;
+  
+    const PREMIUM_TE = `₹${price}/month ONLY: Full Summary + Daily AI Summary + 8 AM price reminders.`;
+    const FREE_TE    = `🆓 Basic inventory (stock add/update + inventory queries) trial తర్వాత కూడా FREE.`;
+  
+    const PREMIUM_KN = `₹${price}/month ONLY: Full Summary + Daily AI Summary + 8 AM price reminders.`;
+    const FREE_KN    = `🆓 Basic inventory (stock add/update + inventory queries) trial ನಂತರವೂ FREE.`;
+
   // Determine activation state (only include links when activated)
     let activated = false;
     try {
@@ -11329,23 +11359,45 @@ async function composePricingAnswer(lang = 'en', flavor = 'tool_pricing', shopId
     } catch { /* noop */ }
   const map = {
     en: {
-      tool: `Free trial is for ${trialDays} days • Post Trial, paid plan at ₹${price}/month`,            
+      tool: `Free trial is for ${trialDays} days.\n${FREE_EN}\n${PREMIUM_EN}`,        
       how: activated
               ? `Pay via ${process.env.PAYMENT_LINK}`
               : `` // no link pre-trial
     },
     hi: {
-      tool: `मुफ़्त ट्रायल ${trialDays} दिन • पेड प्लान ₹${price}/महीना`,            
+      tool: `मुफ़्त ट्रायल ${trialDays} दिन।\n${FREE_HI}\n${PREMIUM_HI}`,          
       how: activated
               ? `पेमेंट: ${process.env.PAYMENT_LINK}`
               : `` // no link pre-trial
-    },
+    },    
     'hi-latn': {
-      tool: `Free trial ${trialDays} din • Trial ke baad, paid plan ₹${price}/mahina`,            
-      how: activated
-              ? `Payment: ${process.env.PAYMENT_LINK}`
-              : `` // no link pre-trial
-    }
+          tool: `Free trial ${trialDays} days.\n${FREE_HI_LATN}\n${PREMIUM_HI_LATN}`,
+          how: activated ? `Payment: ${process.env.PAYMENT_LINK}` : ``
+        },
+        mr: {
+          tool: `फ्री ट्रायल ${trialDays} दिवस.\n${FREE_MR}\n${PREMIUM_MR}`,
+          how: activated ? `पेमेंट: ${process.env.PAYMENT_LINK}` : ``
+        },
+        bn: {
+          tool: `ফ্রি ট্রায়াল ${trialDays} দিন।\n${FREE_BN}\n${PREMIUM_BN}`,
+          how: activated ? `Payment: ${process.env.PAYMENT_LINK}` : ``
+        },
+        gu: {
+          tool: `ફ્રી ટ્રાયલ ${trialDays} દિવસ.\n${FREE_GU}\n${PREMIUM_GU}`,
+          how: activated ? `Payment: ${process.env.PAYMENT_LINK}` : ``
+        },
+        ta: {
+          tool: `Free trial ${trialDays} days.\n${FREE_TA}\n${PREMIUM_TA}`,
+          how: activated ? `Pay via ${process.env.PAYMENT_LINK}` : ``
+        },
+        te: {
+          tool: `Free trial ${trialDays} days.\n${FREE_TE}\n${PREMIUM_TE}`,
+          how: activated ? `Pay via ${process.env.PAYMENT_LINK}` : ``
+        },
+        kn: {
+          tool: `Free trial ${trialDays} days.\n${FREE_KN}\n${PREMIUM_KN}`,
+          how: activated ? `Pay via ${process.env.PAYMENT_LINK}` : ``
+        },
   };
   const dict = map[L] ?? map.en;    
   const msg = dict.how ? `${dict.tool}\n${dict.how}` : `${dict.tool}`;
