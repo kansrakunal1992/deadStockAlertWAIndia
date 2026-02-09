@@ -4252,7 +4252,7 @@ async function sendMultiPartWithFooter(From, rawText, lang, opts = {}) {
     // Respect this-turn language for footer when opts.noPrefOverride is true
     ? await tagWithLocalizedMode(From, finalizeForSend(chunks[i], L), L, { noPrefOverride })
     : finalizeForSend(chunks[i], L);
-    await sendMessageViaAPI(From, payload);
+    await sendMessageViaAPI(From, payload, { ...opts, lang: L, noPrefOverride });
   }
 }
 // ===PATCH ADD END: UNIQ:WA-SPLIT-20251230===
