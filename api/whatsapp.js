@@ -8473,10 +8473,60 @@ async function handleInteractiveSelection(req) {
               
       // Save selected product so the next message can be qty-only
       await setUserState(shopIdTop, 'awaitingTransactionDetails', { action, product: productName, productId });
+                 
+      // ---- Dynamic example for existing products: DO NOT repeat product name in examples ----
+            let pickedUnit = 'pieces';
+            let pickedPrice = null;
+            try {
+              const all = await getAllProducts(shopIdTop).catch(() => []);
+              const arr = Array.isArray(all) ? all : (all?.products || all?.items || []);
+              const hit = arr.find(p =>
+                String(p?.id ?? p?.fields?.Id ?? p?.fields?.RecordId ?? '') === String(productId)
+              );
+              pickedUnit  = hit?.unit  ?? hit?.fields?.Unit  ?? hit?.fields?.Units ?? pickedUnit;
+              pickedPrice = hit?.price ?? hit?.fields?.Price ?? hit?.fields?.MRP   ?? pickedPrice;
+            } catch (_) {}
       
-      const nowLine = (action === 'purchased') ? T.nowBuy : T.nowQty;
-      const exLine = (action === 'purchased') ? T.exBuy : T.exQty;
-      const msg = await t(`${T.selected} ${productName}\n${nowLine}\n${exLine}`, langUi3);
+            // If price wasn't on product record, try the stored price API (existing products typically have this)
+            if (!pickedPrice && action === 'purchased') {
+              try {
+                const pr = await getProductPrice(productName, shopIdTop).catch(() => null);
+                if (pr?.success && Number.isFinite(Number(pr.price))) pickedPrice = Number(pr.price);
+              } catch (_) {}
+            }
+      
+            pickedUnit = canonicalizeUnitToken(pickedUnit);
+            const unitDisp = displayUnit(pickedUnit, langUi3);
+                        
+            // Force prompt labels for this picker path (so UX matches requirement)
+                  const nowLine = (action === 'purchased')
+                    ? 'Now send qty + unit + price:'
+                    : 'Now send qty + unit:';
+            
+                  let exampleBlock = '';
+                  if (action === 'purchased') {
+                    if (Number.isFinite(Number(pickedPrice)) && Number(pickedPrice) > 0) {
+                      // Price exists: show two options (same price vs update)
+                      exampleBlock =
+                        `Example (if price is same):\n` +
+                        `• 10 ${unitDisp}\n` +
+                        `Example (if price needs update):\n` +
+                        `• 10 ${unitDisp} @ ₹${Number(pickedPrice)} /${unitDisp}`;
+                    } else {
+                      // Price missing: force user to include price; show fixed sample
+                      exampleBlock =
+                        `Example:\n` +
+                        `• 10 ${unitDisp} @ ₹55/${unitDisp}`;
+                    }
+                  } else {
+                    // Sale/Return: qty + unit only
+                    exampleBlock =
+                      `Example:\n` +
+                      `• 10 ${unitDisp}`;
+                  }
+      
+            const msg = await t(`${T.selected} ${productName}\n${nowLine}\n${exampleBlock}`, langUi3);
+
       await sendMessageViaAPI(from, finalizeForSend(msg, langUi3));
       return true;
     }
@@ -12455,6 +12505,32 @@ async function sendDailySummaries() {
           } catch (error) {
             console.warn(`Failed to get user preference for shop ${shopId}:`, error.message);
           }
+          
+          // ---- Gate scheduled AI summary after trial expiry (no paid plan) ----
+                    try {
+                      const pi = await getUserPlanQuick(shopId).catch(() => null);
+                      const plan = String(pi?.plan ?? '').toLowerCase().trim();
+                      const te = pi?.trialEndDate ? new Date(pi.trialEndDate).getTime() : null;
+                      const trialExpired = (plan === 'trial' && te && Date.now() > te);
+                      const paid = (plan === 'paid' || plan === 'standard' || plan === 'enterprise');
+                      const activeTrial = (plan === 'trial' && !trialExpired);
+          
+                      // Only block expired-trial/not-paid shops; do not spam pure-free users
+                      if (!paid && !activeTrial) {
+                        if (trialExpired) {
+                          const From = String(shopId).startsWith('whatsapp:') ? String(shopId) : `whatsapp:${shopId}`;
+                          // Same paywall style used by Full Summary gating
+                          const prompt = await t(
+                            '🔒 Your free trial has ended.\nActivate Paid Plan (₹11/month) to unlock Full Summary + Daily AI Summary + 8 AM reminders.',
+                            userLanguage,
+                            `cta-paid-${shopId}`
+                          );
+                          await sendMessageViaAPI(From, finalizeForSend(prompt, userLanguage));
+                          try { await sendPaidPlanCTA(From, userLanguage); } catch (_) {}
+                        }
+                        return { shopId, success: true, skipped: true, reason: trialExpired ? 'trial_expired' : 'not_eligible' };
+                      }
+                    } catch (_) { /* if gating fails, continue to processShopSummary */ }
           
           // Use processShopSummary from dailySummary.js
           const result = await processShopSummary(shopId);
