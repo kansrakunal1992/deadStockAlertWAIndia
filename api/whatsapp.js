@@ -4526,6 +4526,157 @@ function getStaticLabel(key, lang) {
   return STATIC_LABELS[key]?.[lc] || STATIC_LABELS[key]?.en || '';
 }
 
+// =============================================================================
+// [PATCH: TRIAL-ACTIVATED-ONBOARDING-TEMPLATES]
+// First onboarding message shown right after trial is auto-activated.
+// Localized for supported languages + *-latn variants.
+// =============================================================================
+const TRIAL_ACTIVATED_ONBOARDING_TEMPLATES = {
+  en: ({ days, rp }) => [
+    '👋 Welcome to Saamagrii.AI!',
+    '',
+    `🎉 Trial activated for ${days} days!`,
+    '',
+    'Track stock + expiry + sales on WhatsApp.',
+    '✅ Low-stock alerts • ✅ Expiry reminders • ✅ Sales summary',
+    '',
+    '🆓 Basic inventory (add/update stock + inventory queries) stays FREE even after trial ends.',
+    '',
+    'First step — record a purchase:',
+    `Click on "${rp}" button below. Then, Type or speak a voice note; we’ll save the price (only once) if it’s new.`
+  ].join('\n'),
+
+  hi: ({ days, rp }) => [
+    '👋 Saamagrii.AI में स्वागत है!',
+    '',
+    `🎉 ${days} दिन का ट्रायल एक्टिव हो गया!`,
+    '',
+    'WhatsApp पर स्टॉक + एक्सपायरी + बिक्री ट्रैक करें।',
+    '✅ कम-स्टॉक अलर्ट • ✅ एक्सपायरी रिमाइंडर • ✅ बिक्री सारांश',
+    '',
+    '🆓 Basic inventory (स्टॉक जोड़ना/अपडेट + इन्वेंटरी क्वेरी) ट्रायल के बाद भी FREE रहेगा।',
+    '',
+    'पहला कदम — खरीद दर्ज करें:',
+    `नीचे "${rp}" बटन दबाएँ। फिर लिखें या वॉइस नोट भेजें; नई कीमत होगी तो हम (सिर्फ 1 बार) सेव कर लेंगे।`
+  ].join('\n'),
+
+  bn: ({ days, rp }) => [
+    '👋 Saamagrii.AI-এ স্বাগতম!',
+    '',
+    `🎉 ${days} দিনের ট্রায়াল অ্যাক্টিভ হয়েছে!`,
+    '',
+    'WhatsApp-এ স্টক + এক্সপায়ারি + বিক্রি ট্র্যাক করুন।',
+    '✅ কম-স্টক অ্যালার্ট • ✅ এক্সপায়ারি রিমাইন্ডার • ✅ বিক্রির সারাংশ',
+    '',
+    '🆓 বেসিক ইনভেন্টরি (স্টক যোগ/আপডেট + ইনভেন্টরি কুয়েরি) ট্রায়াল শেষ হলেও FREE থাকবে।',
+    '',
+    'প্রথম ধাপ — একটি ক্রয় রেকর্ড করুন:',
+    `নিচের "${rp}" বাটনে ক্লিক করুন। তারপর লিখুন বা ভয়েস নোট পাঠান; নতুন দাম হলে আমরা (শুধু ১ বার) সেভ করব।`
+  ].join('\n'),
+
+  gu: ({ days, rp }) => [
+    '👋 Saamagrii.AI માં સ્વાગત છે!',
+    '',
+    `🎉 ${days} દિવસનો ટ્રાયલ સક્રિય થયો!`,
+    '',
+    'WhatsApp પર સ્ટોક + એક્સપાયરી + વેચાણ ટ્રેક કરો.',
+    '✅ લો-સ્ટોક એલર્ટ • ✅ એક્સપાયરી રિમાઇન્ડર • ✅ વેચાણ સારાંશ',
+    '',
+    '🆓 બેસિક ઇન્વેન્ટરી (સ્ટોક ઉમેરો/અપડેટ + ઇન્વેન્ટરી ક્વેરી) ટ્રાયલ પછી પણ FREE રહેશે.',
+    '',
+    'પ્રથમ પગલું — ખરીદી નોંધાવો:',
+    `નીચે "${rp}" બટન પર ક્લિક કરો. પછી લખો અથવા વૉઇસ નોટ મોકલો; નવી કિંમત હશે તો અમે (માત્ર 1 વાર) સેવ કરી લઈશું.`
+  ].join('\n'),
+
+  mr: ({ days, rp }) => [
+    '👋 Saamagrii.AI मध्ये स्वागत आहे!',
+    '',
+    `🎉 ${days} दिवसांचा ट्रायल अॅक्टिव्ह झाला!`,
+    '',
+    'WhatsApp वर स्टॉक + एक्सपायरी + विक्री ट्रॅक करा.',
+    '✅ कमी-स्टॉक अलर्ट • ✅ एक्सपायरी रिमाइंडर • ✅ विक्री सारांश',
+    '',
+    '🆓 बेसिक इन्व्हेंटरी (स्टॉक जोडा/अपडेट + इन्व्हेंटरी क्वेरी) ट्रायल संपल्यानंतरही FREE राहील.',
+    '',
+    'पहिला टप्पा — खरेदी नोंदवा:',
+    `खाली "${rp}" बटणावर क्लिक करा. मग टाइप करा किंवा व्हॉईस नोट पाठवा; नवीन किंमत असल्यास आम्ही (फक्त 1 वेळ) सेव करू.`
+  ].join('\n'),
+
+  ta: ({ days, rp }) => [
+    '👋 Saamagrii.AI-க்கு வரவேற்கிறோம்!',
+    '',
+    `🎉 ${days} நாட்கள் ட்ரயல் செயல்படுத்தப்பட்டது!`,
+    '',
+    'WhatsApp-ல் ஸ்டாக் + காலாவதி + விற்பனை கண்காணிக்கவும்.',
+    '✅ குறைந்த ஸ்டாக் அலெர்ட் • ✅ காலாவதி நினைவூட்டல் • ✅ விற்பனை சுருக்கம்',
+    '',
+    '🆓 அடிப்படை இன்வென்டரி (ஸ்டாக் சேர்க்க/அப்டேட் + இன்வென்டரி கேள்விகள்) ட்ரயல் முடிந்த பிறகும் FREE.',
+    '',
+    'முதல் படி — கொள்முதல் பதிவு:',
+    `கீழே உள்ள "${rp}" பொத்தானை அழுத்துங்கள். பின்னர் டைப் செய்யவும் அல்லது வொய்ஸ் நோட் அனுப்பவும்; புதிய விலை என்றால் நாம் (ஒரே முறை) சேமிப்போம்.`
+  ].join('\n'),
+
+  te: ({ days, rp }) => [
+    '👋 Saamagrii.AI కు స్వాగతం!',
+    '',
+    `🎉 ${days} రోజుల ట్రయల్ యాక్టివ్ అయింది!`,
+    '',
+    'WhatsApp లో స్టాక్ + ఎక్స్‌పైరీ + అమ్మకాలు ట్రాక్ చేయండి.',
+    '✅ లో-స్టాక్ అలర్ట్స్ • ✅ ఎక్స్‌పైరీ రిమైండర్స్ • ✅ అమ్మకాల సారాంశం',
+    '',
+    '🆓 బేసిక్ ఇన్వెంటరీ (స్టాక్ జోడించు/అప్‌డేట్ + ఇన్వెంటరీ క్వెరీలు) ట్రయల్ తరువాత కూడా FREE.',
+    '',
+    'మొదటి దశ — కొనుగోలు నమోదు:',
+    `కింద ఉన్న "${rp}" బటన్‌ను క్లిక్ చేయండి. తర్వాత టైప్ చేయండి లేదా వాయిస్ నోట్ పంపండి; కొత్త ధర అయితే మేము (ఒకసారి మాత్రమే) సేవ్ చేస్తాం.`
+  ].join('\n'),
+
+  kn: ({ days, rp }) => [
+    '👋 Saamagrii.AI ಗೆ ಸ್ವಾಗತ!',
+    '',
+    `🎉 ${days} ದಿನಗಳ ಟ್ರಯಲ್ ಸಕ್ರಿಯವಾಗಿದೆ!`,
+    '',
+    'WhatsApp ನಲ್ಲಿ ಸ್ಟಾಕ್ + ಎಕ್ಸ್‌ಪೈರಿ + ಮಾರಾಟ ಟ್ರ್ಯಾಕ್ ಮಾಡಿ.',
+    '✅ ಕಡಿಮೆ ಸ್ಟಾಕ್ ಅಲರ್ಟ್‌ಗಳು • ✅ ಎಕ್ಸ್‌ಪೈರಿ ರಿಮೈಂಡರ್‌ಗಳು • ✅ ಮಾರಾಟ ಸಾರಾಂಶ',
+    '',
+    '🆓 ಬೇಸಿಕ್ ಇನ್‌ವೆಂಟರಿ (ಸ್ಟಾಕ್ ಸೇರಿಸಿ/ಅಪ್ಡೇಟ್ + ಇನ್‌ವೆಂಟರಿ ಪ್ರಶ್ನೆಗಳು) ಟ್ರಯಲ್ ನಂತರವೂ FREE.',
+    '',
+    'ಮೊದಲ ಹಂತ — ಖರೀದಿ ದಾಖಲಿಸಿ:',
+    `ಕೆಳಗಿನ "${rp}" ಬಟನ್ ಕ್ಲಿಕ್ ಮಾಡಿ. ನಂತರ ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ವಾಯ್ಸ್ ನೋಟ್ ಕಳಿಸಿ; ಹೊಸ ಬೆಲೆ ಇದ್ದರೆ ನಾವು (ಒಮ್ಮೆ ಮಾತ್ರ) ಸೇವ್ ಮಾಡುತ್ತೇವೆ.`
+  ].join('\n'),
+
+  // Latin-script variants (simple + readable)
+  'hi-latn': ({ days, rp }) => [
+    '👋 Saamagrii.AI me welcome!',
+    '',
+    `🎉 ${days} din ka trial activate ho gaya!`,
+    '',
+    'Track stock + expiry + sales on WhatsApp.',
+    '✅ Low-stock alerts • ✅ Expiry reminders • ✅ Sales summary',
+    '',
+    '🆓 Basic inventory (add/update stock + inventory queries) trial ke baad bhi FREE rahegi.',
+    '',
+    'First step — record a purchase:',
+    `Neeche "${rp}" button dabao. Phir type karo ya voice note bhejo; nayi price hogi to hum (sirf 1 baar) save kar lenge.`
+  ].join('\n'),
+
+  // Other *-latn: fall back to English
+  'bn-latn': (p) => TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en(p),
+  'gu-latn': (p) => TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en(p),
+  'mr-latn': (p) => TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en(p),
+  'ta-latn': (p) => TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en(p),
+  'te-latn': (p) => TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en(p),
+  'kn-latn': (p) => TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en(p),
+};
+
+function composeTrialActivatedOnboardingText(langExact='en', days=TRIAL_DAYS) {
+  const lang = ensureLangExact(langExact ?? 'en');
+  const rp = String(getStaticLabel('recordPurchaseBtn', lang) || 'Record Purchase');
+  const fn = TRIAL_ACTIVATED_ONBOARDING_TEMPLATES[lang]
+    || TRIAL_ACTIVATED_ONBOARDING_TEMPLATES[String(lang).toLowerCase().replace(/-latn$/, '')]
+    || TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en;
+  return fn({ days, rp });
+}
+
 // [UNIQ:TRIAL-ACTIVATION-MSG-20260111] Sticky Purchase + localized first-message helpers
 async function setStickyPurchaseMode(From) {
   try {
@@ -4547,30 +4698,13 @@ async function composeTrialActivationMessage(From, langHint = 'en') {
   // Localize units; keep anchors like ₹ via nativeglishWrap()
   const uPkt = displayUnit('packets', lang);
   const uLtr = displayUnit('ltr', lang);
-   
-  const bodySrc = [
-      `🎉 Trial activated for ${days} days!`,
-      '',
-      'First step — record a purchase:',
-      `• Parle-G 10 ${uPkt} @ ₹11/${uPkt}`,
-      `• दूध 2 ${uLtr} @ ₹65/${uLtr}`,
-      '',
-      'Click on "Record Purchase" button below. Then, Type or speak a voice note; we’ll save the price (only once) if it’s new.'
-    ].join('\\n');
-
-  let msg0 = await t(bodySrc, lang, `trial-activated::${days}`);
+       
+  const bodySrc = composeTrialActivatedOnboardingText(lang, days);
+  
+  let msg0 = bodySrc;
   msg0 = nativeglishWrap(msg0, lang);
   const tagged = await tagWithLocalizedMode(From, finalizeForSend(msg0, lang), lang);    
-  // Inline: send actual quick‑reply buttons + list‑picker (no textual “Buttons:”)
-    try {
-      let L = String(lang ?? 'en').toLowerCase();
-      if (L.endsWith('-latn')) L = 'en';
-      await ensureLangTemplates(L);
-      const sids = getLangSids(L) ?? {};
-      const toWhatsApp = String(From).replace('whatsapp:', '');
-      if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp, contentSid: sids.quickReplySid });
-      if (sids?.listPickerSid) await sendContentTemplate({ toWhatsApp, contentSid: sids.listPickerSid });
-    } catch (_) {}
+  // NOTE: Buttons are sent by sendTrialActivation() to enforce TEXT → VIDEO → BUTTONS order.
   return tagged;
 }
 
@@ -4582,17 +4716,17 @@ async function sendTrialActivation(From, langHint = 'en') {
 
   // Make Purchase sticky right away so footer shows the correct badge + examples parse easily
   await setStickyPurchaseMode(From);
-
-  // Short follow-up nudge with concrete examples (text or voice)
-  const uPkt = displayUnit('packets', lang), uLtr = displayUnit('ltr', lang);
-  const followSrc = [
-    '👉 Tap “Record Purchase” or type/speak:',
-    `• “Parle-G 10 ${uPkt} @ ₹11/${uPkt}”`,
-    `• “दूध 2 ${uLtr} @ ₹65/${uLtr}”`
-  ].join('\\n');
-  const followMsg   = await t(followSrc, lang, 'trial-cta2');
-  const taggedFollow = await tagWithLocalizedMode(From, finalizeForSend(followMsg, lang), lang);
-  await sendMessageViaAPI(From, taggedFollow);
+    
+  // Send onboarding video, then quick-reply buttons (no list-picker on first message)
+    try { await sendOnboardVideoAsync(From, lang); } catch (_) {}
+    try {
+      let L = String(lang ?? 'en').toLowerCase();
+      if (L.endsWith('-latn')) L = 'en';
+      await ensureLangTemplates(L);
+      const sids = getLangSids(L) ?? {};
+      const toWhatsApp = String(From).replace('whatsapp:', '');
+      if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp, contentSid: sids.quickReplySid });
+    } catch (_) {}
 }
 
 // ===PATCH ADD: UNIQ:VOICE-ACK-20251230===
