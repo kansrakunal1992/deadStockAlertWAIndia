@@ -49,6 +49,22 @@ const AUTO_SEND_ONBOARD_VIDEO = String(process.env.AUTO_SEND_ONBOARD_VIDEO ?? '0
 const AUTO_SEND_ONBOARD_VIDEO_DELAY_MS = Number(process.env.AUTO_SEND_ONBOARD_VIDEO_DELAY_MS ?? 1200);
 const ASK_VIDEO_IN_WELCOME = String(process.env.ASK_VIDEO_IN_WELCOME ?? '1') === '1';
 
+// ---------------------------------------------------------------------------
+// Trial CTA resurfacing throttle (prevents spamming when we call sendTrialCtaAsync often)
+// ---------------------------------------------------------------------------
+globalThis._trialCtaResurfaceGrace = globalThis._trialCtaResurfaceGrace ?? new Map(); // shopId -> ts
+const TRIAL_CTA_RESURFACE_TTL_MS = Number(process.env.TRIAL_CTA_RESURFACE_TTL_MS ?? (5 * 60_000)); // default 5 min
+function _trialCtaResurfaceAllowed(shopId) {
+  try {
+    const key = String(shopId ?? '');
+    const now = Date.now();
+    const prev = globalThis._trialCtaResurfaceGrace.get(key);
+    if (prev && (now - prev) < TRIAL_CTA_RESURFACE_TTL_MS) return false;
+    globalThis._trialCtaResurfaceGrace.set(key, now);
+    return true;
+  } catch { return true; }
+}
+
 // Lead playbook TTL (pre-activation)
 const LEAD_STAGE_TTL_MS = Number(process.env.LEAD_STAGE_TTL_MS ?? 15 * 60_000);
 const __leadStage = new Map(); // shopId -> { stage, ts, shopType, lastLang }
@@ -414,18 +430,41 @@ async function sendOnboardQrAsync(From, langExact='en') {
 
 // NEW: Send Activate-Trial CTA buttons (content template) without blocking message latency.
 async function sendTrialCtaAsync(From, langExact='en') {
-  const toNumber = String(shopIdFrom(From)).replace('whatsapp:', '');
+  const toNumber = String(shopIdFrom(From)).replace('whatsapp:', '');  
+  // Throttle resurfacing so we can safely call this function from multiple triggers
+  if (!_trialCtaResurfaceAllowed(toNumber)) return false;
+
+  const pack = _langPack(langExact);
+  const startLbl = _startTrialLabel(langExact);
+  
   try {
     await ensureLangTemplates(langExact);
     const sids = getLangSids(langExact);
     if (sids?.trialCtaSid) {
       const resp = await sendContentTemplate({ toWhatsApp: toNumber, contentSid: sids.trialCtaSid });
-      console.log('[trial-cta] send OK', { sid: resp?.sid, to: toNumber, contentSid: sids.trialCtaSid, lang: langExact });
+      console.log('[trial-cta] send OK', { sid: resp?.sid, to: toNumber, contentSid: sids.trialCtaSid, lang: langExact });      
+      // Follow with a short “what to do next” micro-demo (static, no LLM/translate latency)
+      try {
+        const hook = pack.microDemo(TRIAL_DAYS, startLbl);
+        await sendMessageViaAPI(From, finalizeForSend(hook, langExact));
+      } catch (e) {
+        console.warn('[trial-cta] hook send failed', e?.message);
+      }
       return true;
     }
     console.warn('[trial-cta] missing trialCtaSid', { lang: langExact });
   } catch (e) {
-    console.warn('[trial-cta] send FAILED', { status: e?.response?.status, data: e?.response?.data, lang: langExact });
+    console.warn('[trial-cta] send FAILED', { status: e?.response?.status, data: e?.response?.data, lang: langExact });    
+  }
+
+  // Fallback text CTA if template send fails/missing
+  try {
+    const fallback = String(langExact).toLowerCase().startsWith('hi')
+      ? `🆓 “${startLbl}” दबाएँ (${TRIAL_DAYS} दिन फ्री) — फिर 1 लाइन भेजें: दूध 10 लीटर खरीदा @ ₹60`
+      : `🆓 Tap “${startLbl}” (free ${TRIAL_DAYS} days) — then send 1 line: purchased milk 10 ltr @ ₹60`;
+    await sendMessageViaAPI(From, finalizeForSend(fallback, langExact));
+  } catch (e) {
+    console.warn('[trial-cta] fallback text send failed', e?.message);
   }
   return false;
 }
@@ -24037,7 +24076,9 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
               langExact
             );
             const msg = normalizeNumeralsToLatin(nativeglishWrap(aiNative, langExact));
-            await sendMessageDedup(From, msg);
+            await sendMessageDedup(From, msg);                        
+            // Resurface trial CTA immediately on paywall/lock (throttled)
+            try { await sendTrialCtaAsync(From, langExact); } catch (_) {}
           }
         try {
           const buttonLang = langExact.includes('-latn') ? langExact.split('-')[0] : langExact;
