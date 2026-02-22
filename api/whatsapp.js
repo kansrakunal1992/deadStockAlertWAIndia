@@ -8121,16 +8121,17 @@ async function activateTrialFlow(From, lang = 'en', opts = {}) {
         await setStickyMode(From, 'purchased', { source: 'auto-first-message' });
       }
     } catch (_) {}
-
-    // Send focused onboarding message (localized)
-    try {
-      const raw = _composeAutoTrialFirstStepRaw(lang);
-      const translated = await t(raw, lang, `auto-trial-first-${shopId}`);
-      await sendMessageViaAPI(From, finalizeForSend(translated, lang), { lang, requestId: opts?.requestId, noCta: true });
-    } catch (e) {
-      // fallback: send raw English if translation fails
-      await sendMessageViaAPI(From, finalizeForSend(_composeAutoTrialFirstStepRaw(lang), lang), { lang, requestId: opts?.requestId, noCta: true });
-    }
+        
+    // Send deterministic localized onboarding message (NO AI / no t()).
+        // Uses TRIAL_ACTIVATED_ONBOARDING_TEMPLATES + recordPurchaseBtn label internally.
+        try {
+          const msg = '<!NO_FOOTER!>' + composeTrialActivatedOnboardingText(lang, TRIAL_DAYS);
+          await sendMessageViaAPI(From, finalizeForSend(msg, lang), { lang, requestId: opts?.requestId, noCta: true });
+        } catch (e) {
+          // Last-resort fallback (still no AI): English template
+          const msg = '<!NO_FOOTER!>' + composeTrialActivatedOnboardingText('en', TRIAL_DAYS);
+          await sendMessageViaAPI(From, finalizeForSend(msg, 'en'), { lang: 'en', requestId: opts?.requestId, noCta: true });
+        }
 
     // Send Record Purchase / Sale / Return buttons (quickReplySid)
     try {
