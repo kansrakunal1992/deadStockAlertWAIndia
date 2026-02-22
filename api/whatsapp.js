@@ -5333,7 +5333,6 @@ const LOCAL_SET_WORDS = {
 
 // ==== Canonical message markers (single source of truth) ====
 // ANCHOR: UNIQ:MARKER-STRIP-001
-const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
 const NO_CLAMP_MARKER  = '<!NO_CLAMP!>';
 // Hardened marker stripper: handles <!...!>, plain !NO_*! (if <> got sanitized),
 // duplicates, and trims leftovers.
