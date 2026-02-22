@@ -20,6 +20,31 @@ const axios = require('axios');
 // ---------------------------------------------------------------------------
 // Placed near the top to be available to onboarding flow
 const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 3);
+
+// ---------------------------------------------------------------------------
+// Auto-activate trial on first inbound message (default ON)
+// ---------------------------------------------------------------------------
+const AUTO_TRIAL_ON_FIRST_MESSAGE =
+  String(process.env.AUTO_TRIAL_ON_FIRST_MESSAGE ?? '1') === '1';
+
+// Grace guard to avoid double activation on webhook retries/bursts
+globalThis._autoTrialFirstMsgGrace = globalThis._autoTrialFirstMsgGrace ?? new Map(); // shopId -> ts
+const AUTO_TRIAL_FIRST_MSG_TTL_MS =
+  Number(process.env.AUTO_TRIAL_FIRST_MSG_TTL_MS ?? 30_000);
+function _autoTrialFirstMsgAllowed(shopId) {
+  try {
+    const key = String(shopId ?? '');
+    const now = Date.now();
+    const prev = globalThis._autoTrialFirstMsgGrace.get(key);
+    if (prev && (now - prev) < AUTO_TRIAL_FIRST_MSG_TTL_MS) return false;
+    globalThis._autoTrialFirstMsgGrace.set(key, now);
+    return true;
+  } catch { return true; }
+}
+
+// Ensure this exists (sendMessageViaAPI honors it)
+const NO_FOOTER_MARKER = '<!NO_FOOTER!>';
+
 const fs = require('fs');
 
 const crypto = require('crypto');
@@ -429,7 +454,9 @@ async function sendOnboardQrAsync(From, langExact='en') {
 }
 
 // NEW: Send Activate-Trial CTA buttons (content template) without blocking message latency.
-async function sendTrialCtaAsync(From, langExact='en') {
+async function sendTrialCtaAsync(From, langExact='en') {      
+  // NEW: If auto-trial is enabled, never send Start Free Trial CTA templates
+  if (AUTO_TRIAL_ON_FIRST_MESSAGE) return false;
   const toNumber = String(shopIdFrom(From)).replace('whatsapp:', '');  
   // Throttle resurfacing so we can safely call this function from multiple triggers
   if (!_trialCtaResurfaceAllowed(toNumber)) return false;
@@ -6793,7 +6820,12 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
   try {
     // Only fast-path non-activated users
     const activated = await _isUserActivated(toNumber).catch(() => false);
-    if (!activated) {
+    if (!activated) {            
+    // NEW: Auto-activate trial immediately on first message (NO AI translation)
+          if (AUTO_TRIAL_ON_FIRST_MESSAGE && _autoTrialFirstMsgAllowed(toNumber)) {
+            await activateTrialFlow(From, langExact, { autoFirstMessage: true, requestId });
+            return; // IMPORTANT: suppress all welcome/CTA/QR flows below
+          }
       if (_fastWelcomeAllowed(toNumber)) {
         const pack = _langPack(langExact);
         const welcomeText = pack.welcome(TRIAL_DAYS, startLbl, ASK_VIDEO_IN_WELCOME);
@@ -6822,7 +6854,12 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
      } catch { /* ignore plan read */ }
      const isActivated = (plan === 'trial' || plan === 'paid');
           
-      if (!isActivated) {
+      if (!isActivated) {                        
+        // NEW: Auto-activate trial immediately on first message (legacy unactivated path too)
+        if (AUTO_TRIAL_ON_FIRST_MESSAGE && _autoTrialFirstMsgAllowed(toNumber)) {
+          await activateTrialFlow(From, langExact, { autoFirstMessage: true, requestId });
+          return;
+        }
              // NEW: Send 3‑button Onboarding Quick‑Reply (Start Free Trial • Demo • Help)
              let sent = false;
              const ONBOARDING_QR_SID = String(process.env.ONBOARDING_QR_SID || '').trim();
@@ -8067,8 +8104,49 @@ if (typeof globalThis.startTrialForAuthUser !== 'function') {
 }
 
 // --- typed path now begins capture (no immediate activation)
-async function activateTrialFlow(From, lang = 'en') {
-  const shopId = shopIdFrom(From);
+async function activateTrialFlow(From, lang = 'en', opts = {}) {
+  const shopId = shopIdFrom(From);  
+  // NEW: Auto-first-message path: activate trial immediately + focused onboarding + record buttons
+  if (opts?.autoFirstMessage) {
+    try {
+      // Idempotency guard (safe even if called multiple times)
+      await startTrialForAuthUser(shopId, TRIAL_DAYS);
+    } catch (_) {}
+
+    // Stamp a recent activation marker (you already use this for streak suppressions)
+    try { (globalThis._recentActivations = globalThis._recentActivations ?? new Map()).set(shopId, Date.now()); } catch {}
+
+    // Set sticky mode to PURCHASE for clarity (so user starts in the right mental model)
+    try {
+      if (typeof setStickyMode === 'function') {
+        await setStickyMode(From, 'purchased', { source: 'auto-first-message' });
+      }
+    } catch (_) {}
+
+    // Send focused onboarding message (localized)
+    try {
+      const raw = _composeAutoTrialFirstStepRaw(lang);
+      const translated = await t(raw, lang, `auto-trial-first-${shopId}`);
+      await sendMessageViaAPI(From, finalizeForSend(translated, lang), { lang, requestId: opts?.requestId, noCta: true });
+    } catch (e) {
+      // fallback: send raw English if translation fails
+      await sendMessageViaAPI(From, finalizeForSend(_composeAutoTrialFirstStepRaw(lang), lang), { lang, requestId: opts?.requestId, noCta: true });
+    }
+
+    // Send Record Purchase / Sale / Return buttons (quickReplySid)
+    try {
+      await ensureLangTemplates(lang);
+      const sids = getLangSids(lang);
+      if (sids?.quickReplySid) {
+        await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
+      }
+    } catch (_) {}
+
+    // IMPORTANT: do NOT send listPicker here unless you want it immediately.
+    // (Your requirement asked specifically for record buttons + first-step focus.)
+    return { success: true, activatedTrial: true, autoFirstMessage: true };
+  }
+
   try {
     const planInfo = await getUserPlan(shopId);
     const plan = String(planInfo?.plan ?? '').toLowerCase();
@@ -8080,21 +8158,34 @@ async function activateTrialFlow(From, lang = 'en') {
       return { success: true, already: true };
     }
   } catch { /* continue */ }    
+  
+  // NEW: Auto-first-message path (NO AI translation)
+    if (opts?.autoFirstMessage) {
+      try { await startTrialForAuthUser(shopId, TRIAL_DAYS); } catch (_) {}
+  
+      // Sticky purchase helps “First step” be consistent
+      try { await setStickyPurchaseMode(From); } catch (_) {}
+  
+      // Use deterministic localized templates (no t())
+      const msg = NO_FOOTER_MARKER + composeTrialActivatedOnboardingText(lang, TRIAL_DAYS);
+      await sendMessageViaAPI(From, finalizeForSend(msg, lang), { lang, requestId: opts?.requestId, noCta: true });
+  
+      try {
+        await ensureLangTemplates(lang);
+        const sids = getLangSids(lang);
+        if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
+      } catch (_) {}
+  
+      return { success: true, activatedTrial: true, autoFirstMessage: true };
+    }
+
   if (CAPTURE_SHOP_DETAILS_ON === 'paid') {      
     // Activate trial immediately (no capture)
       try { await startTrialForAuthUser(shopId, TRIAL_DAYS); } catch (_) {}
-      // Localized unit labels for examples
-      const uPkt = displayUnit('packets', lang);
-      const uLtr = displayUnit('ltr',     lang);
-      // Unified activation message (suppresses footer; keeps Latin anchors)
-      const msgRaw =
-        `${NO_CLAMP_MARKER}${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
-        `First step — record a purchase:\n` +
-        `• Parle-G 10 ${uPkt} @ ₹11/${uPkt}\n` +
-        `• दूध 2 ${uLtr} @ ₹65/${uLtr}\n\n` +
-        `Click on "Record Purchase" button below. Then, Type or speak a voice note; we’ll save the price (only once) if it’s new.`;
-      let msgTranslated = await t(msgRaw, lang, `trial-activated-${shopId}`);
-      await sendMessageViaAPI(From, finalizeForSend(msgTranslated, lang));
+          
+    // NEW: Deterministic localized activation message (no t())
+        const msg = NO_FOOTER_MARKER + composeTrialActivatedOnboardingText(lang, TRIAL_DAYS);
+        await sendMessageViaAPI(From, finalizeForSend(msg, lang), { lang, noCta: true });
 
       try { (globalThis._recentActivations = globalThis._recentActivations ?? new Map()).set(shopId, Date.now()); } catch {}
       try {
@@ -19370,7 +19461,11 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
 
     // --- CTA appender (unchanged)
     const appendCTA = async () => {
-      try {
+      try {                                
+        // NEW: Never append "Activate Trial" CTA when auto-trial is enabled
+        if (AUTO_TRIAL_ON_FIRST_MESSAGE) return;
+        if (opts?.noCta) return;
+
         const shopId = formattedTo.replace('whatsapp:', '');
         const meta = {}; // ensure defined
         if (meta?.lastTxn) {
