@@ -315,7 +315,7 @@ const EXISTING_USER_PRODUCT_MODE_QR_LABELS = {
 
 async function createOnboardingQuickReplyForLang(lang) {
   const base = normalizeLangForContent(lang);
-  const l = ONBOARDING_QR_LABELS[lang] ?? ONBOARDING_QR_LABELS.en;
+  const l = ONBOARDING_QR_LABELS[base] ?? ONBOARDING_QR_LABELS.en;
   const payload = {
     friendly_name: `saamagrii_onboard_qr_${lang}_${Date.now()}`,
     language: base,
