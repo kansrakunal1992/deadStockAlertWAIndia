@@ -8858,8 +8858,11 @@ async function handleInteractiveSelection(req) {
     prefLP = await getUserPreference(shopId);
     if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();    
   } catch (_) {}
-    try {
-      if (!(prefLP?.success && prefLP.language)) {
+    try {              
+        const prefLangLc = String(prefLP?.language ?? '').toLowerCase().trim();
+            // If pref is missing OR incorrectly set to 'en', but user tapped a Devanagari (Hindi) button,
+            // treat it as an explicit language switch to Hindi.
+            if (!(prefLP?.success && prefLP.language) || prefLangLc === 'en') {
         // Strong hint: Devanagari quick-reply titles like 'खरीद दर्ज करें'
         if (/[\u0900-\u097F]/.test(tapTextRaw)) lang = 'hi';
         else {
@@ -8877,6 +8880,7 @@ async function handleInteractiveSelection(req) {
     // Templates prefer base language (hi-latn -> hi), not English
     lang = String(lang ?? 'en').toLowerCase();
     if (lang.endsWith('-latn')) lang = lang.replace(/-latn$/, '');
+  try { console.log('[lang-fix-interactive]', { shopId, pref: prefLP?.language ?? null, tapTextRaw, lang }); } catch (_) {}
 
   async function _isActivated(shopIdNum) {
     try { if (typeof isUserActivated === 'function') return !!(await isUserActivated(shopIdNum)); } catch(_) {}
