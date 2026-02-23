@@ -314,10 +314,11 @@ const EXISTING_USER_PRODUCT_MODE_QR_LABELS = {
 };
 
 async function createOnboardingQuickReplyForLang(lang) {
+  const base = normalizeLangForContent(lang);
   const l = ONBOARDING_QR_LABELS[lang] ?? ONBOARDING_QR_LABELS.en;
   const payload = {
     friendly_name: `saamagrii_onboard_qr_${lang}_${Date.now()}`,
-    language: 'en',
+    language: base,
     types: {
       'twilio/quick-reply': {
         body: l.body,
@@ -422,7 +423,7 @@ async function createActivateTrialCTAForLang(lang) {
   const l = ACTIVATE_TRIAL_LABELS[base] ?? ACTIVATE_TRIAL_LABELS.en;
   const payload = {
     friendly_name: `saamagrii_activate_trial_${base}_${Date.now()}`,
-    language: 'en',
+    language: base,
     types: {
       'twilio/quick-reply': {              
       body: l.body,
@@ -443,7 +444,7 @@ async function createActivatePaidCTAForLang(lang) {
   const l = ACTIVATE_PAID_LABELS[base] ?? ACTIVATE_PAID_LABELS.en;
   const payload = {
     friendly_name: `saamagrii_activate_paid_${base}_${Date.now()}`,
-    language: 'en',
+    language: base,
     types: {
       'twilio/quick-reply': {              
       body: l.body,
@@ -464,7 +465,7 @@ async function createPaidConfirmCTAForLang(lang) {
   const l = PAID_CONFIRM_LABELS[base] ?? PAID_CONFIRM_LABELS.en;
   const payload = {
     friendly_name: `saamagrii_paid_confirm_${base}_${Date.now()}`,
-    language: 'en',
+    language: base,
     types: {
       'twilio/quick-reply': {
         body: l.body,
