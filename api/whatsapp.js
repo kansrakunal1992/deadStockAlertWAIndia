@@ -8381,9 +8381,9 @@ async function handleInteractiveSelection(req) {
   try { console.log(`[interactive] undo-detect: id=${payloadStable} title=${_payloadTitle}`); } catch {}
 
   // === Intercept QR taps (purchase/sale/return) and send localized examples ===
-  try {
-    // Resolve UI language from preference; fall back to 'en'
-    let langUi = 'en';
+  try {        
+    // Resolve UI language from preference; fall back to the user's visible script
+    let langUi = guessLangFromInput(raw.ButtonText ?? raw.Body ?? '');
     try {
       const pref = await getUserPreference(shopIdTop);
       if (pref?.success && pref.language) langUi = String(pref.language).toLowerCase();
@@ -8692,7 +8692,7 @@ async function handleInteractiveSelection(req) {
   // ===== NEW: Handle chooser button clicks by stable payload id =====
     if (payload === 'pick_existing_products' || payload === 'add_new_product_as_is') {
       // Use user's saved preference language for UX consistency
-      let langUi2 = 'en';
+      let langUi2 = guessLangFromInput(text);
       try {
         const pref2 = await getUserPreference(shopIdTop);
         if (pref2?.success && pref2.language) langUi2 = String(pref2.language).toLowerCase();
@@ -8721,7 +8721,7 @@ async function handleInteractiveSelection(req) {
   
     // ===== NEW: Handle product selection from list-pickers (listId carries the selected item id) =====
     if (typeof listId === 'string' && listId.startsWith('prod:')) {
-      let langUi3 = 'en';
+      let langUi3 = guessLangFromInput(text);
       try {
         const pref3 = await getUserPreference(shopIdTop);
         if (pref3?.success && pref3.language) langUi3 = String(pref3.language).toLowerCase();
@@ -8762,10 +8762,10 @@ async function handleInteractiveSelection(req) {
             pickedUnit = canonicalizeUnitToken(pickedUnit);
             const unitDisp = displayUnit(pickedUnit, langUi3);
                         
-            // Force prompt labels for this picker path (so UX matches requirement)
-                  const nowLine = (action === 'purchased')
-                    ? 'Now send qty + unit + price:'
-                    : 'Now send qty + unit:';
+            // Force prompt labels for this picker path (so UX matches requirement)                              
+            const nowLine = (action === 'purchased')
+                    ? T.nowBuy
+                    : T.nowQty;
             
                   let exampleBlock = '';
                   if (action === 'purchased') {
