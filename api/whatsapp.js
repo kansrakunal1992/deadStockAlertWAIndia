@@ -610,6 +610,27 @@ function guessLangFromInput(s = '') {
   }
 }
 
+// ---------------------------------------------------------------------------
+// [PATCH:LANG-FIX-INTERACTIVE-ALL-20260223] Infer UI language from interactive tap text
+// Uses Unicode script ranges + Marathi-vs-Hindi disambiguation for Devanagari.
+// Supports: hi, mr, bn, ta, te, kn, gu (and falls back to null for Latin).
+// ---------------------------------------------------------------------------
+function inferLangFromTapText(t = '') {
+  const s = String(t ?? '').trim();
+  if (!s) return null;
+  // Devanagari (Hindi/Marathi). Disambiguate using Marathi tokens from your own labels.
+  if (/[\u0900-\u097F]/.test(s)) {
+    if (/(खरेदी|नोंदवा)/.test(s)) return 'mr';
+    return 'hi';
+  }
+  if (/[\u0980-\u09FF]/.test(s)) return 'bn';
+  if (/[\u0B80-\u0BFF]/.test(s)) return 'ta';
+  if (/[\u0C00-\u0C7F]/.test(s)) return 'te';
+  if (/[\u0C80-\u0CFF]/.test(s)) return 'kn';
+  if (/[\u0A80-\u0AFF]/.test(s)) return 'gu';
+  return null;
+}
+
 // ========================================================================
 // [UNIQ:VOICE-CONF-005] Voice (STT) confidence minimum — environment-driven
 // Default to 0.60 for audio turns; upstream handlers can read this constant.
@@ -8847,40 +8868,33 @@ async function handleInteractiveSelection(req) {
     if (hit) payload = hit.payload;
   }
 
-  // Shared: shopId + language + activation gate
-  const shopId = String(from).replace('whatsapp:', '');    
-  // [PATCH:LANG-FIX-INTERACTIVE-20260223] Resolve UI language for interactive taps deterministically
-  // Prefer saved preference; else infer from the tapped button/list title text (e.g., Devanagari => Hindi).
+  // Shared: shopId + language + activation gate  
+  const shopId = String(from).replace('whatsapp:', '');
+  // [PATCH:LANG-FIX-INTERACTIVE-ALL-20260223] Resolve UI language for interactive taps deterministically
+  // Prefer saved preference; else infer from tapped button/list title text (native script beats stale pref).
   const tapTextRaw = String(raw.ButtonText ?? raw.Body ?? raw.ListItemTitle ?? raw.ListItemDescription ?? '').trim();
   let lang = 'en';
   let prefLP = null;
   try {
     prefLP = await getUserPreference(shopId);
     if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();    
-  } catch (_) {}
-    try {              
-        const prefLangLc = String(prefLP?.language ?? '').toLowerCase().trim();
-            // If pref is missing OR incorrectly set to 'en', but user tapped a Devanagari (Hindi) button,
-            // treat it as an explicit language switch to Hindi.
-            if (!(prefLP?.success && prefLP.language) || prefLangLc === 'en') {
-        // Strong hint: Devanagari quick-reply titles like 'खरीद दर्ज करें'
-        if (/[\u0900-\u097F]/.test(tapTextRaw)) lang = 'hi';
-        else {
-          const hint = (typeof guessLangFromInput === 'function') ? guessLangFromInput(tapTextRaw) : null;
-          if (hint) lang = String(hint).toLowerCase();
-      }      
-  // Persist inferred language to preference so subsequent template sends don't default to 'en'
-  const base = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
-  if (base && base !== 'en' && typeof saveUserPreference === 'function') {
-          try { await saveUserPreference(shopId, base); } catch (_) {}
+  } catch (_) {}      
+  try {
+      const prefLangLc = String(prefLP?.language ?? '').toLowerCase().trim();
+      const inferred = inferLangFromTapText(tapTextRaw);
+      if (inferred && (!prefLangLc || prefLangLc === 'en' || prefLangLc !== inferred)) {
+        lang = inferred;
+        if (typeof saveUserPreference === 'function') {
+          try { await saveUserPreference(shopId, inferred); } catch (_) {}
         }
-        lang = base;
+      } else if (!prefLangLc || prefLangLc === 'en') {
+        const hint = (typeof guessLangFromInput === 'function') ? guessLangFromInput(tapTextRaw) : null;
+        if (hint) lang = String(hint).toLowerCase();
       }
     } catch (_) {}
     // Templates prefer base language (hi-latn -> hi), not English
     lang = String(lang ?? 'en').toLowerCase();
     if (lang.endsWith('-latn')) lang = lang.replace(/-latn$/, '');
-  try { console.log('[lang-fix-interactive]', { shopId, pref: prefLP?.language ?? null, tapTextRaw, lang }); } catch (_) {}
 
   async function _isActivated(shopIdNum) {
     try { if (typeof isUserActivated === 'function') return !!(await isUserActivated(shopIdNum)); } catch(_) {}
@@ -9000,7 +9014,7 @@ async function handleInteractiveSelection(req) {
   const allowExamples = activated || isRecentlyActivated;
 
   if (payload === 'qr_purchase') {        
-    // [PATCH:LANG-FIX-INTERACTIVE-20260223] Ensure base lang for templates in this branch
+    // [PATCH:LANG-FIX-INTERACTIVE-ALL-20260223] Ensure base lang for templates in this branch
     lang = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
     await setStickyMode(from, 'purchased'); // keep sticky
           
@@ -9040,7 +9054,7 @@ async function handleInteractiveSelection(req) {
   }
 
   if (payload === 'qr_sale') {    
-    // [PATCH:LANG-FIX-INTERACTIVE-20260223] Ensure base lang for templates in this branch
+    // [PATCH:LANG-FIX-INTERACTIVE-ALL-20260223] Ensure base lang for templates in this branch
     lang = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
     await setStickyMode(from, 'sold'); // keep sticky
         
@@ -9079,7 +9093,7 @@ async function handleInteractiveSelection(req) {
   }
 
   if (payload === 'qr_return') {        
-    // [PATCH:LANG-FIX-INTERACTIVE-20260223] Ensure base lang for templates in this branch
+    // [PATCH:LANG-FIX-INTERACTIVE-ALL-20260223] Ensure base lang for templates in this branch
     lang = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
     await setStickyMode(from, 'returned'); // keep sticky
         
