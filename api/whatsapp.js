@@ -4748,7 +4748,7 @@ async function sendTrialActivation(From, langHint = 'en') {
     try { await sendOnboardVideoAsync(From, lang); } catch (_) {}
     try {
       let L = String(lang ?? 'en').toLowerCase();
-      if (L.endsWith('-latn')) L = 'en';
+      if (L.endsWith('-latn')) L = L.replace(/-latn$/, '');
       await ensureLangTemplates(L);
       const sids = getLangSids(L) ?? {};
       const toWhatsApp = String(From).replace('whatsapp:', '');
@@ -6782,9 +6782,9 @@ async function resendInventoryListPicker(From, langHint = 'en') {
   try {        
     const toNumber = String(From).replace('whatsapp:', '');            
     // Use the current turn’s detected language; only fall back to pref when hint is missing.
-        let langResolved = canonicalizeLang(langHint || (await getPreferredLangQuick(From, 'en')));
-        // Interactive Content templates are single-script; route roman variants to English.
-        if (String(langResolved).toLowerCase().endsWith('-latn')) langResolved = 'en';
+        let langResolved = canonicalizeLang(langHint || (await getPreferredLangQuick(From, 'en')));           
+    // Interactive Content templates are single-script; use base language for roman variants (hi-latn→hi).
+      if (String(langResolved).toLowerCase().endsWith('-latn')) langResolved = String(langResolved).toLowerCase().replace(/-latn$/, '');
         await ensureLangTemplates(langResolved);
         const sids = getLangSids(langResolved);
 
@@ -7889,7 +7889,7 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
         // Inline actual buttons
         try {
           let L = String(lang ?? 'en').toLowerCase();
-          if (L.endsWith('-latn')) L = 'en';
+          if (L.endsWith('-latn')) L = L.replace(/-latn$/, '');
           await ensureLangTemplates(L);
           const sids = getLangSids(L);
           if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
@@ -8850,10 +8850,33 @@ async function handleInteractiveSelection(req) {
   // Shared: shopId + language + activation gate
   const shopId = String(from).replace('whatsapp:', '');
   let lang = 'en';
+  let prefLP = null;
   try {
-    const prefLP = await getUserPreference(shopId);
+    prefLP = await getUserPreference(shopId);
     if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();
   } catch(_) {}
+  
+  // [PATCH:LANG-FIX-INTERACTIVE-20260223] If pref missing, infer UI language from button text/title
+    // Hindi/Indic button taps should NOT fall back to 'en' templates.
+    try {
+      if (!(prefLP?.success && prefLP.language)) {
+        // Strong hint: Devanagari quick-reply titles like 'खरीद दर्ज करें'
+        if (/[ऀ-ॿ]/.test(text)) lang = 'hi';
+        else {
+          const hint = guessLangFromInput(text);
+          if (hint) lang = String(hint).toLowerCase();
+        }
+        // Persist inferred language to preference so next steps stay consistent
+        const base = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
+        if (base && base !== 'en' && typeof saveUserPreference === 'function') {
+          try { await saveUserPreference(shopId, base); } catch (_) {}
+        }
+        lang = base;
+      }
+    } catch (_) {}
+    // Templates prefer base language (hi-latn -> hi), not English
+    lang = String(lang ?? 'en').toLowerCase();
+    if (lang.endsWith('-latn')) lang = lang.replace(/-latn$/, '');
 
   async function _isActivated(shopIdNum) {
     try { if (typeof isUserActivated === 'function') return !!(await isUserActivated(shopIdNum)); } catch(_) {}
