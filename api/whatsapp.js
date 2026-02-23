@@ -8848,27 +8848,27 @@ async function handleInteractiveSelection(req) {
   }
 
   // Shared: shopId + language + activation gate
-  const shopId = String(from).replace('whatsapp:', '');
+  const shopId = String(from).replace('whatsapp:', '');    
+  // [PATCH:LANG-FIX-INTERACTIVE-20260223] Resolve UI language for interactive taps deterministically
+  // Prefer saved preference; else infer from the tapped button/list title text (e.g., Devanagari => Hindi).
+  const tapTextRaw = String(raw.ButtonText ?? raw.Body ?? raw.ListItemTitle ?? raw.ListItemDescription ?? '').trim();
   let lang = 'en';
   let prefLP = null;
   try {
     prefLP = await getUserPreference(shopId);
-    if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();
-  } catch(_) {}
-  
-  // [PATCH:LANG-FIX-INTERACTIVE-20260223] If pref missing, infer UI language from button text/title
-    // Hindi/Indic button taps should NOT fall back to 'en' templates.
+    if (prefLP?.success && prefLP.language) lang = String(prefLP.language).toLowerCase();    
+  } catch (_) {}
     try {
       if (!(prefLP?.success && prefLP.language)) {
         // Strong hint: Devanagari quick-reply titles like 'खरीद दर्ज करें'
-        if (/[ऀ-ॿ]/.test(text)) lang = 'hi';
+        if (/[\u0900-\u097F]/.test(tapTextRaw)) lang = 'hi';
         else {
-          const hint = guessLangFromInput(text);
+          const hint = (typeof guessLangFromInput === 'function') ? guessLangFromInput(tapTextRaw) : null;
           if (hint) lang = String(hint).toLowerCase();
-        }
-        // Persist inferred language to preference so next steps stay consistent
-        const base = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
-        if (base && base !== 'en' && typeof saveUserPreference === 'function') {
+      }      
+  // Persist inferred language to preference so subsequent template sends don't default to 'en'
+  const base = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
+  if (base && base !== 'en' && typeof saveUserPreference === 'function') {
           try { await saveUserPreference(shopId, base); } catch (_) {}
         }
         lang = base;
@@ -8995,7 +8995,9 @@ async function handleInteractiveSelection(req) {
   const isRecentlyActivated = !!recentTs && (Date.now() - recentTs < RECENT_ACTIVATION_MS);
   const allowExamples = activated || isRecentlyActivated;
 
-  if (payload === 'qr_purchase') {
+  if (payload === 'qr_purchase') {        
+    // [PATCH:LANG-FIX-INTERACTIVE-20260223] Ensure base lang for templates in this branch
+    lang = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
     await setStickyMode(from, 'purchased'); // keep sticky
           
     // Send chooser for activated users (same eligibility you already use via allowExamples)
@@ -9033,7 +9035,9 @@ async function handleInteractiveSelection(req) {
     return true;
   }
 
-  if (payload === 'qr_sale') {
+  if (payload === 'qr_sale') {    
+    // [PATCH:LANG-FIX-INTERACTIVE-20260223] Ensure base lang for templates in this branch
+    lang = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
     await setStickyMode(from, 'sold'); // keep sticky
         
     if (allowExamples) {
@@ -9070,7 +9074,9 @@ async function handleInteractiveSelection(req) {
     return true;
   }
 
-  if (payload === 'qr_return') {
+  if (payload === 'qr_return') {        
+    // [PATCH:LANG-FIX-INTERACTIVE-20260223] Ensure base lang for templates in this branch
+    lang = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
     await setStickyMode(from, 'returned'); // keep sticky
         
     if (allowExamples) {
