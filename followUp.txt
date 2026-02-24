@@ -1,0 +1,66 @@
+T1-EN — Guided demo revive (best default for “stuck/confused”)
+Hi 👋 I noticed you started Saamagrii.AI but it may have felt confusing.
+
+Want a 30‑second guided DEMO (no real entries—just practice)?
+Reply 1 and I’ll run the demo step‑by‑step:
+1) Record Purchase
+2) Add New Product
+3) Enter quantity/unit
+Then you can start real entries confidently ✅
+
+T1-HI — Guided demo revive (Hindi)
+नमस्ते 👋 आपने Saamagrii.AI शुरू किया था, शायद flow थोड़ा confusing लगा।
+
+क्या आप 30‑सेकंड का guided DEMO चाहेंगे? (कोई real entry नहीं—सिर्फ practice)
+1 लिखें, मैं step‑by‑step demo करा दूँ:
+1) खरीद दर्ज करें
+2) नया प्रोडक्ट जोड़ें
+3) मात्रा/यूनिट लिखें
+फिर आप real entries आसानी से कर पाएँगे ✅
+``
+
+T2-EN — Single next step (for “intentful but incomplete”)
+Let’s do just ONE quick step to finish setup ✅
+
+Reply exactly like this:
+purchased milk 1 ltr @ 60
+
+I’ll confirm it and then you’ll know the full flow.
+(You can replace milk with any product you sell.)
+
+T2-HI — Single next step (Hindi)
+सेटअप पूरा करने के लिए बस 1 step ✅
+
+ऐसे लिखें:
+दूध 1 लीटर खरीदा @ ₹60
+
+मैं तुरंत confirm कर दूँगा—फिर पूरा flow आसान लगेगा।
+(दूध की जगह अपना कोई भी product लिख सकते हैं)
+
+T3-HI — Confused + optional call (use for +91 78781 76291)
+नमस्ते 👋 लगता है आप flow में अटक गए थे—कोई बात नहीं।
+
+मैं अभी WhatsApp पर पूरा process 1 मिनट में समझा देता हूँ।
+आप “1” लिखें—मैं demo कराऊँगा (कोई real entry नहीं होगी)।
+
+अगर कॉल चाहिए तो आज/कल का समय लिख दें (सुबह/शाम) — मैं support arrange करा दूँगा।
+
+T4-EN — Hello-only nudge (for “Hi/Hii only” users)
+Hi 👋 Quick check — do you want to use Saamagrii.AI for:
+1) Purchase entry
+2) Sale entry
+3) Return entry
+
+Reply 1/2/3 and I’ll guide you in 2 steps.
+
++91 78781 76291 — T3-HI 1
++91 77375 45077 — T1-EN 1
++91 90010 66022 — T2-HI 1
++91 93255 30390 — T1-EN 1
++91 97793 86422 — T2-EN 1
++91 90812 06798 — T2-HI 1
++91 99971 69714 — T2-EN 1
++91 96960 41275 — T1-EN 1
++91 96875 10459 — T4-EN 1
++91 94263 65633 — T4-EN 1
++91 74330 55957 — T4-EN 1
