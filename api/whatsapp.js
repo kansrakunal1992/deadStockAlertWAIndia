@@ -8268,12 +8268,26 @@ async function _handleDemoFlowTextTurn(From, text, requestId) {
 
   const langExact = st.data?.langExact ?? 'en';
   const P = _demoPack(langExact);
-  const step = st.data?.step ?? 'A';
+  const step = st.data?.step ?? 'P1';
   const demo = st.data?.demo ?? { product: 'Milk', unit: 'ltr', price: 60 };
-
-  // Only Step C expects qty/unit text
-  if (step !== 'C') return true;
-
+    
+  // Practice (2/3): user types a NEW product name — store it in demo state
+    if (step === 'P2_NAME') {
+      const name = String(text ?? '').trim();
+      if (!name) {
+        await sendMessageViaAPI(From, finalizeForSend(P.askNewProductName, langExact));
+        return true;
+      }
+      const cleaned = name.slice(0, 48); // safety cap
+      const nextDemo = { ...(st.data?.demo ?? demo), product: cleaned };
+      await sendMessageViaAPI(From, finalizeForSend(P.added(cleaned), langExact));
+      await setUserState(shopId, DEMO_FLOW_MODE, { ...(st.data ?? {}), step: 'P3', langExact, demo: nextDemo });
+      await _demoSendPracticeButton(From, langExact, 3);
+      return true;
+    }
+  
+    // Practice (3/3): qty/unit input expected only after demo_practice_3 tap
+    if (step !== 'P3_QTY') return true;
   const parsed = _demoParseQtyUnitLoose(text);
   if (!parsed || !Number.isFinite(parsed.quantity) || parsed.quantity <= 0) {
     await sendMessageViaAPI(From, finalizeForSend(P.askQty, langExact));
