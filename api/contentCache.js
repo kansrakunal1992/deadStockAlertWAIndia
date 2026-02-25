@@ -313,6 +313,68 @@ const EXISTING_USER_PRODUCT_MODE_QR_LABELS = {
   gu: { body: 'કેવી રીતે ઉમેરશો?', pick: 'હાલનું પસંદ', add: 'નવું પ્રોડક્ટ' }
 };
 
+// ——— NEW: Demo flow single-button QRs (Step A / Step B) ———
+// IDs MUST match whatsapp.js handlers: demo_purchase, demo_add_product
+// Titles must be <= 20 chars (clampTitle enforces).
+const DEMO_QR_LABELS = {
+  en: { bodyA: 'Practice (1/3)', bodyB: 'Practice (2/3)' },
+  hi: { bodyA: 'Practice (1/3)', bodyB: 'Practice (2/3)' },
+  bn: { bodyA: 'Practice (1/3)', bodyB: 'Practice (2/3)' },
+  gu: { bodyA: 'Practice (1/3)', bodyB: 'Practice (2/3)' },
+  ta: { bodyA: 'Practice (1/3)', bodyB: 'Practice (2/3)' },
+  te: { bodyA: 'Practice (1/3)', bodyB: 'Practice (2/3)' },
+  kn: { bodyA: 'Practice (1/3)', bodyB: 'Practice (2/3)' },
+  mr: { bodyA: 'Practice (1/3)', bodyB: 'Practice (2/3)' },
+};
+
+async function createDemoPurchaseQRForLang(lang) {
+  const base = normalizeLangForContent(lang);
+  const l = DEMO_QR_LABELS[base] ?? DEMO_QR_LABELS.en;
+  // Reuse purchase title from your QR_LABELS
+  const title = clampTitle((QR_LABELS[base] ?? QR_LABELS.en).purchase);
+  const payload = {
+    friendly_name: `saamagrii_demo_purchase_${base}_${Date.now()}`,
+    language: base,
+    types: {
+      'twilio/quick-reply': {
+        body: l.bodyA,
+        actions: [
+          { type: 'QUICK_REPLY', title, id: 'demo_purchase' }
+        ]
+      }
+    }
+  };
+  const { data } = await axios.post(CONTENT_API_URL, payload, {
+    auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
+  });
+  console.log(`[contentCache] Created Demo-Purchase for ${lang}: ContentSid=${data.sid}`);
+  return data.sid;
+}
+
+async function createDemoAddProductQRForLang(lang) {
+  const base = normalizeLangForContent(lang);
+  const l = DEMO_QR_LABELS[base] ?? DEMO_QR_LABELS.en;
+  // Reuse "add" title from your existing chooser labels (already <=20 via clampTitle)
+  const title = clampTitle((EXISTING_USER_PRODUCT_MODE_QR_LABELS[base] ?? EXISTING_USER_PRODUCT_MODE_QR_LABELS.en).add);
+  const payload = {
+    friendly_name: `saamagrii_demo_add_product_${base}_${Date.now()}`,
+    language: base,
+    types: {
+      'twilio/quick-reply': {
+        body: l.bodyB,
+        actions: [
+          { type: 'QUICK_REPLY', title, id: 'demo_add_product' }
+        ]
+      }
+    }
+  };
+  const { data } = await axios.post(CONTENT_API_URL, payload, {
+    auth: { username: ACCOUNT_SID, password: AUTH_TOKEN }
+  });
+  console.log(`[contentCache] Created Demo-Add-Product for ${lang}: ContentSid=${data.sid}`);
+  return data.sid;
+}
+
 async function createOnboardingQuickReplyForLang(lang) {
   const base = normalizeLangForContent(lang);
   const l = ONBOARDING_QR_LABELS[base] ?? ONBOARDING_QR_LABELS.en;
@@ -513,7 +575,9 @@ const language = normalizeLangForContent(lang);
     paidConfirmSid: created?.paidConfirmSid ?? null,
     onboardingQrSid: created?.onboardingQrSid ?? null,
     existingProductModeQrSid: created?.existingProductModeQrSid ?? null,
-    correctionUndoSid: created?.correctionUndoSid ?? null, // NEW
+    correctionUndoSid: created?.correctionUndoSid ?? null, // NEW,    
+    demoPurchaseSid: created?.demoPurchaseSid ?? null,     // NEW
+    demoAddProductSid: created?.demoAddProductSid ?? null, // NEW
     ts            : Date.now()
   };
   sidsByLang.set(language, bundle);
@@ -525,7 +589,9 @@ const language = normalizeLangForContent(lang);
       paidCtaSid         : !!bundle.paidCtaSid,
       paidConfirmSid     : !!bundle.paidConfirmSid,
       onboardingQrSid    : !!bundle.onboardingQrSid,
-      correctionUndoSid  : !!bundle.correctionUndoSid,
+      correctionUndoSid  : !!bundle.correctionUndoSid,          
+      demoPurchaseSid : !!bundle.demoPurchaseSid,
+      demoAddProductSid : !!bundle.demoAddProductSid,
       ts                 : bundle.ts
     });
 
@@ -543,7 +609,9 @@ function getLangSids(lang) {
      paidCtaSid    : null,
      paidConfirmSid: null,
      onboardingQrSid: null,
-     correctionUndoSid: null // NEW
+     correctionUndoSid: null // NEW     
+     ,demoPurchaseSid: null  // NEW
+     ,demoAddProductSid: null // NEW
    };
 }
 
@@ -562,7 +630,9 @@ async function actuallyCreateOrFetchTemplates(language) {
   let correctionUndoSid = null; // NEW
   let onboardingQrSid = null;
   let existingProductModeQrSid = null;
-  let paidConfirmSid = null;
+  let paidConfirmSid = null;    
+  let demoPurchaseSid = null;
+  let demoAddProductSid = null;
   try { trialCtaSid = await createActivateTrialCTAForLang(language); } catch (e) {
     console.warn('[contentCache] Trial CTA create failed:', e?.response?.data || e?.message);
   }
@@ -579,8 +649,11 @@ async function actuallyCreateOrFetchTemplates(language) {
       console.warn('[contentCache] Existing-User Product Mode QR create failed:', e?.response?.data ?? e?.message);
     }
   // NEW: Undo CTA
-  try { correctionUndoSid = await createUndoCorrectionCTAForLang(language); } catch (e) { console.warn('[contentCache] Undo-Correction CTA create failed:', e?.response?.data ?? e?.message); }
-  return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, onboardingQrSid, paidConfirmSid, correctionUndoSid, existingProductModeQrSid };
+  try { correctionUndoSid = await createUndoCorrectionCTAForLang(language); } catch (e) { console.warn('[contentCache] Undo-Correction CTA create failed:', e?.response?.data ?? e?.message); }  
+  // NEW: Demo flow QRs
+  try { demoPurchaseSid = await createDemoPurchaseQRForLang(language); } catch (e) { console.warn('[contentCache] Demo-Purchase QR create failed:', e?.response?.data ?? e?.message); }
+  try { demoAddProductSid = await createDemoAddProductQRForLang(language); } catch (e) { console.warn('[contentCache] Demo-Add-Product QR create failed:', e?.response?.data ?? e?.message); }
+  return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, onboardingQrSid, paidConfirmSid, correctionUndoSid, existingProductModeQrSid, demoPurchaseSid, demoAddProductSid };
 }
 
 module.exports = { ensureLangTemplates, getLangSids };
