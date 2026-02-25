@@ -8329,6 +8329,11 @@ async function activateTrialFlow(From, lang = 'en', opts = {}) {
         
     // Send deterministic localized onboarding message (NO AI / no t()).
         // Uses TRIAL_ACTIVATED_ONBOARDING_TEMPLATES + recordPurchaseBtn label internally.
+        
+    // 1) Onboarding video FIRST (localized)
+        try { await sendOnboardVideoAsync(From, lang); } catch (_) {}
+    
+        // 2) Trial activation message SECOND (localized)
         try {
           const msg = '<!NO_FOOTER!>' + composeTrialActivatedOnboardingText(lang, TRIAL_DAYS);
           await sendMessageViaAPI(From, finalizeForSend(msg, lang), { lang, requestId: opts?.requestId, noCta: true });
@@ -9070,33 +9075,33 @@ async function handleInteractiveSelection(req) {
     const BTN_TEXT_MAP = [             
       // Demo typed fallback mapping for Practice Mode (1/3,2/3,3/3) only when userState is demo_flow
       ...(_inDemo ? [
-        { rx: /^practice\\s+mode\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
-        { rx: /^प्रैक्टिस\\s+मोड\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
-        { rx: /^প্র্যাকটিস\\s+মোড\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
-        { rx: /^પ્રેક્ટિસ\\s+મોડ\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
-        { rx: /^பிராக்டிஸ்\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
-        { rx: /^ప్రాక్టీస్\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
-        { rx: /^ಪ್ರಾಕ್ಟೀಸ್\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
-        { rx: /^प्रॅक्टिस\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
-
-        { rx: /^practice\\s+mode\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
-        { rx: /^प्रैक्टिस\\s+मोड\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
-        { rx: /^প্র্যাকটিস\\s+মোড\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
-        { rx: /^પ્રેક્ટિસ\\s+મોડ\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
-        { rx: /^பிராக்டிஸ்\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
-        { rx: /^ప్రాక్టీస్\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
-        { rx: /^ಪ್ರಾಕ್ಟೀಸ್\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
-        { rx: /^प्रॅक्टिस\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
-
-        { rx: /^practice\\s+mode\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
-        { rx: /^प्रैक्टिस\\s+मोड\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
-        { rx: /^প্র্যাকটিস\\s+মোড\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
-        { rx: /^પ્રેક્ટિસ\\s+મોડ\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
-        { rx: /^பிராக்டிஸ்\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
-        { rx: /^ప్రాక్టీస్\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
-        { rx: /^ಪ್ರಾಕ್ಟೀಸ್\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
-        { rx: /^प्रॅक्टिस\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
-      ] : []),
+            { rx: new RegExp('^practice\\s+mode\\s*\\(1/3\\)$', 'i'), payload: 'demo_purchase' },
+            { rx: new RegExp('^प्रैक्टिस\\s+मोड\\s*\\(1/3\\)$', 'i'), payload: 'demo_purchase' },
+            { rx: new RegExp('^প্র্যাকটিস\\s+মোড\\s*\\(1/3\\)$', 'i'), payload: 'demo_purchase' },
+            { rx: new RegExp('^પ્રેક્ટિસ\\s+મોડ\\s*\\(1/3\\)$', 'i'), payload: 'demo_purchase' },
+            { rx: new RegExp('^பிராக்டிஸ்\\s*\\(1/3\\)$', 'i'), payload: 'demo_purchase' },
+            { rx: new RegExp('^ప్రాక్టీస్\\s*\\(1/3\\)$', 'i'), payload: 'demo_purchase' },
+            { rx: new RegExp('^ಪ್ರಾಕ್ಟೀಸ್\\s*\\(1/3\\)$', 'i'), payload: 'demo_purchase' },
+            { rx: new RegExp('^प्रॅक्टिस\\s*\\(1/3\\)$', 'i'), payload: 'demo_purchase' },
+          
+            { rx: new RegExp('^practice\\s+mode\\s*\\(2/3\\)$', 'i'), payload: 'demo_add_product' },
+            { rx: new RegExp('^प्रैक्टिस\\s+मोड\\s*\\(2/3\\)$', 'i'), payload: 'demo_add_product' },
+            { rx: new RegExp('^প্র্যাকটিস\\s+মোড\\s*\\(2/3\\)$', 'i'), payload: 'demo_add_product' },
+            { rx: new RegExp('^પ્રેક્ટિસ\\s+મોડ\\s*\\(2/3\\)$', 'i'), payload: 'demo_add_product' },
+            { rx: new RegExp('^பிராக்டிஸ்\\s*\\(2/3\\)$', 'i'), payload: 'demo_add_product' },
+            { rx: new RegExp('^ప్రాక్టీస్\\s*\\(2/3\\)$', 'i'), payload: 'demo_add_product' },
+            { rx: new RegExp('^ಪ್ರಾಕ್ಟೀಸ್\\s*\\(2/3\\)$', 'i'), payload: 'demo_add_product' },
+            { rx: new RegExp('^प्रॅक्टिस\\s*\\(2/3\\)$', 'i'), payload: 'demo_add_product' },
+          
+            { rx: new RegExp('^practice\\s+mode\\s*\\(3/3\\)$', 'i'), payload: 'demo_practice_3' },
+            { rx: new RegExp('^प्रैक्टिस\\s+मोड\\s*\\(3/3\\)$', 'i'), payload: 'demo_practice_3' },
+            { rx: new RegExp('^প্র্যাকটিস\\s+মোড\\s*\\(3/3\\)$', 'i'), payload: 'demo_practice_3' },
+            { rx: new RegExp('^પ્રેક્ટિસ\\s+મોડ\\s*\\(3/3\\)$', 'i'), payload: 'demo_practice_3' },
+            { rx: new RegExp('^பிராக்டிஸ்\\s*\\(3/3\\)$', 'i'), payload: 'demo_practice_3' },
+            { rx: new RegExp('^ప్రాక్టీస్\\s*\\(3/3\\)$', 'i'), payload: 'demo_practice_3' },
+            { rx: new RegExp('^ಪ್ರಾಕ್ಟೀಸ್\\s*\\(3/3\\)$', 'i'), payload: 'demo_practice_3' },
+            { rx: new RegExp('^प्रॅक्टिस\\s*\\(3/3\\)$', 'i'), payload: 'demo_practice_3' },
+          ] : []),
     
       // Onboarding buttons
       { rx: /^ट्रायल\s+शुरू\s+करें$/i, payload: 'activate_trial' },
