@@ -8174,14 +8174,27 @@ function _demoPack(langExact = 'en') {
 async function _demoSendSingleButton(From, langExact, which /* 'demo_purchase'|'demo_add_product' */) {
   const shopId = shopIdFrom(From);
   const P = _demoPack(langExact);
-  const sid = (which === 'demo_purchase') ? DEMO_PURCHASE_SID : DEMO_ADD_PRODUCT_SID;
-  // Preferred: Twilio Content template (single quick reply button)
-  try {
-    if (sid) {
-      await sendContentTemplate({ toWhatsApp: shopId, contentSid: sid });
-      return true;
-    }
-  } catch (_) {}
+    
+  // Preferred #1: per-language cached content SID from contentCache.js
+    try {
+      await ensureLangTemplates(langExact);
+      const sids = getLangSids(langExact);
+      const sid1 = (which === 'demo_purchase') ? sids?.demoPurchaseSid : sids?.demoAddProductSid;
+      if (sid1) {
+        await sendContentTemplate({ toWhatsApp: shopId, contentSid: sid1 });
+        return true;
+      }
+    } catch (_) {}
+  
+    // Preferred #2: env fallback (if you still want manual override)
+    try {
+      const sid2 = (which === 'demo_purchase') ? DEMO_PURCHASE_SID : DEMO_ADD_PRODUCT_SID;
+      if (sid2) {
+        await sendContentTemplate({ toWhatsApp: shopId, contentSid: sid2 });
+        return true;
+      }
+    } catch (_) {}
+
   // Fallback: still continue demo (buttons might not render)
   const title = (which === 'demo_purchase') ? P.btnPurchase : P.btnAdd;
   await sendMessageViaAPI(From, finalizeForSend(`👉 Reply: ${title}`, langExact));
@@ -8270,7 +8283,19 @@ async function _handleDemoFlowTextTurn(From, text, requestId) {
 async function activateTrialFlow(From, lang = 'en', opts = {}) {
   const shopId = shopIdFrom(From);  
   // NEW: Auto-first-message path: activate trial immediately + focused onboarding + record buttons
-  if (opts?.autoFirstMessage) {
+  if (opts?.autoFirstMessage) {      
+  // [LANG PIN] Persist language from first input so demo/templates are created in correct language
+      try {
+        const langExact0 = ensureLangExact(lang ?? 'en');
+        const base0 = String(langExact0).toLowerCase().replace(/-latn$/, '');
+        const pref0 = await getUserPreference(shopId).catch(() => null);
+        if (!pref0?.success || !pref0?.language || String(pref0.language).toLowerCase() === 'en') {
+          if (typeof saveUserPreference === 'function') {
+            await saveUserPreference(shopId, base0).catch(() => {});
+          }
+        }
+        lang = base0; // templates are base language (hi-latn -> hi)
+      } catch (_) {}
     try {
       // Idempotency guard (safe even if called multiple times)
       await startTrialForAuthUser(shopId, TRIAL_DAYS);
@@ -9013,8 +9038,38 @@ async function handleInteractiveSelection(req) {
     }
   }
 
-  if (!payload && text) {
-    const BTN_TEXT_MAP = [
+  if (!payload && text) {        
+    // [DEMO-FLOW] Typed fallback only when user is currently in demo_flow
+        // Prevents changing normal typed fallbacks outside demo.
+        let _inDemo = false;
+        try {
+          const _st0 = await getUserStateFromDB(shopIdTop).catch(() => null);
+          _inDemo = !!(_st0 && _st0.mode === DEMO_FLOW_MODE);
+        } catch (_) {}
+    const BTN_TEXT_MAP = [          
+    // ---------------- DEMO typed fallback (ALL LANGS) ----------------
+          ...(_inDemo ? [
+            // Step A: demo_purchase
+            { rx: /^record\s+purchase$/i, payload: 'demo_purchase' },
+            { rx: /^खरीद\s+दर्ज\s+करें$/i, payload: 'demo_purchase' },         // hi
+            { rx: /^ক্রয়\s+নথিভুক্ত$/i, payload: 'demo_purchase' },           // bn
+            { rx: /^ખરીદી\s+નોંધો$/i, payload: 'demo_purchase' },             // gu
+            { rx: /^கொள்முதல்\s+பதிவு$/i, payload: 'demo_purchase' },         // ta
+            { rx: /^కొనుగోలు\s+నమోదు$/i, payload: 'demo_purchase' },          // te
+            { rx: /^ಖರೀದಿ\s+ನೋಂದಣಿ$/i, payload: 'demo_purchase' },            // kn
+            { rx: /^खरेदी\s+नोंदवा$/i, payload: 'demo_purchase' },            // mr
+    
+            // Step B: demo_add_product
+            { rx: /^add\s+new\s+product$/i, payload: 'demo_add_product' },
+            { rx: /^नया\s+प्रोडक्ट\s+जोड़ें$/i, payload: 'demo_add_product' }, // hi
+            { rx: /^নতুন\s+পণ্য\s+যোগ$/i, payload: 'demo_add_product' },       // bn
+            { rx: /^નવું\s+પ્રોડક્ટ$/i, payload: 'demo_add_product' },         // gu
+            { rx: /^புதிய\s+பொருள்$/i, payload: 'demo_add_product' },         // ta
+            { rx: /^కొత్త\s+ప్రోడక్ట్$/i, payload: 'demo_add_product' },        // te
+            { rx: /^ಹೊಸ\s+ಪ್ರೊಡಕ್ಟ್$/i, payload: 'demo_add_product' },         // kn
+            { rx: /^नवीन\s+प्रॉडक्ट$/i, payload: 'demo_add_product' },         // mr
+          ] : []),
+    
       // Onboarding buttons
       { rx: /^ट्रायल\s+शुरू\s+करें$/i, payload: 'activate_trial' },
       { rx: /^ट्रायल$/i, payload: 'activate_trial' },
