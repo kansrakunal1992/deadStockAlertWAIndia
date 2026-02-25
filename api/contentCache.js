@@ -313,6 +313,73 @@ const EXISTING_USER_PRODUCT_MODE_QR_LABELS = {
   gu: { body: 'કેવી રીતે ઉમેરશો?', pick: 'હાલનું પસંદ', add: 'નવું પ્રોડક્ટ' }
 };
 
+// ——— NEW: Demo Practice Mode (1/3, 2/3, 3/3) single-button quick replies ———
+// Titles must be <= 20 chars; clampTitle() enforces.
+const DEMO_PRACTICE_QR_LABELS = {
+  en: { t1: 'Practice Mode (1/3)', t2: 'Practice Mode (2/3)', t3: 'Practice Mode (3/3)' },
+  hi: { t1: 'प्रैक्टिस मोड (1/3)', t2: 'प्रैक्टिस मोड (2/3)', t3: 'प्रैक्टिस मोड (3/3)' },
+  bn: { t1: 'প্র্যাকটিস মোড (1/3)', t2: 'প্র্যাকটিস মোড (2/3)', t3: 'প্র্যাকটিস মোড (3/3)' },
+  gu: { t1: 'પ્રેક્ટિસ મોડ (1/3)', t2: 'પ્રેક્ટિસ મોડ (2/3)', t3: 'પ્રેક્ટિસ મોડ (3/3)' },
+  ta: { t1: 'பிராக்டிஸ் (1/3)', t2: 'பிராக்டிஸ் (2/3)', t3: 'பிராக்டிஸ் (3/3)' },
+  te: { t1: 'ప్రాక్టీస్ (1/3)', t2: 'ప్రాక్టీస్ (2/3)', t3: 'ప్రాక్టీస్ (3/3)' },
+  kn: { t1: 'ಪ್ರಾಕ್ಟೀಸ್ (1/3)', t2: 'ಪ್ರಾಕ್ಟೀಸ್ (2/3)', t3: 'ಪ್ರಾಕ್ಟೀಸ್ (3/3)' },
+  mr: { t1: 'प्रॅक्टिस (1/3)', t2: 'प्रॅक्टिस (2/3)', t3: 'प्रॅक्टिस (3/3)' },
+};
+
+async function createDemoPractice1QRForLang(lang) {
+  const base = normalizeLangForContent(lang);
+  const l = DEMO_PRACTICE_QR_LABELS[base] ?? DEMO_PRACTICE_QR_LABELS.en;
+  const payload = {
+    friendly_name: `saamagrii_demo_practice_1_${base}_${Date.now()}`,
+    language: base,
+    types: {
+      'twilio/quick-reply': {
+        body: l.t1,
+        actions: [ { type: 'QUICK_REPLY', title: clampTitle(l.t1), id: 'demo_purchase' } ]
+      }
+    }
+  };
+  const { data } = await axios.post(CONTENT_API_URL, payload, { auth: { username: ACCOUNT_SID, password: AUTH_TOKEN } });
+  console.log(`[contentCache] Created Demo-Practice-1 for ${lang}: ContentSid=${data.sid}`);
+  return data.sid;
+}
+
+async function createDemoPractice2QRForLang(lang) {
+  const base = normalizeLangForContent(lang);
+  const l = DEMO_PRACTICE_QR_LABELS[base] ?? DEMO_PRACTICE_QR_LABELS.en;
+  const payload = {
+    friendly_name: `saamagrii_demo_practice_2_${base}_${Date.now()}`,
+    language: base,
+    types: {
+      'twilio/quick-reply': {
+        body: l.t2,
+        actions: [ { type: 'QUICK_REPLY', title: clampTitle(l.t2), id: 'demo_add_product' } ]
+      }
+    }
+  };
+  const { data } = await axios.post(CONTENT_API_URL, payload, { auth: { username: ACCOUNT_SID, password: AUTH_TOKEN } });
+  console.log(`[contentCache] Created Demo-Practice-2 for ${lang}: ContentSid=${data.sid}`);
+  return data.sid;
+}
+
+async function createDemoPractice3QRForLang(lang) {
+  const base = normalizeLangForContent(lang);
+  const l = DEMO_PRACTICE_QR_LABELS[base] ?? DEMO_PRACTICE_QR_LABELS.en;
+  const payload = {
+    friendly_name: `saamagrii_demo_practice_3_${base}_${Date.now()}`,
+    language: base,
+    types: {
+      'twilio/quick-reply': {
+        body: l.t3,
+        actions: [ { type: 'QUICK_REPLY', title: clampTitle(l.t3), id: 'demo_practice_3' } ]
+      }
+    }
+  };
+  const { data } = await axios.post(CONTENT_API_URL, payload, { auth: { username: ACCOUNT_SID, password: AUTH_TOKEN } });
+  console.log(`[contentCache] Created Demo-Practice-3 for ${lang}: ContentSid=${data.sid}`);
+  return data.sid;
+}
+
 // ——— NEW: Demo flow single-button QRs (Step A / Step B) ———
 // IDs MUST match whatsapp.js handlers: demo_purchase, demo_add_product
 // Titles must be <= 20 chars (clampTitle enforces).
@@ -573,9 +640,12 @@ const language = normalizeLangForContent(lang);
     trialCtaSid   : created?.trialCtaSid   || null,
     paidCtaSid    : created?.paidCtaSid    || null,
     paidConfirmSid: created?.paidConfirmSid ?? null,
-    onboardingQrSid: created?.onboardingQrSid ?? null,
+    onboardingQrSid: created?.onboardingQrSid ?? null,        
     existingProductModeQrSid: created?.existingProductModeQrSid ?? null,
-    correctionUndoSid: created?.correctionUndoSid ?? null, // NEW,    
+    demoPractice1Sid: created?.demoPractice1Sid ?? null,
+    demoPractice2Sid: created?.demoPractice2Sid ?? null,
+    demoPractice3Sid: created?.demoPractice3Sid ?? null,
+    correctionUndoSid: created?.correctionUndoSid ?? null, // NEW
     demoPurchaseSid: created?.demoPurchaseSid ?? null,     // NEW
     demoAddProductSid: created?.demoAddProductSid ?? null, // NEW
     ts            : Date.now()
@@ -630,9 +700,17 @@ async function actuallyCreateOrFetchTemplates(language) {
   let correctionUndoSid = null; // NEW
   let onboardingQrSid = null;
   let existingProductModeQrSid = null;
-  let paidConfirmSid = null;    
+  let paidConfirmSid = null;        
+  let demoPractice1Sid = null;
+  let demoPractice2Sid = null;
+  let demoPractice3Sid = null;
   let demoPurchaseSid = null;
-  let demoAddProductSid = null;
+  let demoAddProductSid = null;    
+  // NEW: Demo Practice Mode QRs
+   try { demoPractice1Sid = await createDemoPractice1QRForLang(language); } catch (e) { console.warn('[contentCache] Demo-Practice-1 create failed:', e?.response?.data ?? e?.message); }
+   try { demoPractice2Sid = await createDemoPractice2QRForLang(language); } catch (e) { console.warn('[contentCache] Demo-Practice-2 create failed:', e?.response?.data ?? e?.message); }
+   try { demoPractice3Sid = await createDemoPractice3QRForLang(language); } catch (e) { console.warn('[contentCache] Demo-Practice-3 create failed:', e?.response?.data ?? e?.message); }
+  
   try { trialCtaSid = await createActivateTrialCTAForLang(language); } catch (e) {
     console.warn('[contentCache] Trial CTA create failed:', e?.response?.data || e?.message);
   }
@@ -653,7 +731,7 @@ async function actuallyCreateOrFetchTemplates(language) {
   // NEW: Demo flow QRs
   try { demoPurchaseSid = await createDemoPurchaseQRForLang(language); } catch (e) { console.warn('[contentCache] Demo-Purchase QR create failed:', e?.response?.data ?? e?.message); }
   try { demoAddProductSid = await createDemoAddProductQRForLang(language); } catch (e) { console.warn('[contentCache] Demo-Add-Product QR create failed:', e?.response?.data ?? e?.message); }
-  return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, onboardingQrSid, paidConfirmSid, correctionUndoSid, existingProductModeQrSid, demoPurchaseSid, demoAddProductSid };
+  return { quickReplySid, listPickerSid, trialCtaSid, paidCtaSid, onboardingQrSid, paidConfirmSid, correctionUndoSid, existingProductModeQrSid, demoPractice1Sid, demoPractice2Sid, demoPractice3Sid };
 }
 
 module.exports = { ensureLangTemplates, getLangSids };
