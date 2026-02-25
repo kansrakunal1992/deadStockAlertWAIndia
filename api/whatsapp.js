@@ -2371,7 +2371,15 @@ async function parseMultipleUpdates(reqOrText, requestId) {
      } catch (e) { console.warn('[onboard-capture] step failed:', e?.message); }
      return []; // consume onboarding messages
    }
-  
+    
+  // --- [NEW EARLY EXIT: demo_flow] ------------------------------------------
+    // If user is in demo onboarding flow, consume message and DO NOT parse/write inventory
+    if (userState && userState.mode === DEMO_FLOW_MODE) {
+      try { await _handleDemoFlowTextTurn(from ?? `whatsapp:${shopId}`, transcript, requestId1); }
+      catch (e) { console.warn('[demo-flow] step failed:', e?.message); }
+      return []; // consume demo messages (no DB writes)
+    }
+
      // NEW: global skip message guard to avoid alias/transaction normalization
      try {
        const tLower = String(transcript ?? '').trim().toLowerCase();
@@ -8123,6 +8131,141 @@ if (typeof globalThis.startTrialForAuthUser !== 'function') {
   globalThis.startTrialForAuthUser = async () => ({ success: false });
 }
 
+// =============================================================================
+// [PATCH:DEMO-FLOW-ON-TRIAL-20260224] Demo-first onboarding (NO real entries)
+// Step 0: "practice run" + auto video
+// Step A: 1 button "Record Purchase" (id: demo_purchase)
+// Step B: 1 button "Add New Product" (id: demo_add_product) -> show ACTUAL product picker
+// Step C: ask qty/unit -> FAKE confirmation (NO DB writes)
+// Step D: unlock full live menu (existing quickReplySid)
+// =============================================================================
+const DEMO_FLOW_MODE = 'demo_flow';
+const DEMO_PURCHASE_SID = String(process.env.DEMO_PURCHASE_SID ?? '').trim();      // optional Twilio Content template (1 button)
+const DEMO_ADD_PRODUCT_SID = String(process.env.DEMO_ADD_PRODUCT_SID ?? '').trim(); // optional Twilio Content template (1 button)
+
+function _demoPack(langExact = 'en') {
+  const L = String(langExact ?? 'en').toLowerCase().replace(/-latn$/, '');
+  const map = {
+    en: {
+      practice: "We’ll do a quick practice run (no real entries).",
+      askQty: "How much did you purchase? (e.g., 10 packets / 2 pcs / 5 ltr)",
+      unlocked: "✅ Great! Now you can start real entries.",
+      btnPurchase: "Record Purchase",
+      btnAdd: "Add New Product",
+    },
+    hi: {
+      practice: "We’ll do a quick practice run (no real entries).",
+      askQty: "How much did you purchase? (e.g., 10 packets / 2 pcs / 5 ltr)",
+      unlocked: "✅ Great! Now you can start real entries.",
+      btnPurchase: "खरीद दर्ज करें",
+      btnAdd: "नया प्रोडक्ट जोड़ें",
+    },
+    bn: {
+      practice: "We’ll do a quick practice run (no real entries).",
+      askQty: "How much did you purchase? (e.g., 10 packets / 2 pcs / 5 ltr)",
+      unlocked: "✅ Great! Now you can start real entries.",
+      btnPurchase: "Record Purchase",
+      btnAdd: "Add New Product",
+    }
+  };
+  return map[L] ?? map.en;
+}
+
+async function _demoSendSingleButton(From, langExact, which /* 'demo_purchase'|'demo_add_product' */) {
+  const shopId = shopIdFrom(From);
+  const P = _demoPack(langExact);
+  const sid = (which === 'demo_purchase') ? DEMO_PURCHASE_SID : DEMO_ADD_PRODUCT_SID;
+  // Preferred: Twilio Content template (single quick reply button)
+  try {
+    if (sid) {
+      await sendContentTemplate({ toWhatsApp: shopId, contentSid: sid });
+      return true;
+    }
+  } catch (_) {}
+  // Fallback: still continue demo (buttons might not render)
+  const title = (which === 'demo_purchase') ? P.btnPurchase : P.btnAdd;
+  await sendMessageViaAPI(From, finalizeForSend(`👉 Reply: ${title}`, langExact));
+  return false;
+}
+
+function _demoParseQtyUnitLoose(text) {
+  let s = String(text ?? '').trim();
+  if (!s) return null;
+  try { s = normalizeNumeralsToLatin(s); } catch (_) {}
+  const q = s.match(/(\d+(?:\.\d+)?)/);
+  let u = null;
+  try { u = UNIT_REGEX_UNIFIED.exec(s)?.[0] ?? null; } catch (_) {}
+  if (!q) return null;
+  return { quantity: Number(q[1]), unit: u ? canonicalizeUnitToken(u) : null };
+}
+
+async function _demoUnlockLiveMenu(From, langExact) {
+  try {
+    await ensureLangTemplates(langExact);
+    const sids = getLangSids(langExact);
+    if (sids?.quickReplySid) {
+      await sendContentTemplate({ toWhatsApp: shopIdFrom(From), contentSid: sids.quickReplySid });
+      return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+async function _startDemoFlowAfterTrial(From, langExact, requestId) {
+  const shopId = shopIdFrom(From);
+  const P = _demoPack(langExact);
+
+  // Step 0: practice run message + auto-send onboarding video (localized)
+  await sendMessageViaAPI(From, finalizeForSend(P.practice, langExact));
+  setTimeout(() => { sendOnboardVideoAsync(From, langExact).catch(() => {}); }, 350);
+
+  // Persist demo state (product fixed to Milk)
+  await setUserState(shopId, DEMO_FLOW_MODE, {
+    step: 'A',
+    langExact,
+    action: 'purchased',
+    demo: { product: 'Milk', unit: 'ltr', price: 60 },
+    requestId: requestId ?? null,
+  });
+
+  // Step A: show only "Record Purchase"
+  await _demoSendSingleButton(From, langExact, 'demo_purchase');
+}
+
+async function _handleDemoFlowTextTurn(From, text, requestId) {
+  const shopId = shopIdFrom(From);
+  const st = await getUserStateFromDB(shopId).catch(() => null);
+  if (!st || st.mode !== DEMO_FLOW_MODE) return false;
+
+  const langExact = st.data?.langExact ?? 'en';
+  const P = _demoPack(langExact);
+  const step = st.data?.step ?? 'A';
+  const demo = st.data?.demo ?? { product: 'Milk', unit: 'ltr', price: 60 };
+
+  // Only Step C expects qty/unit text
+  if (step !== 'C') return true;
+
+  const parsed = _demoParseQtyUnitLoose(text);
+  if (!parsed || !Number.isFinite(parsed.quantity) || parsed.quantity <= 0) {
+    await sendMessageViaAPI(From, finalizeForSend(P.askQty, langExact));
+    return true;
+  }
+
+  const qty = parsed.quantity;
+  const unit = parsed.unit ?? demo.unit ?? 'pieces';
+  const unitDisp = canonicalizeUnitToken(unit);
+
+  // Step C: FAKE confirmation (NO inventory writes)
+  const confirm = `📦 Purchased: ${demo.product} — ${qty} ${unitDisp} @ ₹${demo.price} (Stock: ${qty} ${unitDisp})`;
+  await sendMessageViaAPI(From, finalizeForSend(confirm, langExact));
+
+  // Step D: unlock normal live menu
+  try { await clearUserState(shopId); } catch (_) {}
+  await sendMessageViaAPI(From, finalizeForSend(P.unlocked, langExact));
+  await _demoUnlockLiveMenu(From, langExact);
+  return true;
+}
+
 // --- typed path now begins capture (no immediate activation)
 async function activateTrialFlow(From, lang = 'en', opts = {}) {
   const shopId = shopIdFrom(From);  
@@ -8153,19 +8296,10 @@ async function activateTrialFlow(From, lang = 'en', opts = {}) {
           const msg = '<!NO_FOOTER!>' + composeTrialActivatedOnboardingText('en', TRIAL_DAYS);
           await sendMessageViaAPI(From, finalizeForSend(msg, 'en'), { lang: 'en', requestId: opts?.requestId, noCta: true });
         }
-
-    // Send Record Purchase / Sale / Return buttons (quickReplySid)
-    try {
-      await ensureLangTemplates(lang);
-      const sids = getLangSids(lang);
-      if (sids?.quickReplySid) {
-        await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
-      }
-    } catch (_) {}
-
-    // IMPORTANT: do NOT send listPicker here unless you want it immediately.
-    // (Your requirement asked specifically for record buttons + first-step focus.)
-    return { success: true, activatedTrial: true, autoFirstMessage: true };
+        
+    // NEW: Demo onboarding flow (Step 0 + Step A)
+        await _startDemoFlowAfterTrial(From, lang, opts?.requestId);
+        return { success: true, activatedTrial: true, autoFirstMessage: true, demoStarted: true };
   }
 
   try {
@@ -8708,7 +8842,28 @@ async function handleInteractiveSelection(req) {
   // Debug snapshot
   try {
     console.log(`[interact] payload=${payload ?? '—'} listId=${listId ?? '—'} body=${text ?? '—'}`);
-  } catch(_) {}
+  } catch(_) {}  
+
+  // ===== [DEMO-FLOW] Step A/B buttons =====
+  if (payload === 'demo_purchase') {
+    const st = await getUserStateFromDB(shopIdTop).catch(() => null);
+    const langUi = String(st?.data?.langExact ?? lang ?? 'en').replace(/-latn$/, '');
+    // Advance to Step B (show only Add New Product)
+    await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'B', langExact: langUi, action: 'purchased' });
+    await _demoSendSingleButton(from, langUi, 'demo_add_product');
+    return true;
+  }
+
+  if (payload === 'demo_add_product') {
+    const st = await getUserStateFromDB(shopIdTop).catch(() => null);
+    const langUi = String(st?.data?.langExact ?? lang ?? 'en').replace(/-latn$/, '');
+    // Step B: show ACTUAL product picker (existing real picker)
+    await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'B_PICK', langExact: langUi, action: 'purchased' });
+    const all = await getAllProducts(shopIdTop).catch(() => []);
+    const products = Array.isArray(all) ? all : (Array.isArray(all?.products) ? all.products : (Array.isArray(all?.items) ? all.items : []));
+    await sendPaginatedProductPickers(from, shopIdTop, langUi, products);
+    return true;
+  }
   
   // ===== NEW: Handle chooser button clicks by stable payload id =====
     if (payload === 'pick_existing_products' || payload === 'add_new_product_as_is') {
@@ -8748,9 +8903,16 @@ async function handleInteractiveSelection(req) {
         if (pref3?.success && pref3.language) langUi3 = String(pref3.language).toLowerCase();
       } catch (_) {}
       langUi3 = String(langUi3).replace(/-latn$/, '');
-  
-      
+        
       const st = await getUserStateFromDB(shopIdTop).catch(() => null);
+            // [DEMO-FLOW] If user is in demo, selecting any product advances to Step C prompt
+            if (st && st.mode === DEMO_FLOW_MODE) {
+              const langUiD = String(st?.data?.langExact ?? langUi3 ?? 'en').replace(/-latn$/, '');
+              const P = _demoPack(langUiD);
+              await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'C', langExact: langUiD, action: 'purchased' });
+              await sendMessageViaAPI(from, finalizeForSend(P.askQty, langUiD));
+              return true;
+            }
       const action = st?.data?.action ?? 'purchased';
       const productId = listId.slice('prod:'.length);
       const productName = await _resolveProductNameById(shopIdTop, productId);
