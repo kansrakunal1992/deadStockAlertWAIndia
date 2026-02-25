@@ -8094,71 +8094,126 @@ if (typeof globalThis.startTrialForAuthUser !== 'function') {
 }
 
 // =============================================================================
-// [PATCH:DEMO-FLOW-ON-TRIAL-20260224] Demo-first onboarding (NO real entries)
-// Step 0: "practice run" + auto video
-// Step A: 1 button "Record Purchase" (id: demo_purchase)
-// Step B: 1 button "Add New Product" (id: demo_add_product) -> show ACTUAL product picker
-// Step C: ask qty/unit -> FAKE confirmation (NO DB writes)
-// Step D: unlock full live menu (existing quickReplySid)
+// [PATCH:DEMO-FLOW-ON-TRIAL-20260224]
+// Demo-first onboarding flow (NO real entries)
+// REQUIRED send order on first activation:
+// 1) Onboarding video
+// 2) Trial activation message (localized)
+// 3) Localized practice-run line
+// 4) Practice Mode (1/3) button (localized)
+// 5) Practice Mode (2/3) -> ask NEW product name (no existing picker)
+// 6) Practice Mode (3/3) -> ask qty/unit -> FAKE confirmation -> unlock live menu
 // =============================================================================
 const DEMO_FLOW_MODE = 'demo_flow';
-const DEMO_PURCHASE_SID = String(process.env.DEMO_PURCHASE_SID ?? '').trim();      // optional Twilio Content template (1 button)
-const DEMO_ADD_PRODUCT_SID = String(process.env.DEMO_ADD_PRODUCT_SID ?? '').trim(); // optional Twilio Content template (1 button)
 
 function _demoPack(langExact = 'en') {
   const L = String(langExact ?? 'en').toLowerCase().replace(/-latn$/, '');
   const map = {
-    en: {
-      practice: "We’ll do a quick practice run (no real entries).",
-      askQty: "How much did you purchase? (e.g., 10 packets / 2 pcs / 5 ltr)",
-      unlocked: "✅ Great! Now you can start real entries.",
-      btnPurchase: "Record Purchase",
-      btnAdd: "Add New Product",
+    en: {     
+practiceRun: 'We’ll do a quick practice run (no real entries).',
+      p1: 'Practice Mode (1/3)',
+      p2: 'Practice Mode (2/3)',
+      p3: 'Practice Mode (3/3)',
+      askNewProductName: 'Type a new product name (practice).',
+      added: (name) => `✅ (Practice) Added: ${name}`,
+      askQty: 'How much did you purchase? (e.g., 10 packets / 2 pcs / 5 ltr)',
+      unlocked: '✅ Great! Now you can start real entries.'
     },
-    hi: {
-      practice: "We’ll do a quick practice run (no real entries).",
-      askQty: "How much did you purchase? (e.g., 10 packets / 2 pcs / 5 ltr)",
-      unlocked: "✅ Great! Now you can start real entries.",
-      btnPurchase: "खरीद दर्ज करें",
-      btnAdd: "नया प्रोडक्ट जोड़ें",
+    hi: {      
+practiceRun: 'हम एक छोटा प्रैक्टिस रन करेंगे (कोई असली एंट्री नहीं होगी)।',
+      p1: 'प्रैक्टिस मोड (1/3)',
+      p2: 'प्रैक्टिस मोड (2/3)',
+      p3: 'प्रैक्टिस मोड (3/3)',
+      askNewProductName: 'नया प्रोडक्ट का नाम लिखें (प्रैक्टिस)।',
+      added: (name) => `✅ (प्रैक्टिस) जोड़ा: ${name}`,
+      askQty: 'आपने कितना खरीदा? (जैसे, 10 पैकेट / 2 पीस / 5 ltr)',
+      unlocked: '✅ हो गया! अब आप real entries कर सकते हैं।'
     },
-    bn: {
-      practice: "We’ll do a quick practice run (no real entries).",
-      askQty: "How much did you purchase? (e.g., 10 packets / 2 pcs / 5 ltr)",
-      unlocked: "✅ Great! Now you can start real entries.",
-      btnPurchase: "Record Purchase",
-      btnAdd: "Add New Product",
+    bn: {      
+practiceRun: 'চলুন একটি ছোট প্র্যাকটিস রান করি (কোনো আসল এন্ট্রি হবে না)।',
+      p1: 'প্র্যাকটিস মোড (1/3)',
+      p2: 'প্র্যাকটিস মোড (2/3)',
+      p3: 'প্র্যাকটিস মোড (3/3)',
+      askNewProductName: 'নতুন পণ্যের নাম লিখুন (প্র্যাকটিস)।',
+      added: (name) => `✅ (প্র্যাকটিস) যোগ হলো: ${name}`,
+      askQty: 'আপনি কত কিনলেন? (যেমন, 10 packets / 2 pcs / 5 ltr)',
+      unlocked: '✅ হয়ে গেছে! এখন আপনি real entries করতে পারবেন।'
+    },
+    gu: {
+      practiceRun: 'ચાલો એક નાનું પ્રેક્ટિસ રન કરીએ (કોઈ સાચી એન્ટ્રી નહીં થાય)।',
+      p1: 'પ્રેક્ટિસ મોડ (1/3)',
+      p2: 'પ્રેક્ટિસ મોડ (2/3)',
+      p3: 'પ્રેક્ટિસ મોડ (3/3)',
+      askNewProductName: 'નવું પ્રોડક્ટ નામ લખો (પ્રેક્ટિસ)।',
+      added: (name) => `✅ (પ્રેક્ટિસ) ઉમેર્યું: ${name}`,
+      askQty: 'તમે કેટલું ખરીદ્યું? (જેમ કે, 10 packets / 2 pcs / 5 ltr)',
+      unlocked: '✅ થઇ ગયું! હવે તમે real entries કરી શકો છો।'
+    },
+    ta: {
+      practiceRun: 'ஒரு சிறிய practice run செய்வோம் (உண்மையான entries இல்லை).',
+      p1: 'பிராக்டிஸ் (1/3)',
+      p2: 'பிராக்டிஸ் (2/3)',
+      p3: 'பிராக்டிஸ் (3/3)',
+      askNewProductName: 'புதிய பொருள் பெயரை எழுதுங்கள் (practice).',
+      added: (name) => `✅ (practice) சேர்த்தது: ${name}`,
+      askQty: 'எவ்வளவு வாங்கினீர்கள்? (எ.கா., 10 packets / 2 pcs / 5 ltr)',
+      unlocked: '✅ முடிந்தது! இப்போது real entries செய்யலாம்.'
+    },
+    te: {
+      practiceRun: 'ఒక చిన్న practice run చేద్దాం (నిజమైన entries కాదు).',
+      p1: 'ప్రాక్టీస్ (1/3)',
+      p2: 'ప్రాక్టీస్ (2/3)',
+      p3: 'ప్రాక్టీస్ (3/3)',
+      askNewProductName: 'కొత్త ప్రోడక్ట్ పేరు టైప్ చేయండి (practice).',
+      added: (name) => `✅ (practice) జోడించింది: ${name}`,
+      askQty: 'మీరు ఎంత కొనుగోలు చేశారు? (ఉదా., 10 packets / 2 pcs / 5 ltr)',
+      unlocked: '✅ అయ్యింది! ఇప్పుడు real entries చేయవచ్చు.'
+    },
+    kn: {
+      practiceRun: 'ಒಂದು ಚಿಕ್ಕ practice run ಮಾಡೋಣ (ನಿಜವಾದ entries ಅಲ್ಲ).',
+      p1: 'ಪ್ರಾಕ್ಟೀಸ್ (1/3)',
+      p2: 'ಪ್ರಾಕ್ಟೀಸ್ (2/3)',
+      p3: 'ಪ್ರಾಕ್ಟೀಸ್ (3/3)',
+      askNewProductName: 'ಹೊಸ ಪ್ರೊಡಕ್ಟ್ ಹೆಸರು ಟೈಪ್ ಮಾಡಿ (practice).',
+      added: (name) => `✅ (practice) ಸೇರಿಸಲಾಗಿದೆ: ${name}`,
+      askQty: 'ನೀವು ಎಷ್ಟು ಖರೀದಿಸಿದ್ದೀರಿ? (ಉದಾ., 10 packets / 2 pcs / 5 ltr)',
+      unlocked: '✅ ಆಯಿತು! ಈಗ real entries ಮಾಡಬಹುದು.'
+    },
+    mr: {
+      practiceRun: 'चला एक छोटा प्रॅक्टिस रन करू (खऱ्या entries नाहीत).',
+      p1: 'प्रॅक्टिस (1/3)',
+      p2: 'प्रॅक्टिस (2/3)',
+      p3: 'प्रॅक्टिस (3/3)',
+      askNewProductName: 'नवीन प्रॉडक्टचे नाव टाइप करा (प्रॅक्टिस).',
+      added: (name) => `✅ (प्रॅक्टिस) जोडले: ${name}`,
+      askQty: 'तुम्ही किती खरेदी केली? (उदा., 10 packets / 2 pcs / 5 ltr)',
+      unlocked: '✅ झाले! आता real entries करू शकता.'
     }
   };
   return map[L] ?? map.en;
 }
 
-async function _demoSendSingleButton(From, langExact, which /* 'demo_purchase'|'demo_add_product' */) {
-  const shopId = shopIdFrom(From);
+function _demoTitle(langExact, stage /*1|2|3*/) {
   const P = _demoPack(langExact);
-    
-  // Preferred #1: per-language cached content SID from contentCache.js
-    try {
-      await ensureLangTemplates(langExact);
-      const sids = getLangSids(langExact);
-      const sid1 = (which === 'demo_purchase') ? sids?.demoPurchaseSid : sids?.demoAddProductSid;
-      if (sid1) {
-        await sendContentTemplate({ toWhatsApp: shopId, contentSid: sid1 });
-        return true;
-      }
-    } catch (_) {}
-  
-    // Preferred #2: env fallback (if you still want manual override)
-    try {
-      const sid2 = (which === 'demo_purchase') ? DEMO_PURCHASE_SID : DEMO_ADD_PRODUCT_SID;
-      if (sid2) {
-        await sendContentTemplate({ toWhatsApp: shopId, contentSid: sid2 });
-        return true;
-      }
-    } catch (_) {}
+  if (stage === 1) return P.p1;
+  if (stage === 2) return P.p2;
+  return P.p3;
+}
 
-  // Fallback: still continue demo (buttons might not render)
-  const title = (which === 'demo_purchase') ? P.btnPurchase : P.btnAdd;
+async function _demoSendPracticeButton(From, langExact, stage /*1|2|3*/) {
+  const shopId = shopIdFrom(From);  
+// Prefer per-language SIDs from contentCache
+  try {
+    await ensureLangTemplates(langExact);
+    const sids = getLangSids(langExact) ?? {};
+    const sid = stage === 1 ? sids.demoPractice1Sid : stage === 2 ? sids.demoPractice2Sid : sids.demoPractice3Sid;
+    if (sid) {
+      await sendContentTemplate({ toWhatsApp: shopId, contentSid: sid });
+      return true;
+    }
+  } catch (_) {}
+  // Fallback: typed instruction
+  const title = _demoTitle(langExact, stage);
   await sendMessageViaAPI(From, finalizeForSend(`👉 Reply: ${title}`, langExact));
   return false;
 }
@@ -8189,22 +8244,21 @@ async function _demoUnlockLiveMenu(From, langExact) {
 async function _startDemoFlowAfterTrial(From, langExact, requestId) {
   const shopId = shopIdFrom(From);
   const P = _demoPack(langExact);
-
-  // Step 0: practice run message + auto-send onboarding video (localized)
-  await sendMessageViaAPI(From, finalizeForSend(P.practice, langExact));
-  setTimeout(() => { sendOnboardVideoAsync(From, langExact).catch(() => {}); }, 350);
+ 
+  // 3) Localized practice-run line
+  await sendMessageViaAPI(From, finalizeForSend(P.practiceRun, langExact));
 
   // Persist demo state (product fixed to Milk)
   await setUserState(shopId, DEMO_FLOW_MODE, {
-    step: 'A',
+    step: 'P1',
     langExact,
     action: 'purchased',
     demo: { product: 'Milk', unit: 'ltr', price: 60 },
     requestId: requestId ?? null,
   });
-
-  // Step A: show only "Record Purchase"
-  await _demoSendSingleButton(From, langExact, 'demo_purchase');
+  
+// 4) Practice Mode (1/3)
+  await _demoSendPracticeButton(From, langExact, 1);
 }
 
 async function _handleDemoFlowTextTurn(From, text, requestId) {
@@ -8834,21 +8888,30 @@ async function handleInteractiveSelection(req) {
   // ===== [DEMO-FLOW] Step A/B buttons =====
   if (payload === 'demo_purchase') {
     const st = await getUserStateFromDB(shopIdTop).catch(() => null);
-    const langUi = String(st?.data?.langExact ?? lang ?? 'en').replace(/-latn$/, '');
-    // Advance to Step B (show only Add New Product)
-    await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'B', langExact: langUi, action: 'purchased' });
-    await _demoSendSingleButton(from, langUi, 'demo_add_product');
+    const langUi = String(st?.data?.langExact ?? lang ?? 'en').replace(/-latn$/, '');        
+    // Practice Mode (2/3)
+    await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P2', langExact: langUi });
+    await _demoSendPracticeButton(from, langUi, 2);
     return true;
   }
 
   if (payload === 'demo_add_product') {
     const st = await getUserStateFromDB(shopIdTop).catch(() => null);
+    const langUi = String(st?.data?.langExact ?? lang ?? 'en').replace(/-latn$/, '');          
+    // Practice Mode (2/3): ask user to TYPE a NEW product name (no existing product list)
+        await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P2_NAME', langExact: langUi });
+        const P = _demoPack(langUi);
+        await sendMessageViaAPI(from, finalizeForSend(P.askNewProductName, langUi));
+    return true;
+  }
+
+  if (payload === 'demo_practice_3') {
+    const st = await getUserStateFromDB(shopIdTop).catch(() => null);
     const langUi = String(st?.data?.langExact ?? lang ?? 'en').replace(/-latn$/, '');
-    // Step B: show ACTUAL product picker (existing real picker)
-    await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'B_PICK', langExact: langUi, action: 'purchased' });
-    const all = await getAllProducts(shopIdTop).catch(() => []);
-    const products = Array.isArray(all) ? all : (Array.isArray(all?.products) ? all.products : (Array.isArray(all?.items) ? all.items : []));
-    await sendPaginatedProductPickers(from, shopIdTop, langUi, products);
+    const P = _demoPack(langUi);
+    // Practice Mode (3/3): ask qty/unit (demo)
+    await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P3_QTY', langExact: langUi });
+    await sendMessageViaAPI(from, finalizeForSend(P.askQty, langUi));
     return true;
   }
   
@@ -9000,37 +9063,40 @@ async function handleInteractiveSelection(req) {
     }
   }
 
-  if (!payload && text) {        
-    // [DEMO-FLOW] Typed fallback only when user is currently in demo_flow
-        // Prevents changing normal typed fallbacks outside demo.
-        let _inDemo = false;
-        try {
-          const _st0 = await getUserStateFromDB(shopIdTop).catch(() => null);
-          _inDemo = !!(_st0 && _st0.mode === DEMO_FLOW_MODE);
-        } catch (_) {}
-    const BTN_TEXT_MAP = [          
-    // ---------------- DEMO typed fallback (ALL LANGS) ----------------
-          ...(_inDemo ? [
-            // Step A: demo_purchase
-            { rx: /^record\s+purchase$/i, payload: 'demo_purchase' },
-            { rx: /^खरीद\s+दर्ज\s+करें$/i, payload: 'demo_purchase' },         // hi
-            { rx: /^ক্রয়\s+নথিভুক্ত$/i, payload: 'demo_purchase' },           // bn
-            { rx: /^ખરીદી\s+નોંધો$/i, payload: 'demo_purchase' },             // gu
-            { rx: /^கொள்முதல்\s+பதிவு$/i, payload: 'demo_purchase' },         // ta
-            { rx: /^కొనుగోలు\s+నమోదు$/i, payload: 'demo_purchase' },          // te
-            { rx: /^ಖರೀದಿ\s+ನೋಂದಣಿ$/i, payload: 'demo_purchase' },            // kn
-            { rx: /^खरेदी\s+नोंदवा$/i, payload: 'demo_purchase' },            // mr
-    
-            // Step B: demo_add_product
-            { rx: /^add\s+new\s+product$/i, payload: 'demo_add_product' },
-            { rx: /^नया\s+प्रोडक्ट\s+जोड़ें$/i, payload: 'demo_add_product' }, // hi
-            { rx: /^নতুন\s+পণ্য\s+যোগ$/i, payload: 'demo_add_product' },       // bn
-            { rx: /^નવું\s+પ્રોડક્ટ$/i, payload: 'demo_add_product' },         // gu
-            { rx: /^புதிய\s+பொருள்$/i, payload: 'demo_add_product' },         // ta
-            { rx: /^కొత్త\s+ప్రోడక్ట్$/i, payload: 'demo_add_product' },        // te
-            { rx: /^ಹೊಸ\s+ಪ್ರೊಡಕ್ಟ್$/i, payload: 'demo_add_product' },         // kn
-            { rx: /^नवीन\s+प्रॉडक्ट$/i, payload: 'demo_add_product' },         // mr
-          ] : []),
+  if (!payload && text) {            
+  // [DEMO-FLOW] typed fallback: only interpret Practice Mode titles when user is in demo_flow
+  let _inDemo = false;
+  try { const _st0 = await getUserStateFromDB(shopIdTop).catch(() => null); _inDemo = !!(_st0 && _st0.mode === DEMO_FLOW_MODE); } catch (_) {}
+    const BTN_TEXT_MAP = [             
+      // Demo typed fallback mapping for Practice Mode (1/3,2/3,3/3) only when userState is demo_flow
+      ...(_inDemo ? [
+        { rx: /^practice\\s+mode\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
+        { rx: /^प्रैक्टिस\\s+मोड\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
+        { rx: /^প্র্যাকটিস\\s+মোড\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
+        { rx: /^પ્રેક્ટિસ\\s+મોડ\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
+        { rx: /^பிராக்டிஸ்\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
+        { rx: /^ప్రాక్టీస్\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
+        { rx: /^ಪ್ರಾಕ್ಟೀಸ್\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
+        { rx: /^प्रॅक्टिस\\s*\\(1\\/3\\)$/i, payload: 'demo_purchase' },
+
+        { rx: /^practice\\s+mode\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
+        { rx: /^प्रैक्टिस\\s+मोड\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
+        { rx: /^প্র্যাকটিস\\s+মোড\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
+        { rx: /^પ્રેક્ટિસ\\s+મોડ\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
+        { rx: /^பிராக்டிஸ்\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
+        { rx: /^ప్రాక్టీస్\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
+        { rx: /^ಪ್ರಾಕ್ಟೀಸ್\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
+        { rx: /^प्रॅक्टिस\\s*\\(2\\/3\\)$/i, payload: 'demo_add_product' },
+
+        { rx: /^practice\\s+mode\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
+        { rx: /^प्रैक्टिस\\s+मोड\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
+        { rx: /^প্র্যাকটিস\\s+মোড\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
+        { rx: /^પ્રેક્ટિસ\\s+મોડ\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
+        { rx: /^பிராக்டிஸ்\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
+        { rx: /^ప్రాక్టీస్\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
+        { rx: /^ಪ್ರಾಕ್ಟೀಸ್\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
+        { rx: /^प्रॅक्टिस\\s*\\(3\\/3\\)$/i, payload: 'demo_practice_3' },
+      ] : []),
     
       // Onboarding buttons
       { rx: /^ट्रायल\s+शुरू\s+करें$/i, payload: 'activate_trial' },
