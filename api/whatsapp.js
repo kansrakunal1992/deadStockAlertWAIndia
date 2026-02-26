@@ -8108,6 +8108,38 @@ const DEMO_FLOW_MODE = 'demo_flow';
 // --- NEW: Demo flow dedupe guard (prevents duplicate Practice buttons on webhook retries)
 globalThis.__demoStartGuard = globalThis.__demoStartGuard ?? new Map();
 
+// =============================================================================
+// [PATCH:DEMO-FLOW-DEDUP-AND-EXIT-20260226]
+// Fixes infinite practice-mode loop:
+// 1) suppress duplicate interactive demo taps (WhatsApp/Twilio retries or double-taps)
+// 2) prevent demo step regressions (re-sending same button)
+// 3) add failCount + escape hatch so P3_TEXT cannot recurse forever
+// =============================================================================
+globalThis.__demoTapGrace = globalThis.__demoTapGrace ?? new Map(); // key -> ts
+const DEMO_TAP_TTL_MS = Number(process.env.DEMO_TAP_TTL_MS ?? 7000);
+function _demoTapAllowed(shopId, payloadId) {
+  try {
+    const key = `${String(shopId)}::${String(payloadId)}`;
+    const now = Date.now();
+    const prev = globalThis.__demoTapGrace.get(key);
+    if (prev && (now - prev) < DEMO_TAP_TTL_MS) return false;
+    globalThis.__demoTapGrace.set(key, now);
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+async function _demoExitToLiveMenu(From, langExact = 'en') {
+  // Hard-exit demo_flow and resurface live menu
+  try {
+    const shopId = String(From ?? '').replace('whatsapp:', '');
+    await deleteUserStateFromDB(shopId).catch(() => null);
+  } catch (_) {}
+  try { await clearUserState(String(From ?? '').replace('whatsapp:', '')).catch(() => null); } catch (_) {}
+  try { await _demoUnlockLiveMenu(From, langExact); } catch (_) {}
+}
+
 function _demoPack(langExact = 'en') {
   const L = String(langExact ?? 'en').toLowerCase().replace(/-latn$/, '');
   const map = {
@@ -8348,7 +8380,21 @@ async function _handleDemoFlowTextTurn(From, text, requestId) {
       }
     } catch (_) {}
 
-    if (!product || !Number.isFinite(qty) || qty <= 0 || !unitTok || !Number.isFinite(price) || price <= 0) {
+    if (!product || !Number.isFinite(qty) || qty <= 0 || !unitTok || !Number.isFinite(price) || price <= 0) {          
+    // --- [PATCH:DEMO-FLOW-DEDUP-AND-EXIT-20260226] failCount + escape hatch ---
+          const prevFail = Number(st?.data?.failCount ?? 0);
+          const nextFail = prevFail + 1;
+          try {
+            await setUserState(shopId, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P3_TEXT', langExact, failCount: nextFail });
+          } catch (_) {}
+    
+          // After 2 failures, do NOT recurse forever — force-exit to live menu.
+          if (nextFail >= 2) {
+            await sendMessageViaAPI(From, finalizeForSend('⚠️ प्रैक्टिस मोड में दिक्कत हो रही है — आपको अब Live mode में ले जा रहे हैं।', langExact));
+            await _demoExitToLiveMenu(From, langExact);
+            try { if (requestId) handledRequests.add(requestId); } catch {}
+            return;
+          }
       const ask = `${P.p3}\\n${P.askLine}`;
       await sendMessageViaAPI(From, finalizeForSend(ask, langExact));
       return;
@@ -8365,9 +8411,10 @@ async function _handleDemoFlowTextTurn(From, text, requestId) {
 
     await sendMessageViaAPI(From, finalizeForSend(P.unlocked, langExact));
     
-    // Clear demo state and show live menu
-    try { await deleteUserStateFromDB(st.id ?? shopId); } catch (_) {}
-    await _demoUnlockLiveMenu(From, langExact);
+    // Clear demo state and show live menu       
+    // --- [PATCH:DEMO-FLOW-DEDUP-AND-EXIT-20260226] make exit deterministic ---
+    await _demoExitToLiveMenu(From, langExact);
+
     // IMPORTANT: prevent the same inbound message from falling through to real inventory writes
     try { if (requestId) handledRequests.add(requestId); } catch (_) {}
     return;
@@ -8979,6 +9026,15 @@ async function handleInteractiveSelection(req) {
     console.log(`[interact] payload=${payload ?? '—'} listId=${listId ?? '—'} body=${text ?? '—'}`);
   } catch(_) {}  
 
+  // --- [PATCH:DEMO-FLOW-DEDUP-AND-EXIT-20260226] suppress duplicate demo taps ---
+    if (payload === 'demo_purchase' || payload === 'demo_add_product' || payload === 'demo_practice_3') {
+      const ok = _demoTapAllowed(shopIdTop, payload);
+      if (!ok) {
+        console.log('[demo-flow] duplicate tap suppressed', { shopId: shopIdTop, payload });
+        return true;
+      }
+    }
+
   // ===== [DEMO-FLOW] Step A/B buttons =====
   if (payload === 'demo_purchase') {
     const st = await getUserStateFromDB(shopIdTop).catch(() => null);
@@ -8993,19 +9049,21 @@ async function handleInteractiveSelection(req) {
     const st = await getUserStateFromDB(shopIdTop).catch(() => null);
     const langUi = String(st?.data?.langExact ?? lang ?? 'en').replace(/-latn$/, '');          
     // Practice Mode (2/3): ask user to TYPE a NEW product name (no existing product list)
-        await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P3_TEXT', langExact: langUi });
-        const P = _demoPack(langUi);
-        await _demoSendPracticeButton(from, langUi, 2);
+        await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P3_TEXT', langExact: langUi, failCount: 0 });
+        const P = _demoPack(langUi);            
+    // IMPORTANT: do NOT send the same button again (this causes the loop).
+        // Move user forward by prompting for the single-line entry.
+        await sendMessageViaAPI(from, finalizeForSend(`${P.p3}\n${P.askLine}`, langUi));
     return true;
   }
 
   if (payload === 'demo_practice_3') {
     const st = await getUserStateFromDB(shopIdTop).catch(() => null);
     const langUi = String(st?.data?.langExact ?? lang ?? 'en').replace(/-latn$/, '');
-    const P = _demoPack(langUi);
-    // Practice Mode (3/3): ask qty/unit (demo)
-    await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P3_QTY', langExact: langUi });
-    await sendMessageViaAPI(from, finalizeForSend(P.askQty, langUi));
+    const P = _demoPack(langUi);        
+    // Treat this as “Step 3 prompt” (single-line: name + qty + price), not a separate qty-only step.
+    await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P3_TEXT', langExact: langUi, failCount: 0 });
+    await sendMessageViaAPI(from, finalizeForSend(`${P.p3}\n${P.askLine}`, langUi));
     return true;
   }
   
