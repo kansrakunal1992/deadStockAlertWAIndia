@@ -8353,9 +8353,17 @@ async function _handleDemoFlowTextTurn(From, text, requestId) {
   if (step === 'P3_TEXT') {
     const raw = String(text ?? '').trim();
     const latin = normalizeNumeralsToLatin(raw);
-
-    const priceM = latin.match(/(?:@|at)\s*(?:₹|rs\.?|inr)?\s*(\d+(?:\.\d+)?)/i) || latin.match(/₹\s*(\d+(?:\.\d+)?)/);
-    const price = priceM ? Number(priceM[1]) : NaN;
+      
+  // Price is OPTIONAL in practice mode (as requested).
+      // Best-effort parse:
+      //  1) "@ ₹50" / "₹50"
+      //  2) "35000 रुपये" / "35000 rs"
+      const priceM =
+        latin.match(/(?:@|at)\s*(?:₹|rs\.?|inr)?\s*(\d+(?:\.\d+)?)/i) ||
+        latin.match(/₹\s*(\d+(?:\.\d+)?)/) ||
+        latin.match(/(\d+(?:\.\d+)?)\s*(?:रुपये|रु\.?|rs\.?|inr)\b/i);
+      const price = priceM ? Number(priceM[1]) : NaN;
+      const hasPrice = Number.isFinite(price) && price > 0;
 
     const u = UNIT_REGEX_UNIFIED.exec(latin);
     const unitTok = u ? String(u[0]) : '';
@@ -8380,7 +8388,8 @@ async function _handleDemoFlowTextTurn(From, text, requestId) {
       }
     } catch (_) {}
 
-    if (!product || !Number.isFinite(qty) || qty <= 0 || !unitTok || !Number.isFinite(price) || price <= 0) {          
+    // Price is optional, so we validate only: product + qty + unit
+          if (!product || !Number.isFinite(qty) || qty <= 0 || !unitTok) {          
     // --- [PATCH:DEMO-FLOW-DEDUP-AND-EXIT-20260226] failCount + escape hatch ---
           const prevFail = Number(st?.data?.failCount ?? 0);
           const nextFail = prevFail + 1;
@@ -8405,8 +8414,11 @@ async function _handleDemoFlowTextTurn(From, text, requestId) {
     const STOCK_WORD = { en: 'Stock', hi: 'स्टॉक', bn: 'স্টক', gu: 'સ્ટોક', ta: 'ஸ்டாக்', te: 'స్టాక్', kn: 'ಸ್ಟಾಕ್', mr: 'स्टॉक' };
     const stockWord = STOCK_WORD[base] ?? 'Stock';
 
-    const verb = String(P?.purchaseVerb ?? 'Purchased');
-    const line = `${P.practiceTag} 📦 ${verb}: ${product} — ${qty} ${unitDisp} @ ₹${price} (${stockWord}: ${qty} ${unitDisp})`;
+    const verb = String(P?.purchaseVerb ?? 'Purchased');        
+    // Price optional: include only if parsed.
+    const pricePart = hasPrice ? ` @ ₹${price}/${unitDisp}` : '';
+    const line = `${P.practiceTag} 📦 ${verb}: ${product} — ${qty} 
+
     await sendMessageViaAPI(From, finalizeForSend(line, langExact));
 
     await sendMessageViaAPI(From, finalizeForSend(P.unlocked, langExact));
@@ -24310,7 +24322,26 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
        const s = (typeof getUserStateFromDB === 'function')
           ? await getUserStateFromDB(shopId)
           : await getUserState(shopId);
-               
+                     
+      // -------------------------------------------------------------------
+              // [PATCH:DEMO-FLOW-HARD-STOP-20260226]
+              // If user is in demo_flow, handle practice input ONLY and STOP the request.
+              // This prevents practice-mode text from falling through into sticky/txn parsing
+              // and being committed as a real inventory update (observed in logs). 
+              // -------------------------------------------------------------------
+              if (s && s.mode === DEMO_FLOW_MODE) {
+                try {
+                  await _handleDemoFlowTextTurn(From, String(Body ?? ''), requestId);
+                } catch (e) {
+                  console.warn(`[${requestId}] demo-flow handler failed:`, e?.message);
+                }
+                // Twilio webhook ack — do not continue with any other routing/parsing.
+                const twiml = new twilio.twiml.MessagingResponse();
+                twiml.message('');
+                res.type('text/xml').send(twiml.toString());
+                return;
+              }
+
           // Heartbeat: keep sticky mode fresh in new interactions
           try {
             const st = typeof getUserStateFromDB === 'function' ? await getUserStateFromDB(shopId) : null;
