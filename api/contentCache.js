@@ -326,6 +326,18 @@ const DEMO_PRACTICE_QR_LABELS = {
   mr: { t1: 'प्रॅक्टिस (1/3)', t2: 'प्रॅक्टिस (2/3)', t3: 'प्रॅक्टिस (3/3)' },
 };
 
+// NEW: Demo practice prompt for step (2/3) — ask for product name, quantity & price (generic example)
+const DEMO_PRACTICE_PROMPTS = {
+  en: 'Now share product name, quantity & price.\nExample: Milk 2 ltr @ ₹50',
+  hi: 'अब प्रोडक्ट का नाम, मात्रा और कीमत भेजें।\nउदाहरण: दूध 2 लीटर @ ₹50',
+  bn: 'এখন পণ্যের নাম, পরিমাণ ও দাম পাঠান।\nউদাহরণ: দুধ 2 লিটার @ ₹50',
+  gu: 'હવે પ્રોડક્ટનું નામ, જથ્થો અને ભાવ મોકલો.\nઉદાહરણ: દૂધ 2 લિટર @ ₹50',
+  ta: 'இப்போது பொருள் பெயர், அளவு & விலை அனுப்புங்கள்.\nஉதாரணம்: பால் 2 லிட்டர் @ ₹50',
+  te: 'ఇప్పుడు ప్రోడక్ట్ పేరు, పరిమాణం & ధర పంపండి.\nఉదాహరణ: పాలు 2 లీటర్ @ ₹50',
+  kn: 'ಈಗ ಉತ್ಪನ್ನ ಹೆಸರು, ಪ್ರಮಾಣ & ಬೆಲೆ ಕಳುಹಿಸಿ.\nಉದಾಹರಣೆ: ಹಾಲು 2 ಲೀಟರ್ @ ₹50',
+  mr: 'आता प्रॉडक्टचे नाव, प्रमाण आणि किंमत पाठवा.\nउदाहरण: दूध 2 लिटर @ ₹50',
+};
+
 async function createDemoPractice1QRForLang(lang) {
   const base = normalizeLangForContent(lang);
   const l = DEMO_PRACTICE_QR_LABELS[base] ?? DEMO_PRACTICE_QR_LABELS.en;
@@ -335,7 +347,7 @@ async function createDemoPractice1QRForLang(lang) {
     types: {
       'twilio/quick-reply': {
         body: l.t1,
-        actions: [ { type: 'QUICK_REPLY', title: clampTitle(l.t1), id: 'demo_purchase' } ]
+        actions: [ { type: 'QUICK_REPLY', title: clampTitle((QR_LABELS[base] ?? QR_LABELS.en).purchase), id: 'demo_purchase' } ]
       }
     }
   };
@@ -352,8 +364,9 @@ async function createDemoPractice2QRForLang(lang) {
     language: base,
     types: {
       'twilio/quick-reply': {
-        body: l.t2,
-        actions: [ { type: 'QUICK_REPLY', title: clampTitle(l.t2), id: 'demo_add_product' } ]
+        body: `${l.t2}
+        ${(DEMO_PRACTICE_PROMPTS[base] ?? DEMO_PRACTICE_PROMPTS.en)}`,
+        actions: [ { type: 'QUICK_REPLY', title: clampTitle((EXISTING_USER_PRODUCT_MODE_QR_LABELS[base] ?? EXISTING_USER_PRODUCT_MODE_QR_LABELS.en).add), id: 'demo_add_product' } ]
       }
     }
   };
