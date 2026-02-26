@@ -338,6 +338,18 @@ const DEMO_PRACTICE_PROMPTS = {
   mr: 'आता प्रॉडक्टचे नाव, प्रमाण आणि किंमत पाठवा.\nउदाहरण: दूध 2 लिटर @ ₹50',
 };
 
+// NEW: Demo practice click-hints for steps (1/3) and (2/3)
+const DEMO_PRACTICE_CLICK_HINTS = {
+  en: { s1: 'Tap the button below to record a purchase.', s2: 'Tap the button below to add a new product.' },
+  hi: { s1: 'नीचे दिए बटन पर क्लिक करें — खरीद दर्ज करने के लिए।', s2: 'नीचे दिए बटन पर क्लिक करें — नया प्रोडक्ट जोड़ने के लिए।' },
+  bn: { s1: 'নিচের বাটনে চাপ দিন — ক্রয় নথিভুক্ত করতে।', s2: 'নিচের বাটনে চাপ দিন — নতুন পণ্য যোগ করতে।' },
+  gu: { s1: 'નીચેના બટન પર ક્લિક કરો — ખરીદી નોંધવા માટે।', s2: 'નીચેના બટન પર ક્લિક કરો — નવું પ્રોડક્ટ ઉમેરવા માટે।' },
+  ta: { s1: 'கீழே உள்ள பொத்தானை அழுத்துங்கள் — கொள்முதல் பதிவு செய்ய.', s2: 'கீழே உள்ள பொத்தானை அழுத்துங்கள் — புதிய பொருள் சேர்க்க.' },
+  te: { s1: 'క్రింది బటన్ నొక్కండి — కొనుగోలు నమోదు చేయడానికి.', s2: 'క్రింది బటన్ నొక్కండి — కొత్త ప్రోడక్ట్ జోడించడానికి.' },
+  kn: { s1: 'ಕೆಳಗಿನ ಬಟನ್ ಒತ್ತಿ — ಖರೀದಿ ನೋಂದಣಿ ಮಾಡಲು.', s2: 'ಕೆಳಗಿನ ಬಟನ್ ಒತ್ತಿ — ಹೊಸ ಪ್ರೊಡಕ್ಟ್ ಸೇರಿಸಲು.' },
+  mr: { s1: 'खालील बटन दाबा — खरेदी नोंदवण्यासाठी.', s2: 'खालील बटन दाबा — नवीन प्रॉडक्ट जोडण्यासाठी.' },
+};
+
 async function createDemoPractice1QRForLang(lang) {
   const base = normalizeLangForContent(lang);
   const l = DEMO_PRACTICE_QR_LABELS[base] ?? DEMO_PRACTICE_QR_LABELS.en;
@@ -346,7 +358,8 @@ async function createDemoPractice1QRForLang(lang) {
     language: base,
     types: {
       'twilio/quick-reply': {
-        body: l.t1,
+        body: `${l.t1}
+        ${(DEMO_PRACTICE_CLICK_HINTS[base] ?? DEMO_PRACTICE_CLICK_HINTS.en).s1}`,
         actions: [ { type: 'QUICK_REPLY', title: clampTitle((QR_LABELS[base] ?? QR_LABELS.en).purchase), id: 'demo_purchase' } ]
       }
     }
@@ -365,7 +378,7 @@ async function createDemoPractice2QRForLang(lang) {
     types: {
       'twilio/quick-reply': {
         body: `${l.t2}
-        ${(DEMO_PRACTICE_PROMPTS[base] ?? DEMO_PRACTICE_PROMPTS.en)}`,
+        ${(DEMO_PRACTICE_CLICK_HINTS[base] ?? DEMO_PRACTICE_CLICK_HINTS.en).s2}`,
         actions: [ { type: 'QUICK_REPLY', title: clampTitle((EXISTING_USER_PRODUCT_MODE_QR_LABELS[base] ?? EXISTING_USER_PRODUCT_MODE_QR_LABELS.en).add), id: 'demo_add_product' } ]
       }
     }
