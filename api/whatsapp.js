@@ -1264,8 +1264,21 @@ if (typeof globalThis.getUserState !== 'function') {
 if (typeof globalThis.clearUserState !== 'function') {
   globalThis.clearUserState = async function clearUserState(shopIdOrFrom) {
     try {
-      const key = String(shopIdOrFrom ?? '').replace('whatsapp:', '');
-      await deleteUserStateFromDB(key);
+      const key = String(shopIdOrFrom ?? '').replace('whatsapp:', '');     
+      // deleteUserStateFromDB() often expects a recordId; passing ShopID can 404.
+      // Best-effort: try delete, but ALWAYS force-clear state even if delete fails.
+      try {
+        await deleteUserStateFromDB(key);
+      } catch (e) {
+        // fallback: soft-clear by overwriting state to null (no-op if not supported)
+        try {
+          if (typeof saveUserStateToDB === 'function') {
+            await saveUserStateToDB(key, null, {});
+          }
+        } catch (_) {}
+      }
+      // also clear in-memory state
+      try { if (globalState?.conversationState) delete globalState.conversationState[key]; } catch (_) {}
     } catch (_) {}
   };
 }
@@ -8143,17 +8156,22 @@ function _demoTurnAllowed(shopId, step, text) {
   }
 }
 
-function _demoUnlockAllowed(shopId) {
+// -----------------------------------------------------------------------------
+// [PATCH:DEMO-UNLOCK-DEDUP-FIX-20260226]
+// IMPORTANT: do NOT mark dedupe as "sent" before the menu is actually sent.
+// Otherwise the first real send gets suppressed (seen in logs).
+// -----------------------------------------------------------------------------
+function _demoUnlockRecentlySent(shopId) {
   try {
     const key = String(shopId ?? '');
-    const now = Date.now();
     const prev = globalThis.__demoUnlockGrace.get(key);
-    if (prev && (now - prev) < DEMO_UNLOCK_TTL_MS) return false;
-    globalThis.__demoUnlockGrace.set(key, now);
-    return true;
+    return !!(prev && (Date.now() - prev) < DEMO_UNLOCK_TTL_MS);
   } catch {
-    return true;
+    return false;
   }
+}
+function _demoUnlockMarkSent(shopId) {
+  try { globalThis.__demoUnlockGrace.set(String(shopId ?? ''), Date.now()); } catch {}
 }
 
 function _demoTapAllowed(shopId, payloadId) {
@@ -8173,12 +8191,12 @@ async function _demoExitToLiveMenu(From, langExact = 'en') {
   // Hard-exit demo_flow and resurface live menu
   try {
     const shopId = String(From ?? '').replace('whatsapp:', '');
-    
-    // Prevent duplicate unlock/menu sends (end-of-demo can be invoked twice).
-    if (!_demoUnlockAllowed(shopId)) {
-      console.log('[demo-flow] unlock suppressed (duplicate)', { shopId });
-      return;
-    }
+        
+    // If we already sent the menu very recently, skip quietly.
+        if (_demoUnlockRecentlySent(shopId)) {
+          console.log('[demo-flow] unlock suppressed (recent)', { shopId });
+          return;
+        }
 
     await deleteUserStateFromDB(shopId).catch(() => null);
   } catch (_) {}
@@ -8326,25 +8344,47 @@ function _demoParseQtyUnitLoose(text) {
   let s = String(text ?? '').trim();
   if (!s) return null;
   try { s = normalizeNumeralsToLatin(s); } catch (_) {}
-  const q = s.match(/(\d+(?:\.\d+)?)/);
-  let u = null;
-  try { u = UNIT_REGEX_UNIFIED.exec(s)?.[0] ?? null; } catch (_) {}
+  const q = s.match(/(\d+(?:\.\d+)?)/);    
+  // NOTE: UNIT_REGEX_UNIFIED can match single-letter tokens (e.g., "l") inside words.
+    // Use a Latin-safe unit regex first; fallback to unified regex with single-letter guard.
+    const DEMO_UNIT_RX_LATIN = /\b(packs?|packets?|pkts?|pkt|pcs?|pieces?|boxes?|bottles?|dozens?|kg|kgs|gm|gms|g|ltr|ltrs|liter|litre|ml)\b/i;
+    let u = null;
+    try {
+      const m = DEMO_UNIT_RX_LATIN.exec(s);
+      if (m && m[0]) u = canonicalizeUnitToken(m[0]);
+    } catch (_) {}
+    if (!u) {
+      try {
+        const m2 = UNIT_REGEX_UNIFIED.exec(s);
+        const tok = m2?.[0] ? String(m2[0]) : '';
+        // Reject single-letter unit matches not bounded by space/digit (e.g. Hercu[l]es)
+        if (tok && tok.length === 1 && /[a-z]/i.test(tok)) {
+          const bounded = new RegExp(`(^|\\s|\\d)${tok}($|\\s|\\d)`, 'i');
+          if (!bounded.test(s)) u = null;
+          else u = canonicalizeUnitToken(tok);
+        } else if (tok) {
+          u = canonicalizeUnitToken(tok);
+        }
+      } catch (_) {}
+    }
   if (!q) return null;
   return { quantity: Number(q[1]), unit: u ? canonicalizeUnitToken(u) : null };
 }
 
 async function _demoUnlockLiveMenu(From, langExact) {
   try {        
-    const shopId = String(From ?? '').replace('whatsapp:', '');
-        // Extra guard: avoid duplicate content template sends.
-        if (!_demoUnlockAllowed(shopId)) {
-          console.log('[demo-flow] live menu send suppressed (duplicate)', { shopId });
+    const shopId = String(From ?? '').replace('whatsapp:', '');        
+    // Do NOT suppress the first send. Only suppress if we *already sent* recently.
+        if (_demoUnlockRecentlySent(shopId)) {
+          console.log('[demo-flow] live menu send suppressed (recent)', { shopId });
           return true;
         }
     await ensureLangTemplates(langExact);
     const sids = getLangSids(langExact);
     if (sids?.quickReplySid) {
-      await sendContentTemplate({ toWhatsApp: shopIdFrom(From), contentSid: sids.quickReplySid });
+      await sendContentTemplate({ toWhatsApp: shopIdFrom(From), contentSid: sids.quickReplySid });            
+      // Mark AFTER successful send (this was the bug earlier)
+      _demoUnlockMarkSent(shopId);
       return true;
     }
   } catch (_) {}
@@ -8453,13 +8493,24 @@ async function _handleDemoFlowTextTurn(From, text, requestId) {
     const latin = normalizeNumeralsToLatin(raw);
       
   const price = _demoParsePriceOptional(latin); // may be null (allowed)
+    
+  // Unit extraction: avoid single-letter unit match inside words (e.g., "Hercules" -> "l")
+      const DEMO_UNIT_RX_LATIN = /\b(packs?|packets?|pkts?|pkt|pcs?|pieces?|boxes?|bottles?|dozens?|kg|kgs|gm|gms|g|ltr|ltrs|liter|litre|ml)\b/i;
+      const mU = DEMO_UNIT_RX_LATIN.exec(latin);
+      let unitTok = mU?.[0] ? canonicalizeUnitToken(mU[0]) : '';
+      let unitIdx = (mU && typeof mU.index === 'number') ? mU.index : -1;
+      if (!unitTok) {
+        const u2 = UNIT_REGEX_UNIFIED.exec(latin);
+        const tok = u2?.[0] ? String(u2[0]) : '';
+        if (tok && tok.length === 1 && /[a-z]/i.test(tok)) {
+          const bounded = new RegExp(`(^|\\s|\\d)${tok}($|\\s|\\d)`, 'i');
+          if (bounded.test(latin)) { unitTok = canonicalizeUnitToken(tok); unitIdx = u2.index; }
+        } else if (tok) { unitTok = canonicalizeUnitToken(tok); unitIdx = u2.index; }
+      }
 
-    const u = UNIT_REGEX_UNIFIED.exec(latin);
-    const unitTok = u ? String(u[0]) : '';
-
-    let qty = NaN;
-    if (u) {
-      const left = latin.slice(0, u.index);
+    let qty = NaN;        
+    if (unitIdx >= 0) {
+          const left = latin.slice(0, unitIdx);
       const nums = left.match(/(\d+(?:\.\d+)?)/g);
       if (nums && nums.length) qty = Number(nums[nums.length - 1]);
     }
