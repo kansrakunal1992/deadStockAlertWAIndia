@@ -8110,36 +8110,48 @@ function _demoPack(langExact = 'en') {
   const L = String(langExact ?? 'en').toLowerCase().replace(/-latn$/, '');
   const map = {
     en: {     
-practiceRun: 'We’ll do a quick practice run (no real entries).',
+      practiceTag: '(Practice)',
+      askLine: 'Now share product name, quantity & price — Example: Milk 2 ltr @ ₹50',
+      purchaseVerb: 'Purchased',
+      practiceRun: 'We\'ll do a quick practice run (no real entries).',
       p1: 'Practice Mode (1/3)',
       p2: 'Practice Mode (2/3)',
       p3: 'Practice Mode (3/3)',
       askNewProductName: 'Type a new product name (practice).',
       added: (name) => `✅ (Practice) Added: ${name}`,
       askQty: 'How much did you purchase? (e.g., 10 packets / 2 pcs / 5 ltr)',
-      unlocked: '✅ Great! Now you can start real entries.'
+      unlocked: '✅ Done! Now you can add real entries.'
     },
     hi: {      
-practiceRun: 'हम एक छोटा प्रैक्टिस रन करेंगे (कोई असली एंट्री नहीं होगी)।',
+      practiceTag: '(प्रैक्टिस)',
+      askLine: 'अब प्रोडक्ट का नाम, मात्रा और कीमत भेजें — उदाहरण: दूध 2 लीटर @ ₹50',
+      purchaseVerb: 'खरीदा',
+      practiceRun: 'हम एक छोटा प्रैक्टिस रन करेंगे (कोई असली एंट्री नहीं होगी)।',
       p1: 'प्रैक्टिस मोड (1/3)',
       p2: 'प्रैक्टिस मोड (2/3)',
       p3: 'प्रैक्टिस मोड (3/3)',
       askNewProductName: 'नया प्रोडक्ट का नाम लिखें (प्रैक्टिस)।',
       added: (name) => `✅ (प्रैक्टिस) जोड़ा: ${name}`,
       askQty: 'आपने कितना खरीदा? (जैसे, 10 पैकेट / 2 पीस / 5 ltr)',
-      unlocked: '✅ हो गया! अब आप real entries कर सकते हैं।'
+      unlocked: '✅ हो गया! अब आप असली एंट्री कर सकते हैं।'
     },
-    bn: {      
-practiceRun: 'চলুন একটি ছোট প্র্যাকটিস রান করি (কোনো আসল এন্ট্রি হবে না)।',
+    bn: {     
+      practiceTag: '(প্র্যাকটিস)',
+      askLine: 'এখন পণ্যের নাম, পরিমাণ ও দাম পাঠান — উদাহরণ: দুধ 2 লিটার @ ₹50',
+      purchaseVerb: 'কেনা',
+      practiceRun: 'চলুন একটি ছোট প্র্যাকটিস রান করি (কোনো আসল এন্ট্রি হবে না)।',
       p1: 'প্র্যাকটিস মোড (1/3)',
       p2: 'প্র্যাকটিস মোড (2/3)',
       p3: 'প্র্যাকটিস মোড (3/3)',
       askNewProductName: 'নতুন পণ্যের নাম লিখুন (প্র্যাকটিস)।',
       added: (name) => `✅ (প্র্যাকটিস) যোগ হলো: ${name}`,
       askQty: 'আপনি কত কিনলেন? (যেমন, 10 packets / 2 pcs / 5 ltr)',
-      unlocked: '✅ হয়ে গেছে! এখন আপনি real entries করতে পারবেন।'
+      unlocked: '✅ হয়ে গেছে! এখন আপনি আসল এন্ট্রি করতে পারবেন।'
     },
     gu: {
+      practiceTag: '(પ્રેક્ટિસ)',
+      askLine: 'હવે પ્રોડક્ટનું નામ, જથ્થો અને ભાવ મોકલો — ઉદાહરણ: દૂધ 2 લિટર @ ₹50',
+      purchaseVerb: 'ખરીદ્યું',
       practiceRun: 'ચાલો એક નાનું પ્રેક્ટિસ રન કરીએ (કોઈ સાચી એન્ટ્રી નહીં થાય)।',
       p1: 'પ્રેક્ટિસ મોડ (1/3)',
       p2: 'પ્રેક્ટિસ મોડ (2/3)',
@@ -8147,9 +8159,12 @@ practiceRun: 'চলুন একটি ছোট প্র্যাকটিস
       askNewProductName: 'નવું પ્રોડક્ટ નામ લખો (પ્રેક્ટિસ)।',
       added: (name) => `✅ (પ્રેક્ટિસ) ઉમેર્યું: ${name}`,
       askQty: 'તમે કેટલું ખરીદ્યું? (જેમ કે, 10 packets / 2 pcs / 5 ltr)',
-      unlocked: '✅ થઇ ગયું! હવે તમે real entries કરી શકો છો।'
+      unlocked: '✅ થઈ ગયું! હવે તમે સાચી એન્ટ્રી કરી શકો છો।'
     },
     ta: {
+      practiceTag: '(பிராக்டிஸ்)',
+      askLine: 'இப்போது பொருள் பெயர், அளவு & விலை அனுப்புங்கள் — உதாரணம்: பால் 2 லிட்டர் @ ₹50',
+      purchaseVerb: 'வாங்கியது',
       practiceRun: 'ஒரு சிறிய practice run செய்வோம் (உண்மையான entries இல்லை).',
       p1: 'பிராக்டிஸ் (1/3)',
       p2: 'பிராக்டிஸ் (2/3)',
@@ -8157,9 +8172,12 @@ practiceRun: 'চলুন একটি ছোট প্র্যাকটিস
       askNewProductName: 'புதிய பொருள் பெயரை எழுதுங்கள் (practice).',
       added: (name) => `✅ (practice) சேர்த்தது: ${name}`,
       askQty: 'எவ்வளவு வாங்கினீர்கள்? (எ.கா., 10 packets / 2 pcs / 5 ltr)',
-      unlocked: '✅ முடிந்தது! இப்போது real entries செய்யலாம்.'
+      unlocked: '✅ முடிந்தது! இப்போது நீங்கள் உண்மையான பதிவுகளைச் செய்யலாம்.'
     },
     te: {
+      practiceTag: '(ప్రాక్టీస్)',
+      askLine: 'ఇప్పుడు ప్రోడక్ట్ పేరు, పరిమాణం & ధర పంపండి — ఉదాహరణ: పాలు 2 లీటర్ @ ₹50',
+      purchaseVerb: 'కొన్నది',
       practiceRun: 'ఒక చిన్న practice run చేద్దాం (నిజమైన entries కాదు).',
       p1: 'ప్రాక్టీస్ (1/3)',
       p2: 'ప్రాక్టీస్ (2/3)',
@@ -8167,9 +8185,12 @@ practiceRun: 'চলুন একটি ছোট প্র্যাকটিস
       askNewProductName: 'కొత్త ప్రోడక్ట్ పేరు టైప్ చేయండి (practice).',
       added: (name) => `✅ (practice) జోడించింది: ${name}`,
       askQty: 'మీరు ఎంత కొనుగోలు చేశారు? (ఉదా., 10 packets / 2 pcs / 5 ltr)',
-      unlocked: '✅ అయ్యింది! ఇప్పుడు real entries చేయవచ్చు.'
+      unlocked: '✅ అయిపోయింది! ఇప్పుడు మీరు నిజమైన ఎంట్రీలు చేయవచ్చు.'
     },
     kn: {
+      practiceTag: '(ಪ್ರಾಕ್ಟೀಸ್)',
+      askLine: 'ಈಗ ಉತ್ಪನ್ನ ಹೆಸರು, ಪ್ರಮಾಣ & ಬೆಲೆ ಕಳುಹಿಸಿ — ಉದಾಹರಣೆ: ಹಾಲು 2 ಲೀಟರ್ @ ₹50',
+      purchaseVerb: 'ಖರೀದಿಸಿದೆ',
       practiceRun: 'ಒಂದು ಚಿಕ್ಕ practice run ಮಾಡೋಣ (ನಿಜವಾದ entries ಅಲ್ಲ).',
       p1: 'ಪ್ರಾಕ್ಟೀಸ್ (1/3)',
       p2: 'ಪ್ರಾಕ್ಟೀಸ್ (2/3)',
@@ -8177,9 +8198,12 @@ practiceRun: 'চলুন একটি ছোট প্র্যাকটিস
       askNewProductName: 'ಹೊಸ ಪ್ರೊಡಕ್ಟ್ ಹೆಸರು ಟೈಪ್ ಮಾಡಿ (practice).',
       added: (name) => `✅ (practice) ಸೇರಿಸಲಾಗಿದೆ: ${name}`,
       askQty: 'ನೀವು ಎಷ್ಟು ಖರೀದಿಸಿದ್ದೀರಿ? (ಉದಾ., 10 packets / 2 pcs / 5 ltr)',
-      unlocked: '✅ ಆಯಿತು! ಈಗ real entries ಮಾಡಬಹುದು.'
+      unlocked: '✅ ಆಯಿತು! ಈಗ ನೀವು ನಿಜವಾದ ಎಂಟ್ರಿಗಳನ್ನು ಮಾಡಬಹುದು.'
     },
     mr: {
+      practiceTag: '(प्रॅक्टिस)',
+      askLine: 'आता प्रॉडक्टचे नाव, प्रमाण आणि किंमत पाठवा — उदाहरण: दूध 2 लिटर @ ₹50',
+      purchaseVerb: 'खरेदी केली',
       practiceRun: 'चला एक छोटा प्रॅक्टिस रन करू (खऱ्या entries नाहीत).',
       p1: 'प्रॅक्टिस (1/3)',
       p2: 'प्रॅक्टिस (2/3)',
@@ -8187,7 +8211,7 @@ practiceRun: 'চলুন একটি ছোট প্র্যাকটিস
       askNewProductName: 'नवीन प्रॉडक्टचे नाव टाइप करा (प्रॅक्टिस).',
       added: (name) => `✅ (प्रॅक्टिस) जोडले: ${name}`,
       askQty: 'तुम्ही किती खरेदी केली? (उदा., 10 packets / 2 pcs / 5 ltr)',
-      unlocked: '✅ झाले! आता real entries करू शकता.'
+      unlocked: '✅ झालं! आता तुम्ही खरी एंट्री करू शकता.'
     }
   };
   return map[L] ?? map.en;
@@ -8253,7 +8277,6 @@ async function _startDemoFlowAfterTrial(From, langExact, requestId) {
     step: 'P1',
     langExact,
     action: 'purchased',
-    demo: { product: 'Milk', unit: 'ltr', price: 60 },
     requestId: requestId ?? null,
   });
   
@@ -8264,55 +8287,78 @@ async function _startDemoFlowAfterTrial(From, langExact, requestId) {
 async function _handleDemoFlowTextTurn(From, text, requestId) {
   const shopId = shopIdFrom(From);
   const st = await getUserStateFromDB(shopId).catch(() => null);
-  if (!st || st.mode !== DEMO_FLOW_MODE) return false;
+  if (!st || st.mode !== DEMO_FLOW_MODE) return;
 
-  const langExact = st.data?.langExact ?? 'en';
+  const langExact = String(st?.data?.langExact ?? 'en');
   const P = _demoPack(langExact);
-  const step = st.data?.step ?? 'P1';
-  const demo = st.data?.demo ?? { product: 'Milk', unit: 'ltr', price: 60 };
-    
-  // Practice (2/3): user types a NEW product name — store it in demo state
-    if (step === 'P2_NAME') {
-      const name = String(text ?? '').trim();
-      if (!name) {
-        await sendMessageViaAPI(From, finalizeForSend(P.askNewProductName, langExact));
-        return true;
-      }
-      const cleaned = name.slice(0, 48); // safety cap
-      const nextDemo = { ...(st.data?.demo ?? demo), product: cleaned };
-      await sendMessageViaAPI(From, finalizeForSend(P.added(cleaned), langExact));
-      await setUserState(shopId, DEMO_FLOW_MODE, { ...(st.data ?? {}), step: 'P3', langExact, demo: nextDemo });
-      await _demoSendPracticeButton(From, langExact, 3);
-      return true;
-    }
-  
-    // Practice (3/3): qty/unit input expected only after demo_practice_3 tap
-    if (step !== 'P3_QTY') return true;
-  const parsed = _demoParseQtyUnitLoose(text);
-  if (!parsed || !Number.isFinite(parsed.quantity) || parsed.quantity <= 0) {
-    await sendMessageViaAPI(From, finalizeForSend(P.askQty, langExact));
-    return true;
+  const step = String(st?.data?.step ?? 'P1');
+
+  if (step === 'P1') {
+    await _demoSendPracticeButton(From, langExact, 1);
+    return;
   }
 
-  const qty = parsed.quantity;
-  const unit = parsed.unit ?? demo.unit ?? 'pieces';
-  const unitDisp = canonicalizeUnitToken(unit);
+  if (step === 'P2_LINE') {
+    const raw = String(text ?? '').trim();
+    const latin = normalizeNumeralsToLatin(raw);
 
-  // Step C: FAKE confirmation (NO inventory writes)
-  const confirm = `📦 Purchased: ${demo.product} — ${qty} ${unitDisp} @ ₹${demo.price} (Stock: ${qty} ${unitDisp})`;
-  await sendMessageViaAPI(From, finalizeForSend(confirm, langExact));
+    const priceM = latin.match(/(?:@|at)\s*(?:₹|rs\.?|inr)?\s*(\d+(?:\.\d+)?)/i) || latin.match(/₹\s*(\d+(?:\.\d+)?)/);
+    const price = priceM ? Number(priceM[1]) : NaN;
 
-  // Step D: unlock normal live menu
-  try { await clearUserState(shopId); } catch (_) {}
-  await sendMessageViaAPI(From, finalizeForSend(P.unlocked, langExact));
-  await _demoUnlockLiveMenu(From, langExact);
-  return true;
+    const u = UNIT_REGEX_UNIFIED.exec(latin);
+    const unitTok = u ? String(u[0]) : '';
+
+    let qty = NaN;
+    if (u) {
+      const left = latin.slice(0, u.index);
+      const nums = left.match(/(\d+(?:\.\d+)?)/g);
+      if (nums && nums.length) qty = Number(nums[nums.length - 1]);
+    }
+    if (!Number.isFinite(qty)) {
+      const q0 = latin.match(/(\d+(?:\.\d+)?)/);
+      if (q0) qty = Number(q0[1]);
+    }
+
+    let product = raw;
+    try {
+      if (Number.isFinite(qty)) {
+        const qStr = String(qty);
+        const idx = latin.indexOf(qStr);
+        if (idx >= 0) product = raw.slice(0, idx).trim();
+      }
+    } catch (_) {}
+
+    if (!product || !Number.isFinite(qty) || qty <= 0 || !unitTok || !Number.isFinite(price) || price <= 0) {
+      await _demoSendPracticeButton(From, langExact, 2);
+      return;
+    }
+
+    const unitDisp = displayUnit(unitTok, langExact);
+    const base = String(langExact).toLowerCase().replace(/-latn$/, '');
+    const STOCK_WORD = { en: 'Stock', hi: 'स्टॉक', bn: 'স্টক', gu: 'સ્ટોક', ta: 'ஸ்டாக்', te: 'స్టాక్', kn: 'ಸ್ಟಾಕ್', mr: 'स्टॉक' };
+    const stockWord = STOCK_WORD[base] ?? 'Stock';
+
+    const verb = String(P?.purchaseVerb ?? 'Purchased');
+    const line = `${P.practiceTag} 📦 ${verb}: ${product} — ${qty} ${unitDisp} @ ₹${price} (${stockWord}: ${qty} ${unitDisp})`;
+    await sendMessageViaAPI(From, finalizeForSend(line, langExact));
+
+    await sendMessageViaAPI(From, finalizeForSend(P.unlocked, langExact));
+
+    try { await deleteUserStateFromDB(st.id ?? shopId); } catch (_) {}
+    await _demoUnlockLiveMenu(From, langExact);
+    return;
+  }
+
+  await _demoSendPracticeButton(From, langExact, 1);
 }
 
 // --- typed path now begins capture (no immediate activation)
 async function activateTrialFlow(From, lang = 'en', opts = {}) {
   const shopId = shopIdFrom(From);  
-  // NEW: Auto-first-message path: activate trial immediately + focused onboarding + record buttons
+  // NEW: Was this user post-trial eligible BEFORE this activation? (prevents rerunning practice on expired trials)
+  const wasChooserEligible = await _isChooserEligible(shopId).catch(() => false);
+// NEW: Auto-first-message path: activate trial immediately + focused onboarding + record buttons
+
   if (opts?.autoFirstMessage) {      
   // [LANG PIN] Persist language from first input so demo/templates are created in correct language
       try {
@@ -8359,6 +8405,11 @@ async function activateTrialFlow(From, lang = 'en', opts = {}) {
         
     // NEW: Demo onboarding flow (Step 0 + Step A)
         await _startDemoFlowAfterTrial(From, lang, opts?.requestId);
+    // NEW: Mandatory practice flow for first-time users (runs once).
+    if (!wasChooserEligible) {
+      await _startDemoFlowAfterTrial(From, lang, opts?.requestId);
+      return { success: true, activatedTrial: true, demoStarted: true };
+    }
         return { success: true, activatedTrial: true, autoFirstMessage: true, demoStarted: true };
   }
 
@@ -8909,7 +8960,7 @@ async function handleInteractiveSelection(req) {
     const st = await getUserStateFromDB(shopIdTop).catch(() => null);
     const langUi = String(st?.data?.langExact ?? lang ?? 'en').replace(/-latn$/, '');        
     // Practice Mode (2/3)
-    await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P2', langExact: langUi });
+    await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P2_LINE', langExact: langUi });
     await _demoSendPracticeButton(from, langUi, 2);
     return true;
   }
@@ -8918,9 +8969,9 @@ async function handleInteractiveSelection(req) {
     const st = await getUserStateFromDB(shopIdTop).catch(() => null);
     const langUi = String(st?.data?.langExact ?? lang ?? 'en').replace(/-latn$/, '');          
     // Practice Mode (2/3): ask user to TYPE a NEW product name (no existing product list)
-        await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P2_NAME', langExact: langUi });
+        await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P2_LINE', langExact: langUi });
         const P = _demoPack(langUi);
-        await sendMessageViaAPI(from, finalizeForSend(P.askNewProductName, langUi));
+        await _demoSendPracticeButton(from, langUi, 2);
     return true;
   }
 
