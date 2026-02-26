@@ -8105,6 +8105,8 @@ if (typeof globalThis.startTrialForAuthUser !== 'function') {
 // 6) Practice Mode (3/3) -> ask qty/unit -> FAKE confirmation -> unlock live menu
 // =============================================================================
 const DEMO_FLOW_MODE = 'demo_flow';
+// --- NEW: Demo flow dedupe guard (prevents duplicate Practice buttons on webhook retries)
+globalThis.__demoStartGuard = globalThis.__demoStartGuard ?? new Map();
 
 function _demoPack(langExact = 'en') {
   const L = String(langExact ?? 'en').toLowerCase().replace(/-latn$/, '');
@@ -8266,6 +8268,16 @@ async function _demoUnlockLiveMenu(From, langExact) {
 }
 
 async function _startDemoFlowAfterTrial(From, langExact, requestId) {
+  try {
+    const key = String(shopIdFrom(From));
+    const now = Date.now();
+    const prev = globalThis.__demoStartGuard.get(key);
+    if (prev && (now - prev) < 60000) {
+      console.log('[demo-flow] dedupe: skipping duplicate start', { shopId: key, ms: now - prev });
+      return;
+    }
+    globalThis.__demoStartGuard.set(key, now);
+  } catch (_) {}
   const shopId = shopIdFrom(From);
   const P = _demoPack(langExact);
  
@@ -8293,12 +8305,20 @@ async function _handleDemoFlowTextTurn(From, text, requestId) {
   const P = _demoPack(langExact);
   const step = String(st?.data?.step ?? 'P1');
 
+  // Step (1/3): user must tap the purchase button
   if (step === 'P1') {
     await _demoSendPracticeButton(From, langExact, 1);
     return;
   }
 
-  if (step === 'P2_LINE') {
+  // Step (2/3): user must tap the add-new-product button
+  if (step === 'P2_BTN') {
+    await _demoSendPracticeButton(From, langExact, 2);
+    return;
+  }
+
+  // Step (3/3): user types product + qty + price (no button)
+  if (step === 'P3_TEXT') {
     const raw = String(text ?? '').trim();
     const latin = normalizeNumeralsToLatin(raw);
 
@@ -8329,7 +8349,8 @@ async function _handleDemoFlowTextTurn(From, text, requestId) {
     } catch (_) {}
 
     if (!product || !Number.isFinite(qty) || qty <= 0 || !unitTok || !Number.isFinite(price) || price <= 0) {
-      await _demoSendPracticeButton(From, langExact, 2);
+      const ask = `${P.p3}\\n${P.askLine}`;
+      await sendMessageViaAPI(From, finalizeForSend(ask, langExact));
       return;
     }
 
@@ -8343,9 +8364,12 @@ async function _handleDemoFlowTextTurn(From, text, requestId) {
     await sendMessageViaAPI(From, finalizeForSend(line, langExact));
 
     await sendMessageViaAPI(From, finalizeForSend(P.unlocked, langExact));
-
+    
+    // Clear demo state and show live menu
     try { await deleteUserStateFromDB(st.id ?? shopId); } catch (_) {}
     await _demoUnlockLiveMenu(From, langExact);
+    // IMPORTANT: prevent the same inbound message from falling through to real inventory writes
+    try { if (requestId) handledRequests.add(requestId); } catch (_) {}
     return;
   }
 
@@ -8960,7 +8984,7 @@ async function handleInteractiveSelection(req) {
     const st = await getUserStateFromDB(shopIdTop).catch(() => null);
     const langUi = String(st?.data?.langExact ?? lang ?? 'en').replace(/-latn$/, '');        
     // Practice Mode (2/3)
-    await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P2_LINE', langExact: langUi });
+    await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P2_BTN', langExact: langUi });
     await _demoSendPracticeButton(from, langUi, 2);
     return true;
   }
@@ -8969,7 +8993,7 @@ async function handleInteractiveSelection(req) {
     const st = await getUserStateFromDB(shopIdTop).catch(() => null);
     const langUi = String(st?.data?.langExact ?? lang ?? 'en').replace(/-latn$/, '');          
     // Practice Mode (2/3): ask user to TYPE a NEW product name (no existing product list)
-        await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P2_LINE', langExact: langUi });
+        await setUserState(shopIdTop, DEMO_FLOW_MODE, { ...(st?.data ?? {}), step: 'P3_TEXT', langExact: langUi });
         const P = _demoPack(langUi);
         await _demoSendPracticeButton(from, langUi, 2);
     return true;
