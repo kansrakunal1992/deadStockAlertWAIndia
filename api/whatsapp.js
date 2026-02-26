@@ -8117,6 +8117,45 @@ globalThis.__demoStartGuard = globalThis.__demoStartGuard ?? new Map();
 // =============================================================================
 globalThis.__demoTapGrace = globalThis.__demoTapGrace ?? new Map(); // key -> ts
 const DEMO_TAP_TTL_MS = Number(process.env.DEMO_TAP_TTL_MS ?? 7000);
+
+// =============================================================================
+// [PATCH:DEMO-FLOW-DUP-SUPPRESS-20260226]
+// Suppress duplicate end-of-demo messages and duplicate menu unlock sends.
+// Cause: demo flow handler can be invoked twice (webhook retries / multi-router),
+// leading to duplicate "✅ Done!" and duplicate menu template sends (seen in logs).
+// =============================================================================
+globalThis.__demoTurnGrace = globalThis.__demoTurnGrace ?? new Map();   // key -> ts
+globalThis.__demoUnlockGrace = globalThis.__demoUnlockGrace ?? new Map(); // shopId -> ts
+const DEMO_TURN_TTL_MS = Number(process.env.DEMO_TURN_TTL_MS ?? 8000);
+const DEMO_UNLOCK_TTL_MS = Number(process.env.DEMO_UNLOCK_TTL_MS ?? 15000);
+
+function _demoTurnAllowed(shopId, step, text) {
+  try {
+    const norm = String(text ?? '').trim().toLowerCase().slice(0, 120);
+    const key = `${String(shopId)}::${String(step)}::${norm}`;
+    const now = Date.now();
+    const prev = globalThis.__demoTurnGrace.get(key);
+    if (prev && (now - prev) < DEMO_TURN_TTL_MS) return false;
+    globalThis.__demoTurnGrace.set(key, now);
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+function _demoUnlockAllowed(shopId) {
+  try {
+    const key = String(shopId ?? '');
+    const now = Date.now();
+    const prev = globalThis.__demoUnlockGrace.get(key);
+    if (prev && (now - prev) < DEMO_UNLOCK_TTL_MS) return false;
+    globalThis.__demoUnlockGrace.set(key, now);
+    return true;
+  } catch {
+    return true;
+  }
+}
+
 function _demoTapAllowed(shopId, payloadId) {
   try {
     const key = `${String(shopId)}::${String(payloadId)}`;
@@ -8134,6 +8173,13 @@ async function _demoExitToLiveMenu(From, langExact = 'en') {
   // Hard-exit demo_flow and resurface live menu
   try {
     const shopId = String(From ?? '').replace('whatsapp:', '');
+    
+    // Prevent duplicate unlock/menu sends (end-of-demo can be invoked twice).
+    if (!_demoUnlockAllowed(shopId)) {
+      console.log('[demo-flow] unlock suppressed (duplicate)', { shopId });
+      return;
+    }
+
     await deleteUserStateFromDB(shopId).catch(() => null);
   } catch (_) {}
   try { await clearUserState(String(From ?? '').replace('whatsapp:', '')).catch(() => null); } catch (_) {}
@@ -8288,7 +8334,13 @@ function _demoParseQtyUnitLoose(text) {
 }
 
 async function _demoUnlockLiveMenu(From, langExact) {
-  try {
+  try {        
+    const shopId = String(From ?? '').replace('whatsapp:', '');
+        // Extra guard: avoid duplicate content template sends.
+        if (!_demoUnlockAllowed(shopId)) {
+          console.log('[demo-flow] live menu send suppressed (duplicate)', { shopId });
+          return true;
+        }
     await ensureLangTemplates(langExact);
     const sids = getLangSids(langExact);
     if (sids?.quickReplySid) {
@@ -8336,6 +8388,13 @@ async function _handleDemoFlowTextTurn(From, text, requestId) {
   const langExact = String(st?.data?.langExact ?? 'en');
   const P = _demoPack(langExact);
   const step = String(st?.data?.step ?? 'P1');
+    
+  // Suppress duplicate processing of the same demo turn (prevents duplicate "✅ done" and
+    // duplicate practice confirmation lines when handlers run twice).
+    if (!_demoTurnAllowed(shopId, step, text)) {
+      console.log('[demo-flow] duplicate demo turn suppressed', { shopId, step });
+      return;
+    }
   
   // Helper: accept price in multiple natural formats (optional in practice)
     function _demoParsePriceOptional(latin) {
