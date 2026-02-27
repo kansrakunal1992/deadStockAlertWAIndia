@@ -619,8 +619,10 @@ function inferLangFromTapText(t = '') {
   const s = String(t ?? '').trim();
   if (!s) return null;
   // Devanagari (Hindi/Marathi). Disambiguate using Marathi tokens from your own labels.
-  if (/[\u0900-\u097F]/.test(s)) {
-    if (/(खरेदी|नोंदवा)/.test(s)) return 'mr';
+  if (/[\u0900-\u097F]/.test(s)) {        
+    // Expand Marathi cues beyond just "खरेदी/नोंदवा" to avoid defaulting Marathi taps to Hindi.
+    // Examples observed in flows: "नवीन प्रॉडक्ट", "निवडा", etc.
+      if (/(खरेदी|नोंदवा|नवीन|प्रॉडक्ट|निवडा|जुने|सराव|डेमो|साठा|पुढील|कृती)/.test(s)) return 'mr';
     return 'hi';
   }
   if (/[\u0980-\u09FF]/.test(s)) return 'bn';
