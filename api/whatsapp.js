@@ -25,7 +25,10 @@ const TRIAL_DAYS = Number(process.env.TRIAL_DAYS ?? 3);
 // Auto-activate trial on first inbound message (default ON)
 // ---------------------------------------------------------------------------
 const AUTO_TRIAL_ON_FIRST_MESSAGE =
-  String(process.env.AUTO_TRIAL_ON_FIRST_MESSAGE ?? '1') === '1';
+  String(process.env.AUTO_TRIAL_ON_FIRST_MESSAGE ?? '0') === '1';
+// PATCH [1]: Default changed to '0'.
+// Trial now starts after first successful inventory entry (confirmed), not on "Hi".
+// To revert temporarily: set env AUTO_TRIAL_ON_FIRST_MESSAGE=1
 
 // Grace guard to avoid double activation on webhook retries/bursts
 globalThis._autoTrialFirstMsgGrace = globalThis._autoTrialFirstMsgGrace ?? new Map(); // shopId -> ts
@@ -505,6 +508,317 @@ async function sendOnboardVideoAsync(From, langExact='en') {
     console.warn('[onboard-video] async send failed', e?.message);
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// PATCH [5]: Action-first onboarding prompt (no pitch/CTA).
+// ---------------------------------------------------------------------------
+async function sendFirstActionPrompt(From, langExact, requestId) {
+  try {
+    const PROMPTS = {
+      hi: `नमस्ते! 👋 मैं आपका WhatsApp स्टॉक असिस्टेंट हूं।
+
+बस एक काम करो — अभी बोलो (🎤 voice note) या type करो:
+
+*"10 Parle-G बिका"*
+
+मैं तुरंत stock update कर दूंगा। कोई app नहीं। ✅`,
+      mr: `नमस्कार! 👋 मी तुमचा WhatsApp स्टॉक असिस्टंट.
+
+फक्त सांगा (🎤 voice note किंवा type):
+
+*"10 Parle-G विकलं"*
+
+मी लगेच update करतो. App नाही. ✅`,
+      gu: `નમસ્તે! 👋 હું તમારો WhatsApp સ્ટૉક આસિસ્ટન્ટ.
+
+ફક્ત (🎤 voice note અથવા type):
+
+*"10 Parle-G વેચ્યા"*
+
+હું તરત update. App નહીં. ✅`,
+      bn: `নমস্কার! 👋 আমি আপনার WhatsApp স্টক অ্যাসিস্ট্যান্ট।
+
+(🎤 voice note বা type):
+
+*"10 Parle-G বিক্রি"*
+
+আমি সঙ্গে সঙ্গে update। App নেই। ✅`,
+      ta: `வணக்கம்! 👋 நான் உங்கள் WhatsApp ஸ்டாக் அசிஸ்டன்ட்.
+
+(🎤 voice note அல்லது type):
+
+*"10 Parle-G விற்றது"*
+
+உடனே update. App இல்லை. ✅`,
+      te: `నమస్కారం! 👋 నేను మీ WhatsApp స్టాక్ అసిస్టెంట్.
+
+(🎤 voice note లేదా type):
+
+*"10 Parle-G అమ్మాను"*
+
+వెంటనే update. App వద్దు. ✅`,
+      kn: `ನಮಸ್ಕಾರ! 👋 ನಾನು WhatsApp ಸ್ಟಾಕ್ ಅಸಿಸ್ಟೆಂಟ್.
+
+(🎤 voice note ಅಥವಾ type):
+
+*"10 Parle-G ಮಾರಿದ್ದೇನೆ"*
+
+ತಕ್ಷಣ update. App ಇಲ್ಲ. ✅`,
+      en: `Hello! 👋 I'm your WhatsApp stock assistant.
+
+Just tell me one thing sold today.
+🎤 voice note or type:
+
+*"10 Parle-G sold"*
+
+I'll update your stock instantly. No app. ✅`,
+    };
+    const baseLang = String(langExact ?? 'en').toLowerCase().split(/[-_]/)[0];
+    const msg = PROMPTS[baseLang] ?? PROMPTS.en;
+    if (typeof sendMessageQueued === 'function') {
+      await sendMessageQueued(From, msg);
+    } else {
+      await sendMessageViaAPI(From, msg);
+    }
+    console.log(`[first-action-prompt] sent to ${From} lang=${baseLang} req=${requestId ?? ''}`);
+  } catch (e) {
+    console.warn('[first-action-prompt] failed', e?.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PATCH [5b]: Conversational correction reprompt (no numbered menus).
+// ---------------------------------------------------------------------------
+function _buildCorrectionReprompt(update, lang) {
+  const { product = '?', quantity = '?', unit = '', action = '' } = update ?? {};
+  const unitStr = unit ? ` ${unit}` : '';
+  const ACTION_LABELS = {
+    en: { sold:'sold', purchased:'bought', returned:'returned', remaining:'remaining' },
+    hi: { sold:'बिका', purchased:'खरीदा', returned:'वापस आया', remaining:'बचा' },
+    mr: { sold:'विकलं', purchased:'खरेदी केलं', returned:'परत आलं', remaining:'शिल्लक' },
+    gu: { sold:'વેચ્યા', purchased:'ખરીદ્યા', returned:'પાછા આવ્યા', remaining:'બાકી' },
+    bn: { sold:'বিক্রি', purchased:'কেনা', returned:'ফেরত', remaining:'বাকি' },
+    ta: { sold:'விற்றது', purchased:'வாங்கினது', returned:'திரும்பியது', remaining:'மீதி' },
+    te: { sold:'అమ్మారు', purchased:'కొన్నారు', returned:'తిరిగి వచ్చింది', remaining:'మిగిలింది' },
+    kn: { sold:'ಮಾರಿದ್ದೇನೆ', purchased:'ತಂದಿದ್ದೇನೆ', returned:'ವಾಪಸ್ ಬಂತು', remaining:'ಉಳಿದಿದೆ' },
+  };
+  const TEMPLATES = {
+    hi: (q,u,p,a) => `मैंने सुना: *${q}${u} ${p} ${a}*
+
+सही नहीं? बस सही version बोलो 🎤`,
+    mr: (q,u,p,a) => `मी ऐकलं: *${q}${u} ${p} ${a}*
+
+चुकीचं? बरोबर सांगा 🎤`,
+    gu: (q,u,p,a) => `મેં સાંભળ્યું: *${q}${u} ${p} ${a}*
+
+ખોટું? સાચું બોલો 🎤`,
+    bn: (q,u,p,a) => `আমি শুনেছি: *${q}${u} ${p} ${a}*
+
+ভুল? সঠিকটা বলুন 🎤`,
+    ta: (q,u,p,a) => `கேட்டது: *${q}${u} ${p} ${a}*
+
+தப்பா? சரியானதை சொல்லுங்கள் 🎤`,
+    te: (q,u,p,a) => `విన్నది: *${q}${u} ${p} ${a}*
+
+తప్పు? సరైనది చెప్పండి 🎤`,
+    kn: (q,u,p,a) => `ಕೇಳಿದ್ದು: *${q}${u} ${p} ${a}*
+
+ತಪ್ಪಾ? ಸರಿಯಾದ್ದನ್ನು ಹೇಳಿ 🎤`,
+    en: (q,u,p,a) => `I heard: *${q}${u} ${p} ${a}*
+
+Not right? Just say the correct version 🎤`,
+  };
+  const baseLang = String(lang ?? 'en').toLowerCase().split(/[-_]/)[0];
+  const labels = ACTION_LABELS[baseLang] ?? ACTION_LABELS.en;
+  const actionLabel = labels[action] ?? action;
+  const tpl = TEMPLATES[baseLang] ?? TEMPLATES.en;
+  return tpl(quantity, unitStr, product, actionLabel);
+}
+
+// ---------------------------------------------------------------------------
+// PATCH [6]: Day 1 evening habit nudge (6–7 PM local approx).
+// NOTE: setTimeout is process-local; for multi-server use a job queue.
+// ---------------------------------------------------------------------------
+function scheduleDay1EveningNudge(From, langExact) {
+  try {
+    const now = new Date();
+    const target = new Date(now);
+    // 6:30 PM IST = 13:00 UTC (IST is +5:30)
+    target.setUTCHours(13, 0, 0, 0);
+    if (target <= now) target.setUTCDate(target.getUTCDate() + 1);
+    const delayMs = target.getTime() - now.getTime();
+    const baseLang = String(langExact ?? 'en').toLowerCase().split(/[-_]/)[0];
+    const MSGS = {
+      hi: `📦 आज की बिक्री कैसी रही?
+
+बस बोल दो — *"5 kg आटा बिका, 2 kg दाल बिका"*
+मैं 1 मिनट में summary बना दूंगा। 🎤`,
+      mr: `📦 आज काय विकलं?
+
+फक्त सांगा — *"5 kg पीठ विकलं, 2 kg डाळ विकलं"*
+मी 1 मिनिटात summary देतो. 🎤`,
+      gu: `📦 આજ શું વેચ્યા?
+
+બસ બોલો — *"5 kg લોટ, 2 kg દાળ"*
+હું 1 મિનિટમાં summary. 🎤`,
+      bn: `📦 আজ কী বিক্রি হল?
+
+শুধু বলুন — *"5 kg আটা, 2 kg ডাল বিক্রি"*
+আমি ১ মিনিটে summary. 🎤`,
+      ta: `📦 இன்று என்ன விற்றீர்கள்?
+
+சொல்லுங்கள் — *"5 kg மாவு, 2 kg பருப்பு"*
+1 நிமிடத்தில் summary. 🎤`,
+      te: `📦 ఈరోజు ఏం అమ్మారు?
+
+చెప్పండి — *"5 kg పిండి, 2 kg పప్పు"*
+1 నిమిషంలో summary. 🎤`,
+      kn: `📦 ಇಂದು ಏನು ಮಾರಿದಿರಿ?
+
+ಹೇಳಿ — *"5 kg ಹಿಟ್ಟು, 2 kg ಬೇಳೆ"*
+1 ನಿಮಿಷದಲ್ಲಿ summary. 🎤`,
+      en: `📦 How did sales go today?
+
+Just tell me — *"5 kg flour sold, 2 kg dal"*
+I'll build your summary in 1 minute. 🎤`,
+    };
+    const msg = MSGS[baseLang] ?? MSGS.en;
+    setTimeout(async () => {
+      try {
+        await sendMessageViaAPI(From, msg);
+        console.log(`[day1-nudge] sent to ${From}`);
+      } catch (e) {
+        console.warn(`[day1-nudge] failed for ${From}`, e?.message);
+      }
+    }, delayMs);
+    console.log(`[day1-nudge] scheduled for ${From} in ${Math.round(delayMs / 60000)}min`);
+  } catch (e) {
+    console.warn('[day1-nudge] schedule error', e?.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PATCH [7]: Day 2 morning summary (8–9 AM local approx).
+// Uses existing quick-query pipeline to avoid needing new DB helpers.
+// ---------------------------------------------------------------------------
+function scheduleDay2MorningSummary(From, langExact) {
+  try {
+    const now = new Date();
+    const target = new Date(now);
+    // Next day 8:30 AM IST = 03:00 UTC
+    target.setUTCDate(target.getUTCDate() + 1);
+    target.setUTCHours(3, 0, 0, 0);
+    const delayMs = target.getTime() - now.getTime();
+    setTimeout(async () => {
+      try {
+        await routeQuickQueryRaw('short summary', From, langExact, `day2-morning::${Date.now()}`);
+      } catch (e) {
+        console.warn('[morning-summary] failed', e?.message);
+      }
+    }, delayMs);
+    console.log(`[morning-summary] scheduled for ${From} in ${Math.round(delayMs / 60000)}min`);
+  } catch (e) {
+    console.warn('[morning-summary] schedule error', e?.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Adoption: First transaction = Preview → Haan/Nahi → Commit (strict).
+// Stores state via setUserState/getUserStateFromDB; avoids global vars.
+// ---------------------------------------------------------------------------
+const FIRST_TXN_CONFIRM_MODE = 'first_txn_confirm';
+const FIRST_TXN_COMMIT_TTL_MS = Number(process.env.FIRST_TXN_COMMIT_TTL_MS ?? 120_000);
+globalThis._firstTxnCommitGrace = globalThis._firstTxnCommitGrace ?? new Map(); // shopId -> ts
+function _firstTxnCommitAllowed(shopId) {
+  try {
+    const key = String(shopId ?? '');
+    const now = Date.now();
+    const prev = globalThis._firstTxnCommitGrace.get(key);
+    if (prev && (now - prev) < FIRST_TXN_COMMIT_TTL_MS) return false;
+    globalThis._firstTxnCommitGrace.set(key, now);
+    return true;
+  } catch { return true; }
+}
+function _isYes(text='') {
+  const t = String(text ?? '').trim().toLowerCase();
+  return /^(haan|han|ha|haanji|yes|y|ok|okay|sahi|thik|theek)/.test(t);
+}
+function _isNo(text='') {
+  const t = String(text ?? '').trim().toLowerCase();
+  return /^(nahi|nahin|na|no|n|galat|wrong)/.test(t);
+}
+function _yesNoReprompt(langExact='en') {
+  const YES_NO = {
+    hi: '✅ हाँ या ❌ नहीं — बस इतना बोलो।',
+    mr: '✅ हो किंवा ❌ नाही — फक्त एवढं सांगा.',
+    gu: '✅ હા અથવા ❌ ના — બસ આ બોલો.',
+    bn: '✅ হ্যাঁ অথবা ❌ না — শুধু এটুকু বলুন।',
+    ta: '✅ ஆம் அல்லது ❌ இல்லை — இதை மட்டும் சொல்லுங்கள்.',
+    te: '✅ అవును లేదా ❌ కాదు — ఇది చెప్పండి.',
+    kn: '✅ ಹೌದು ಅಥವಾ ❌ ಇಲ್ಲ — ಇಷ್ಟು ಮಾತ್ರ ಹೇಳಿ.',
+    en: '✅ Yes or ❌ No — just reply with one of those.',
+  };
+  const base = String(langExact ?? 'en').toLowerCase().split(/[-_]/)[0];
+  return YES_NO[base] ?? YES_NO.en;
+}
+async function _composeFirstTxnPreview(shopId, updates, langExact) {
+  try {
+    const base = String(langExact ?? 'en').toLowerCase().split(/[-_]/)[0];
+    const head = base === 'hi' ? '🧾 मैंने समझा:' : '🧾 I understood:';
+    const lines = (updates ?? []).slice(0, 6).map(u => {
+      const qty = u?.quantity ?? '?';
+      const unit = u?.unit ? ` ${u.unit}` : '';
+      const prod = u?.product ?? u?.productDisplay ?? '?';
+      const act = u?.action ?? '';
+      const price = Number.isFinite(u?.pricePerUnit) ? ` @ ₹${u.pricePerUnit}` : '';
+      return `• ${act} ${qty}${unit} ${prod}${price}`.trim();
+    });
+    // Best-effort stock info for first item
+    let stockLine = '';
+    try {
+      const u0 = (updates ?? [])[0];
+      const prod0 = u0?.product ?? u0?.productDisplay;
+      const unit0 = u0?.unit ?? 'pieces';
+      if (prod0 && typeof getProductTotalQuantity === 'function') {
+        const r = await getProductTotalQuantity(shopId, prod0, unit0);
+        if (r?.success) stockLine = `📦 Stock: ${r.total} ${canonicalizeUnitToken(r.unit ?? unit0)}`;
+      }
+    } catch { /* noop */ }
+    const ask = base === 'hi' ? 'सही है? (Haan/Nahi)' : 'Is this correct? (Yes/No)';
+    return [head, ...lines, stockLine, '', ask].filter(Boolean).join('
+');
+  } catch {
+    return 'Is this correct? (Yes/No)';
+  }
+}
+function markActivationStartInGamify(shopId) {
+  try {
+    const state = readGamify();
+    const gs = state[shopId] || { points: 0, entries: 0, streakDays: 0, lastActivityDate: null, badges: [] };
+    if (!gs.activationStartAtMs) gs.activationStartAtMs = Date.now();
+    if (typeof gs.first48hCount !== 'number') gs.first48hCount = 0;
+    gs.ahaCommitted = true;
+    state[shopId] = gs;
+    writeGamify(state);
+  } catch { /* noop */ }
+}
+function bump48hTxnCountInGamify(shopId, delta = 1) {
+  try {
+    const state = readGamify();
+    const gs = state[shopId] || { points: 0, entries: 0, streakDays: 0, lastActivityDate: null, badges: [] };
+    const start = Number(gs.activationStartAtMs ?? 0);
+    if (start > 0 && (Date.now() - start) <= (48 * 60 * 60 * 1000)) {
+      gs.first48hCount = Number(gs.first48hCount ?? 0) + Number(delta ?? 1);
+      if (gs.first48hCount >= 3 && !(gs.badges ?? []).includes('3-in-48h')) {
+        gs.badges = Array.isArray(gs.badges) ? gs.badges : [];
+        gs.badges.push('3-in-48h');
+        console.log('[activation-metric] reached 3+ real txns in 48h', { shopId, first48hCount: gs.first48hCount });
+      }
+    }
+    state[shopId] = gs;
+    writeGamify(state);
+  } catch { /* noop */ }
 }
 
 function _benefitsForShopType(type, langExact='en') {
@@ -6832,19 +7146,13 @@ async function sendWelcomeFlowLocalized(From, detectedLanguage = 'en', requestId
             return; // IMPORTANT: suppress all welcome/CTA/QR flows below
           }
       if (_fastWelcomeAllowed(toNumber)) {
-        const pack = _langPack(langExact);
-        const welcomeText = pack.welcome(TRIAL_DAYS, startLbl, ASK_VIDEO_IN_WELCOME);
-        await sendMessageQueued(From, finalizeForSend(_withStartFreeTrialLabel(welcomeText, langExact), langExact));
+        // PATCH [2]: Action-first onboarding.
+        // No feature pitch. No CTA buttons. No video.
+        // Get them to do ONE real action. Trial starts after that action is confirmed + committed.
+        await sendFirstActionPrompt(From, langExact, requestId);
       }
-            
-      // Send ONLY the trial CTA buttons once on welcome (pre-trial). Avoid QR template spam.
-      setTimeout(() => { sendTrialCtaAsync(From, langExact).catch(() => {}); }, 650);
-
-      // Video: either auto-send async or send on demand when user types "video"
-      if (AUTO_SEND_ONBOARD_VIDEO) {
-        setTimeout(() => { sendOnboardVideoAsync(From, langExact).catch(() => {}); }, AUTO_SEND_ONBOARD_VIDEO_DELAY_MS);
-      }
-      return; // important: skip legacy slow onboarding path
+      
+      return;
     }
   } finally {
     __fastWelcomeInFlight.delete(toNumber);
@@ -19174,7 +19482,76 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
         // fall through gracefully
       }
           
-    console.log(`[${requestId}] [6] Parsing updates using AI...`);
+// -----------------------------------------------------------------------
+// Adoption: If we are waiting for first transaction confirmation (Haan/Nahi),
+// handle it BEFORE parsing new updates.
+// -----------------------------------------------------------------------
+try {
+  const st0 = await getUserStateFromDB(shopId).catch(() => null);
+  if (st0 && String(st0.mode ?? '').toLowerCase() === FIRST_TXN_CONFIRM_MODE) {
+    const replyText = String(ButtonText ?? Body ?? '').trim();
+    const langExact0 = st0?.data?.langExact ?? detectedLanguage;
+    // Idempotency: suppress duplicate commit on webhook retries
+    if (_isYes(replyText)) {
+      if (!_firstTxnCommitAllowed(shopId)) {
+        handledRequests.add(requestId);
+        return res.send(response.toString());
+      }
+      const pending = Array.isArray(st0?.data?.pendingUpdates) ? st0.data.pendingUpdates : [];
+      if (!pending.length) {
+        await clearUserState(shopId).catch(() => {});
+        handledRequests.add(requestId);
+        return res.send(response.toString());
+      }
+      // Commit now
+      const connectionTest2 = await testConnection();
+      if (!connectionTest2) {
+        await sendSystemMessage('Database connection error. Please try again later.', from, detectedLanguage, requestId, response);
+        handledRequests.add(requestId);
+        return res.send(response.toString());
+      }
+      const results2 = await updateMultipleInventory(shopId, pending, langExact0);
+      // Tracking: count successful commits for 48h metric
+      try {
+        const okN = (results2 ?? []).filter(r => r?.success && !r?.skipped).length;
+        if (okN > 0) {
+          bump48hTxnCountInGamify(String(shopId), okN);
+        }
+      } catch {}
+      // Mark aha + activation start, then start trial
+      markActivationStartInGamify(String(shopId));
+      const alreadyActive = await _isUserActivated(String(shopId)).catch(() => false);
+      if (!alreadyActive) {
+        await activateTrialFlow(From, langExact0, { autoFirstMessage: false, requestId });
+        // Habit hooks (non-blocking)
+        scheduleDay1EveningNudge(From, langExact0);
+        scheduleDay2MorningSummary(From, langExact0);
+        console.log(`[activation] First-entry trial started + hooks scheduled for ${shopId}`);
+      }
+      await clearUserState(shopId).catch(() => {});
+      handledRequests.add(requestId);
+      return res.send(response.toString());
+    }
+    if (_isNo(replyText)) {
+      await clearUserState(shopId).catch(() => {});
+      const base = String(langExact0 ?? 'en').toLowerCase().split(/[-_]/)[0];
+      const msg = (base === 'hi')
+        ? 'ठीक है। बस एक लाइन में फिर से बोलो/लिखो — जैसे: "10 Parle-G बिका" 🎤'
+        : 'Okay. Please just resend naturally in one line — e.g., "10 Parle-G sold" 🎤';
+      await sendMessageViaAPI(From, msg);
+      handledRequests.add(requestId);
+      return res.send(response.toString());
+    }
+    // invalid
+    await sendMessageViaAPI(From, _yesNoReprompt(langExact0));
+    handledRequests.add(requestId);
+    return res.send(response.toString());
+  }
+} catch (e) {
+  console.warn(`[${requestId}] first-txn-confirm handler failed:`, e?.message);
+}
+
+console.log(`[${requestId}] [6] Parsing updates using AI...`);
       const updates = await parseOrReturn(transcript, from, detectedLanguage, requestId);
       if (!Array.isArray(updates) || updates.length === 0) {
         handledRequests.add(requestId);
@@ -19195,8 +19572,44 @@ async function processConfirmedTranscription(transcript, from, detectedLanguage,
       handledRequests.add(requestId);
       return res.send(response.toString());
     }
+    // -----------------------------------------------------------------------
+    // Adoption: For the first real transaction of an unactivated user,
+    // show Preview → ask Haan/Nahi → commit only on Haan.
+    // -----------------------------------------------------------------------
+    try {
+      const gs = (() => { try { return (readGamify() ?? {})[String(shopId)] ?? null; } catch { return null; } })();
+      const alreadyAha = !!(gs && gs.ahaCommitted);
+      const isActivatedNow = await _isUserActivated(String(shopId)).catch(() => false);
+      if (!isActivatedNow && !alreadyAha) {
+        const previewText = await _composeFirstTxnPreview(String(shopId), updates, detectedLanguage);
+        await setUserState(String(shopId), FIRST_TXN_CONFIRM_MODE, {
+          pendingUpdates: updates,
+          langExact: detectedLanguage,
+          createdAtISO: new Date().toISOString(),
+          requestId
+        });
+        await sendMessageViaAPI(From, previewText);
+        handledRequests.add(requestId);
+        return res.send(response.toString());
+      }
+    } catch (e) {
+      console.warn(`[${requestId}] first-txn-preview failed; continuing to normal commit:`, e?.message);
+    }
+    
     console.log(`[${requestId}] [8] Updating inventory for ${updates.length} items...`);
     const results = await updateMultipleInventory(shopId, updates, detectedLanguage);
+    // Tracking (minimal): update local gamify tracker & 48h adoption metric
+    try {
+      const okItems = (results ?? []).filter(r => r?.success && !r?.skipped).length;
+      if (okItems > 0) {
+        for (const u of (updates ?? []).slice(0, okItems)) {
+          try { updateGamifyState(String(shopId), u?.action ?? 'sold'); } catch (_) {}
+        }
+        bump48hTxnCountInGamify(String(shopId), okItems);
+      }
+    } catch (e) {
+      console.warn('[gamify] tracking failed:', e?.message);
+    }
     
       if (allPendingPrice(results)) {
         try {              
@@ -24294,16 +24707,8 @@ async function handleConfirmationState(Body, From, state, requestId, res) {
     
   } else if (noVariants.includes(Body.toLowerCase())) {
     // Go back to correction selection
-    const correctionMessage = await t(
-      `Please try again. What needs to be corrected?
-Reply with:
-1 – Product is wrong
-2 – Quantity is wrong
-3 – Action is wrong
-4 – All wrong, I'll type it instead`,
-      detectedLanguage,
-      requestId
-    );
+    // PATCH [4]: Mirror back what was understood, ask them to re-say it naturally (no numbered menu).
+    const correctionMessage = _buildCorrectionReprompt(correctedUpdate, detectedLanguage);
     
     // Update correction state back to selection
     await saveCorrectionState(shopId, 'selection', correctedUpdate, detectedLanguage);
@@ -24343,7 +24748,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
     
     if (allPendingPrice(results)) {
         try {
-          await setUserState(shopID, 'correction', {
+          await setUserState(shopId, 'correction', { // PATCH [3]: was shopID (capital D) — undefined variable, silently failed
             correctionState: {
               correctionType: 'price',
               pendingUpdate: results[0],
@@ -24435,7 +24840,7 @@ async function handleInventoryState(Body, From, state, requestId, res) {
       const saveResult = await saveCorrectionState(shopId, 'selection', update, detectedLanguage);
       
       if (saveResult.success) {
-        await setUserState(shopID, 'correction', {
+        await setUserState(shopId, 'correction', { // PATCH [3]: was shopID (capital D) — undefined variable, silently failed
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -25219,7 +25624,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
 
       if (allPendingPrice(results)) {
         try {
-          await setUserState(shopID, 'correction', {
+          await setUserState(shopId, 'correction', { // PATCH [3]: was shopID (capital D) — undefined variable, silently failed
             correctionState: {
               correctionType: 'price',
               pendingUpdate: results[0],
@@ -25664,7 +26069,7 @@ Reply with:
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id} (fallback)`);
         
         // Set correction state
-        await setUserState(shopID, 'correction', {
+        await setUserState(shopId, 'correction', { // PATCH [3]: was shopID (capital D) — undefined variable, silently failed
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -25861,7 +26266,7 @@ async function handleTextConfirmationState(Body, From, state, requestId, res) {
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
         
         // Set correction state
-        await setUserState(shopID, 'correction', {
+        await setUserState(shopId, 'correction', {
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -25915,7 +26320,7 @@ Reply with:
         console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id} (fallback)`);
         
         // Set correction state
-        await setUserState(shopID, 'correction', {
+        await setUserState(shopId, 'correction', { // PATCH [3]: was shopID (capital D) — undefined variable, silently failed
           correctionState: {
             correctionType: 'selection',
             pendingUpdate: update,
@@ -26018,7 +26423,7 @@ const header = chooseHeader(processed.length, COMPACT_MODE, false, detectedLangu
       console.log(`[${requestId}] Successfully saved correction state with ID: ${saveResult.id}`);
       
       // Set correction state
-      await setUserState(shopID, 'correction', {
+      await setUserState(shopId, 'correction', {
         correctionState: {
           correctionType: 'selection',
           pendingUpdate: update,
