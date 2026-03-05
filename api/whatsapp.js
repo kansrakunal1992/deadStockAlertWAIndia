@@ -786,8 +786,7 @@ async function _composeFirstTxnPreview(shopId, updates, langExact) {
       }
     } catch { /* noop */ }
     const ask = base === 'hi' ? 'सही है? (Haan/Nahi)' : 'Is this correct? (Yes/No)';
-    return [head, ...lines, stockLine, '', ask].filter(Boolean).join('
-');
+    return [head, ...lines, stockLine, '', ask].filter(Boolean).join('\n');
   } catch {
     return 'Is this correct? (Yes/No)';
   }
