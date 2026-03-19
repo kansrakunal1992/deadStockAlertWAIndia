@@ -2398,7 +2398,7 @@ async function getUserPreferencesRecord(shopId) {
 
 // --- [NEW ANCHOR: AuthUsers Onboarding Upsert] -----------------------------------------
 // Upsert Name, GSTIN (optional), Address, Phone, CreatedDate BEFORE starting trial
-async function upsertAuthUserDetails(shopId, { name, gstin = null, address = '', phone = null } = {}) {
+async function upsertAuthUserDetails(shopId, { name, gstin = null, address = '', phone = null, shopType = null } = {}) {
   const context = `Upsert AuthUser Details ${shopId}`;
   try {
     const nowISO = new Date().toISOString();
@@ -2409,7 +2409,8 @@ async function upsertAuthUserDetails(shopId, { name, gstin = null, address = '',
       Address: String(address ?? '').trim(),
       Phone: String(phone ?? shopId ?? '').trim(),
       CreatedDate: nowISO,
-      ...(gstin && String(gstin).trim().toLowerCase() !== 'skip' ? { GSTIN: String(gstin).trim() } : {})
+      ...(gstin && String(gstin).trim().toLowerCase() !== 'skip' ? { GSTIN: String(gstin).trim() } : {}),
+      ...(shopType ? { ShopType: String(shopType).trim() } : {})
     };
     if (record) {
       await airtableRequest({
@@ -3988,4 +3989,6 @@ module.exports = {
   openCorrectionWindow,
   applyUndoLastTxn,
   closeCorrectionWindow
+  // udhaar functions are in udhaar.js (separate module).
+  // udhaar.js imports `airtableRequest` from this file (already exported above).
 };

@@ -5,6 +5,9 @@ const client = require('../twilioClient'); // from /root/api → ../twilioClient
 // Soniox async transcription helper (server-side file transcription; no streaming)
 const { transcribeFileWithSoniox } = require('../stt/sonioxAsync');
 
+// Udhaar (credit tracking) module — handles before inventory parsing
+const { handleUdhaarMessage } = require('./udhaar');
+
 // Fast in-memory grace guard to suppress duplicate paid confirmations in bursty webhooks
 globalThis._paidConfirmGrace = globalThis._paidConfirmGrace ?? new Map();
 
@@ -8155,11 +8158,14 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
         // -----------------------------------------------------------------------
         if (typeof upsertAuthUserDetails === 'function') {
           try {
+            // Pull shopType from in-memory lead stage (set during pre-trial welcome flow)
+            const _leadSt = (typeof _leadGet === 'function') ? _leadGet(shopId) : null;
             await upsertAuthUserDetails(shopId, {
               name: data.name,
               gstin: data.gstin,
               address: data.address,
-              phone: shopId
+              phone: shopId,
+              shopType: _leadSt?.shopType ?? null
             });
           } catch (e) {
             console.warn('[trial-onboard] upsertAuthUserDetails failed:', e?.message);
@@ -8376,7 +8382,16 @@ async function handlePaidOnboardingStep(From, text, lang = 'en', requestId = nul
     data.address = String(text ?? '').trim();
 
     // Save details
-    try { await upsertAuthUserDetails(shopId, { name: data.name, gstin: data.gstin, address: data.address, phone: shopId }); }
+    try {
+      const _leadStPaid = (typeof _leadGet === 'function') ? _leadGet(shopId) : null;
+      await upsertAuthUserDetails(shopId, {
+        name: data.name,
+        gstin: data.gstin,
+        address: data.address,
+        phone: shopId,
+        shopType: _leadStPaid?.shopType ?? null
+      });
+    }
     catch (e) { console.warn('[paid-onboard] upsertAuthUserDetails failed:', e?.message); }
 
     // Mark paid (prefer markAuthUserPaid; fallback saveUserPlan)
@@ -25041,6 +25056,21 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       return null;
     }
   }
+
+  // ── [UDHAAR] Credit tracking: intercept BEFORE sticky/inventory parsing ──────
+  // Handles: diya udhaar | liya udhaar | wapas aaya | baaki | hisaab
+  // Fails-open: any error here falls through to normal inventory flow.
+  try {
+    const _udhaarResult = await handleUdhaarMessage(shopId, Body, detectedLanguage, requestId);
+    if (_udhaarResult.handled && _udhaarResult.response) {
+      await sendMessageViaAPI(From, _udhaarResult.response);
+      handledRequests.add(requestId);
+      return res.send('<Response></Response>');
+    }
+  } catch (_uErr) {
+    console.warn(`[${requestId}] [udhaar] handler failed (continuing):`, _uErr?.message);
+  }
+  // ─────────────────────────────────────────────────────────────────────────────
 
   // ✅ Sticky short-circuit: consume verb‑less txn lines BEFORE any QA/router
   try {
