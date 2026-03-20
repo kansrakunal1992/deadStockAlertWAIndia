@@ -6,7 +6,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const cron = require('node-cron');
-const { runDailySummary } = require('./dailySummary');
+const { runDailySummary }         = require('./dailySummary');
+const { runTrialEndingReminders } = require('./trialEndingSummary');
 const {
   // existing
   getAllProducts,
@@ -1194,6 +1195,32 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Schedule daily summary at 11 PM every day (Asia/Kolkata timezone)
+// ─────────────────────────────────────────────────────────────────────────────
+// [ADOPTION-STAGE-8] Trial ending reminder — runs daily at 5:00 PM IST
+// Finds trials expiring within next 24 hours, sends personalized Stage 8 message.
+// Message includes: real entry count, bill count, top udhaar entry by name.
+// ─────────────────────────────────────────────────────────────────────────────
+cron.schedule('30 11 * * *', () => {
+  // 11:30 UTC = 5:00 PM IST (UTC+5:30)
+  console.log('[trial-end-cron] Running trial ending reminder job at 5 PM IST');
+
+  runTrialEndingReminders()
+    .then(results => {
+      const ok  = results.filter(r => r.success).length;
+      const err = results.filter(r => !r.success).length;
+      console.log(`[trial-end-cron] Completed: ${ok} sent, ${err} failed`);
+    })
+    .catch(error => {
+      console.error('[trial-end-cron] Failed:', error.message);
+    });
+}, {
+  scheduled: true,
+  timezone: 'Asia/Kolkata'
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Daily summary — runs at 11:00 PM IST
+// ─────────────────────────────────────────────────────────────────────────────
 cron.schedule('0 23 * * *', () => {
   console.log('Running scheduled daily summary job at 11 PM');
   

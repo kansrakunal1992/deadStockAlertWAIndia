@@ -5,6 +5,19 @@ const client = require('../twilioClient'); // from /root/api → ../twilioClient
 // Soniox async transcription helper (server-side file transcription; no streaming)
 const { transcribeFileWithSoniox } = require('../stt/sonioxAsync');
 
+// Adoption flow message templates (Stage 0–8, all languages)
+const {
+  getStage0Message,
+  getStage0bMessage,
+  getStage1bBillHook,
+  getStage2Message,
+  getStage3Message,
+  getStage5aMessage,
+} = require('./adoptionMessages');
+
+// Bill intent router (intercepts "bill"/"rasid"/"receipt")
+const { handleBillRequest } = require('./billTrigger');
+
 // Udhaar (credit tracking) module — handles before inventory parsing
 const { handleUdhaarMessage } = require('./udhaar');
 
@@ -518,67 +531,14 @@ async function sendOnboardVideoAsync(From, langExact='en') {
 // ---------------------------------------------------------------------------
 async function sendFirstActionPrompt(From, langExact, requestId) {
   try {
-    const PROMPTS = {
-      hi: `नमस्ते! 👋 मैं आपका WhatsApp स्टॉक असिस्टेंट हूं।
+    // [ADOPTION-STAGE-0] 4-line formula: greeting → instruction → example → signal
+    // getStage0Message lives in adoptionMessages.js — covers all 8 languages
+    const msg = getStage0Message(langExact);
 
-बस एक काम करो — अभी बोलो (🎤 voice note) या type करो:
+    // [ADOPTION-STAGE-0b] Schedule 2-hour silent follow-up (one-shot, daytime only)
+    // Only fires if user never sends a first entry. See _scheduleStage0bFollowup below.
+    _scheduleStage0bFollowup(From, langExact);
 
-*"10 Parle-G बिका"*
-
-मैं तुरंत stock update कर दूंगा। कोई app नहीं। ✅`,
-      mr: `नमस्कार! 👋 मी तुमचा WhatsApp स्टॉक असिस्टंट.
-
-फक्त सांगा (🎤 voice note किंवा type):
-
-*"10 Parle-G विकलं"*
-
-मी लगेच update करतो. App नाही. ✅`,
-      gu: `નમસ્તે! 👋 હું તમારો WhatsApp સ્ટૉક આસિસ્ટન્ટ.
-
-ફક્ત (🎤 voice note અથવા type):
-
-*"10 Parle-G વેચ્યા"*
-
-હું તરત update. App નહીં. ✅`,
-      bn: `নমস্কার! 👋 আমি আপনার WhatsApp স্টক অ্যাসিস্ট্যান্ট।
-
-(🎤 voice note বা type):
-
-*"10 Parle-G বিক্রি"*
-
-আমি সঙ্গে সঙ্গে update। App নেই। ✅`,
-      ta: `வணக்கம்! 👋 நான் உங்கள் WhatsApp ஸ்டாக் அசிஸ்டன்ட்.
-
-(🎤 voice note அல்லது type):
-
-*"10 Parle-G விற்றது"*
-
-உடனே update. App இல்லை. ✅`,
-      te: `నమస్కారం! 👋 నేను మీ WhatsApp స్టాక్ అసిస్టెంట్.
-
-(🎤 voice note లేదా type):
-
-*"10 Parle-G అమ్మాను"*
-
-వెంటనే update. App వద్దు. ✅`,
-      kn: `ನಮಸ್ಕಾರ! 👋 ನಾನು WhatsApp ಸ್ಟಾಕ್ ಅಸಿಸ್ಟೆಂಟ್.
-
-(🎤 voice note ಅಥವಾ type):
-
-*"10 Parle-G ಮಾರಿದ್ದೇನೆ"*
-
-ತಕ್ಷಣ update. App ಇಲ್ಲ. ✅`,
-      en: `Hello! 👋 I'm your WhatsApp stock assistant.
-
-Just tell me one thing sold today.
-🎤 voice note or type:
-
-*"10 Parle-G sold"*
-
-I'll update your stock instantly. No app. ✅`,
-    };
-    const baseLang = String(langExact ?? 'en').toLowerCase().split(/[-_]/)[0];
-    const msg = PROMPTS[baseLang] ?? PROMPTS.en;
     if (typeof sendMessageQueued === 'function') {
       await sendMessageQueued(From, msg);
     } else {
@@ -588,6 +548,76 @@ I'll update your stock instantly. No app. ✅`,
   } catch (e) {
     console.warn('[first-action-prompt] failed', e?.message);
   }
+}
+
+// ---------------------------------------------------------------------------
+// [ADOPTION-STAGE-0b] 2-hour silent follow-up scheduler
+// Fires ONCE, 2 hours after Stage 0, daytime only (10am–6pm IST).
+// Cancelled if user sends ANY message in the meantime (checked via gamify).
+// ---------------------------------------------------------------------------
+globalThis._stage0bScheduled = globalThis._stage0bScheduled ?? new Map(); // shopId -> ts
+
+function _scheduleStage0bFollowup(From, langExact) {
+  try {
+    const shopId = String(From).replace('whatsapp:', '');
+    const key = String(shopId);
+
+    // Only schedule once per session (dedup by shopId)
+    if (globalThis._stage0bScheduled.has(key)) return;
+    globalThis._stage0bScheduled.set(key, Date.now());
+
+    const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+
+    setTimeout(async () => {
+      try {
+        // Check if user already sent a first entry — if gs.entries > 0, skip
+        const gs = (() => {
+          try { return (readGamify() ?? {})[key] ?? null; } catch { return null; }
+        })();
+        if (gs && Number(gs.entries ?? 0) > 0) {
+          console.log('[stage0b] user already active — skipping follow-up for', shopId);
+          globalThis._stage0bScheduled.delete(key);
+          return;
+        }
+
+        // Daytime gate: 10am–6pm IST (UTC+5:30 = 04:30–12:30 UTC)
+        const nowUTC  = new Date();
+        const utcH    = nowUTC.getUTCHours();
+        const utcM    = nowUTC.getUTCMinutes();
+        const istMins = utcH * 60 + utcM + 330; // IST offset +330 min
+        const istH    = Math.floor(istMins / 60) % 24;
+        if (istH < 10 || istH >= 18) {
+          console.log('[stage0b] outside daytime window — skipping for', shopId);
+          globalThis._stage0bScheduled.delete(key);
+          return;
+        }
+
+        const msg = getStage0bMessage(langExact);
+        await sendMessageViaAPI(From, msg);
+        console.log('[stage0b] silent follow-up sent to', shopId);
+
+        // Clean up
+        globalThis._stage0bScheduled.delete(key);
+      } catch (e) {
+        console.warn('[stage0b] follow-up failed for', shopId, e?.message);
+        globalThis._stage0bScheduled.delete(key);
+      }
+    }, TWO_HOURS_MS);
+
+    console.log('[stage0b] 2-hour follow-up scheduled for', shopId);
+  } catch (e) {
+    console.warn('[stage0b] schedule error:', e?.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// [ADOPTION-STAGE-0b] Cancel follow-up if user becomes active
+// Call this from any point where user sends their first entry
+// ---------------------------------------------------------------------------
+function _cancelStage0bFollowup(shopId) {
+  try {
+    globalThis._stage0bScheduled?.delete(String(shopId).replace('whatsapp:', ''));
+  } catch (_) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -652,39 +682,18 @@ function scheduleDay1EveningNudge(From, langExact) {
     if (target <= now) target.setUTCDate(target.getUTCDate() + 1);
     const delayMs = target.getTime() - now.getTime();
     const baseLang = String(langExact ?? 'en').toLowerCase().split(/[-_]/)[0];
+    // [ADOPTION-STAGE-3] Vague input explicitly allowed ("3 cheezein biki").
+    // "30 seconds" anchor reduces perceived friction. No guilt. No mention of inactivity.
+    // getStage3Message from adoptionMessages.js covers all 8 languages.
     const MSGS = {
-      hi: `📦 आज की बिक्री कैसी रही?
-
-बस बोल दो — *"5 kg आटा बिका, 2 kg दाल बिका"*
-मैं 1 मिनट में summary बना दूंगा। 🎤`,
-      mr: `📦 आज काय विकलं?
-
-फक्त सांगा — *"5 kg पीठ विकलं, 2 kg डाळ विकलं"*
-मी 1 मिनिटात summary देतो. 🎤`,
-      gu: `📦 આજ શું વેચ્યા?
-
-બસ બોલો — *"5 kg લોટ, 2 kg દાળ"*
-હું 1 મિનિટમાં summary. 🎤`,
-      bn: `📦 আজ কী বিক্রি হল?
-
-শুধু বলুন — *"5 kg আটা, 2 kg ডাল বিক্রি"*
-আমি ১ মিনিটে summary. 🎤`,
-      ta: `📦 இன்று என்ன விற்றீர்கள்?
-
-சொல்லுங்கள் — *"5 kg மாவு, 2 kg பருப்பு"*
-1 நிமிடத்தில் summary. 🎤`,
-      te: `📦 ఈరోజు ఏం అమ్మారు?
-
-చెప్పండి — *"5 kg పిండి, 2 kg పప్పు"*
-1 నిమిషంలో summary. 🎤`,
-      kn: `📦 ಇಂದು ಏನು ಮಾರಿದಿರಿ?
-
-ಹೇಳಿ — *"5 kg ಹಿಟ್ಟು, 2 kg ಬೇಳೆ"*
-1 ನಿಮಿಷದಲ್ಲಿ summary. 🎤`,
-      en: `📦 How did sales go today?
-
-Just tell me — *"5 kg flour sold, 2 kg dal"*
-I'll build your summary in 1 minute. 🎤`,
+      hi: getStage3Message('hi'),
+      mr: getStage3Message('mr'),
+      gu: getStage3Message('gu'),
+      bn: getStage3Message('bn'),
+      ta: getStage3Message('ta'),
+      te: getStage3Message('te'),
+      kn: getStage3Message('kn'),
+      en: getStage3Message('en'),
     };
     const msg = MSGS[baseLang] ?? MSGS.en;
     setTimeout(async () => {
@@ -707,22 +716,82 @@ I'll build your summary in 1 minute. 🎤`,
 // ---------------------------------------------------------------------------
 function scheduleDay2MorningSummary(From, langExact) {
   try {
-    const now = new Date();
+    const now    = new Date();
     const target = new Date(now);
-    // Next day 8:30 AM IST = 03:00 UTC
+    // 8:30 AM IST = 03:00 UTC (IST is UTC+5:30)
     target.setUTCDate(target.getUTCDate() + 1);
     target.setUTCHours(3, 0, 0, 0);
     const delayMs = target.getTime() - now.getTime();
+
     setTimeout(async () => {
       try {
-        await routeQuickQueryRaw('short summary', From, langExact, `day2-morning::${Date.now()}`);
+        const shopId = String(From).replace('whatsapp:', '');
+        console.log('[morning-brief] building for', shopId);
+
+        // ── Pull low-stock items ──────────────────────────────────────────
+        let lowStockItems = [];
+        try {
+          const ls = await getLowStockProducts(shopId);
+          lowStockItems = (Array.isArray(ls) ? ls : (ls?.records ?? []))
+            .slice(0, 3)
+            .map(r => {
+              const f = r.fields ?? r;
+              return {
+                product: String(f.Product ?? f.product ?? 'Item'),
+                qty:     Number(f.Quantity ?? f.quantity ?? 0),
+                unit:    String(f.Units ?? f.unit ?? ''),
+              };
+            });
+        } catch (_) {}
+
+        // ── Pull yesterday's sales total ──────────────────────────────────
+        let salesTotal = 0;
+        try {
+          const yesterday = new Date(Date.now() - 86400_000);
+          const yStart    = new Date(yesterday);
+          yStart.setUTCHours(0, 0, 0, 0);
+          const yEnd      = new Date(yesterday);
+          yEnd.setUTCHours(23, 59, 59, 999);
+          const data      = await getSalesDataForPeriod(shopId, yStart, yEnd);
+          const records   = Array.isArray(data?.records) ? data.records : [];
+          salesTotal = records.reduce((sum, r) => {
+            const f = r.fields ?? r;
+            return sum + Math.abs(Number(f.Quantity ?? 0)) * Number(f.SalePrice ?? 0);
+          }, 0);
+        } catch (_) {}
+
+        // ── Pull shop name if available ───────────────────────────────────
+        let shopName = null;
+        try {
+          const sd = await getShopDetails(shopId);
+          shopName = sd?.shopDetails?.name ?? sd?.name ?? null;
+          if (shopName && String(shopName).toLowerCase() === 'shop name') shopName = null;
+        } catch (_) {}
+
+        // ── Compose and send the Stage 4 message ─────────────────────────
+        const { getStage4Message: _s4 } = require('./adoptionMessages');
+        const morningMsg = _s4({
+          shopName,
+          lowStockItems,
+          salesTotal,
+          langExact: langExact ?? 'en',
+        });
+
+        await sendMessageViaAPI(From, morningMsg, { lang: langExact ?? 'en' });
+        console.log('[morning-brief] sent to', shopId, { lowItems: lowStockItems.length, salesTotal });
+
       } catch (e) {
-        console.warn('[morning-summary] failed', e?.message);
+        console.warn('[morning-brief] failed:', e?.message);
+        // Fallback to generic short summary if our enriched version fails
+        try {
+          await routeQuickQueryRaw('short summary', From, langExact ?? 'en', `day2-morning-fallback::${Date.now()}`);
+        } catch (_) {}
       }
     }, delayMs);
-    console.log(`[morning-summary] scheduled for ${From} in ${Math.round(delayMs / 60000)}min`);
+
+    console.log(`[morning-brief] scheduled for ${From} in ${Math.round(delayMs / 60000)}min`);
   } catch (e) {
-    console.warn('[morning-summary] schedule error', e?.message);
+    console.warn('[morning-brief] schedule error:', e?.message);
   }
 }
 
@@ -4918,103 +4987,27 @@ function getStaticLabel(key, lang) {
 // First onboarding message shown right after trial is auto-activated.
 // Localized for supported languages + *-latn variants.
 // =============================================================================
+// [ADOPTION-STAGE-2] Trial activation — quiet unlock, not announcement.
+// Tone: "ab aur bhi kar sakte ho" — not "congratulations your trial started."
+// Formula: quiet unlock + 2 voice commands + udhaar hook + free tier reassurance.
+// getStage2Message lives in adoptionMessages.js — covers all 8 languages + -latn variants.
 const TRIAL_ACTIVATED_ONBOARDING_TEMPLATES = {
-  en: ({ days }) => [
-    '👋 Welcome to Saamagrii.AI!',
-    '',
-    `🎉 ${days} day trial activated!`,
-    '',
-    'Track stock + expiry + sales on WhatsApp.',
-    '✅ Low-stock alerts • ✅ Expiry reminders • ✅ Sales summary',
-    '',
-    '🆓 Basic inventory (add/update stock + inventory queries) stays FREE even after trial ends.',
-  ].join('\n'),
-
-  hi: ({ days }) => [
-    '👋 Saamagrii.AI में स्वागत है!',
-    '',
-    `🎉 ${days} दिन का ट्रायल एक्टिव हो गया!`,
-    '',
-    'WhatsApp पर स्टॉक + एक्सपायरी + बिक्री ट्रैक करें।',
-    '✅ कम-स्टॉक अलर्ट • ✅ एक्सपायरी रिमाइंडर • ✅ बिक्री सारांश',
-    '',
-    '🆓 Basic inventory (स्टॉक जोड़ना/अपडेट + इन्वेंटरी क्वेरी) ट्रायल के बाद भी FREE रहेगा।',
-  ].join('\n'),
-
-  bn: ({ days }) => [
-    '👋 Saamagrii.AI-এ স্বাগতম!',
-    '',
-    `🎉 ${days} দিনের ট্রায়াল অ্যাক্টিভ হয়েছে!`,
-    '',
-    'WhatsApp-এ স্টক + এক্সপায়ারি + বিক্রি ট্র্যাক করুন।',
-    '✅ কম-স্টক অ্যালার্ট • ✅ এক্সপায়ারি রিমাইন্ডার • ✅ বিক্রির সারাংশ',
-    '',
-    '🆓 Basic inventory (স্টক add/update + ইনভেন্টরি কুয়েরি) ট্রায়ালের পরেও FREE থাকবে।',
-  ].join('\n'),
-
-  gu: ({ days }) => [
-    '👋 Saamagrii.AI માં સ્વાગત છે!',
-    '',
-    `🎉 ${days} દિવસનો ટ્રાયલ એક્ટિવ થયો!`,
-    '',
-    'WhatsApp પર સ્ટોક + એક્સપાયરી + વેચાણ ટ્રેક કરો.',
-    '✅ ઓછો સ્ટોક અલર્ટ • ✅ એક્સપાયરી રિમાઇન્ડર • ✅ વેચાણ સારાંશ',
-    '',
-    '🆓 Basic inventory (સ્ટોક add/update + ઇન્વેન્ટરી ક્વેરી) ટ્રાયલ પછી પણ FREE રહેશે.',
-  ].join('\n'),
-
-  mr: ({ days }) => [
-    '👋 Saamagrii.AI मध्ये स्वागत आहे!',
-    '',
-    `🎉 ${days} दिवसांचा ट्रायल अॅक्टिव झाला!`,
-    '',
-    'WhatsApp वर स्टॉक + एक्सपायरी + विक्री ट्रॅक करा.',
-    '✅ कमी स्टॉक अलर्ट • ✅ एक्सपायरी रिमाइंडर • ✅ विक्री सारांश',
-    '',
-    '🆓 Basic inventory (स्टॉक add/update + इन्व्हेंटरी क्वेरी) ट्रायलनंतरही FREE राहील.',
-  ].join('\n'),
-
-  ta: ({ days }) => [
-    '👋 Saamagrii.AI-க்கு வரவேற்கிறோம்!',
-    '',
-    `🎉 ${days} நாட்கள் ட்ரயல் ஆக்டிவ்!`,
-    '',
-    'WhatsApp-ல் ஸ்டாக் + எக்ஸ்பைரி + விற்பனை ட்ராக் செய்யுங்கள்.',
-    '✅ குறைந்த ஸ்டாக் அலெர்ட் • ✅ எக்ஸ்பைரி ரிமைண்டர் • ✅ விற்பனை சுருக்கம்',
-    '',
-    '🆓 Basic inventory (ஸ்டாக் add/update + inventory query) ட்ரயல் முடிந்த பிறகும் FREE.',
-  ].join('\n'),
-
-  te: ({ days }) => [
-    '👋 Saamagrii.AI కు స్వాగతం!',
-    '',
-    `🎉 ${days} రోజుల ట్రయల్ యాక్టివ్ అయ్యింది!`,
-    '',
-    'WhatsApp లో స్టాక్ + ఎక్స్‌పైరీ + అమ్మకాలు ట్రాక్ చేయండి.',
-    '✅ తక్కువ స్టాక్ అలర్ట్స్ • ✅ ఎక్స్‌పైరీ రిమైండర్స్ • ✅ అమ్మకాల సారాంశం',
-    '',
-    '🆓 Basic inventory (స్టాక్ add/update + inventory query) ట్రయల్ తర్వాత కూడా FREE.',
-  ].join('\n'),
-
-  kn: ({ days }) => [
-    '👋 Saamagrii.AI ಗೆ ಸ್ವಾಗತ!',
-    '',
-    `🎉 ${days} ದಿನಗಳ ಟ್ರಯಲ್ ಆಕ್ಟಿವ್ ಆಗಿದೆ!`,
-    '',
-    'WhatsApp ನಲ್ಲಿ ಸ್ಟಾಕ್ + ಎಕ್ಸ್‌ಪೈರಿ + ಮಾರಾಟ ಟ್ರ್ಯಾಕ್ ಮಾಡಿ.',
-    '✅ ಕಡಿಮೆ ಸ್ಟಾಕ್ ಅಲರ್ಟ್ • ✅ ಎಕ್ಸ್‌ಪೈರಿ ರಿಮೈಂಡರ್ • ✅ ಮಾರಾಟ ಸಾರಾಂಶ',
-    '',
-    '🆓 Basic inventory (ಸ್ಟಾಕ್ add/update + inventory query) ಟ್ರಯಲ್ ಬಳಿಕವೂ FREE.',
-  ].join('\n'),
-
-  // Roman variants fall back to English (single-script policy for -latn outputs)
-  'hi-latn': (p) => TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en(p),
-  'bn-latn': (p) => TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en(p),
-  'gu-latn': (p) => TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en(p),
-  'mr-latn': (p) => TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en(p),
-  'ta-latn': (p) => TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en(p),
-  'te-latn': (p) => TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en(p),
-  'kn-latn': (p) => TRIAL_ACTIVATED_ONBOARDING_TEMPLATES.en(p),
+  en:      ({ days }) => getStage2Message('en', days),
+  hi:      ({ days }) => getStage2Message('hi', days),
+  bn:      ({ days }) => getStage2Message('bn', days),
+  gu:      ({ days }) => getStage2Message('gu', days),
+  mr:      ({ days }) => getStage2Message('mr', days),
+  ta:      ({ days }) => getStage2Message('ta', days),
+  te:      ({ days }) => getStage2Message('te', days),
+  kn:      ({ days }) => getStage2Message('kn', days),
+  // Roman variants fall back to English
+  'hi-latn': (p) => getStage2Message('en', p.days),
+  'bn-latn': (p) => getStage2Message('en', p.days),
+  'gu-latn': (p) => getStage2Message('en', p.days),
+  'mr-latn': (p) => getStage2Message('en', p.days),
+  'ta-latn': (p) => getStage2Message('en', p.days),
+  'te-latn': (p) => getStage2Message('en', p.days),
+  'kn-latn': (p) => getStage2Message('en', p.days),
 };
 
 function composeTrialActivatedOnboardingText(langExact='en', days=TRIAL_DAYS) {
@@ -8083,26 +8076,16 @@ function _isSkipGST(s) {
 async function beginTrialOnboarding(From, lang = 'en') {
   const shopId = shopIdFrom(From);
   // ✅ Always store by shopId (without "whatsapp:") to match DB readers
+  // [ADOPTION-STAGE-5] Step order: name → area → GSTIN
+  //   name first  = personalises entries + bill immediately
+  //   area second = enables low-stock alerts at right time
+  //   GSTIN last  = most formal ask, lowest urgency, easy to skip
   await setUserState(shopId, 'onboarding_trial_capture', { step: 'name', collected: {}, lang });
   try { await saveUserPreference(shopId, lang); } catch {}
-  const NO_FOOTER_MARKER = '<!NO_FOOTER!>';    
-  const askName = await t(NO_FOOTER_MARKER + 'Please share your *Shop Name*.', lang, `trial-onboard-name-${shopId}`);
-    await sendMessageViaAPI(From, askName);
-    // PATCH: Immediately ask for GSTIN in local language (GSTIN stays Latin; NA/Skip in native script)
-    const GSTIN_PROMPT = {
-      en: 'Enter your *GSTIN* (if not available, type *NA* or *skip*).',
-      hi: 'अपना *GSTIN* दर्ज करें (अगर उपलब्ध नहीं है तो *एनए* टाइप करें या *स्किप* करें)।',
-      bn: 'আপনার *GSTIN* লিখুন (না থাকলে *এনএ* লিখুন বা *স্কিপ* করুন)।',
-      ta: 'உங்கள் *GSTIN* ஐ உள்ளிடவும் (இல்லையெனில் *என்ஏ* அல்லது *ஸ்கிப்* எழுதவும்).',
-      te: 'మీ *GSTIN* నమోదు చేయండి (లభ్యం కాకపోతే *ఎన్‌ఏ* లేదా *స్కిప్* టైప్ చేయండి).',
-      kn: 'ನಿಮ್ಮ *GSTIN* ನಮೂದಿಸಿ (ಲಭ್ಯವಿಲ್ಲದಿದ್ದರೆ *ಎನ್‌ಏ* ಅಥವಾ *ಸ್ಕಿಪ್* ಎಂದು ಟೈಪ್ ಮಾಡಿ).',
-      mr: 'आपला *GSTIN* प्रविष्ट करा (उपलब्ध नसेल तर *एनए* टाइप करा किंवा *स्किप* करा).',
-      gu: 'તમારો *GSTIN* દાખલ કરો (ઉપલબ્ધ ન હોય તો *એનએ* લખો અથવા *સ્કિપ* કરો).',
-    };
-    const langExact = String(lang ?? 'en').toLowerCase().replace(/-latn$/, '');
-    const msgGstinRaw = GSTIN_PROMPT[langExact] ?? GSTIN_PROMPT.en;
-    // Avoid t(...) here to keep NA/Skip exactly in native script; still finalize (single-script + numerals)
-    await sendMessageViaAPI(From, finalizeForSend(msgGstinRaw, langExact));
+
+  // Ask for shop name — frame as personalisation benefit (bill + entries)
+  const askName = getStage5aMessage(lang);
+  await sendMessageViaAPI(From, `<!NO_FOOTER!>${askName}`, { lang });
 }
 
 async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = null) {
@@ -8124,32 +8107,31 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
        lang = await checkAndUpdateLanguageSafe(String(text ?? ''), From, currentLang, `trial-onboard-${shopId}`);
      } catch (_) { /* keep incoming lang */ }
   if (step === 'name') {
+    // [ADOPTION-STAGE-5] After name: ask for AREA (enables low-stock alerts, not GSTIN)
     data.name = String(text ?? '').trim();
-    await setUserState(shopId, 'onboarding_trial_capture', { step: 'gstin', collected: data, lang });   
-    // NEW: add NO_CLAMP to preserve Latin tokens (GSTIN/NA) in Hindi output
-       const askGstin = await t(
-         NO_CLAMP_MARKER + NO_FOOTER_MARKER +
-         'Enter your *GSTIN* (type "*NA*" or *skip* if not available).',
-         lang,
-         `trial-onboard-gstin-${shopId}`
-       );
-    await sendMessageViaAPI(From, finalizeForSend(askGstin, lang));
-      try { if (requestId) handledRequests.add(requestId); } catch {}
+    await setUserState(shopId, 'onboarding_trial_capture', { step: 'area', collected: data, lang });
+    const askArea = getStage5bMessage(lang);
+    await sendMessageViaAPI(From, `<!NO_FOOTER!>${askArea}`, { lang });
+    try { if (requestId) handledRequests.add(requestId); } catch {}
+    return true;
+  }
+  if (step === 'area') {
+    // [ADOPTION-STAGE-5] After area: ask for GSTIN (most formal, last, skippable)
+    data.address = String(text ?? '').trim(); // area stored in address field
+    await setUserState(shopId, 'onboarding_trial_capture', { step: 'gstin', collected: data, lang });
+    const askGstin = getStage5cMessage(lang);
+    await sendMessageViaAPI(From, `<!NO_FOOTER!>${askGstin}`, { lang });
+    try { if (requestId) handledRequests.add(requestId); } catch {}
     return true;
   }
   if (step === 'gstin') {
+    // [ADOPTION-STAGE-5] GSTIN received — persist all collected details and finish
     const raw = String(text ?? '').trim();
     data.gstin = _isSkipGST(raw) ? null : raw;
+    // step 'address' check below will handle persistence — re-route to it
+    // by treating gstin step completion the same as address completion
     await setUserState(shopId, 'onboarding_trial_capture', { step: 'address', collected: data, lang });
-    // NEW: add NO_CLAMP to preserve "Address" and any Latin/ASCII parts user may reply with
-       const askAddr = await t(
-         NO_CLAMP_MARKER + NO_FOOTER_MARKER + 'Please share your *Shop Address* (area, city).',
-         lang,
-         `trial-onboard-address-${shopId}`
-       );
-    await sendMessageViaAPI(From, finalizeForSend(askAddr, lang));
-      try { if (requestId) handledRequests.add(requestId); } catch {}
-    return true;
+    // Fall through to step === 'address' below (no return — intentional)
   }
   if (step === 'address') {
     data.address = String(text ?? '').trim();        
@@ -11500,7 +11482,17 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
   console.log(`[sendSaleConfirmationOnce - here] start lang=${detectedLanguage} req=${requestId} from=${From}`);
   await _sendConfirmOnceByBody(From, detectedLanguage, requestId, bodyLoc);
   console.log(`[sendSaleConfirmationOnce] sent confirmation`);  
-    
+
+  // [ADOPTION-STAGE-1b] Bill hook — surfaces bill feature at point of sale
+  // Single line after every sale confirmation. Customer is still at counter.
+  try {
+    const _billHookMsg = getStage1bBillHook(detectedLanguage);
+    // Small delay so confirmation and bill hook appear as separate bubbles
+    setTimeout(() => {
+      sendMessageViaAPI(From, _billHookMsg, { lang: detectedLanguage }).catch(() => {});
+    }, 800);
+  } catch (_) { /* non-blocking */ }
+
   // Cache sale txn for Undo (best-effort)
     try {
       const shopId = shopIdFrom(From);
@@ -19620,11 +19612,61 @@ console.log(`[${requestId}] [6] Parsing updates using AI...`);
           try { updateGamifyState(String(shopId), u?.action ?? 'sold'); } catch (_) {}
         }
         bump48hTxnCountInGamify(String(shopId), okItems);
+
+        // [ADOPTION-STAGE-5] Trigger shop details capture after 2nd confirmed entry.
+        // User has seen the magic moment twice — now they trust us enough.
+        // Only fires once: checks badge 'Stage5Asked' to prevent repeat.
+        try {
+          const _gs = (readGamify() ?? {})[String(shopId)] ?? null;
+          const _entries = Number(_gs?.entries ?? 0);
+          const _alreadyAsked = Array.isArray(_gs?.badges) && _gs.badges.includes('Stage5Asked');
+          const _isActivated = await _isUserActivated(String(shopId)).catch(() => false);
+
+          if (_entries >= 2 && !_alreadyAsked && _isActivated) {
+            // Mark so we never ask again
+            try {
+              const _s5state = readGamify();
+              const _s5gs = _s5state[String(shopId)] ?? {};
+              _s5gs.badges = Array.isArray(_s5gs.badges) ? _s5gs.badges : [];
+              if (!_s5gs.badges.includes('Stage5Asked')) _s5gs.badges.push('Stage5Asked');
+              _s5state[String(shopId)] = _s5gs;
+              writeGamify(_s5state);
+            } catch (_) {}
+
+            // Check if we already have shop name
+            const _shopDeets = await getShopDetails(String(shopId)).catch(() => null);
+            const _hasName = !!(_shopDeets?.shopDetails?.name
+              && String(_shopDeets.shopDetails.name).trim().length > 1
+              && String(_shopDeets.shopDetails.name).toLowerCase() !== 'shop name');
+
+            if (!_hasName) {
+              // Delay 1.5s so inventory confirmation arrives first
+              setTimeout(async () => {
+                try {
+                  const _s5lang = detectedLanguage ?? 'en';
+                  await sendMessageViaAPI(From, getStage5aMessage(_s5lang), { lang: _s5lang });
+                  // Set onboarding state for step-by-step capture
+                  await setUserState(String(shopId), 'onboarding_trial_capture', {
+                    step: 'name',
+                    collected: {},
+                    lang: _s5lang,
+                    trigger: 'stage5_2nd_entry'
+                  });
+                  console.log('[stage5] shop name ask sent to', shopId);
+                } catch (e) {
+                  console.warn('[stage5] ask failed:', e?.message);
+                }
+              }, 1500);
+            }
+          }
+        } catch (_) { /* non-blocking */ }
+
+        // Cancel the Stage 0b follow-up if it was scheduled
+        try { _cancelStage0bFollowup(shopId); } catch (_) {}
       }
     } catch (e) {
       console.warn('[gamify] tracking failed:', e?.message);
     }
-    
       if (allPendingPrice(results)) {
         try {              
         const shopIdLocal = String(from ?? '').replace('whatsapp:', '');
@@ -25056,6 +25098,24 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       return null;
     }
   }
+
+  // ── [BILL] Bill intent routing: intercept before inventory parsing ──────
+  // Triggers on: "bill", "receipt", "rasid", "invoice", "patta" etc.
+  try {
+    // Expose sendMessageViaAPI and sendPDFViaWhatsApp for billTrigger.js
+    if (!globalThis.__sendMessageViaAPI) globalThis.__sendMessageViaAPI = sendMessageViaAPI;
+    if (!globalThis.__sendPDFViaWhatsApp) globalThis.__sendPDFViaWhatsApp = sendPDFViaWhatsApp;
+    if (!globalThis.__setUserState) globalThis.__setUserState = setUserState;
+
+    const _billResult = await handleBillRequest(shopId, From, Body, detectedLanguage, requestId);
+    if (_billResult.handled) {
+      handledRequests.add(requestId);
+      return res.send('<Response></Response>');
+    }
+  } catch (_bErr) {
+    console.warn(`[${requestId}] [bill] handler failed (continuing):`, _bErr?.message);
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   // ── [UDHAAR] Credit tracking: intercept BEFORE sticky/inventory parsing ──────
   // Handles: diya udhaar | liya udhaar | wapas aaya | baaki | hisaab
