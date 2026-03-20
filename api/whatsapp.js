@@ -8958,14 +8958,20 @@ async function activateTrialFlow(From, lang = 'en', opts = {}) {
           await sendMessageViaAPI(From, finalizeForSend(msg, 'en'), { lang: 'en', requestId: opts?.requestId, noCta: true });
         }
         
-    // NEW: Demo onboarding flow (Step 0 + Step A)
-        await _startDemoFlowAfterTrial(From, lang, opts?.requestId);
-    // NEW: Mandatory practice flow for first-time users (runs once).
-    if (!wasChooserEligible) {
-      await _startDemoFlowAfterTrial(From, lang, opts?.requestId);
-      return { success: true, activatedTrial: true, demoStarted: true };
-    }
-        return { success: true, activatedTrial: true, autoFirstMessage: true, demoStarted: true };
+    // [ADOPTION-D2] Demo practice flow SUPPRESSED for real-entry users.
+    //
+    // Why: the user already committed a real transaction to trigger this activation.
+    // Running _startDemoFlowAfterTrial immediately after says: "great, now pretend
+    // to do it again, but fake this time." That is patronising and breaks the spell.
+    //
+    // The demo flow (_startDemoFlowAfterTrial) remains available for users who:
+    //   a) Tap "Demo" on the onboarding quick reply (ONBOARDING_QR_LABELS)
+    //   b) Type "demo" / "demo dekho" / "डेमो" explicitly at any point
+    //
+    // Those paths already route to _startDemoFlowAfterTrial correctly via
+    // handleNewInteraction → demoTokens check (line ~25035).
+    // No change needed there — just stop running it here automatically.
+    return { success: true, activatedTrial: true };
   }
 
   try {
@@ -9009,12 +9015,14 @@ async function activateTrialFlow(From, lang = 'en', opts = {}) {
         await sendMessageViaAPI(From, finalizeForSend(msg, lang), { lang, noCta: true });
 
       try { (globalThis._recentActivations = globalThis._recentActivations ?? new Map()).set(shopId, Date.now()); } catch {}
-      try {
-        await ensureLangTemplates(lang);
-        const sids = getLangSids(lang);
-        if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
-        if (sids?.listPickerSid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.listPickerSid });
-      } catch (_) {}
+
+      // [ADOPTION-D1] Buttons SUPPRESSED at activation.
+      // Reasoning: user just had their magic moment (first real entry + Haan).
+      // Immediately firing "क्या करना चाहेंगे?" + 10-item list kills that moment.
+      // Buttons are EARNED features:
+      //   → 3-button QR fires after 5th entry (contextual prompt in gamify block)
+      //   → 10-item list fires only on explicit "options"/"help"/"aur kya" request
+      // The Stage 2 quiet unlock message (getStage2Message) is sufficient here.
       return { success: true, activatedTrial: true };
     }
     // legacy: capture on trial if toggle != 'paid'
@@ -19663,6 +19671,75 @@ console.log(`[${requestId}] [6] Parsing updates using AI...`);
 
         // Cancel the Stage 0b follow-up if it was scheduled
         try { _cancelStage0bFollowup(shopId); } catch (_) {}
+
+        // [ADOPTION-D3a] After 3rd confirmed entry: contextual single-action suggestion.
+        // One line. One action. Mirrors what they just did, nudges discovery.
+        // Fired exactly once (entry count === 3). Non-blocking.
+        try {
+          const _gs3 = (readGamify() ?? {})[String(shopId)] ?? null;
+          if (Number(_gs3?.entries ?? 0) === 3) {
+            const _HINT3 = {
+              hi: `📊 Aaj ka hisaab dekhna hai? Bolo — *"aaj kitna bika"*`,
+              mr: `📊 आजचा हिशोब बघायचा? सांगा — *"aaj kitna bika"*`,
+              gu: `📊 Aajno hisaab joiyo? Bolo — *"aaj ketlu vechayu"*`,
+              bn: `📊 আজকের হিসাব দেখতে চান? বলুন — *"aaj kitna bika"*`,
+              ta: `📊 இன்றைய கணக்கு வேண்டுமா? சொல்லுங்கள் — *"aaj kitna bika"*`,
+              te: `📊 ఈరోజు లెక్క చూడాలా? చెప్పండి — *"aaj kitna bika"*`,
+              kn: `📊 ಇಂದಿನ ಲೆಕ್ಕ ಬೇಕಾ? ಹೇಳಿ — *"aaj kitna bika"*`,
+              en: `📊 Want today's summary? Say — *"how much sold today"*`,
+            };
+            const _base3 = String(detectedLanguage ?? 'en').toLowerCase().split(/[-_]/)[0];
+            const _hint3msg = _HINT3[_base3] ?? _HINT3.en;
+            // 2s delay — inventory confirmation arrives first, hint follows naturally
+            setTimeout(() => {
+              sendMessageViaAPI(From, _hint3msg, { lang: detectedLanguage }).catch(() => {});
+            }, 2000);
+            console.log('[adoption-d3a] 3rd-entry hint sent to', shopId);
+          }
+        } catch (_) { /* non-blocking */ }
+
+        // [ADOPTION-D3b] After 5th confirmed entry: user has EARNED the 3-button QR.
+        // They've used the tool 5 times — they know what it does.
+        // Show ONLY quickReplySid (3 buttons). NOT the 10-item list picker yet.
+        // The list picker is earned after 10+ entries OR explicit "options"/"help" request.
+        // Fired exactly once (entry count === 5). Non-blocking.
+        try {
+          const _gs5 = (readGamify() ?? {})[String(shopId)] ?? null;
+          const _isActivated5 = await _isUserActivated(String(shopId)).catch(() => false);
+          if (Number(_gs5?.entries ?? 0) === 5 && _isActivated5) {
+            // Short prefix message so the button doesn't appear cold
+            const _INTRO5 = {
+              hi: `बोलते रहो 🎤 — या shortcut use करो:`,
+              mr: `बोलत राहा 🎤 — किंवा shortcut वापरा:`,
+              gu: `Bolto raho 🎤 — ya shortcut vaparo:`,
+              bn: `বলতে থাকুন 🎤 — অথবা shortcut ব্যবহার করুন:`,
+              ta: `பேசுங்கள் 🎤 — அல்லது shortcut பயன்படுத்துங்கள்:`,
+              te: `చెప్పండి 🎤 — లేదా shortcut వాడండి:`,
+              kn: `ಹೇಳುತ್ತಿರಿ 🎤 — ಅಥವಾ shortcut ಬಳಸಿ:`,
+              en: `Keep talking 🎤 — or use a shortcut:`,
+            };
+            const _base5 = String(detectedLanguage ?? 'en').toLowerCase().split(/[-_]/)[0];
+            // 2.5s delay so 3rd-entry hint (if just sent) settles first
+            setTimeout(async () => {
+              try {
+                const _intro5msg = _INTRO5[_base5] ?? _INTRO5.en;
+                await sendMessageViaAPI(From, _intro5msg, { lang: detectedLanguage });
+                // Small gap between text and buttons
+                await new Promise(r => setTimeout(r, 400));
+                await ensureLangTemplates(detectedLanguage ?? 'en');
+                const _sids5 = getLangSids(detectedLanguage ?? 'en');
+                // Only 3-button QR — NOT the 10-item list picker
+                if (_sids5?.quickReplySid) {
+                  await sendContentTemplate({ toWhatsApp: From, contentSid: _sids5.quickReplySid });
+                }
+                console.log('[adoption-d3b] 5th-entry QR sent to', shopId);
+              } catch (e5) {
+                console.warn('[adoption-d3b] 5th-entry QR failed:', e5?.message);
+              }
+            }, 2500);
+          }
+        } catch (_) { /* non-blocking */ }
+
       }
     } catch (e) {
       console.warn('[gamify] tracking failed:', e?.message);
