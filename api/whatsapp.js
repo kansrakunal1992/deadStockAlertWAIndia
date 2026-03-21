@@ -6240,6 +6240,16 @@ const COMMAND_ALIAS_MAP = {
 
     // Stock/Expiry
     'low stock': appendDandaVariants(['स्टॉक कम', 'कम स्टॉक', 'स्टॉक की कमी']),
+    // [GAP-B] Product-specific stock query — "Parle-G ka stock" / "doodh kitna bacha"
+    // These normalize to 'short summary' which triggers getProductTotalQuantity lookup.
+    // Regex keeps it fast; AI not needed for this deterministic pattern.
+    'short summary': [
+      ...(typeof appendDandaVariants === 'function'
+        ? appendDandaVariants(['छोटा सारांश', 'संक्षिप्त सारांश'])
+        : ['छोटा सारांश', 'संक्षिप्त सारांश']),
+      'ka stock', 'kitna bacha', 'kitna stock', 'stock batao', 'stock dikhao',
+      'कितना बचा', 'स्टॉक बताओ', 'स्टॉक दिखाओ', 'कितना स्टॉक है'
+    ],
     'expiring 0': appendDandaVariants([
       'मियाद समाप्त', 'समाप्त स्टॉक', 'एक्सपायर्ड स्टॉक'
     ]),
@@ -8173,52 +8183,29 @@ async function handleTrialOnboardingStep(From, text, lang = 'en', requestId = nu
        
     // ✅ Clear by shopId (safe no-op if your delete uses record id; otherwise add a DB helper to delete by key)
     try { await clearUserState(shopId); } catch {}            
-    // -----------------------------------------------------------------------
-        // Send activation message WITHOUT clamp & WITHOUT footer to avoid truncation
-        // -----------------------------------------------------------------------               
-        const uPkt = displayUnit('packets', lang);
-        const uLtr = displayUnit('ltr',     lang);
-        let msgRaw =
-          `${NO_CLAMP_MARKER}${NO_FOOTER_MARKER}🎉 Trial activated for ${TRIAL_DAYS} days!\n\n` +
-          `First step — record a purchase:\n` +
-          `• Parle-G 10 ${uPkt} @ ₹11/${uPkt}\n` +
-          `• दूध 2 ${uLtr} @ ₹65/${uLtr}\n\n` +
-          `Click on "Record Purchase" button below. Then, Type or speak a voice note; we’ll save the price (only once) if it’s new.`;
-             
-        let msgTranslated = await t(msgRaw, lang, `trial-onboard-done-${shopId}`);              
-        await sendMessageViaAPI(From, finalizeForSend(msgTranslated, lang));                        
-        // Inline actual buttons
-        try {
-          let L = String(lang ?? 'en').toLowerCase();
-          if (L.endsWith('-latn')) L = L.replace(/-latn$/, '');
-          await ensureLangTemplates(L);
-          const sids = getLangSids(L);
-          if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
-          if (sids?.listPickerSid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.listPickerSid });
-        } catch (_) {}
 
-        // NEW: Standalone inventory pre-load tip (post-activation)
-        // Sends a brief line without footer; localized via t(), digits normalized via finalizeForSend().
-        try {
-          const preloadEn =
-            `To pre-load your existing inventory directly into the backend, WhatsApp the Saamagrii.AI support team: ${SUPPORT_WHATSAPP_LINK}`;
-          // Use canonical markers to keep this message standalone (no footer/mode badge).
-          const preloadSrc = NO_FOOTER_MARKER + preloadEn;
-          let preloadMsg = await t(preloadSrc, lang, `trial-preload-info-${shopId}`);
-          await sendMessageViaAPI(From, finalizeForSend(preloadMsg, lang));
-        } catch (e) {
-          console.warn('[trial-onboard] preload info send failed:', e?.message);
-        }
-      try { if (requestId) handledRequests.add(requestId); } catch {}
+    // [GAP-D] Redundant activation message REMOVED.
+    // The Stage 2 quiet unlock (getStage2Message) already fired via activateTrialFlow
+    // when the user first committed their entry. Sending another activation message
+    // here (mid-onboarding capture) is dissonant and duplicates content.
+    //
+    // The quickReplySid + listPickerSid sends are ALSO removed here — consistent
+    // with Patch D1 which removed them from activateTrialFlow.
+    // Buttons are earned: quickReplySid after 5th entry, listPickerSid on explicit request.
+    //
+    // The preload tip (support link) IS kept as a useful, non-duplicated message.
     try {
-      await ensureLangTemplates(lang);
-      const sids = getLangSids(lang);
-      if (sids?.quickReplySid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.quickReplySid });
-      if (sids?.listPickerSid) await sendContentTemplate({ toWhatsApp: shopId, contentSid: sids.listPickerSid });
+      const preloadEn =
+        `To pre-load your existing inventory, WhatsApp the Saamagrii.AI support team: ${SUPPORT_WHATSAPP_LINK}`;
+      const preloadSrc = NO_FOOTER_MARKER + preloadEn;
+      let preloadMsg = await t(preloadSrc, lang, `trial-preload-info-${shopId}`);
+      await sendMessageViaAPI(From, finalizeForSend(preloadMsg, lang));
     } catch (e) {
-      console.warn('[trial-onboard] menu orchestration failed', e?.response?.status, e?.response?.data);
+      console.warn('[trial-onboard] preload info send failed:', e?.message);
     }
+
     try { (globalThis._recentActivations = globalThis._recentActivations ?? new Map()).set(shopId, Date.now()); } catch {}
+    try { if (requestId) handledRequests.add(requestId); } catch {}
     return true;
   }
   return false;
@@ -11511,6 +11498,10 @@ async function sendSaleConfirmationOnce(From, detectedLanguage, requestId, paylo
         product: productRawForDb ?? product ?? productDisplay ?? '',
         quantity: Number(qty ?? 0),
         unit: normalizeUnit ? normalizeUnit(unit) : (unit ?? 'pieces'),
+        // [GAP-A] Store price so billTrigger.js can build accurate invoice
+        pricePerUnit: (pricePerUnit !== null && pricePerUnit !== undefined)
+          ? Number(pricePerUnit)
+          : null,
         compositeKey: generateCompositeKey(
           shopId,
           'sold',
@@ -13985,6 +13976,47 @@ const regexPatterns = {
 
 // Centralized minimal Help (new copy), localized + tagged with footer
 async function sendHelpMinimal(From, lang, requestId) {
+  // [GAP-C] "options", "aur kya", "menu", "kya kya kar sakte ho" →
+  // surface the 3-button QR + list picker so users can discover features.
+  // This is the explicit text path to the menu that Patch D3b earned via entry count.
+  const _optionsTriggers = [
+    'options','menu','kya kya','aur kya','and what','what else','what can',
+    'सब कुछ','और क्या','क्या क्या','मेनू','विकल्प',
+    'aur batao','kya kar sakte','sab kya hai',
+  ];
+  const _bodyLower = String(Body ?? '').trim().toLowerCase();
+  const _isOptionsTrigger = _optionsTriggers.some(t => _bodyLower.includes(t));
+
+  if (_isOptionsTrigger) {
+    // Short intro in user's language, then buttons
+    const _OPTIONS_INTRO = {
+      hi: `यह सब कर सकते हो:`,
+      mr: `हे सगळं करता येतं:`,
+      gu: `આ બધું કરી શકો:`,
+      bn: `এগুলো করতে পারবেন:`,
+      ta: `இவற்றை செய்யலாம்:`,
+      te: `ఇవన్నీ చేయవచ్చు:`,
+      kn: `ಇವನ್ನೆಲ್ಲ ಮಾಡಬಹುದು:`,
+      en: `Here's what you can do:`,
+    };
+    const _base = String(lang ?? 'en').toLowerCase().split(/[-_]/)[0];
+    const _introMsg = _OPTIONS_INTRO[_base] ?? _OPTIONS_INTRO.en;
+    try {
+      await sendMessageViaAPI(From, _introMsg, { lang });
+      await new Promise(r => setTimeout(r, 300));
+      await maybeResendListPicker(From, lang, requestId);
+      await new Promise(r => setTimeout(r, 300));
+      await ensureLangTemplates(lang);
+      const _optSids = getLangSids(lang);
+      if (_optSids?.quickReplySid) {
+        await sendContentTemplate({ toWhatsApp: From, contentSid: _optSids.quickReplySid });
+      }
+    } catch (e) {
+      console.warn('[gap-c] options trigger failed:', e?.message);
+    }
+    return;
+  }
+
   const base = [
     'Help:',
     '• WhatsApp or call: +91-9013283687',
@@ -19679,13 +19711,13 @@ console.log(`[${requestId}] [6] Parsing updates using AI...`);
           const _gs3 = (readGamify() ?? {})[String(shopId)] ?? null;
           if (Number(_gs3?.entries ?? 0) === 3) {
             const _HINT3 = {
-              hi: `📊 Aaj ka hisaab dekhna hai? Bolo — *"aaj kitna bika"*`,
-              mr: `📊 आजचा हिशोब बघायचा? सांगा — *"aaj kitna bika"*`,
-              gu: `📊 Aajno hisaab joiyo? Bolo — *"aaj ketlu vechayu"*`,
-              bn: `📊 আজকের হিসাব দেখতে চান? বলুন — *"aaj kitna bika"*`,
-              ta: `📊 இன்றைய கணக்கு வேண்டுமா? சொல்லுங்கள் — *"aaj kitna bika"*`,
-              te: `📊 ఈరోజు లెక్క చూడాలా? చెప్పండి — *"aaj kitna bika"*`,
-              kn: `📊 ಇಂದಿನ ಲೆಕ್ಕ ಬೇಕಾ? ಹೇಳಿ — *"aaj kitna bika"*`,
+              hi: `📊 आज का हिसाब देखना है? बोलो — *"आज कितना बिका"*`,
+              mr: `📊 आजचा हिशोब बघायचा? सांगा — *"आज किती विकलं"*`,
+              gu: `📊 આજનો હિસાબ જોઈએ? કહો — *"આજ કેટલું વેચ્યું"*`,
+              bn: `📊 আজকের হিসাব দেখতে চান? বলুন — *"আজ কত বিক্রি"*`,
+              ta: `📊 இன்றைய கணக்கு வேண்டுமா? சொல்லுங்கள் — *"இன்று எவ்வளவு விற்றது"*`,
+              te: `📊 ఈరోజు లెక్క చూడాలా? చెప్పండి — *"ఈరోజు ఎంత అమ్మారు"*`,
+              kn: `📊 ಇಂದಿನ ಲೆಕ್ಕ ಬೇಕಾ? ಹೇಳಿ — *"ಇಂದು ಎಷ್ಟು ಮಾರಿದ್ದೇನೆ"*`,
               en: `📊 Want today's summary? Say — *"how much sold today"*`,
             };
             const _base3 = String(detectedLanguage ?? 'en').toLowerCase().split(/[-_]/)[0];
@@ -19709,13 +19741,13 @@ console.log(`[${requestId}] [6] Parsing updates using AI...`);
           if (Number(_gs5?.entries ?? 0) === 5 && _isActivated5) {
             // Short prefix message so the button doesn't appear cold
             const _INTRO5 = {
-              hi: `बोलते रहो 🎤 — या shortcut use करो:`,
-              mr: `बोलत राहा 🎤 — किंवा shortcut वापरा:`,
-              gu: `Bolto raho 🎤 — ya shortcut vaparo:`,
-              bn: `বলতে থাকুন 🎤 — অথবা shortcut ব্যবহার করুন:`,
-              ta: `பேசுங்கள் 🎤 — அல்லது shortcut பயன்படுத்துங்கள்:`,
-              te: `చెప్పండి 🎤 — లేదా shortcut వాడండి:`,
-              kn: `ಹೇಳುತ್ತಿರಿ 🎤 — ಅಥವಾ shortcut ಬಳಸಿ:`,
+              hi: `बोलते रहो 🎤 — या शॉर्टकट इस्तेमाल करो:`,
+              mr: `बोलत राहा 🎤 — किंवा शॉर्टकट वापरा:`,
+              gu: `બોલતા રહો 🎤 — અથવા શૉર્ટકટ વાપરો:`,
+              bn: `বলতে থাকুন 🎤 — অথবা শর্টকাট ব্যবহার করুন:`,
+              ta: `பேசுங்கள் 🎤 — அல்லது குறுக்குவழி பயன்படுத்துங்கள்:`,
+              te: `చెప్పండి 🎤 — లేదా షార్ట్‌కట్ వాడండి:`,
+              kn: `ಹೇಳುತ್ತಿರಿ 🎤 — ಅಥವಾ ಶಾರ್ಟ್‌ಕಟ್ ಬಳಸಿ:`,
               en: `Keep talking 🎤 — or use a shortcut:`,
             };
             const _base5 = String(detectedLanguage ?? 'en').toLowerCase().split(/[-_]/)[0];
