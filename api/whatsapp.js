@@ -7096,7 +7096,7 @@ function localizeQuotedCommands(text, lang) {
   } catch { return text; }
 }
 
-const { sendContentTemplate } = require('./whatsappButtons');
+//const { sendContentTemplate } = require('./whatsappButtons');
 const { ensureLangTemplates, getLangSids } = require('./contentCache');
 
 /**
