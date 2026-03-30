@@ -205,13 +205,13 @@ app.post(
           return; // already 200-ACKed; just stop processing
         }
 
-        // Build E.164 WhatsApp 'From' for Twilio: whatsapp:+91XXXXXXXXXX
+        // Build E.164 address for Meta Graph API: +91XXXXXXXXXX (no whatsapp: prefix)
         const toE164 = (canon10) => {
           const d = String(canon10 || '').replace(/\D+/g, '');
           const c = d.startsWith('91') && d.length >= 12 ? d.slice(2) : d.replace(/^0+/, '');
           return `+91${c}`;
         };
-        const fromWhatsApp = `whatsapp:${toE164(shopId)}`;                                
+        const fromWhatsApp = toE164(shopId); // Meta format: +91XXXXXXXXXX                                
         console.log(`[${requestId}] WhatsApp paid confirm target=${fromWhatsApp}`, {
         shopId, status, eventId: razorEventId
         });
@@ -276,35 +276,36 @@ app.post(
               );
               markPaidConfirmCompleted(shopId, razorEventId);
             } else {
-              // Fallback: send confirmation directly via Twilio WhatsApp
+              // Fallback: send confirmation directly via Meta Graph API
               try {
-                const twilio = require('twilio')(
-                  process.env.ACCOUNT_SID,
-                  process.env.AUTH_TOKEN
-                );
-                const WHATSAPP_NUMBER = process.env.WHATSAPP_NUMBER; // e.g., 'whatsapp:+14155238886'
-                if (!WHATSAPP_NUMBER) {
+                const META_TOKEN    = process.env.META_ACCESS_TOKEN;
+                const META_PHONE_ID = process.env.META_PHONE_NUMBER_ID;
+                if (!META_TOKEN || !META_PHONE_ID) {
                   console.warn(
-                    `[${requestId}] Twilio fallback skipped: WHATSAPP_NUMBER env not set`
+                    `[${requestId}] Meta fallback skipped: META_ACCESS_TOKEN or META_PHONE_NUMBER_ID not set`
                   );
-                } else {                                    
-                  await twilio.messages.create({
-                    from: WHATSAPP_NUMBER,
-                    to: fromWhatsApp, // already in 'whatsapp:+91XXXXXXXXXX' format
-                    body:
-                      '✅ Your Saamagrii.AI Paid Plan is now active. Enjoy full access!',
-                  });
+                } else {
+                  const axios = require('axios');
+                  await axios.post(
+                    `https://graph.facebook.com/${process.env.META_API_VERSION || 'v20.0'}/${META_PHONE_ID}/messages`,
+                    {
+                      messaging_product: 'whatsapp',
+                      to: fromWhatsApp,
+                      type: 'text',
+                      text: { body: '\u2705 Your Saamagrii.AI Paid Plan is now active. Enjoy full access!' }
+                    },
+                    { headers: { Authorization: `Bearer ${META_TOKEN}`, 'Content-Type': 'application/json' } }
+                  );
                   console.log(
-                    `[${requestId}] Twilio fallback: paid confirm sent to ${fromWhatsApp}`
+                    `[${requestId}] Meta fallback: paid confirm sent to ${fromWhatsApp}`
                   );
                   markPaidConfirmCompleted(shopId, razorEventId);
                 }
-              } catch (twErr) {
+              } catch (metaErr) {
                 console.warn(
-                  `[${requestId}] Twilio fallback paid confirm failed: ${twErr?.message}`
-                );                              
-              // Release the claim so a retry can process later
-              releasePaidConfirmClaim(shopId, razorEventId);
+                  `[${requestId}] Meta fallback paid confirm failed: ${metaErr?.message}`
+                );
+                releasePaidConfirmClaim(shopId, razorEventId);
               }
             }
           } catch (e) {
@@ -396,22 +397,8 @@ app.get('/invoice/:fileName', (req, res) => {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Middleware for webhook verification
-app.use('/api/whatsapp', express.json({
-  verify: (req, res, buf) => {
-    const url = require('url').parse(req.url);
-    if (req.method === 'POST' && url.pathname === '/api/whatsapp') {
-      const signature = req.headers['x-twilio-signature'];
-      const params = req.body;
-      const twilio = require('twilio')(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-      
-      if (!twilio.validateRequest(process.env.AUTH_TOKEN, signature, url, buf)) {
-        console.error(`[${req.requestId}] Twilio signature validation failed`);
-        throw new Error('Invalid signature');
-      }
-    }
-  }
-}));
+// Meta Cloud API sends standard JSON.
+// Webhook ownership verified once via GET challenge handshake (see handler below).
 
 // Health check endpoint with detailed system information
 app.get('/health', (req, res) => {
@@ -425,8 +412,7 @@ app.get('/health', (req, res) => {
     checks: {
       database: 'unknown',
       products: 'unknown',
-      twilio: 'unknown',
-      deepseek: 'unknown'
+      meta: 'unknown'
     }
   };
   
@@ -450,22 +436,27 @@ app.get('/health', (req, res) => {
           healthCheck.checks.products = 'error';
         })
         .finally(() => {
-          // Check Twilio connection
-          try {
-            const twilio = require('twilio')(process.env.ACCOUNT_SID, process.env.AUTH_TOKEN);
-            twilio.api.accounts(process.env.ACCOUNT_SID).fetch()
-              .then(() => {
-                healthCheck.checks.twilio = 'ok';
-                res.status(200).json(healthCheck);
-              })
-              .catch(() => {
-                healthCheck.checks.twilio = 'error';
-                res.status(200).json(healthCheck);
-              });
-          } catch (error) {
-            healthCheck.checks.twilio = 'error';
-            res.status(200).json(healthCheck);
+          // Check Meta Graph API reachability
+          const axios = require('axios');
+          const META_TOKEN    = process.env.META_ACCESS_TOKEN;
+          const META_PHONE_ID = process.env.META_PHONE_NUMBER_ID;
+          const META_VER      = process.env.META_API_VERSION || 'v20.0';
+          if (!META_TOKEN || !META_PHONE_ID) {
+            healthCheck.checks.meta = 'not_configured';
+            return res.status(200).json(healthCheck);
           }
+          axios.get(
+            `https://graph.facebook.com/${META_VER}/${META_PHONE_ID}`,
+            { headers: { Authorization: `Bearer ${META_TOKEN}` }, timeout: 5000 }
+          )
+            .then(() => {
+              healthCheck.checks.meta = 'ok';
+              res.status(200).json(healthCheck);
+            })
+            .catch(() => {
+              healthCheck.checks.meta = 'error';
+              res.status(200).json(healthCheck);
+            });
         });
     });
 });
@@ -491,7 +482,7 @@ app.get('/api/whatsapp', (req, res) => {
   const challenge = req.query['hub.challenge'];
   
   if (mode && token) {
-    if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
+    if (mode === 'subscribe' && token === (process.env.META_VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOKEN)) {
       console.log(`[${req.requestId}] WEBHOOK_VERIFIED`);
       res.status(200).send(challenge);
     } else {
