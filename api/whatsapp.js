@@ -4,7 +4,7 @@ const twilio = require('twilio'); // REQUIRED for TwiML usage [twilio-node docs]
 const client = require('../twilioClient'); // from /root/api → ../twilioClient.js
 // Soniox async transcription helper (server-side file transcription; no streaming)
 const { transcribeFileWithSoniox } = require('../stt/sonioxAsync');
-
+const VERIFY_TOKEN = "myverify123";
 // Adoption flow message templates (Stage 0–8, all languages)
 const {
   getStage0Message,
