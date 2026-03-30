@@ -13338,12 +13338,12 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
 // DB-backed memory helpers (Airtable via database.js)
 const { appendTurn, getRecentTurns, inferTopic } = require('../database');
 
-const {
-  BUSINESS_TIPS_EN,
-  startEngagementTips,
-  stopEngagementTips,
-  withEngagementTips
-} = require('./engagementTips');
+//const {
+//  BUSINESS_TIPS_EN,
+//  startEngagementTips,
+//  stopEngagementTips,
+//  withEngagementTips
+//} = require('./engagementTips');
 
 // ===== Inactivity Nudge Config & Tracker =====
 const NUDGE_OFF = String(process.env.NUDGE_OFF ?? '0').toLowerCase() === '1';
