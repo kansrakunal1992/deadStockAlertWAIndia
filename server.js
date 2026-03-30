@@ -183,16 +183,6 @@ app.post(
            payload?.event ||
            // fallback if header missing
            crypto.createHash('sha256').update(rawBody).digest('hex'); // last resort: body hash
-         // PATCH: Source idempotency at the event level (persisted key; returns early if seen)
-         if (typeof redis !== 'undefined' && razorEventId) {
-           const processedKey = `evt:${razorEventId}`;
-           if (await redis.get(processedKey)) {
-             console.log(`[${requestId}] duplicate eventId; skipping downstream`, { razorEventId });
-             return;
-           }
-           // Keep for 7 days; enough for gateway retries
-           await redis.set(processedKey, '1', { NX: true, PX: 7 * 24 * 60 * 60 * 1000 });
-         }
 
         const buyerPhone = String(entity.contact || '').trim(); // payer-entered phone
 
@@ -272,10 +262,7 @@ app.post(
           }
                                             
           // Non-blocking WhatsApp confirmation (send now; mark completion AFTER success)
-             const lockKey = `lock:paid-confirm:${shopId}`;
-             const gotLock = (typeof redis !== 'undefined')
-               ? await redis.set(lockKey, '1', { NX: true, PX: 15000 })
-               : true; // if Redis not available, proceed
+             const gotLock = true; // paidTracker handles idempotency
              if (!gotLock) {
                console.log(`[${requestId}] [paid-confirm] skipped due to lock`, { shopId });
                return;
@@ -327,9 +314,6 @@ app.post(
           // Release the claim so the next delivery or manual retry can process
           releasePaidConfirmClaim(shopId, razorEventId);
           } finally {
-             if (typeof redis !== 'undefined') {
-               try { await redis.del(lockKey); } catch {}
-             }
            }
         } else {
           console.log(
@@ -582,6 +566,41 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
+// Get products needing price update
+app.get('/api/products/needing-update', async (req, res) => {
+  const requestId = req.requestId;
+  
+  try {
+    console.log(`[${requestId}] Getting products needing price update`);
+           
+    // ===== [PATCH:PRICES-SHOP-SCOPE-SERVER-001] BEGIN =====
+        // Optional shop scoping via ?shopId=whatsapp:+91XXXXXXXXXX or +91XXXXXXXXXX or 10-digit
+        const rawShopId = (req.query.shopId ?? '').toString().trim();
+        const canon = s => {
+          const d = String(s ?? '').replace(/\D+/g, '');
+          return d.startsWith('91') && d.length >= 12 ? d.slice(2) : d;
+        };
+        const shopId = rawShopId ? `+91${canon(rawShopId)}` : null;
+        const products = await getProductsNeedingPriceUpdate(shopId);
+        // ===== [PATCH:PRICES-SHOP-SCOPE-SERVER-001] END =====
+    
+    res.status(200).json({
+      success: true,
+      count: products.length,
+      products: products,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error(`[${requestId}] Error getting products needing update:`, error.message);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get products needing update',
+      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+    });
+  }
+});
+
+
 // Get single product by name
 app.get('/api/products/:name', async (req, res) => {
   const requestId = req.requestId;
@@ -710,40 +729,6 @@ app.put('/api/products/:id/price', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to update product price',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
-
-// Get products needing price update
-app.get('/api/products/needing-update', async (req, res) => {
-  const requestId = req.requestId;
-  
-  try {
-    console.log(`[${requestId}] Getting products needing price update`);
-           
-    // ===== [PATCH:PRICES-SHOP-SCOPE-SERVER-001] BEGIN =====
-        // Optional shop scoping via ?shopId=whatsapp:+91XXXXXXXXXX or +91XXXXXXXXXX or 10-digit
-        const rawShopId = (req.query.shopId ?? '').toString().trim();
-        const canon = s => {
-          const d = String(s ?? '').replace(/\D+/g, '');
-          return d.startsWith('91') && d.length >= 12 ? d.slice(2) : d;
-        };
-        const shopId = rawShopId ? `+91${canon(rawShopId)}` : null;
-        const products = await getProductsNeedingPriceUpdate(shopId);
-        // ===== [PATCH:PRICES-SHOP-SCOPE-SERVER-001] END =====
-    
-    res.status(200).json({
-      success: true,
-      count: products.length,
-      products: products,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error(`[${requestId}] Error getting products needing update:`, error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get products needing update',
       message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
   }
@@ -1200,9 +1185,9 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 // Finds trials expiring within next 24 hours, sends personalized Stage 8 message.
 // Message includes: real entry count, bill count, top udhaar entry by name.
 // ─────────────────────────────────────────────────────────────────────────────
-cron.schedule('30 11 * * *', () => {
-  // 11:30 UTC = 5:00 PM IST (UTC+5:30)
-  console.log('[trial-end-cron] Running trial ending reminder job at 5 PM IST');
+cron.schedule('30 17 * * *', () => {
+  // 17:30 IST = 5:30 PM IST (timezone: Asia/Kolkata set below)
+  console.log('[trial-end-cron] Running trial ending reminder job at 5:30 PM IST');
 
   runTrialEndingReminders()
     .then(results => {
