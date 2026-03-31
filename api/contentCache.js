@@ -43,7 +43,7 @@ const UNDO_CORRECTION_LABELS = {
 };
 
 if (!ACCOUNT_SID || !AUTH_TOKEN) {
-   throw new Error('Missing ACCOUNT_SID or AUTH_TOKEN');
+   console.warn('[contentCache] No Twilio creds -- Content API disabled (Meta mode)');
  }
 
 async function createUndoCorrectionCTAForLang(lang) {
@@ -642,6 +642,7 @@ async function createPaidConfirmCTAForLang(lang) {
 const sidsByLang = new Map();
 
 async function ensureLangTemplates(lang) {
+  return getLangSids(lang);
 console.log(`[contentCache] ensureLangTemplates(lang=${lang})`);
 const language = normalizeLangForContent(lang);
   // Fast path with TTL
@@ -696,9 +697,14 @@ const language = normalizeLangForContent(lang);
 }
 
 function getLangSids(lang) {  
- const language = normalizeLangForContent(lang);
-   // Prefer cache; if not present, return nulls rather than force creation here.
-   // The caller should have invoked ensureLangTemplates(language) first.
+   return {
+     quickReplySid: null, listPickerSid: null, trialCtaSid: null,
+     paidCtaSid: null, paidConfirmSid: null, onboardingQrSid: null,
+     correctionUndoSid: null, demoPurchaseSid: null, demoAddProductSid: null,
+     existingProductModeQrSid: null, demoPractice1Sid: null,
+     demoPractice2Sid: null, demoPractice3Sid: null
+   };
+   const language = normalizeLangForContent(lang);
    return sidsByLang.get(language) || {
      quickReplySid : null,
      listPickerSid : null,
