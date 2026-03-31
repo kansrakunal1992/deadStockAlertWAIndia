@@ -5,6 +5,7 @@ const client = require('../twilioClient'); // from /root/api → ../twilioClient
 // Soniox async transcription helper (server-side file transcription; no streaming)
 const { transcribeFileWithSoniox } = require('../stt/sonioxAsync');
 const VERIFY_TOKEN = "myverify123";
+const metaClient = require('../lib/metaClient');
 // Adoption flow message templates (Stage 0–8, all languages)
 const {
   getStage0Message,
@@ -10452,9 +10453,12 @@ async function sendUndoCTAQuickReply(From, lang = 'en', requestId = '') {
     // 4) Instrumentation
     console.log(`[undoCTA] lang=${lang} to=${toWa} route=${route} msid=${msid || '(none)'} from=${fromEnv || '(none)'} contentSid=${correctionUndoSid} req=${requestId}`);
 
-    // 5) Send via Messages API
-    const resp = await client.messages.create(params);
-    console.log(`[undoCTA] sent OK: ${resp?.sid || '(no sid)'} req=${requestId}`);
+    // 5) Send via Meta Graph API (plain text fallback -- Content SIDs not supported on Meta)
+    const toPlain = String(toWa).replace('whatsapp:', '');
+    const undoBody = String(params && params.body ? params.body : 'Galti? Undo karne ke liye likhen: UNDO');
+    const resp = await metaClient.sendTextMessage(toPlain, undoBody);
+    const undoId = (resp && resp.messages && resp.messages[0]) ? resp.messages[0].id : '(meta-ok)';
+    console.log(`[undoCTA] sent via Meta. ID: ${undoId} req=${requestId}`);
     return true;
   } catch (e) {
     console.warn('[undoCTA] send failed:', e?.message);
@@ -19981,7 +19985,7 @@ catch (error) {
 
 // Function to confirm transcription with user
 async function confirmTranscript(transcript, from, detectedLanguage, requestId) {
-  const response = new twilio.twiml.MessagingResponse();
+  const response = {}; // Meta uses plain 200 JSON, not TwiML
   await sendSystemMessage(
     `I heard: "${transcript}". Is this correct? You can reply with "yes" or "no", either by voice or text.`,
     from,
@@ -19999,7 +20003,7 @@ async function confirmTranscript(transcript, from, detectedLanguage, requestId) 
 
 // Function to confirm product with user
 async function confirmProduct(update, from, detectedLanguage, requestId) {
-  const response = new twilio.twiml.MessagingResponse();
+  const response = {}; // Meta uses plain 200 JSON, not TwiML
   await sendSystemMessage(
   `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
 Is this correct?  
@@ -20435,22 +20439,12 @@ try {
 }
 
 // Audio Processing Functions
-async function downloadAudio(url) {
-  console.log('[1] Downloading audio from:', url);
-  const { data } = await axios.get(url, {
-    responseType: 'arraybuffer',
-    timeout: 5000,
-    auth: {
-      username: process.env.ACCOUNT_SID,
-      password: process.env.AUTH_TOKEN
-    },
-    headers: {
-      'User-Agent': 'WhatsApp-Business-Automation/1.0'
-    }
-  });
-  const hash = crypto.createHash('md5').update(data).digest('hex');
-  console.log(`[1] Audio downloaded, size: ${data.length} bytes, MD5: ${hash}`);
-  return data;
+async function downloadAudio(urlOrMetaId) {
+  console.log('[1] Downloading audio:', String(urlOrMetaId).slice(0, 80));
+  const buffer = await metaClient.downloadMetaMedia(urlOrMetaId);
+  const hash = crypto.createHash('md5').update(buffer).digest('hex');
+  console.log(`[1] Audio downloaded, size: ${buffer.length} bytes, MD5: ${hash}`);
+  return buffer;
 }
 
 async function convertToFLAC(oggBuffer) {
@@ -20726,12 +20720,9 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
         }
       } catch (_) {}
 
-      const message = await client.messages.create({
-        body: finalText,
-        from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: formattedTo
-      });
-      console.log(`[sendMessageViaAPI] Message sent successfully. SID: ${message.sid}`);
+      const message = await metaClient.sendTextMessage(formattedTo, finalText);
+      const msgSid = (message && message.messages && message.messages[0]) ? message.messages[0].id : '(meta-ok)';
+      console.log(`[sendMessageViaAPI] Sent via Meta. ID: ${msgSid}`);
 
       // Undo CTA emit‑only (pre‑armed at DB commit; no text parsing / no reqId coupling)
       try {                
@@ -20797,13 +20788,10 @@ async function sendMessageViaAPI(to, body, opts /* optional: forwarded to tagWit
       } catch (_) {}
 
       console.log(`[sendMessageViaAPI] Sending part ${i + 1}/${final.length} (${text.length} chars)`);
-      const message = await client.messages.create({
-        body: text,
-        from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: formattedTo
-      });
-      messageSids.push(message.sid);
-      console.log(`[sendMessageViaAPI] Part ${i + 1} sent successfully. SID: ${message.sid}`);
+      const message = await metaClient.sendTextMessage(formattedTo, text);
+      const partId = (message && message.messages && message.messages[0]) ? message.messages[0].id : '(meta-ok)';
+      messageSids.push(partId);
+      console.log(`[sendMessageViaAPI] Part ${i + 1} sent via Meta. ID: ${partId}`);
 
       // Undo CTA for multipart confirmations (same emit‑only; still suppressed for aggregates)
       try {        
@@ -22103,7 +22091,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
             handledRequests.add(requestId);
             await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
             const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
-            res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
+            if (!res.headersSent) res.status(200).json({ status: 'ok' }); safeTrackResponseTime(requestStart, requestId);
             return;
           }
           handledRequests.add(requestId);
@@ -22346,11 +22334,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
       // Check if the transcript contains batch selection keywords
       if (isBatchSelectionResponse(cleanTranscript)) {
         // Send follow-up message via Twilio API
-        await client.messages.create({
-          body: 'Processing your batch selection...',
-          from: process.env.TWILIO_WHATSAPP_NUMBER,
-          to: From
-        });
+        await metaClient.sendTextMessage(String(From).replace('whatsapp:', ''), 'Processing your batch selection...');
         await handleBatchSelectionResponse(cleanTranscript, From, new twilio.twiml.MessagingResponse(), requestId, conversationState.language);
         return;
       }
@@ -22389,11 +22373,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
         messageBody = "Please confirm the transcription.";
       }
       
-      await client.messages.create({
-        body: messageBody,
-        from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: From
-      });
+      await metaClient.sendTextMessage(String(From).replace('whatsapp:', ''), messageBody);
       try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}
       return;
     } else {
@@ -22438,11 +22418,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
             messageBody = "Please confirm the product update.";
           }
           
-          await client.messages.create({
-            body: messageBody,
-            from: process.env.TWILIO_WHATSAPP_NUMBER,
-            to: From
-          });
+          await metaClient.sendTextMessage(String(From).replace('whatsapp:', ''), messageBody);
           try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(cleanTranscript) }); } catch (_) {}
           return;
         }
@@ -22468,11 +22444,7 @@ async function processVoiceMessageAsync(MediaUrl0, From, requestId, conversation
               console.error(`[${requestId}] Error extracting message body:`, error);
               messageBody = "Processing complete.";
             }
-            return client.messages.create({
-              body: messageBody,
-              from: process.env.TWILIO_WHATSAPP_NUMBER,
-              to: From
-            });
+            return metaClient.sendTextMessage(String(From).replace('whatsapp:', ''), messageBody);
           },
           toString: () => '<Response><Message>Processing complete</Message></Response>'
         };
@@ -22644,11 +22616,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
       }
       
       // Send correction message via API
-      await client.messages.create({
-        body: correctionMessage,
-        from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: From
-      });
+      await metaClient.sendTextMessage(String(From).replace('whatsapp:', ''), correctionMessage);
       
       return;
     }      
@@ -22752,11 +22720,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         if (userPreference !== 'voice') {
           const greetingMessage = greetingMessages[greetingLang] || greetingMessages['en'];
           // Send via Twilio API
-          await client.messages.create({
-            body: greetingMessage,
-            from: process.env.TWILIO_WHATSAPP_NUMBER,
-            to: From
-          });
+          await metaClient.sendTextMessage(String(From).replace('whatsapp:', ''), greetingMessage);
           return;
         }
         
@@ -22774,11 +22738,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         
         const welcomeMessage = welcomeMessages[greetingLang] || welcomeMessages['en'];
         // Send via Twilio API
-        await client.messages.create({
-          body: welcomeMessage,
-          from: process.env.TWILIO_WHATSAPP_NUMBER,
-          to: From
-        });
+        await metaClient.sendTextMessage(String(From).replace('whatsapp:', ''), welcomeMessage);
         return;
       }
     }
@@ -23025,7 +22985,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
                 handledRequests.add(requestId);
                 await sendDemoVideoAndButtons(From, detectedLanguage, `${requestId}::demo`);
                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
-                res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
+                if (!res.headersSent) res.status(200).json({ status: 'ok' }); safeTrackResponseTime(requestStart, requestId);
                 return;
               }
           handledRequests.add(requestId);                     
@@ -23328,11 +23288,7 @@ async function processTextMessageAsync(Body, From, requestId, conversationState)
         messageBody = "Please confirm the product update.";
       }
       
-      await client.messages.create({
-        body: messageBody,
-        from: process.env.TWILIO_WHATSAPP_NUMBER,
-        to: From
-      });
+      await metaClient.sendTextMessage(String(From).replace('whatsapp:', ''), messageBody);
       try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: isStartTrialIntent(Body) }); } catch (_) {}
       return;
     }
@@ -23445,11 +23401,20 @@ function logAiFirstDecision(reqId, stage, details = {}) {
 // Main handler (exported as default). We attach helper functions below.
  const whatsappHandler = async (req, res) => {
   const requestStart = Date.now();
-  const response = new twilio.twiml.MessagingResponse();
+  const response = {}; // Meta uses plain 200 JSON, not TwiML
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;    
   // STEP 2: single-response guard for the webhook
   const resp = makeSafeResponder(res);
   try { cleanupCaches(); } catch (_) {}
+
+  // Reshape Meta Cloud API JSON into Twilio-style flat fields
+  try { metaClient.normalizeMetaRequest(req); } catch (_) {}
+
+  // Status updates (read receipts) have empty From -- ACK and return
+  if (req.body && req.body._isMetaPayload && !req.body.From) {
+    if (!res.headersSent) res.sendStatus(200);
+    return;
+  }
 
   // --- Extract inbound fields early (so helpers can use them) ---
   let Body =
@@ -23458,6 +23423,10 @@ function logAiFirstDecision(reqId, stage, details = {}) {
     (req.body && (req.body.From || req.body.from)) ||
     (req.body && req.body.WaId ? `whatsapp:${req.body.WaId}` : '');
   const shopId = fromToShopId(From);
+
+  if (req.body && req.body._metaMessageId) {
+    metaClient.markRead(req.body._metaMessageId).catch(() => {});
+  }
   
   // =====================================================================
   // ULTRA-EARLY HANDLING (fast exits)
@@ -23472,10 +23441,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
 
       // Respond immediately to Twilio (fast webhook)
       try {
-        const twiml = new twilio.twiml.MessagingResponse();
-        twiml.message('');
-        if (!res.headersSent) res.type('text/xml');
-        resp.safeSend(200, twiml.toString());
+        if (!res.headersSent) res.status(200).json({ status: 'ok' });
       } catch (_) {
         resp.safeSend(200, '');
       }
@@ -23504,7 +23470,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message('');
           if (!res.headersSent) res.type('text/xml');
-          resp.safeSend(200, twiml.toString());
+          if (!res.headersSent) res.status(200).json({ status: 'ok' });
         } catch (_) {
           resp.safeSend(200, '');
         }
@@ -23665,7 +23631,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
       const twiml = new twilio.twiml.MessagingResponse();
       twiml.message('');
       res.type('text/xml');
-      resp.safeSend(200, twiml.toString());
+      if (!res.headersSent) res.status(200).json({ status: 'ok' });
       safeTrackResponseTime(requestStart, requestId);
       return; // EARLY EXIT: do not continue to text/interactive flow
     }
@@ -23689,7 +23655,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message(''); // quiet ack; we intentionally ignore noise
           res.type('text/xml');
-          resp.safeSend(200, twiml.toString());
+          if (!res.headersSent) res.status(200).json({ status: 'ok' });
           safeTrackResponseTime(requestStart, requestId);
           return;
         }
@@ -23713,7 +23679,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
         const twiml = new twilio.twiml.MessagingResponse();
         twiml.message('');                
         res.type('text/xml');
-        resp.safeSend(200, twiml.toString());
+        if (!res.headersSent) res.status(200).json({ status: 'ok' });
         safeTrackResponseTime(requestStart, requestId);
         return;
       }
@@ -23752,7 +23718,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
           try { await maybeShowPaidCTAAfterInteraction(From, detectedLanguage, { trialIntentNow: true }); } catch {}
           handledRequests.add(requestId);
           const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
-          res.type('text/xml'); resp.safeSend(200, twiml.toString());
+          if (!res.headersSent) res.status(200).json({ status: 'ok' });
           safeTrackResponseTime(requestStart, requestId);
           return; // consume this turn
         }
@@ -23776,7 +23742,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
                    await maybeResendListPicker(From, langForUi, requestId);
                  } catch (_) { /* best effort */ }
                  const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
-                 res.type('text/xml'); resp.safeSend(200, twiml.toString());
+                 if (!res.headersSent) res.status(200).json({ status: 'ok' });
                  safeTrackResponseTime(requestStart, requestId);
                  return; // early exit (reply sent via API)
                }
@@ -23797,7 +23763,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
               // Minimal TwiML ack; Content/PM API already replied
               const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
               res.type('text/xml');
-              resp.safeSend(200, twiml.toString());
+              if (!res.headersSent) res.status(200).json({ status: 'ok' });
               safeTrackResponseTime(requestStart, requestId);
               return;
             }
@@ -23821,7 +23787,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message('');
           res.type('text/xml');
-          resp.safeSend(200, twiml.toString());
+          if (!res.headersSent) res.status(200).json({ status: 'ok' });
           safeTrackResponseTime(requestStart, requestId);
           return;
         }
@@ -23846,7 +23812,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message('');
           res.type('text/xml');
-          resp.safeSend(200, twiml.toString());
+          if (!res.headersSent) res.status(200).json({ status: 'ok' });
           safeTrackResponseTime(requestStart, requestId);
           return;
         }
@@ -23884,7 +23850,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
            const twiml = new twilio.twiml.MessagingResponse();
            twiml.message('');
            res.type('text/xml');
-           resp.safeSend(200, twiml.toString());
+           if (!res.headersSent) res.status(200).json({ status: 'ok' });
            safeTrackResponseTime(requestStart, requestId);
            return;
          }
@@ -23910,7 +23876,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
          const twiml = new twilio.twiml.MessagingResponse();
          twiml.message('');
          res.type('text/xml');
-         resp.safeSend(200, twiml.toString());
+         if (!res.headersSent) res.status(200).json({ status: 'ok' });
          safeTrackResponseTime(requestStart, requestId);
          return;
        }
@@ -23921,7 +23887,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
                 handledRequests.add(requestId);
                 await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
-                res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
+                if (!res.headersSent) res.status(200).json({ status: 'ok' }); safeTrackResponseTime(requestStart, requestId);
                 return;
               }                
         const normCmd = String(orch.normalizedCommand).trim().toLowerCase();
@@ -23929,7 +23895,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
            if (normCmd === 'full summary') {
              // EARLY ACK: heavy command → ack TwiML immediately, send in background
              const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
-             res.type('text/xml'); resp.safeSend(200, twiml.toString());
+             if (!res.headersSent) res.status(200).json({ status: 'ok' });
              try {
                inBackground('qq-full-summary', async () => {
                  await handleQuickQueryEN('full summary', From, langPinned, `${requestId}::ai-norm`);
@@ -23956,7 +23922,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
          const twiml = new twilio.twiml.MessagingResponse();
          twiml.message('');
          res.type('text/xml');
-         resp.safeSend(200, twiml.toString());
+         if (!res.headersSent) res.status(200).json({ status: 'ok' });
          safeTrackResponseTime(requestStart, requestId);
          return;
        }
@@ -23994,7 +23960,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
         const twiml = new twilio.twiml.MessagingResponse();
         twiml.message('');                
         res.type('text/xml');
-        resp.safeSend(200, twiml.toString());
+        if (!res.headersSent) res.status(200).json({ status: 'ok' });
         safeTrackResponseTime(requestStart, requestId);
         return;
       }
@@ -24012,7 +23978,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
         const twiml = new twilio.twiml.MessagingResponse();
         twiml.message(''); // minimal ack for webhook               
         res.type('text/xml');
-        resp.safeSend(200, twiml.toString());
+        if (!res.headersSent) res.status(200).json({ status: 'ok' });
         safeTrackResponseTime(requestStart, requestId);
         return;
       }
@@ -24033,7 +23999,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
                 const twiml = new twilio.twiml.MessagingResponse();
                 twiml.message('');                               
                 res.type('text/xml');
-                resp.safeSend(200, twiml.toString());
+                if (!res.headersSent) res.status(200).json({ status: 'ok' });
                 safeTrackResponseTime(requestStart, requestId);
                   __handled = true;
                 return; // exit early; wrapper 'finally' will stop tips
@@ -24072,7 +24038,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
         const twiml = new twilio.twiml.MessagingResponse();
         twiml.message('');
         res.type('text/xml');
-        resp.safeSend(200, twiml.toString());
+        if (!res.headersSent) res.status(200).json({ status: 'ok' });
         safeTrackResponseTime(requestStart, requestId);
         __handled = true;
         return;
@@ -24223,7 +24189,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
               const twiml = new twilio.twiml.MessagingResponse();
               twiml.message('');
               if (!res.headersSent) res.type('text/xml');
-              res.send(twiml.toString());
+              if (!res.headersSent) res.status(200).json({ status: 'ok' });
             } catch (_) {
               res.status(200).end();
             }
@@ -24250,7 +24216,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
               const twiml = new twilio.twiml.MessagingResponse();
               twiml.message('');
               if (!res.headersSent) res.type('text/xml');
-              res.send(twiml.toString());
+              if (!res.headersSent) res.status(200).json({ status: 'ok' });
             } catch (_) {
               res.status(200).end();
             }
@@ -24439,7 +24405,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
        try {
          const twiml = new twilio.twiml.MessagingResponse();
          twiml.message('');
-         res.type('text/xml').send(twiml.toString());
+         if (!res.headersSent) res.status(200).json({ status: 'ok' });
        } catch (_) { /* best-effort */ }
        return; // 🔒 Do not run greeting/AI/welcome or inventory parsing in this turn
      }
@@ -24505,7 +24471,7 @@ async function handleRequest(req, res, response, requestId, requestStart) {
 
 // Simple confirmation function for corrected updates
 async function confirmCorrectedUpdate(update, from, detectedLanguage, requestId) {
-  const response = new twilio.twiml.MessagingResponse();
+  const response = {}; // Meta uses plain 200 JSON, not TwiML
   
   const confirmationMessage = `I heard: "${update.quantity} ${update.unit} of ${update.product}" (${update.action}).  
 Is this correct?  
@@ -25075,7 +25041,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           }
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message('');
-          res.type('text/xml').send(twiml.toString());
+          if (!res.headersSent) res.status(200).json({ status: 'ok' });
           return;
         }
 
@@ -25095,7 +25061,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           await handleTrialOnboardingStep(From, String(Body ?? ''), String(langForStep ?? 'en').toLowerCase(), requestId);
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message('');
-          res.type('text/xml').send(twiml.toString());
+          if (!res.headersSent) res.status(200).json({ status: 'ok' });
           return;
         }
       } catch (_) { /* continue normal flow */ }
@@ -25147,7 +25113,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
           await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo-typed`);
           // Minimal TwiML ack; main send used Content/PM API
           const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
-          res.type('text/xml').send(twiml.toString());
+          if (!res.headersSent) res.status(200).json({ status: 'ok' });
           return;
         }
       } catch (_) { /* continue normal flow */ }
@@ -25163,7 +25129,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       await sendPaidPlanCTA(From, detectedLanguage || 'en');
       const twiml = new twilio.twiml.MessagingResponse();
       twiml.message('');
-      res.type('text/xml').send(twiml.toString());
+      if (!res.headersSent) res.status(200).json({ status: 'ok' });
       return;
     }
 
@@ -25465,7 +25431,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
       try {
         const twiml = new twilio.twiml.MessagingResponse();
         twiml.message('');
-        res.type('text/xml').send(twiml.toString());
+        if (!res.headersSent) res.status(200).json({ status: 'ok' });
       } catch (_) {
         res.status(200).end();
       }
@@ -25572,7 +25538,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
                 handledRequests.add(requestId);
                 await sendDemoVideoAndButtons(From, langPinned, `${requestId}::demo`);
                 const twiml = new twilio.twiml.MessagingResponse(); twiml.message('');
-                res.type('text/xml'); resp.safeSend(200, twiml.toString()); safeTrackResponseTime(requestStart, requestId);
+                if (!res.headersSent) res.status(200).json({ status: 'ok' }); safeTrackResponseTime(requestStart, requestId);
                 return;
               }
         handledRequests.add(requestId);
@@ -25796,7 +25762,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         try {
           const twiml = new twilio.twiml.MessagingResponse();
           twiml.message('');
-          res.type('text/xml').send(twiml.toString());
+          if (!res.headersSent) res.status(200).json({ status: 'ok' });
           __handled = true;
           return;
         } catch (e){
@@ -25843,7 +25809,7 @@ async function handleNewInteraction(Body, MediaUrl0, NumMedia, From, requestId, 
         // unified prompt already sent
         const twiml = new twilio.twiml.MessagingResponse();
         twiml.message('');
-        res.type('text/xml').send(twiml.toString());
+        if (!res.headersSent) res.status(200).json({ status: 'ok' });
         return;
       }
 
@@ -25993,7 +25959,7 @@ async function handleGreetingResponse(Body, From, state, requestId, res) {
             try {
               const twiml = new twilio.twiml.MessagingResponse();
               twiml.message(''); // minimal ack
-              res.type('text/xml').send(twiml.toString());
+              if (!res.headersSent) res.status(200).json({ status: 'ok' });
             } catch (_) {
               res.status(200).end();
             }
