@@ -1,5 +1,6 @@
 const express = require('express');
 const whatsappHandler = require('./api/whatsapp');
+const metaClient = require('./lib/metaClient');
 const bodyParser = require('body-parser'); // for raw body
 try { require('dotenv').config(); } catch (_) {}
 const fs = require('fs');
@@ -276,35 +277,16 @@ app.post(
               );
               markPaidConfirmCompleted(shopId, razorEventId);
             } else {
-              // Fallback: send confirmation directly via Meta Graph API
+              // Fallback: send confirmation directly via metaClient
               try {
-                const META_TOKEN    = process.env.META_ACCESS_TOKEN;
-                const META_PHONE_ID = process.env.META_PHONE_NUMBER_ID;
-                if (!META_TOKEN || !META_PHONE_ID) {
-                  console.warn(
-                    `[${requestId}] Meta fallback skipped: META_ACCESS_TOKEN or META_PHONE_NUMBER_ID not set`
-                  );
-                } else {
-                  const axios = require('axios');
-                  await axios.post(
-                    `https://graph.facebook.com/${process.env.META_API_VERSION || 'v20.0'}/${META_PHONE_ID}/messages`,
-                    {
-                      messaging_product: 'whatsapp',
-                      to: fromWhatsApp,
-                      type: 'text',
-                      text: { body: '\u2705 Your Saamagrii.AI Paid Plan is now active. Enjoy full access!' }
-                    },
-                    { headers: { Authorization: `Bearer ${META_TOKEN}`, 'Content-Type': 'application/json' } }
-                  );
-                  console.log(
-                    `[${requestId}] Meta fallback: paid confirm sent to ${fromWhatsApp}`
-                  );
-                  markPaidConfirmCompleted(shopId, razorEventId);
-                }
-              } catch (metaErr) {
-                console.warn(
-                  `[${requestId}] Meta fallback paid confirm failed: ${metaErr?.message}`
+                await metaClient.sendTextMessage(
+                  fromWhatsApp,
+                  '\u2705 Your Saamagrii.AI Paid Plan is now active. Enjoy full access!'
                 );
+                console.log(`[${requestId}] Meta fallback: paid confirm sent to ${fromWhatsApp}`);
+                markPaidConfirmCompleted(shopId, razorEventId);
+              } catch (metaErr) {
+                console.warn(`[${requestId}] Meta fallback paid confirm failed: ${metaErr?.message}`);
                 releasePaidConfirmClaim(shopId, razorEventId);
               }
             }
@@ -1211,7 +1193,7 @@ cron.schedule('0 23 * * *', () => {
       console.error('Scheduled daily summary failed:', error.message);
     });
 }, {
-  scheduled: false,
+  scheduled: true,
   timezone: "Asia/Kolkata"
 });
 

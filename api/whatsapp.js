@@ -1,5 +1,6 @@
 // Twilio SDK (needed for TwiML builders like new twilio.twiml.MessagingResponse())
-const twilio = require('twilio'); // REQUIRED for TwiML usage [twilio-node docs]
+const twilio = require('twilio'); /const utils = require('../lib/utils'); // pure helpers
+/ REQUIRED for TwiML usage [twilio-node docs]
 // Shared Twilio REST client (Keep-Alive + Edge/Region already configured in root/twilioClient.js)
 const client = require('../twilioClient'); // from /root/api → ../twilioClient.js
 // Soniox async transcription helper (server-side file transcription; no streaming)
@@ -10501,19 +10502,6 @@ async function ensureShopDetailsForInvoice(From) {
   return { ...details, shopId: phoneE164 };
 }
 
-/**
- * SAFE TIP WRAPPER
- * Only invoke runWithTips if it exists and is a function; otherwise, run the handler directly.
- * Using `typeof runWithTips` is safe even if the symbol is not declared, so no ReferenceError.
- */
-const invokeWithTips = async (ctx, fn) => {
-  try {
-    if (typeof runWithTips === 'function') {
-      return await runWithTips(ctx, fn);
-    }
-  } catch (_) { /* noop: fall back to plain handler */ }
-  return await fn();
-};
 
 // ===== Compact & Single-Script config =====
 const COMPACT_MODE = String(process.env.COMPACT_MODE ?? 'true').toLowerCase() === 'true';
@@ -10522,10 +10510,7 @@ const SINGLE_SCRIPT_MODE = String(process.env.SINGLE_SCRIPT_MODE ?? 'true').toLo
 const DEBUG_QA_SANITIZE = String(process.env.DEBUG_QA_SANITIZE ?? 'false').toLowerCase() === 'true';
 const AGENT_NAME = process.env.AGENT_NAME ?? 'Suhani';
 // ===== Paywall / Trial / Links (env-driven) =====
-const PAYTM_NUMBER = String(process.env.PAYTM_NUMBER ?? '9013283687');
-const PAYTM_NAME   = String(process.env.PAYTM_NAME   ?? 'Saamagrii.AI Support Team');
 const PAID_PRICE_INR = Number(process.env.PAID_PRICE_INR ?? 11);
-const INLINE_PAYTM_IN_PRICING = String(process.env.INLINE_PAYTM_IN_PRICING ?? 'false').toLowerCase() === 'true';
 const WHATSAPP_LINK = String(process.env.WHATSAPP_LINK ?? 'https://wa.link/6q3ol7');
 const PAYMENT_LINK  = String(process.env.PAYMENT_LINK  ?? '<payment_link>');
 
@@ -13342,12 +13327,6 @@ async function ensureAccessOrOnboard(From, Body, detectedLanguage) {
 // DB-backed memory helpers (Airtable via database.js)
 const { appendTurn, getRecentTurns, inferTopic } = require('../database');
 
-//const {
-//  BUSINESS_TIPS_EN,
-//  startEngagementTips,
-//  stopEngagementTips,
-//  withEngagementTips
-//} = require('./engagementTips');
 
 // ===== Inactivity Nudge Config & Tracker =====
 const NUDGE_OFF = String(process.env.NUDGE_OFF ?? '0').toLowerCase() === '1';
@@ -13602,26 +13581,6 @@ function composeGamifyToast({ action, gs, newlyAwarded }) {
 // ===== NEW ENV: how many alternative batches to show in the confirmation (default 2) =====
 const SHOW_BATCH_SUGGESTIONS_COUNT = Number(process.env.SHOW_BATCH_SUGGESTIONS_COUNT ?? 2);
 
-// Central wrapper: run any per-request logic with engagement tips
-const TIPS_OFF = String(process.env.TIPS_OFF ?? '1').toLowerCase() === '1';
-async function runWithTips({ From, language, requestId }, fn) {
-  if (TIPS_OFF) return await fn(); // short-circuit: suppress all engagement tips    
-  // Skip tips for this request if Q&A marked suppression
-  try { if (requestId && suppressTipsFor.has(requestId)) return await fn(); } catch {}
-  return await withEngagementTips(
-    {
-      From,
-      language,
-      requestId,
-      firstDelayMs: Number(process.env.TIP_FIRST_DELAY_MS ?? 20000),
-      intervalMs: Number(process.env.TIP_INTERVAL_MS ?? 990000),
-      maxCount: Number(process.env.TIP_MAX_COUNT ?? 1),
-      sendMessage: (to, body) => sendMessageViaAPI(to, body),
-      translate: (msg, lang, rid) => t(msg, lang, rid), // enforce SINGLE_SCRIPT_MODE
-    },
-    fn
-  );
-}
 
 const SUMMARY_TRACK_FILE_WRITABLE = path.join(STATE_DIR, 'summary_tracker.json');
 
@@ -23988,8 +23947,7 @@ function logAiFirstDecision(reqId, stage, details = {}) {
     }
 
   // === Centralized engagement tips: wrap the entire request handling ===    
-  // use SAFE wrapper to avoid ReferenceError when runWithTips isn't loaded
-    await invokeWithTips({ From, language: detectedLanguage, requestId }, async () => {
+    await (async () => {
     // --- NEW: resolve pending price+expiry correction BEFORE deeper routing ---
           
       try {
