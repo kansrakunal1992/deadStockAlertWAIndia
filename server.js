@@ -9,6 +9,7 @@ const os = require('os');
 const cron = require('node-cron');
 const { runDailySummary }         = require('./dailySummary');
 const { runTrialEndingReminders } = require('./trialEndingSummary');
+const { runCollectionsNudge }   = require('./crons/collectionsNudge');
 const {
   // existing
   getAllProducts,
@@ -1196,6 +1197,15 @@ cron.schedule('0 23 * * *', () => {
   scheduled: true,
   timezone: "Asia/Kolkata"
 });
+
+// Collections nudge -- 2:00 PM IST daily
+cron.schedule('0 14 * * *', () => {
+  console.log('[collections-cron] Running overdue collections nudge');
+  runCollectionsNudge()
+    .then(r => console.log('[collections-cron] Done: ' + r.filter(x => x.sent).length + ' nudges sent'))
+    .catch(e => console.error('[collections-cron] Failed:', e.message));
+}, { scheduled: true, timezone: 'Asia/Kolkata' });
+
 
 // Start server
 const PORT = process.env.PORT || 3000;

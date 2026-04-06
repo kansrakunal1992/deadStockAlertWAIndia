@@ -1,12 +1,13 @@
 // Twilio SDK (needed for TwiML builders like new twilio.twiml.MessagingResponse())
-const twilio = require('twilio'); /const utils = require('../lib/utils'); // pure helpers
-/ REQUIRED for TwiML usage [twilio-node docs]
+const twilio = require('twilio'); // REQUIRED for TwiML usage [twilio-node docs]
+const utils  = require('../lib/utils');    // pure helpers
 // Shared Twilio REST client (Keep-Alive + Edge/Region already configured in root/twilioClient.js)
 const client = require('../twilioClient'); // from /root/api → ../twilioClient.js
 // Soniox async transcription helper (server-side file transcription; no streaming)
 const { transcribeFileWithSoniox } = require('../stt/sonioxAsync');
 const VERIFY_TOKEN = "myverify123";
 const metaClient = require('../lib/metaClient');
+const { identifyActor, buildUnknownReply, ACTOR } = require('../lib/router');
 // Adoption flow message templates (Stage 0–8, all languages)
 const {
   getStage0Message,
@@ -23387,6 +23388,31 @@ function logAiFirstDecision(reqId, stage, details = {}) {
     metaClient.markRead(req.body._metaMessageId).catch(() => {});
   }
   
+  // Actor routing: customer/distributor handled here; owner falls through
+  try {
+    const actor = await identifyActor(From, Body);
+    if (actor.actor === ACTOR.CUSTOMER) {
+      const { handleCustomerMessage } = require('../handlers/customer');
+      await handleCustomerMessage({ from: actor.senderId, shopId: actor.shopId, shopCode: actor.shopCode, body: Body, requestId });
+      if (!res.headersSent) res.status(200).json({ status: 'ok' });
+      return;
+    }
+    if (actor.actor === ACTOR.DISTRIBUTOR) {
+      const { handleDistributorMessage } = require('../handlers/distributor');
+      await handleDistributorMessage({ from: actor.senderId, shopId: actor.shopId, shopCode: actor.shopCode, body: Body, req, requestId });
+      if (!res.headersSent) res.status(200).json({ status: 'ok' });
+      return;
+    }
+    if (actor.actor === ACTOR.UNKNOWN) {
+      await metaClient.sendTextMessage(From.replace('whatsapp:', ''), buildUnknownReply());
+      if (!res.headersSent) res.status(200).json({ status: 'ok' });
+      return;
+    }
+    // ACTOR.OWNER falls through to existing flow
+  } catch (routerErr) {
+    console.warn('[router] error, falling through to owner flow:', routerErr && routerErr.message);
+  }
+
   // =====================================================================
   // ULTRA-EARLY HANDLING (fast exits)
   // 1) Meta Ads language-first choice (“हिन्दी”, “বাংলা”, “ગુજરાતી”, “मराठी”, “English”)

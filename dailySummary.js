@@ -15,6 +15,7 @@ const {
     getTranslationEntry,
     upsertTranslationEntry
 } = require('./database');
+const { splitMessage } = require('../lib/utils');
 
 // ====== DETERMINISTIC NATIVEGLISH LABEL RENDERER (no external API) ======
 const NL_LABELS = {  
@@ -190,49 +191,6 @@ hi: {
 };
 
 // Helper function to split messages
-function splitMessage(message, maxLength = 1600) {
-  if (message.length <= maxLength) {
-    return [message];
-  }
-  
-  const chunks = [];
-  let currentChunk = '';
-  
-  // Split by paragraph breaks first, then by sentence-ending punctuation
-  const sentences = message
-    .split(/\n{2,}/)                               // paragraphs
-    .flatMap(p => p.match(/[^.!?]+[.!?]*/g) || [p]); // sentences (fallback to whole paragraph)
-
-  for (const sentence of sentences) {
-    if (currentChunk.length + sentence.length + 1 <= maxLength) {
-      currentChunk += sentence + ' ';
-    } else {
-      // If adding this sentence would exceed the limit, push the current chunk and start a new one
-      if (currentChunk.trim().length > 0) {
-        chunks.push(currentChunk.trim());
-        currentChunk = sentence + ' ';
-      } else {
-        // If the sentence itself is longer than maxLength, split by words
-        const words = sentence.split(' ');
-        for (const word of words) {
-          if (currentChunk.length + word.length + 1 <= maxLength) {
-            currentChunk += word + ' ';
-          } else {
-            chunks.push(currentChunk.trim());
-            currentChunk = word + ' ';
-          }
-        }
-      }
-    }
-  }
-  
-  // Add the last chunk if it has content
-  if (currentChunk.trim().length > 0) {
-    chunks.push(currentChunk.trim());
-  }
-  
-  return chunks;
-}
 
 function renderNativeglishLabels(text, languageCode) {
   const lang = (languageCode || 'en').toLowerCase();
