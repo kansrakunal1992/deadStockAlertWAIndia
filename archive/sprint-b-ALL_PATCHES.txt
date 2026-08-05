@@ -1,0 +1,164 @@
+SPRINT B — Hybrid routing: per-call provider flags
+9 files, all single-line or 2-line diffs. Apply with str_replace.
+No logic changes — purely adds { provider: '...' } to existing calls.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FILE 1: app/api/persona/route.ts
+Call: createStream — synthesis → Claude, everything else → DeepSeek
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+REMOVE:
+    const { readable, getContent } = await createStream(systemPrompt, chatMessages)
+
+REPLACE WITH:
+    const { readable, getContent } = await createStream(
+      systemPrompt,
+      chatMessages,
+      personaKey === 'synthesis' ? 'anthropic' : 'deepseek',
+    )
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FILE 2: app/api/examiner/route.ts
+Call A: personaliseRuleQuestion → DeepSeek (simple rewrite, 80 tokens)
+Call B: generateGapQuestions    → Claude   (JSON array, precision matters)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+REMOVE:
+    const raw   = await createCompletion(PERSONALISE_PROMPT(ruleId, template, decision, biasHint), 80)
+
+REPLACE WITH:
+    const raw   = await createCompletion(PERSONALISE_PROMPT(ruleId, template, decision, biasHint), 80, { provider: 'deepseek' })
+
+---
+
+REMOVE:
+    const raw    = await createCompletion(GAP_QUESTION_PROMPT(nonEmpty), 400)
+
+REPLACE WITH:
+    const raw    = await createCompletion(GAP_QUESTION_PROMPT(nonEmpty), 400, { provider: 'anthropic' })
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FILE 3: app/api/mirror/rules/route.ts
+Call: rules extraction → Claude (structured rules, hallucinated rules corrupt Mirror)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+REMOVE:
+    const rawText = await createCompletion(
+  `${RULES_SYSTEM}\n\n    Here are the user's examiner responses and pushbacks across ${corpusSessions.length} decisions:\n\n    ${corpus}\n\n    Extract their implicit operating principles as a JSON array of first-person rule strings.`,
+      600
+    )
+
+REPLACE WITH:
+    const rawText = await createCompletion(
+  `${RULES_SYSTEM}\n\n    Here are the user's examiner responses and pushbacks across ${corpusSessions.length} decisions:\n\n    ${corpus}\n\n    Extract their implicit operating principles as a JSON array of first-person rule strings.`,
+      600,
+      { provider: 'anthropic' }
+    )
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FILE 4: app/api/record/[id]/brief/route.ts
+Call: brief auto-gen → DeepSeek (long-form template-guided narrative)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+REMOVE:
+        const briefContent = await createCompletion(briefPrompt, 1200)
+
+REPLACE WITH:
+        const briefContent = await createCompletion(briefPrompt, 1200, { provider: 'deepseek' })
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FILE 5: app/api/voice/cleanup/route.ts
+Call: ASR cleanup → DeepSeek (text normalization, lowest stakes call)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+REMOVE:
+    cleaned = (await createCompletion(prompt, 600)).trim()
+
+REPLACE WITH:
+    cleaned = (await createCompletion(prompt, 600, { provider: 'deepseek' })).trim()
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FILE 6: lib/bias-scorer.ts
+Call: bias scoring → Claude (complex nested JSON, errors corrupt Ledger + fingerprint)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+REMOVE:
+  const raw   = await createCompletion(prompt, 4000)
+
+REPLACE WITH:
+  const raw   = await createCompletion(prompt, 4000, { provider: 'anthropic' })
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FILE 7: lib/contradiction-detector.ts
+Call Pass 1: principle extraction → Claude
+Call Pass 2: contradiction detection → Claude
+(Hallucinated cross-session references destroy user trust in this feature)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+REMOVE:
+    const raw1 = await createCompletion(PASS1_PROMPT(capped), 1200)
+
+REPLACE WITH:
+    const raw1 = await createCompletion(PASS1_PROMPT(capped), 1200, { provider: 'anthropic' })
+
+---
+
+REMOVE:
+    const raw2 = await createCompletion(PASS2_PROMPT(extracted), 800)
+
+REPLACE WITH:
+    const raw2 = await createCompletion(PASS2_PROMPT(extracted), 800, { provider: 'anthropic' })
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FILE 8: lib/mirror-fingerprint.ts
+Call: fingerprint narrative → DeepSeek (prose portrait, user-facing)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+REMOVE:
+  const raw   = await createCompletion(prompt, 2000)
+
+REPLACE WITH:
+  const raw   = await createCompletion(prompt, 2000, { provider: 'deepseek' })
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FILE 9: lib/structural-retrieval.ts
+Call: structural annotation → Claude (precise 2–3 sentence explanatory output)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+REMOVE:
+    const text = await createCompletion(prompt, 200)
+
+REPLACE WITH:
+    const text = await createCompletion(prompt, 200, { provider: 'anthropic' })
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ROUTING SUMMARY (Sprint B result)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Claude (anthropic):
+  ✓ Synthesis (#2)                   — createStream, persona/route.ts
+  ✓ generateGapQuestions (#6)        — createCompletion, examiner/route.ts
+  ✓ Rules extraction (#7)            — createCompletion, mirror/rules/route.ts
+  ✓ Bias scorer (#10)                — createCompletion, lib/bias-scorer.ts
+  ✓ Contradiction Pass 1 (#11)       — createCompletion, lib/contradiction-detector.ts
+  ✓ Contradiction Pass 2 (#12)       — createCompletion, lib/contradiction-detector.ts
+  ✓ Structural annotation (#14)      — createCompletion, lib/structural-retrieval.ts
+  ✓ Ontology tagger (#15)            — createCompletion, lib/ontology-tagger.ts (Sprint A)
+
+DeepSeek (deepseek):
+  ✓ Persona analyses × 6 (#1)       — createStream, persona/route.ts
+  ✓ Pushback responses (#3)          — createStream, persona/route.ts
+  ✓ Decision Brief persona (#4)      — createStream, persona/route.ts
+  ✓ PersonaliseRuleQuestion (#5)     — createCompletion, examiner/route.ts
+  ✓ Brief auto-gen (#8)              — createCompletion, brief/route.ts
+  ✓ Voice cleanup (#9)               — createCompletion, voice/cleanup/route.ts
+  ✓ Mirror fingerprint (#13)         — createCompletion, lib/mirror-fingerprint.ts

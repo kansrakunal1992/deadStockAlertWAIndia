@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- Tell supporting clients (Apple Mail, Outlook New, Samsung) this
+         email ships explicit dark-mode styles — do not auto-invert -->
+    <meta name="color-scheme" content="light dark" />
+    <meta name="supported-color-schemes" content="light dark" />
+
+    <title>Sign in to Quorum</title>
+
+    <!--[if mso]>
+    <noscript>
+      <xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>
+    </noscript>
+    <![endif]-->
+
+    <style>
+      /*
+        DARK MODE LAYER 1 — @media (prefers-color-scheme: dark)
+        Supported: Apple Mail · Outlook (New) · Samsung Mail · Thunderbird
+        Palette intentionally mirrors the Quorum app's own dark mode:
+        deep navy, warm parchment text, gold accents.
+      */
+      @media (prefers-color-scheme: dark) {
+
+        /* Outer wrapper */
+        .dm-outer-bg {
+          background-color: #08111f !important;
+        }
+
+        /* Card shell */
+        .dm-card {
+          background-color: #0d1624 !important;
+          border-color:     #1c2b3a !important;
+        }
+
+        /* Body cells (all cream/white sections) */
+        .dm-body {
+          background-color: #0d1624 !important;
+        }
+
+        /* Typography */
+        .dm-overline {
+          color: #c9a84c !important; /* bump to brighter gold on dark bg */
+        }
+        .dm-headline {
+          color: #e4d5b2 !important; /* warm parchment */
+        }
+        .dm-body-text {
+          color: #bfaa88 !important; /* warm cream — matches app text */
+        }
+        .dm-muted {
+          color: #4e5560 !important;
+        }
+        .dm-fallback-link {
+          color: #c9a84c !important;
+        }
+
+        /* CTA gold button — already ideal for dark; only darken text slightly */
+        .dm-cta-text {
+          color: #0a0e14 !important;
+        }
+
+        /* Info / positioning strip */
+        .dm-info-cell {
+          background-color:  #0b0906 !important;
+          border-color:      #2a1e0a !important;
+          border-left-color: #d2b66b !important; /* keep gold rail */
+        }
+        .dm-info-text {
+          color: #c9a84c !important;
+        }
+
+        /* Footer */
+        .dm-footer {
+          background-color:  #08111f !important;
+          border-top-color:  #1c2b3a !important;
+        }
+        .dm-footer-brand {
+          color: #c9a84c !important;
+        }
+        .dm-footer-sub {
+          color: #6b5c38 !important;
+        }
+      }
+
+      /*
+        DARK MODE LAYER 2 — [data-ogsc] selector
+        Gmail dark mode: Gmail strips <style> blocks but adds the
+        data-ogsc attribute to the wrapper div when in dark mode.
+        These rules are the ONLY css hook that works in Gmail dark.
+      */
+      [data-ogsc] .dm-outer-bg  { background-color: #08111f !important; }
+      [data-ogsc] .dm-card      { background-color: #0d1624 !important;
+                                   border-color:     #1c2b3a !important; }
+      [data-ogsc] .dm-body      { background-color: #0d1624 !important; }
+      [data-ogsc] .dm-overline  { color: #c9a84c !important; }
+      [data-ogsc] .dm-headline  { color: #e4d5b2 !important; }
+      [data-ogsc] .dm-body-text { color: #bfaa88 !important; }
+      [data-ogsc] .dm-muted     { color: #4e5560 !important; }
+      [data-ogsc] .dm-fallback-link { color: #c9a84c !important; }
+      [data-ogsc] .dm-cta-text  { color: #0a0e14 !important; }
+      [data-ogsc] .dm-info-cell { background-color:  #0b0906 !important;
+                                   border-color:      #2a1e0a !important;
+                                   border-left-color: #d2b66b !important; }
+      [data-ogsc] .dm-info-text { color: #c9a84c !important; }
+      [data-ogsc] .dm-footer    { background-color: #08111f !important;
+                                   border-top-color: #1c2b3a !important; }
+      [data-ogsc] .dm-footer-brand { color: #c9a84c !important; }
+      [data-ogsc] .dm-footer-sub   { color: #6b5c38 !important; }
+    </style>
+  </head>
+
+  <body style="margin:0; padding:0; background:#f8f6f1;
+               -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%;">
+
+    <!-- Outer wrapper -->
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
+           class="dm-outer-bg"
+           style="background:#f8f6f1; margin:0; padding:0;">
+      <tr>
+        <td align="center" style="padding:36px 16px 48px;">
+
+          <!-- ─── EMAIL CARD ─────────────────────────────────────────────── -->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"
+                 class="dm-card"
+                 style="max-width:600px; width:100%; background:#ffffff;
+                        border:1px solid #e5d5b4; border-radius:16px; overflow:hidden;">
+
+            <!-- ▸ HEADER
+                 Already deep navy — looks correct in both light and dark.
+                 No dark-mode class needed here. -->
+            <tr>
+              <td align="center"
+                  style="background:#08111f; padding:36px 32px 32px;
+                         border-bottom:3px solid #d2b66b;">
+                <img
+                  src="https://invigorating-manifestation-production-ecd2.up.railway.app/quorum-logo.png"
+                  alt="QUORUM · Add to your judgment record"
+                  width="210"
+                  style="display:block; width:210px; max-width:76%;
+                         height:auto; border:0; outline:none; text-decoration:none;"
+                />
+              </td>
+            </tr>
+
+            <!-- ▸ BODY COPY -->
+            <tr>
+              <td class="dm-body"
+                  style="padding:40px 40px 16px 40px; background:#fdfbf8;">
+
+                <!-- Overline -->
+                <p class="dm-overline"
+                   style="margin:0 0 14px 0;
+                          font-family: Arial, Helvetica, sans-serif;
+                          font-size:11px; line-height:16px;
+                          letter-spacing:2.6px; text-transform:uppercase;
+                          color:#9c7628;">
+                  One-time access link
+                </p>
+
+                <!-- Headline -->
+                <h1 class="dm-headline"
+                    style="margin:0 0 18px 0;
+                           font-family: Georgia, 'Times New Roman', serif;
+                           font-size:28px; line-height:36px;
+                           font-weight:400; color:#08111f;">
+                  Your access link is ready.
+                </h1>
+
+                <!-- Body -->
+                <p class="dm-body-text"
+                   style="margin:0 0 30px 0;
+                          font-family: Arial, Helvetica, sans-serif;
+                          font-size:15px; line-height:25px; color:#344054;">
+                  Use the button below to sign in to Quorum.
+                  This link is single-use and expires in 24&nbsp;hours.
+                </p>
+
+                <!-- ▸ CTA BUTTON
+                     Gold bg (#d2b66b) is ideal for both light + dark.
+                     No bg override needed. Text class covers Gmail edge case. -->
+                <table role="presentation" cellspacing="0" cellpadding="0"
+                       border="0" style="margin-bottom:28px;">
+                  <tr>
+                    <td align="center"
+                        style="background:#d2b66b; border-radius:8px;">
+                      <a href="{{ .ConfirmationURL }}"
+                         target="_blank"
+                         style="display:inline-block; padding:14px 32px;
+                                font-family: Arial, Helvetica, sans-serif;
+                                font-size:14px; line-height:20px;
+                                font-weight:700; color:#08111f;
+                                text-decoration:none; letter-spacing:0.06em;">
+                        <span class="dm-cta-text" style="color:#08111f;">
+                          Enter Quorum →
+                        </span>
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+
+                <!-- Security note -->
+                <p class="dm-muted"
+                   style="margin:0;
+                          font-family: Arial, Helvetica, sans-serif;
+                          font-size:13px; line-height:20px; color:#9aa0a9;">
+                  If you didn't request this link, you can safely ignore
+                  this email. Do not share this link with anyone.
+                </p>
+
+              </td>
+            </tr>
+
+            <!-- ▸ FALLBACK URL -->
+            <tr>
+              <td class="dm-body"
+                  style="padding:16px 40px 32px 40px; background:#fdfbf8;">
+                <p class="dm-muted"
+                   style="margin:0 0 6px 0;
+                          font-family: Arial, Helvetica, sans-serif;
+                          font-size:12px; line-height:18px; color:#b0b5bc;">
+                  If the button doesn't work, copy and paste this URL
+                  into your browser:
+                </p>
+                <p style="margin:0;
+                          font-family: Arial, Helvetica, sans-serif;
+                          font-size:12px; line-height:18px;
+                          word-break:break-all;">
+                  <a href="{{ .ConfirmationURL }}"
+                     target="_blank"
+                     class="dm-fallback-link"
+                     style="color:#8a6e2f; text-decoration:underline;">
+                    {{ .ConfirmationURL }}
+                  </a>
+                </p>
+              </td>
+            </tr>
+
+            <!-- ▸ BRAND POSITIONING STRIP -->
+            <tr>
+              <td class="dm-body"
+                  style="padding:0 40px 36px 40px; background:#fdfbf8;">
+                <table role="presentation" width="100%" cellspacing="0"
+                       cellpadding="0" border="0">
+                  <tr>
+                    <td class="dm-info-cell"
+                        style="padding:16px 20px;
+                               background:#faf3e5;
+                               border:1px solid #ead8b8;
+                               border-left:4px solid #d2b66b;
+                               border-radius:8px;">
+                      <p class="dm-info-text"
+                         style="margin:0;
+                                font-family: Georgia, 'Times New Roman', serif;
+                                font-size:14px; line-height:23px;
+                                color:#4a3f2e; font-style:italic;">
+                        "Not a chatbot. Not a framework. A private judgment
+                        system that compounds with every session."
+                      </p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+
+            <!-- ▸ FOOTER -->
+            <tr>
+              <td align="center"
+                  class="dm-footer"
+                  style="padding:22px 32px 26px; background:#f3ead8;
+                         border-top:1px solid #ead8b8;">
+                <p class="dm-footer-brand"
+                   style="margin:0 0 5px 0;
+                          font-family: Georgia, 'Times New Roman', serif;
+                          font-size:13px; line-height:18px;
+                          letter-spacing:2px; text-transform:uppercase;
+                          color:#9c7628;">
+                  Quorum
+                </p>
+                <p class="dm-footer-sub"
+                   style="margin:0;
+                          font-family: Arial, Helvetica, sans-serif;
+                          font-size:12px; line-height:18px; color:#7a6f5f;">
+                  Add to your judgment record.&nbsp;&nbsp;·&nbsp;&nbsp;quorumvault.org
+                </p>
+              </td>
+            </tr>
+
+          </table>
+          <!-- end card -->
+
+        </td>
+      </tr>
+    </table>
+
+  </body>
+</html>

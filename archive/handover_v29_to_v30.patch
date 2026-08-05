@@ -1,0 +1,140 @@
+--- /mnt/user-data/uploads/HANDOVER_DOC_v29_1.md	2026-05-31 07:23:54.372944000 +0000
++++ /home/claude/r4/HANDOVER_DOC_v30.md	2026-05-31 11:43:30.477840113 +0000
+@@ -1,5 +1,5 @@
+-# QUORUM — Handover Document v29_1
+-### Date: May 31, 2026 | Status: Sprints 32–34 deployed + C0 fix + R3 + R5 + Additional Risk C + Additional Risk E implemented; Additional Risk A confirmed pre-existing fix; Risk F confirmed pre-existing fix
++# QUORUM — Handover Document v30
++### Date: May 31, 2026 | Status: Sprints 32–34 deployed + C0 fix + R3 + R4 + R5 + Additional Risk C + Additional Risk E implemented; Additional Risk A confirmed pre-existing fix; Risk F confirmed pre-existing fix
+ ### Date: May 30, 2026 | Status: Sprints 32–34 deployed + Website competitive leakage audit completed
+ ### Stack: Next.js 15 · Supabase (PostgreSQL) · Railway · Anthropic / DeepSeek
+ 
+@@ -103,6 +103,8 @@
+   types.ts                 — ✅ Sprint 30 — Session interface gains decision_type_primary +
+                              stakes_reversibility. also Sprint 19/20/21: MirrorGateState, MirrorAccessState,
+                              SubscriptionPlan, BiasSignalType, StyleCue, BenchmarkData, SessionPreview, RulePattern
++                             R4 — SessionScoreData interface appended (composite score + 4 sub-scores +
++                             calibrationPending + distortingBiasLabels + actionPlan).
+   personas.ts              — ✅ Sprint 34 — SYNTHESIS prompt: PATTERN OBSERVATION section now
+                              includes explicit "CRITICAL: Do NOT write 'PATTERN OBSERVATION:' as a
+                              label or header — begin directly with the natural-language opener."
+@@ -152,6 +154,16 @@
+                              Both lib/structural-retrieval.ts and app/api/mirror/benchmark/route.ts
+                              import from here. Eliminates math inconsistency between the two routes.
+                              Do not define DIM_WEIGHTS anywhere else — always import from this file.
++  session-score.ts         — ✅ R4 NEW — computeUserSessionScores(userId, supabase): Promise<SessionScoreData[]>.
++                             Unifies 4 data streams into per-session reliability score (0–100).
++                             Sub-scores: structural (sessions_ontology.matches_json → maxStructuralScore),
++                             biasClarity (bias_library.activation_contexts — distorting count × asymmetry),
++                             councilConfidence (rule_engine_result mode + flag_rules.length — deterministic,
++                             no LLM), calibration (outcomes.calibration_delta — 70 if outcome pending).
++                             deriveActionPlan() targets user's weakest avg sub-score across all sessions.
++                             TypeScript: intermediate array typed as Omit<SessionScoreData, 'actionPlan'> —
++                             actionPlan attached in final .map() call (deploy fix for TS build error).
++                             No LLM calls. No schema changes.
+ 
+ app/api/
+   mirror/status/route.ts    — ✅ Sprint 19 — 3-state gate via getMirrorAccessState()
+@@ -172,6 +184,11 @@
+                                     Confidence intentionally NOT applied cross-user. Sprint 20 NEW.
+   mirror/sessions-lookup/route.ts — ✅ Sprint 20 NEW — session preview for source drawers
+   mirror/preferences/route.ts    — ✅ Sprint 21 NEW — GET/POST style_cue
++  mirror/session-score/route.ts  — ✅ R4 NEW — GET /api/mirror/session-score.
++                                    Auth (Bearer token → resolveUserId) + Mirror unlocked gate
++                                    (getMirrorAccessState). Returns SessionScoreData[] for last 20
++                                    sessions. Parallel reads from sessions, sessions_ontology,
++                                    bias_library, outcomes. No LLM. No schema change.
+   payment/create-subscription/route.ts — ✅ Sprint 19 NEW (stub)
+   admin/grant-mirror-access/route.ts   — ✅ Sprint 19 NEW
+   persona/route.ts          — ✅ Sprint R5 — conditional OUTPUT TRACEABILITY requirement appended
+@@ -243,6 +260,14 @@
+   BiasFingerprint.tsx      — ✅ Sprint 20 — authToken passed to PatternTile
+   IndependenceScore.tsx    — ✅ Sprint 28 — examinerQuote block, CoachingTip sub-component
+   DecisionRules.tsx        — ✅ Sprint 28 — mobile classNames
++  SessionReliabilityIndex.tsx — ✅ R4 NEW — Mirror module in UnlockedView (after Confidence
++                                 Calibration, before Decision Timeline). Fetches from
++                                 /api/mirror/session-score. Renders: average composite score + trend
++                                 delta (recent 5 vs prior 5 sessions), per-session list (last 10)
++                                 with score bar + 4 sub-score dots (structural/bias/council/
++                                 calibration). Hover tooltip per dot shows exact score. Always-visible
++                                 "Your next move" action plan callout (gold left-border card) targeting
++                                 user's weakest avg sub-score with a specific, non-generic action.
+   StyleCalibration.tsx     — ✅ Sprint 21 NEW — 3-question inline calibration, localStorage persistence
+   CouncilStatusBar.tsx     — ✅ Sprint 22 NEW — phase state machine narrating back-end activity
+   BackButton.tsx           — ✅ Sprint 24a NEW — router.back() client component
+@@ -261,7 +286,9 @@
+                              RecurringConditionCard wired; mirrorUnlocked; pattern dimensions.
+                              Sprint 30 — QUORUM flip-card, Judgment Record strip, clamp heights.
+                              Sprint 29 — fixed navbar, persona pill strip, tips collapsible.
+-  mirror/page.tsx          — ✅ Sprint 31 — sub-label "A private operating system for your judgment";
++  mirror/page.tsx          — ✅ R4 — SessionReliabilityIndex import added. Section block inserted in
++                             UnlockedView after CalibrationSparkline closing div, before Decision Timeline.
++                             Sprint 31 — sub-label "A private operating system for your judgment";
+                              no lock icons on teaser tiles; "Activate Mirror" language throughout;
+                              ₹9,999/year leading price; "building" lockedBadge; gold back button
+                              Sprint 28 — mobile layout, section reorder (Fingerprint first), teaser polish
+@@ -357,6 +384,7 @@
+ | **Additional Risk A** | **recency_bias hardcoded to 'neutral' — confirmed already fixed in Sprint R2 (bias-scorer.ts classifyBiasSignal()). Now correctly returns 'distorting' when ddInfo ≥ 4. No new files needed. — ✅ Pre-existing fix confirmed May 31, 2026** |
+ | **Additional Risk C** | **Benchmark vs structural retrieval math inconsistency: lib/similarity.ts (NEW) — single source of truth for DIM_WEIGHTS (14 dims, 1.5× for ⭐ starred). lib/structural-retrieval.ts updated: imports DIM_WEIGHTS from similarity.ts, local definition removed. app/api/mirror/benchmark/route.ts updated: extractVector() now applies DIM_WEIGHTS (score × dim_weight). Intentionally NOT confidence-weighted cross-user (see KDD 101). — ✅ Implemented May 31, 2026** |
+ | **Additional Risk E** | **Longitudinal reasoning gap — calibration delta and contradiction data not reaching synthesis: lib/bias-scorer.ts extended (one file). fetchCalibrationContext() (private) — queries sessions+outcomes for calibration_delta, gates on ≥3 paired points and \|avgDelta\| ≥ 0.3, returns plain-English synthesis-ready description of confidence pattern. fetchActiveContradictions() (private) — queries contradictions for undismissed tensions (limit 2), returns synthesis-ready block. fetchUserBiasContext() updated: all 3 DB queries run in parallel via Promise.all; calibrationLine + contradictionBlock appended to synthesisBlock; MANDATORY directive extended with calibrationDirective + contradictionDirective — each gives synthesis concrete example phrasings to ensure findings surface as natural prose, never as section headers or labelled data points. Return shape and call signature unchanged. — ✅ Implemented May 31, 2026** |
++| **R4** | **Session Reliability Index: lib/session-score.ts (NEW) — computeUserSessionScores() unifies structural match quality (sessions_ontology.matches_json), bias clarity (bias_library.activation_contexts — distorting signal count × asymmetry_score_avg), council confidence (rule_engine_result mode + flag_rules.length, deterministic), calibration (outcomes.calibration_delta, 70 if pending) into SessionScoreData[]. Formula: structural × 0.25 + biasClarity × 0.30 + councilConfidence × 0.20 + calibration × 0.25. deriveActionPlan() always returns specific improvement action targeting weakest avg sub-score across all sessions. app/api/mirror/session-score/route.ts (NEW) — GET handler, auth + unlocked gate. components/SessionReliabilityIndex.tsx (NEW) — Mirror module: per-session score list (last 10), 4 sub-score hover dots, average + trend delta, always-visible "Your next move" callout. lib/types.ts: SessionScoreData appended. app/mirror/page.tsx: import + section block added after Confidence Calibration. TypeScript fix: Omit<SessionScoreData, 'actionPlan'> intermediate type resolves build error. No LLM. No schema change. — ✅ Implemented May 31, 2026** |
+ | **Additional Risk F** | **Synthesis has no access to bias signals — confirmed already fully implemented in Sprint R2 (fetchUserBiasContext() in lib/bias-scorer.ts). synthesisBlock + personaAlert both firing. No new files needed. — ✅ Pre-existing fix confirmed May 31, 2026** |
+ | **Website Audit** | **Competitive leakage analysis on index.html (3 passes). HIGH: dimension count (14), rule count (12), full pipeline sequence, Mirror module mechanism descriptions. MEDIUM: bias trigger format, Decision Independence Score mechanism, internal state labels (provisional/blocked/held), social proof FOMO metric, not-a-chatbot strip architecture, Mirror timeline internal labels. LOW: "12 months" advisory, teaser unlock threshold (3), "in parallel" Council execution, "Traces which structural factors". All resolved. Output: index_final.html + index_final.patch. — ✅ May 30, 2026** |
+ 
+@@ -365,7 +393,7 @@
+ ## CURRENT STATUS
+ 
+ **Active Sprint:** Sprint 35 (not started)
+-**Last completed:** Sprint R3 + R5 + C0 fix + Additional Risk C + Additional Risk E — **implemented May 31, 2026** (deploy pending)
++**Last completed:** Sprint R3 + R4 + R5 + C0 fix + Additional Risk C + Additional Risk E — **implemented May 31, 2026** (deploy pending)
+ **Stage gate:** First paying session + one returning user — not yet met
+ 
+ **What is implemented this session (May 31, 2026 — deploy pending):**
+@@ -379,6 +407,11 @@
+ | `lib/structural-retrieval.ts` | ✅ CHANGED | `DIM_WEIGHTS` local definition removed. Imports from `lib/similarity.ts`. `scoreVectorSimilarity()` logic unchanged. |
+ | `app/api/mirror/benchmark/route.ts` | ✅ CHANGED | `extractVector()` now applies `DIM_WEIGHTS` (dim-weighted raw scores). Confidence intentionally not applied cross-user. |
+ | `lib/bias-scorer.ts` | ✅ CHANGED | Sprint RE: `fetchCalibrationContext()` + `fetchActiveContradictions()` (both private). `fetchUserBiasContext()` extended — parallel queries, calibration + contradiction appended to synthesisBlock, directive extended with plain-language example phrasings for both. One file changed. |
++| `lib/session-score.ts` | ✅ NEW | R4: `computeUserSessionScores()` + `deriveActionPlan()`. Parallel queries from sessions_ontology, bias_library, outcomes. Returns `SessionScoreData[]` with composite score + 4 sub-scores + action plan. `Omit<SessionScoreData, 'actionPlan'>` intermediate type prevents TS build error. |
++| `app/api/mirror/session-score/route.ts` | ✅ NEW | R4: GET handler, auth + Mirror unlocked gate. Returns scored array (last 20 sessions). No LLM, no schema change. |
++| `components/SessionReliabilityIndex.tsx` | ✅ NEW | R4: Mirror module. Per-session score list (last 10), 4 sub-score hover dots, average + trend delta (recent 5 vs prior 5), always-visible "Your next move" action plan targeting weakest avg sub-score. |
++| `lib/types.ts` | ✅ CHANGED | R4: `SessionScoreData` interface appended. |
++| `app/mirror/page.tsx` | ✅ CHANGED | R4: `SessionReliabilityIndex` import added. Section block inserted in UnlockedView after `CalibrationSparkline`, before Decision Timeline. |
+ 
+ **What is confirmed deployed (v29 — Sprints 32–34):**
+ 
+@@ -502,6 +535,28 @@
+ 103. **Calibration and contradiction data in synthesisBlock must reach the user as natural prose, never as labelled data.** The calibration and contradiction directive addenda in `fetchUserBiasContext()` each supply concrete example phrasings to synthesis — e.g. "your track record suggests you tend to be more certain at the moment of deciding than your retrospective view has supported" (calibration) and "this sits in some tension with something you've articulated before" (contradiction). Synthesis is explicitly prohibited from: using the label "calibration data", creating a section header for either data type, reproducing field values verbatim as a list, surfacing contradiction tensions that are not genuinely applicable to the current decision, or quoting numbers without human meaning. This is the same plain-language contract that governs bias key translation (KDD 87) — extended consistently to all three longitudinal data types now in synthesisBlock.
+ 
+ 104. **fetchCalibrationContext() gates on both count and magnitude.** Minimum 3 paired sessions (pre + retro both present) AND |avgDelta| ≥ 0.3. The magnitude gate ensures well-calibrated users — whose delta is noise-level — produce no injection. No point surfacing a calibration observation when the user is already accurate. The count gate prevents a single retrospective outlier from driving synthesis narrative. Both gates must be satisfied; neither alone is sufficient.
++
++105. **Session Reliability Index formula weights: structural × 0.25, biasClarity × 0.30, councilConfidence × 0.20, calibration × 0.25.** Bias clarity weighted highest (0.30) — active distorting signals are the most actionable and most frequently occurring drag on analysis quality. Structural and calibration equal (0.25 each) — both measure contextual richness but across different axes (historical comparison vs. personal accuracy track record). Council confidence lowest (0.20) — it reflects decision framing clarity, which is least controllable within a single session. Do not rebalance without a calibration corpus of ≥ 50 sessions.
++
++106. **Session Reliability Index action plan is global (one per user from weakest average sub-score across all sessions) — not per-session.** Per-session actions would produce contradictory advice if adjacent sessions have different weak spots. A single global action based on the user's pattern gives one clear lever. The same actionPlan string is attached to every row in SessionScoreData[] — UI reads from [0]. The action is always present even when all sub-scores are strong — maintenance actions surface in that case (e.g. "log outcomes consistently").
++
++107. **council_confidence_score is computed deterministically from rule_engine_result.mode and flag_rules.length — no LLM call.** An LLM-based divergence score (per original audit proposal) would require a per-session inference pass adding latency and cost. The rule engine result is a structurally valid proxy: REDIRECT = decision was structurally blocked (35); GATE = structural ambiguity fired (50); flag count ≥ 3 = high complexity (60); 1–2 flags = manageable (75); 0 flags OPEN = clean conditions (90). Deterministic, auditable, and zero inference cost. If true LLM variance scoring is needed in future, it must run async post-session — not on the API request path.
++---
++
++## R4 TEST LOG (validate before marking deployed)
++
++| # | Test | Expected |
++|---|---|---|
++| R4-1 | Mirror unlocked user — open Mirror, scroll to Session Reliability Index | Module renders below Confidence Calibration. Average score (large number) + trend delta visible. Per-session list shows last ≤10 decisions. |
++| R4-2 | Hover any sub-score dot on a session row | Tooltip appears: label + exact score (e.g. "Structural: 78/100"). Disappears on mouse-out. |
++| R4-3 | User with ≥5 sessions — mix of sessions with outcomes logged and sessions without | Sessions missing outcomes show yellow calibration dot (score=70). Sessions with calibration_delta ≥ 0 show teal dot (score=85). Sessions with delta < −0.3 show red/yellow dot. |
++| R4-4 | User with a recurring distorting bias across ≥2 sessions | "Your next move" callout names the specific bias label (not generic copy). Gold left-border card always visible — never absent. |
++| R4-5 | User whose sessions contain a REDIRECT rule result | Council confidence dot red (score=35) for that session. If >40% of sessions are REDIRECTs, action plan references the redirect pattern specifically. |
++| R4-6 | User with ≥10 sessions | Trend delta line appears: "↑ N pts over last 5 sessions" or "↓" or "→ stable". Only appears when prior 5 sessions exist (≥6 sessions total). |
++| R4-7 | User with only 1–2 sessions (no structural history yet) | Structural sub-score dots neutral (score=50 = yellow). Action plan reads: "Structural matching activates once Quorum has prior sessions…" Module renders without error. |
++| R4-8 | Mirror locked or teaser user | GET /api/mirror/session-score returns 403. Component returns null — no empty state rendered, no error shown. |
++| R4-9 | Check Railway logs during module load | No errors from computeUserSessionScores(). Three parallel DB queries complete in single round-trip. No "actionPlan is missing" TypeScript errors at runtime. |
++
+ ---
+ 
+ ## PENDING
+@@ -538,6 +593,7 @@
+ *(All items from v27 carried forward unchanged)*
+ 
+ - **C0 question suppression on complex decisions** → ✅ Fixed May 31, 2026. C0 now always fires regardless of rule count. One condition removed from examiner/route.ts.
++- **R4 (No unified decision scoring layer)** → ✅ Implemented May 31, 2026. lib/session-score.ts (NEW) — computeUserSessionScores() + deriveActionPlan(). app/api/mirror/session-score/route.ts (NEW). components/SessionReliabilityIndex.tsx (NEW). lib/types.ts + app/mirror/page.tsx updated. TypeScript fix: Omit<SessionScoreData, 'actionPlan'> intermediate array. No schema change, no LLM. Deploy pending.
+ - **R3 (Council Weighting Directive — flat synthesis aggregation)** → ✅ Implemented May 31, 2026. lib/persona-relevance.ts created. persona/route.ts updated. Deploy pending.
+ - **R5 (Structural context injected as text only, no output traceability)** → ✅ Implemented May 31, 2026. Conditional OUTPUT TRACEABILITY requirement appended to structuralBlock in persona/route.ts. One functional change (~4 lines). Deploy pending.
+ - **Additional Risk A (recency_bias hardcoded to 'neutral')** → ✅ Confirmed pre-existing fix (Sprint R2). classifyBiasSignal() in bias-scorer.ts already returns 'distorting' when ddInfo ≥ 4. No new files needed.

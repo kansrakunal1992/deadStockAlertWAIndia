@@ -1,0 +1,571 @@
+diff --git a/app/api/mirror/calibration/route.ts b/app/api/mirror/calibration/route.ts
+index 89b7b39..29f7c0c 100644
+--- a/app/api/mirror/calibration/route.ts
++++ b/app/api/mirror/calibration/route.ts
+@@ -38,6 +38,7 @@ import { createServiceClient }  from '@/lib/supabase'
+ import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+ import { getMirrorAccessState } from '@/lib/mirror-access'
+ import { decrypt } from '@/lib/encryption'
++import { computeDimensionalCalibration, type DimensionalCalibrationZone } from '@/lib/calibration-engine'
+ 
+ export interface CalibrationPoint {
+   session_id:               string
+@@ -60,8 +61,9 @@ export interface CalibrationSummary {
+ }
+ 
+ export interface CalibrationResponse {
+-  points:  CalibrationPoint[]
+-  summary: CalibrationSummary
++  points:          CalibrationPoint[]
++  summary:         CalibrationSummary
++  dimensionalZones: DimensionalCalibrationZone[]   // Sprint CAL — evidence-backed per-dimension patterns
+ }
+ 
+ // ── Trend slope ────────────────────────────────────────────────────────────────
+@@ -232,5 +234,12 @@ export async function GET(req: Request) {
+     pairedCount,
+   }
+ 
+-  return NextResponse.json({ points, summary } satisfies CalibrationResponse)
++  // ── 6. Dimensional calibration zones (Sprint CAL) ─────────────────────────
++  // Reuses the session IDs already fetched above — no extra query to derive them.
++  // Resolves to [] when no dimension clears the gate (see lib/calibration-engine.ts);
++  // that's the expected, common state, not an error.
++  const sessionIds = (rows ?? []).map(r => r.id)
++  const dimensionalZones = await computeDimensionalCalibration(sessionIds, supabase)
++
++  return NextResponse.json({ points, summary, dimensionalZones } satisfies CalibrationResponse)
+ }
+diff --git a/app/api/persona/route.ts b/app/api/persona/route.ts
+index 1886200..6ccb14e 100644
+--- a/app/api/persona/route.ts
++++ b/app/api/persona/route.ts
+@@ -271,9 +271,9 @@ export async function POST(req: Request) {
+       ? councilContextPromise.then(({ ontologyVector, userId }) =>
+           userId
+             ? fetchUserBiasContext(userId, ontologyVector)
+-            : Promise.resolve({ synthesisBlock: '', personaAlert: null, hasAnyBiases: false })
++            : Promise.resolve({ synthesisBlock: '', personaAlert: null, hasAnyBiases: false, personalCalibrationZones: [] })
+         )
+-      : Promise.resolve({ synthesisBlock: '', personaAlert: null, hasAnyBiases: false })
++      : Promise.resolve({ synthesisBlock: '', personaAlert: null, hasAnyBiases: false, personalCalibrationZones: [] })
+ 
+     // ── Build chat messages ───────────────────────────────────────────────────
+     let chatMessages: { role: 'user' | 'assistant'; content: string }[]
+@@ -414,17 +414,21 @@ MANDATORY: weave this context into your synthesis naturally. Do not create a sep
+     // baseline weights from ontology dimensions). No-ops gracefully if both
+     // ruleEngineResult and ontologyVector are null (returns baseline 0.50 map
+     // which produces a flat directive — still valid, just less informative).
++    // Sprint CAL: personalCalibrationZones threaded through from biasContext —
++    // already resolved above, no extra DB call needed.
+     if (isSynthesisCall) {
+       const relevanceMap = computePersonaRelevance(
+         councilResult.ruleEngineResult,
+         councilResult.ontologyVector,
+         councilResult.maxStructuralScore,
++        biasContext.personalCalibrationZones,
+       )
+       const relevanceBlock = buildRelevanceBlock(
+         relevanceMap,
+         councilResult.ruleEngineResult,
+         councilResult.ontologyVector,
+         councilResult.maxStructuralScore,
++        biasContext.personalCalibrationZones,
+       )
+       basePrompt = `${basePrompt}${relevanceBlock}`
+       console.log(`[Persona] Council weighting directive injected for synthesis | session ${sessionId}`)
+diff --git a/components/CalibrationSparkline.tsx b/components/CalibrationSparkline.tsx
+index de3364f..b1a7934 100644
+--- a/components/CalibrationSparkline.tsx
++++ b/components/CalibrationSparkline.tsx
+@@ -1,25 +1,35 @@
+ 'use client'
+ 
+ import { formatShortDate } from '@/lib/dates'
++import Link from 'next/link'
+ 
+ // components/CalibrationSparkline.tsx
+ // ── Mirror: Calibration Sparkline (Sprint 15) ─────────────────────────────────
+ //
+ // Renders the user's pre-decision vs. retrospective confidence over time.
+ //
+-// Three visual layers:
++// Four visual layers:
+ //   1. Summary card — avg delta with colour-coding + trend label + pattern text
+ //   2. Dual-line SVG sparkline — pre confidence (muted) vs retro confidence (gold)
+ //   3. Delta bar row — per-session delta as signed bars (+green / -red)
++//   4. Personal Calibration Zones (Sprint CAL) — per-dimension patterns, each
++//      backed by 1–2 real evidence sessions (decision text + link), not just
++//      an asserted claim. Renders only when lib/calibration-engine.ts has
++//      cleared a dimension's gate — absent for most users, most of the time,
++//      by design.
+ //
+-// Data threshold: needs >= 3 paired points to render chart. Below that,
+-// renders a progress state explaining what will appear.
++// Data threshold: needs >= 3 paired points to render the chart (layers 1–3).
++// Below that, renders a progress state explaining what will appear. The
++// dimensional zones layer (4) has its own, stricter, independent gate and
++// simply does not render when empty — no placeholder, no "not enough data yet"
++// noise stacked under an already-explained insufficient state.
+ //
+ // Auth: receives authToken prop (same pattern as BiasFingerprint, IndependenceScore).
+ // ─────────────────────────────────────────────────────────────────────────────
+ 
+ import { useState, useEffect } from 'react'
+ import type { CalibrationPoint, CalibrationSummary, CalibrationResponse } from '@/app/api/mirror/calibration/route'
++import type { DimensionalCalibrationZone, CalibrationEvidence } from '@/lib/calibration-engine'
+ 
+ // ── Helpers ───────────────────────────────────────────────────────────────────
+ 
+@@ -141,6 +151,147 @@ function InsufficientState({ pairedCount }: { pairedCount: number }) {
+   )
+ }
+ 
++// ── Personal Calibration Zones (Sprint CAL) ───────────────────────────────────
++//
++// Each zone is a per-dimension pattern that has cleared lib/calibration-engine.ts's
++// gate — both buckets >= 3 sessions, gap >= 0.4. Deliberately evidence-first:
++// the headline claim is paired with the actual decision(s) that produced it,
++// linked through to the full session record rather than asked to be trusted
++// as an abstract psychological observation.
++function directionLabel(direction: DimensionalCalibrationZone['direction']): string {
++  return direction === 'overconfident'
++    ? 'Runs overconfident here'
++    : 'Runs underconfident here'
++}
++
++function directionColor(direction: DimensionalCalibrationZone['direction']): string {
++  return direction === 'overconfident' ? '#f87171' : '#4ade80'
++}
++
++function formatOutcomeQuality(q: string | null): string | null {
++  if (!q) return null
++  return q.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase())
++}
++
++function EvidenceRow({ evidence }: { evidence: CalibrationEvidence }) {
++  const delta = evidence.calibration_delta
++  const dStr  = (delta >= 0 ? '+' : '') + delta.toFixed(1)
++  const oq    = formatOutcomeQuality(evidence.outcome_quality)
++
++  return (
++    <Link
++      href={`/session/${evidence.session_id}`}
++      style={{
++        display:        'block',
++        textDecoration: 'none',
++        padding:        '10px 12px',
++        marginTop:      6,
++        background:     'var(--bg-inset)',
++        border:         '1px solid var(--border-dim)',
++        borderRadius:   8,
++        transition:     'border-color 0.15s',
++      }}
++    >
++      <p style={{
++        fontSize:   12.5,
++        color:      'var(--text-2)',
++        margin:     '0 0 6px',
++        lineHeight: 1.45,
++      }}>
++        “{evidence.decision_text}{evidence.decision_text.length >= 140 ? '…' : ''}”
++      </p>
++      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
++        <span style={{ fontSize: 9.5, color: 'var(--text-4)', fontFamily: 'var(--font-mono)' }}>
++          {formatShortDate(evidence.created_at)}
++        </span>
++        <span style={{ fontSize: 9.5, color: 'var(--text-4)', fontFamily: 'var(--font-mono)' }}>
++          Pre: {evidence.pre_decision_confidence} → Retro: {evidence.retrospective_confidence}
++        </span>
++        <span style={{
++          fontSize:   9.5,
++          fontFamily: 'var(--font-mono)',
++          fontWeight: 700,
++          color:      deltaColor(delta),
++        }}>
++          Δ {dStr}
++        </span>
++        {oq && (
++          <span style={{ fontSize: 9.5, color: 'var(--text-4)' }}>
++            {oq}
++          </span>
++        )}
++        <span style={{ fontSize: 9.5, color: 'var(--gold)', marginLeft: 'auto' }}>
++          View decision →
++        </span>
++      </div>
++    </Link>
++  )
++}
++
++function ZoneCard({ zone }: { zone: DimensionalCalibrationZone }) {
++  const color = directionColor(zone.direction)
++  return (
++    <div style={{
++      background:   'var(--bg-card)',
++      border:       '1px solid var(--border-dim)',
++      borderRadius: 10,
++      padding:      '16px 16px 14px',
++    }}>
++      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
++        <p style={{ fontSize: 13.5, color: 'var(--text-1)', margin: 0, fontWeight: 600, lineHeight: 1.4 }}>
++          On decisions with high {zone.dimLabel}
++        </p>
++        <span style={{
++          fontSize:      10.5,
++          fontWeight:    700,
++          color,
++          whiteSpace:    'nowrap',
++        }}>
++          {directionLabel(zone.direction)}
++        </span>
++      </div>
++      <p style={{ fontSize: 11.5, color: 'var(--text-4)', margin: '4px 0 0', lineHeight: 1.5 }}>
++        Calibration delta runs {zone.gap >= 0 ? '+' : ''}{zone.gap} points wider than on decisions
++        where this dimension is low — based on {zone.sampleSize.high} high-scoring and{' '}
++        {zone.sampleSize.low} low-scoring tracked decisions.
++      </p>
++
++      <p style={{
++        fontSize:      9.5,
++        fontWeight:    700,
++        color:         'var(--text-4)',
++        letterSpacing: '0.08em',
++        textTransform: 'uppercase',
++        margin:        '14px 0 0',
++      }}>
++        Evidence
++      </p>
++      {zone.evidence.map(e => <EvidenceRow key={e.session_id} evidence={e} />)}
++    </div>
++  )
++}
++
++function DimensionalZonesSection({ zones }: { zones: DimensionalCalibrationZone[] }) {
++  if (zones.length === 0) return null
++  return (
++    <div style={{ marginTop: 18 }}>
++      <p style={{
++        fontSize:      11,
++        fontWeight:    700,
++        color:         'var(--text-4)',
++        letterSpacing: '0.1em',
++        textTransform: 'uppercase',
++        margin:        '0 0 10px',
++      }}>
++        Personal Calibration Zones
++      </p>
++      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
++        {zones.map(z => <ZoneCard key={z.dim} zone={z} />)}
++      </div>
++    </div>
++  )
++}
++
+ // ── Main component ─────────────────────────────────────────────────────────────
+ export default function CalibrationSparkline({ authToken }: { authToken: string }) {
+   const [loading,  setLoading]  = useState(true)
+@@ -200,7 +351,7 @@ export default function CalibrationSparkline({ authToken }: { authToken: string
+     )
+   }
+ 
+-  const { points, summary } = data
++  const { points, summary, dimensionalZones } = data
+ 
+   // ── Insufficient data ───────────────────────────────────────────────────────
+   if (!summary.dataReady) {
+@@ -524,6 +675,9 @@ export default function CalibrationSparkline({ authToken }: { authToken: string
+         Based on {summary.pairedCount} decision{summary.pairedCount !== 1 ? 's' : ''} with a retrospective confidence score logged.
+         {summary.avg_delta !== null && ' Delta (retro − pre) shown where pre-decision confidence was also recorded.'}
+       </p>
++
++      {/* ── Personal Calibration Zones (Sprint CAL) ─────────────────────────── */}
++      <DimensionalZonesSection zones={dimensionalZones} />
+     </div>
+   )
+ }
+diff --git a/lib/bias-scorer.ts b/lib/bias-scorer.ts
+index f811109..63ddcab 100644
+--- a/lib/bias-scorer.ts
++++ b/lib/bias-scorer.ts
+@@ -58,6 +58,11 @@
+ import { createCompletion, getProviderInfo } from '@/lib/ai-client'
+ import { createServiceClient }               from '@/lib/supabase'
+ import { decrypt }                           from '@/lib/encryption'
++import {
++  computeDimensionalCalibration,
++  isZoneActiveForVector,
++  type DimensionalCalibrationZone,
++}                                             from '@/lib/calibration-engine'
+ 
+ // ── 15 Bias Parameters ───────────────────────────────────────────────────────
+ export const BIAS_PARAMETERS = [
+@@ -491,6 +496,41 @@ async function fetchCalibrationContext(
+   }
+ }
+ 
++// ── buildDimensionalCalibrationLine (Sprint CAL — private) ───────────────────
++//
++// Takes the full set of a user's confirmed personal calibration zones
++// (lib/calibration-engine.ts) and the CURRENT decision's ontology vector, and
++// returns a plain-English data line for any zone that is "live" for this
++// specific decision — i.e. the current vector is elevated on that exact
++// dimension. Returns '' when no zone is currently active (most users, most
++// of the time, by design — see calibration-engine.ts gating).
++//
++// This is deliberately separate from fetchCalibrationContext's global
++// average: that describes "this user's calibration overall," this describes
++// "this user's calibration specifically on decisions structured like THIS
++// one" — a sharper, dimension-anchored claim, evidenced by real sessions
++// rather than an aggregate.
++// ─────────────────────────────────────────────────────────────────────────────
++
++function buildDimensionalCalibrationLine(
++  zones: DimensionalCalibrationZone[],
++  currentVector: OntologyScoreMap | null,
++): string {
++  const active = zones.filter(z => isZoneActiveForVector(z, currentVector))
++  if (active.length === 0) return ''
++
++  const lines = active
++    .map(z =>
++      `— On decisions scoring high on ${z.dimLabel}, this user runs ${z.direction} ` +
++      `(calibration delta averages ${z.gap >= 0 ? '+' : ''}${z.gap} points wider than on ` +
++      `decisions where that dimension is low — based on ${z.sampleSize.high} high-scoring ` +
++      `and ${z.sampleSize.low} low-scoring tracked decisions).`,
++    )
++    .join('\n')
++
++  return `Dimension-specific calibration pattern matching THIS decision's structural profile:\n${lines}`
++}
++
+ // ── fetchActiveContradictions (Sprint RE — private) ──────────────────────────
+ //
+ // Queries the contradictions table for active (non-dismissed) principle–behaviour
+@@ -782,13 +822,14 @@ export interface UserBiasContext {
+   synthesisBlock:  string        // full block for synthesis system prompt
+   personaAlert:    string | null // one-sentence alert for initial persona system prompts
+   hasAnyBiases:    boolean
++  personalCalibrationZones: DimensionalCalibrationZone[]  // Sprint CAL — full zone list, for persona-relevance.ts
+ }
+ 
+ export async function fetchUserBiasContext(
+   userId: string,
+   ontologyVector: OntologyScoreMap | null,
+ ): Promise<UserBiasContext> {
+-  const empty: UserBiasContext = { synthesisBlock: '', personaAlert: null, hasAnyBiases: false }
++  const empty: UserBiasContext = { synthesisBlock: '', personaAlert: null, hasAnyBiases: false, personalCalibrationZones: [] }
+   if (!userId) return empty
+ 
+   try {
+@@ -819,9 +860,11 @@ export async function fetchUserBiasContext(
+     ).map(s => s.id)
+ 
+     // R_JC: principles + regret run in parallel (both depend on sessionIds)
+-    const [principlesBlock, regretBlock] = await Promise.all([
++    // Sprint CAL: dimensional calibration joins the same batch — also keyed off sessionIds.
++    const [principlesBlock, regretBlock, personalCalibrationZones] = await Promise.all([
+       fetchUserPrinciplesBlock(sessionIds, supabase),
+       fetchRecurringRegretBlock(sessionIds, ontologyVector, supabase),
++      computeDimensionalCalibration(sessionIds, supabase),
+     ])
+ 
+     const { data: biases, error } = biasResult
+@@ -911,14 +954,28 @@ export async function fetchUserBiasContext(
+       ? ' The recurring regret signal above is factual context about this user\'s track record in structurally similar decisions. If the Council\'s analysis touches on the same structural dimensions (irreversibility, urgency, stakes, value conflict), weave a brief, plain observation into your existing prose. Example phrasing: \"Worth naming: a few decisions you\'ve faced with this structural profile haven\'t landed as expected — not from bad analysis, but because [name the mechanism the Council identified]. That pattern is worth holding in mind before this one closes.\" Do NOT frame it as a prediction of failure. Do NOT surface it if the Council analysis does not connect to those structural dimensions. Do NOT create a separate section header.'
+       : ''
+ 
++    // ── Dimensional calibration line + directive (Sprint CAL) ─────────────
++    // Only appended when a confirmed personal calibration zone (lib/calibration-
++    // engine.ts) is active for THIS decision's structural profile — i.e. the
++    // current vector is elevated on the exact dimension where this user has a
++    // documented over/underconfidence pattern. Sharper and evidence-backed
++    // (real past sessions, not just an aggregate), so it gets its own directive
++    // rather than being folded into the general calibrationDirective above.
++    const dimensionalCalibrationLine = buildDimensionalCalibrationLine(personalCalibrationZones, ontologyVector)
++    const dimensionalCalibrationDirective = dimensionalCalibrationLine
++      ? ' This decision\'s structural profile specifically matches a documented personal calibration pattern above. If relevant to what the Council raised, name it as a plain observation tied to this decision\'s structure — for example, "decisions with this much [paraphrase the dimension] have historically been a spot where your hindsight view has run more [favourable/cautious] than how certain you felt going in." Do NOT reference dimension names, scores, or the phrase \'calibration pattern\' verbatim, and do NOT create a separate section header.'
++      : ''
++
+     // ── Assemble full synthesisBlock ───────────────────────────────────────
+     // Structure: bias record → calibration (if present) → contradictions (if present)
+-    //            → principles (if present) → regret signal (if present) → MANDATORY directive.
++    //            → principles (if present) → regret signal (if present)
++    //            → dimensional calibration (if present) → MANDATORY directive.
+     const longitudinalContext = [
+       calibrationLine,
+       contradictionBlock,
+       principlesBlock,
+       regretBlock,
++      dimensionalCalibrationLine,
+     ].filter(Boolean).join('\n\n')
+ 
+     const synthesisBlock =
+@@ -928,7 +985,7 @@ ${biasLines}
+ Columns: bias_key | status (CONFIRMED = 3+ detections, FORMING = 1–2 detections) | severity (avg prosecutor–defense asymmetry, 0–10 scale) | confidence (evidence weight: 30% per detection, capped at 100%) | signal (re-classified against THIS decision's structural profile: DISTORTING / NEUTRAL / ADAPTIVE).
+ ${longitudinalContext ? `\n${longitudinalContext}\n` : ''}
+ MANDATORY SYNTHESIS REQUIREMENT — NON-NEGOTIABLE:
+-${biasDirective}${calibrationDirective}${contradictionDirective}${principlesDirective}${regretDirective}`
++${biasDirective}${calibrationDirective}${contradictionDirective}${principlesDirective}${regretDirective}${dimensionalCalibrationDirective}`
+ 
+     // ── Build personaAlert ────────────────────────────────────────────────
+     // Only the single highest-severity DISTORTING bias fires here, and only if confirmed.
+@@ -939,7 +996,7 @@ ${biasDirective}${calibrationDirective}${contradictionDirective}${principlesDire
+       ? `DOCUMENTED BIAS ALERT: This user has a confirmed longitudinal pattern of ${topDistorting.biasKey} (${topDistorting.detectionCount} prior detections, severity ${topDistorting.asymmetryAvg.toFixed(1)}/10, currently DISTORTING for this decision's structural profile). Factor this into your analysis where the evidence supports it.`
+       : null
+ 
+-    return { synthesisBlock, personaAlert, hasAnyBiases: true }
++    return { synthesisBlock, personaAlert, hasAnyBiases: true, personalCalibrationZones }
+ 
+   } catch (err) {
+     console.error('[BiasContext] fetchUserBiasContext failed:', err)
+diff --git a/lib/persona-relevance.ts b/lib/persona-relevance.ts
+index 4940fec..542df12 100644
+--- a/lib/persona-relevance.ts
++++ b/lib/persona-relevance.ts
+@@ -1,32 +1,45 @@
+ /**
+- * QUORUM — Persona Relevance Scoring (Sprint R3)
++ * QUORUM — Persona Relevance Scoring (Sprint R3 + Sprint CAL)
+  *
+  * Computes a weighted relevance score (0.0–1.0) for each of the 6 advisor
+  * personas based on the current session's rule engine signals, ontology
+- * dimension scores, and structural match quality.
++ * dimension scores, structural match quality, and (Sprint CAL) the user's
++ * own confirmed personal calibration zones.
+  *
+  * Used exclusively at synthesis time to produce a COUNCIL WEIGHTING DIRECTIVE
+  * injected into the synthesis system prompt as a MANDATORY non-negotiable block.
+  *
+  * ── How the score is built ───────────────────────────────────────────────────
+- *   Base weight     : 0.50 for every persona
+- *   Rule boosts     : per RULE_PERSONA_BOOSTS — fires for every triggered/flag rule
+- *   Ontology boosts : per DIM_PERSONA_BOOSTS — fires when a dimension crosses a threshold
+- *   Structural boost : pattern_analyst gets extra weight when a structural match exists
+- *   Clamp           : final scores bounded to [0.0, 1.0]
++ *   Base weight       : 0.50 for every persona
++ *   Rule boosts       : per RULE_PERSONA_BOOSTS — fires for every triggered/flag rule
++ *   Ontology boosts   : per DIM_PERSONA_BOOSTS — fires when a dimension crosses a threshold
++ *   Calibration boosts: +0.10 to the same persona(s) when the current decision is elevated
++ *                        on a dimension where this specific user has a confirmed personal
++ *                        over/underconfidence pattern (lib/calibration-engine.ts). A
++ *                        refinement on the ontology boost above, not a new signal.
++ *   Structural boost  : pattern_analyst gets extra weight when a structural match exists
++ *   Clamp             : final scores bounded to [0.0, 1.0]
+  *
+  * ── Config maintenance ───────────────────────────────────────────────────────
+  *   RULE_PERSONA_BOOSTS  keys are typed against RuleId (derived from rule-engine.ts).
+  *   If a rule is added or renamed there, add/update the entry here — TypeScript
+  *   will surface a mismatch if an unknown rule_id is referenced.
+  *   To retune weights, edit RULE_PERSONA_BOOSTS or DIM_PERSONA_BOOSTS values only.
+- *   No logic changes required for retuning.
++ *   No logic changes required for retuning. Calibration boosts reuse
++ *   DIM_PERSONA_BOOSTS directly — there is no separate mapping to maintain.
++ *
++ * KDD: lib/rule-engine.ts thresholds are never personalised by this file or by
++ * lib/calibration-engine.ts. Rule thresholds stay global so the admin R7/R8
++ * calibration-sensitivity tooling (which assumes one threshold per rule across
++ * the whole corpus) remains valid. Personalisation lives only in this relevance
++ * layer and in the synthesis context block built by lib/bias-scorer.ts.
+  *
+  * See: docs/r3-persona-relevance.md for full rationale.
+  */
+ 
+ import type { RuleEngineResult } from './rule-engine'
+ import type { OntologyScoreMap }  from './bias-scorer'
++import { isZoneActiveForVector, type DimensionalCalibrationZone } from './calibration-engine'
+ 
+ // ── Persona key subset — the 6 Council advisors (not synthesis/decision_brief) ─
+ export type AdvisorKey =
+@@ -144,6 +157,7 @@ export function computePersonaRelevance(
+   ruleEngineResult:   RuleEngineResult | null,
+   ontologyVector:     OntologyScoreMap | null,
+   maxStructuralScore: number | null,
++  personalCalibrationZones: DimensionalCalibrationZone[] | null = null,
+ ): PersonaRelevanceMap {
+   const scores: PersonaRelevanceMap = {
+     contrarian:         0.50,
+@@ -185,6 +199,26 @@ export function computePersonaRelevance(
+     }
+   }
+ 
++  // ── 2.5. Personal calibration zone boosts (Sprint CAL) ───────────────────
++  // When THIS decision is elevated on a dimension where THIS specific user
++  // has a confirmed personal calibration pattern (lib/calibration-engine.ts),
++  // nudge the persona(s) already mapped to that dimension in DIM_PERSONA_BOOSTS.
++  // Deliberately smaller than a primary boost (0.10 vs the 0.10–0.30 above) —
++  // this refines an existing signal, it does not introduce a new one.
++  // KDD: lib/rule-engine.ts thresholds are never personalised — this stays
++  // confined to relevance weighting and the synthesis context block.
++  const CALIBRATION_ZONE_BOOST = 0.10
++  if (ontologyVector && personalCalibrationZones?.length) {
++    for (const zone of personalCalibrationZones) {
++      if (!isZoneActiveForVector(zone, ontologyVector)) continue
++      const entry = DIM_PERSONA_BOOSTS.find(e => e.dim === zone.dim)
++      if (!entry) continue
++      for (const persona of Object.keys(entry.boosts) as AdvisorKey[]) {
++        scores[persona] += CALIBRATION_ZONE_BOOST
++      }
++    }
++  }
++
+   // ── 3. Structural match boost ─────────────────────────────────────────────
+   const structBoost = getStructuralBoost(maxStructuralScore)
+   for (const [persona, boost] of Object.entries(structBoost) as [AdvisorKey, number][]) {
+@@ -222,6 +256,7 @@ function buildRationale(
+   ruleEngineResult:   RuleEngineResult | null,
+   ontologyVector:     OntologyScoreMap | null,
+   maxStructuralScore: number | null,
++  personalCalibrationZones: DimensionalCalibrationZone[] | null = null,
+ ): string {
+   const reasons: string[] = []
+ 
+@@ -245,6 +280,16 @@ function buildRationale(
+     }
+   }
+ 
++  if (ontologyVector && personalCalibrationZones?.length) {
++    for (const zone of personalCalibrationZones) {
++      if (!isZoneActiveForVector(zone, ontologyVector)) continue
++      const entry = DIM_PERSONA_BOOSTS.find(e => e.dim === zone.dim)
++      if (entry?.boosts[persona]) {
++        reasons.push(`personal calibration zone: ${zone.dim.replace(/_/g, ' ')}`)
++      }
++    }
++  }
++
+   if (persona === 'pattern_analyst' && maxStructuralScore !== null && maxStructuralScore >= 45) {
+     reasons.push(`structural match ${maxStructuralScore}/100`)
+   }
+@@ -259,6 +304,7 @@ export function buildRelevanceBlock(
+   ruleEngineResult:   RuleEngineResult | null,
+   ontologyVector:     OntologyScoreMap | null,
+   maxStructuralScore: number | null,
++  personalCalibrationZones: DimensionalCalibrationZone[] | null = null,
+ ): string {
+   // Sort descending by score
+   const sorted = (Object.entries(map) as [AdvisorKey, number][])
+@@ -267,7 +313,7 @@ export function buildRelevanceBlock(
+   const lines = sorted.map(([persona, score]) => {
+     const label      = PERSONA_DISPLAY[persona]
+     const tier       = tierLabel(score)
+-    const rationale  = buildRationale(persona, ruleEngineResult, ontologyVector, maxStructuralScore)
++    const rationale  = buildRationale(persona, ruleEngineResult, ontologyVector, maxStructuralScore, personalCalibrationZones)
+     const reasonStr  = rationale ? ` — ${rationale}` : ''
+     return `— ${label} [${score.toFixed(2)}] ${tier}${reasonStr}`
+   })
+diff --git a/lib/structural-retrieval.ts b/lib/structural-retrieval.ts
+index 7170e75..6736de2 100644
+--- a/lib/structural-retrieval.ts
++++ b/lib/structural-retrieval.ts
+@@ -118,7 +118,9 @@ export type VectorDimName = typeof VECTOR_DIMS[number]
+ // structural retrieval (which used weights) and peer benchmark (which did not).
+ 
+ // Human-readable labels for annotation prompt and context block injection
+-const DIM_LABELS: Record<VectorDimName, string> = {
++// Exported (Sprint CAL) so lib/calibration-engine.ts shares the same labels
++// instead of maintaining a second copy that could drift out of sync.
++export const DIM_LABELS: Record<VectorDimName, string> = {
+   reversibility:               'reversibility of outcomes',
+   time_horizon:                'time horizon of consequences',
+   stakes_magnitude:            'stakes magnitude',

@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quorum — Competitive Leakage Analysis</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #010306;
+    --bg2: #03070f;
+    --card: #060c1a;
+    --card2: #080f1e;
+    --b0: #0d1628;
+    --b1: #182340;
+    --b2: #243658;
+    --t0: #ffffff;
+    --t1: #edf2ff;
+    --t2: #c8d6f0;
+    --t3: #8fa8cc;
+    --t4: #506484;
+    --t5: #263d5e;
+    --gold: #d4a832;
+    --gold-hi: #f0c040;
+    --gold-lo: #a07828;
+    --gold-alpha: rgba(212,168,50,0.10);
+    --gold-glow: rgba(212,168,50,0.05);
+    --red: #c97050;
+    --red-alpha: rgba(201,112,80,0.12);
+    --amber: #c99050;
+    --amber-alpha: rgba(201,144,80,0.10);
+    --green: #5aaa78;
+    --green-alpha: rgba(90,170,120,0.10);
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    line-height: 1.75;
+    color: var(--t2);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 80px 48px 120px;
+  }
+  @media(max-width:720px){ body{ padding:48px 20px 80px; } }
+
+  /* ── Type ── */
+  .display {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-weight: 300;
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    color: var(--t0);
+  }
+  .mono {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--gold);
+    display: block;
+    margin-bottom: 14px;
+  }
+  h1.display { font-size: clamp(44px,6vw,72px); margin-bottom: 32px; }
+  h2.display { font-size: clamp(30px,4vw,44px); margin-bottom: 20px; }
+  h3 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--t0);
+    margin-bottom: 10px;
+    letter-spacing: -0.01em;
+  }
+
+  /* ── Layout ── */
+  .rule { border: none; border-top: 1px solid var(--b0); margin: 60px 0; }
+  .section { margin-bottom: 72px; }
+
+  /* ── Meta header ── */
+  .doc-meta {
+    display: flex;
+    gap: 32px;
+    margin-bottom: 56px;
+    padding-bottom: 32px;
+    border-bottom: 1px solid var(--b0);
+  }
+  .meta-item { font-size: 11px; color: var(--t4); }
+  .meta-item strong { display: block; color: var(--t1); font-size: 12px; margin-bottom: 2px; }
+
+  /* ── Exec summary ── */
+  .exec-box {
+    border: 1px solid var(--b1);
+    border-radius: 16px;
+    padding: 38px 40px;
+    background: var(--card);
+    margin-bottom: 60px;
+    position: relative;
+    overflow: hidden;
+  }
+  .exec-box::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent 5%, var(--gold-alpha) 42%, var(--gold-alpha) 58%, transparent 95%);
+  }
+  .exec-box p { font-size: 15px; color: var(--t2); line-height: 1.9; margin-bottom: 16px; }
+  .exec-box p:last-child { margin-bottom: 0; }
+  .exec-box .hi { color: var(--t1); font-size: 15.5px; }
+
+  /* ── Core heuristic ── */
+  .heuristic-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin: 36px 0;
+  }
+  @media(max-width:600px){ .heuristic-grid{ grid-template-columns:1fr; } }
+  .hc {
+    border: 1px solid var(--b0);
+    border-radius: 12px;
+    padding: 22px 20px;
+    background: var(--card2);
+  }
+  .hc-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 8.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    display: block;
+  }
+  .hc-label.safe { color: var(--green); }
+  .hc-label.border { color: var(--amber); }
+  .hc-label.danger { color: var(--red); }
+  .hc p { font-size: 12.5px; color: var(--t3); line-height: 1.7; }
+
+  /* ── Issue card ── */
+  .issue {
+    border: 1px solid var(--b0);
+    border-radius: 18px;
+    overflow: hidden;
+    background: var(--card);
+    margin-bottom: 28px;
+    position: relative;
+  }
+  .issue.high { border-color: rgba(201,112,80,0.35); }
+  .issue.medium { border-color: rgba(201,144,80,0.3); }
+  .issue.low { border-color: var(--b1); }
+
+  .issue-header {
+    padding: 20px 28px 18px;
+    border-bottom: 1px solid var(--b0);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    justify-content: space-between;
+  }
+  .issue-title-wrap { display: flex; align-items: center; gap: 14px; }
+  .issue-num {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--t5);
+  }
+  .issue-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--t0);
+    line-height: 1.3;
+  }
+  .severity-badge {
+    font-family: 'DM Mono', monospace;
+    font-size: 8px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 5px 12px;
+    border-radius: 20px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .severity-badge.high { background: var(--red-alpha); color: var(--red); border: 1px solid rgba(201,112,80,0.25); }
+  .severity-badge.medium { background: var(--amber-alpha); color: var(--amber); border: 1px solid rgba(201,144,80,0.2); }
+  .severity-badge.low { background: var(--b0); color: var(--t4); border: 1px solid var(--b0); }
+
+  .issue-body { padding: 26px 28px 28px; }
+
+  /* Quote block */
+  .quote-block {
+    border: 1px solid var(--b1);
+    border-radius: 10px;
+    background: var(--card2);
+    padding: 18px 22px;
+    margin-bottom: 18px;
+  }
+  .quote-lbl {
+    font-family: 'DM Mono', monospace;
+    font-size: 8px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--t5);
+    margin-bottom: 10px;
+  }
+  .quote-text {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 16.5px;
+    font-style: italic;
+    color: var(--t1);
+    line-height: 1.65;
+  }
+
+  /* Leakage explanation */
+  .leakage-explain {
+    font-size: 14px;
+    color: var(--t2);
+    line-height: 1.88;
+    margin-bottom: 18px;
+  }
+
+  /* Rewrite block */
+  .rewrite-block {
+    border-radius: 10px;
+    background: var(--gold-alpha);
+    border: 1px solid rgba(212,168,50,0.22);
+    padding: 18px 22px;
+    margin-top: 18px;
+  }
+  .rewrite-lbl {
+    font-family: 'DM Mono', monospace;
+    font-size: 8px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 10px;
+  }
+  .rewrite-text {
+    font-size: 14px;
+    color: var(--t1);
+    line-height: 1.85;
+  }
+  .rewrite-text em { color: var(--gold); font-style: italic; }
+
+  /* Safe / Dangerous table */
+  .st-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .st-table th {
+    font-family: 'DM Mono', monospace;
+    font-size: 8.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--t5);
+    text-align: left;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--b1);
+  }
+  .st-table td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--b0);
+    color: var(--t3);
+    vertical-align: top;
+    line-height: 1.65;
+  }
+  .st-table tr:last-child td { border-bottom: none; }
+  .st-table td.item { color: var(--t1); font-size: 13px; }
+  .badge-safe { display: inline-block; font-family:'DM Mono',monospace; font-size:8px; letter-spacing:0.12em; text-transform:uppercase; color:var(--green); background:var(--green-alpha); padding:3px 8px; border-radius:10px; }
+  .badge-danger { display: inline-block; font-family:'DM Mono',monospace; font-size:8px; letter-spacing:0.12em; text-transform:uppercase; color:var(--red); background:var(--red-alpha); padding:3px 8px; border-radius:10px; }
+  .badge-border { display: inline-block; font-family:'DM Mono',monospace; font-size:8px; letter-spacing:0.12em; text-transform:uppercase; color:var(--amber); background:var(--amber-alpha); padding:3px 8px; border-radius:10px; }
+  .action-keep { color: var(--green); font-family:'DM Mono',monospace; font-size:8.5px; letter-spacing:0.1em; text-transform:uppercase; }
+  .action-cut { color: var(--red); font-family:'DM Mono',monospace; font-size:8.5px; letter-spacing:0.1em; text-transform:uppercase; }
+  .action-reword { color: var(--amber); font-family:'DM Mono',monospace; font-size:8.5px; letter-spacing:0.1em; text-transform:uppercase; }
+
+  /* Comparisons */
+  .comp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 28px; }
+  @media(max-width:600px){ .comp-grid{ grid-template-columns:1fr; } }
+  .comp-card {
+    border: 1px solid var(--b0);
+    border-radius: 12px;
+    padding: 22px 22px;
+    background: var(--card2);
+  }
+  .comp-co {
+    font-family: 'DM Mono', monospace;
+    font-size: 8.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--t5);
+    margin-bottom: 10px;
+  }
+  .comp-quote {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 15.5px;
+    font-style: italic;
+    color: var(--t2);
+    line-height: 1.65;
+    margin-bottom: 10px;
+  }
+  .comp-note {
+    font-size: 12px;
+    color: var(--t4);
+    line-height: 1.7;
+  }
+
+  /* Priority action list */
+  .priority-list { list-style: none; }
+  .priority-list li {
+    display: flex;
+    gap: 16px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--b0);
+    align-items: flex-start;
+  }
+  .priority-list li:last-child { border-bottom: none; }
+  .p-rank {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 28px;
+    font-weight: 300;
+    color: var(--b2);
+    line-height: 1;
+    flex-shrink: 0;
+    width: 32px;
+    padding-top: 2px;
+  }
+  .p-content .p-title { font-size: 13.5px; font-weight: 500; color: var(--t0); margin-bottom: 4px; }
+  .p-content .p-detail { font-size: 12.5px; color: var(--t4); line-height: 1.65; }
+
+  /* Safe reveals grid */
+  .safe-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 28px; }
+  @media(max-width:600px){ .safe-grid{ grid-template-columns:1fr; } }
+  .safe-card {
+    border: 1px solid var(--b0);
+    border-radius: 12px;
+    padding: 22px 22px;
+    background: var(--card);
+    border-left: 3px solid var(--green);
+  }
+  .safe-card .safe-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 8.5px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--green);
+    margin-bottom: 8px;
+    display: block;
+  }
+  .safe-card .safe-quote {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 15.5px;
+    font-style: italic;
+    color: var(--t1);
+    line-height: 1.62;
+    margin-bottom: 8px;
+  }
+  .safe-card .safe-reason { font-size: 12px; color: var(--t4); line-height: 1.65; }
+
+</style>
+</head>
+<body>
+
+<span class="mono">Quorum · Internal</span>
+<h1 class="display">Competitive Leakage<br>Analysis</h1>
+
+<div class="doc-meta">
+  <div class="meta-item"><strong>Source files</strong>index.html · HANDOVER_DOC_v27.md · quorum.zip</div>
+  <div class="meta-item"><strong>Sprint basis</strong>Sprint 31 (partial) · May 2026</div>
+  <div class="meta-item"><strong>Classification</strong>Internal · Pre-publish</div>
+</div>
+
+<!-- EXEC SUMMARY -->
+<div class="exec-box">
+  <span class="mono">Executive summary</span>
+  <p class="hi">The website does the most important thing correctly: it names a category ("Judgment Infrastructure"), frames the right problem (intelligence abundant, coherence scarce), and communicates a transformation narrative that compounds over time. None of that is at risk. The positioning is strong.</p>
+  <p>However, the current copy makes six material errors that a product-oriented competitor at an equivalent stage could act on directly. In aggregate, the website reveals the ontology cardinality, the rule engine mode-set, the full processing pipeline in sequential order, and six named internal modules alongside their computational mechanisms. A well-funded team reading this knows exactly what to build.</p>
+  <p>The root cause is consistent: the copy describes <em>how the system works</em> rather than <em>what transformation the user experiences</em>. These are different sentences. Quorum should be writing the second one.</p>
+</div>
+
+<!-- CORE DIAGNOSTIC -->
+<div class="section">
+  <span class="mono">The core diagnostic principle</span>
+  <h2 class="display">Three categories of copy.<br>Different rules for each.</h2>
+  <p style="color:var(--t3); font-size:15px; line-height:1.88; max-width:620px; margin-top:20px; margin-bottom:28px;">The issue is not which words are used. It is what each sentence exposes. Before publishing any product copy, every sentence should be placed in one of three buckets.</p>
+  <div class="heuristic-grid">
+    <div class="hc">
+      <span class="hc-label safe">✓ Always publish</span>
+      <p>"What Quorum does" — what the user experiences, what transformation is possible, what category this occupies. Impossible to reverse-engineer. Strengthens positioning.</p>
+    </div>
+    <div class="hc">
+      <span class="hc-label border">⚠ Abstract first</span>
+      <p>"What the system produces" — outputs, findings, patterns surfaced. Valuable as positioning. Safe if abstracted from mechanism. Risky if mechanism description is attached.</p>
+    </div>
+    <div class="hc">
+      <span class="hc-label danger">✕ Default to remove</span>
+      <p>"How Quorum does it" — pipeline sequence, dimension counts, rule counts, mode names, scoring logic, trigger conditions. This is a product specification. Default is off.</p>
+    </div>
+  </div>
+</div>
+
+<hr class="rule">
+
+<!-- HIGH SEVERITY -->
+<div class="section">
+  <span class="mono">High severity · 4 issues</span>
+  <h2 class="display">These four items are<br>a build-list for a competitor.</h2>
+  <p style="color:var(--t3); font-size:15px; line-height:1.88; max-width:620px; margin-top:20px; margin-bottom:36px;">A well-resourced team reading these sections would leave knowing: the ontology cardinality, the rule engine's operating modes, the full pipeline sequence, and all six internal module names plus their computation descriptions.</p>
+
+  <!-- Issue 1 -->
+  <div class="issue high">
+    <div class="issue-header">
+      <div class="issue-title-wrap">
+        <span class="issue-num">Issue 01</span>
+        <span class="issue-name">Exact dimension count disclosed — with named dimensions listed</span>
+      </div>
+      <span class="severity-badge high">High</span>
+    </div>
+    <div class="issue-body">
+      <div class="quote-block">
+        <div class="quote-lbl">Appears twice — stats section + Step 00 description</div>
+        <div class="quote-text">"14 Structural dimensions scored before any advisor responds"</div>
+      </div>
+      <div class="quote-block">
+        <div class="quote-lbl">Step 00 body copy</div>
+        <div class="quote-text">"…the decision is classified across 14 structural dimensions. Reversibility. Identity stakes. Real vs. felt urgency. Prior unresolved dependencies."</div>
+      </div>
+      <p class="leakage-explain">The number 14 and four named dimensions together hand a competitor the skeleton of the ontology tagger. They know: it is a multi-dimensional classifier, it scores approximately 14 axes, and at least reversibility, identity stakes, urgency type, and upstream dependency are among them. This is enough to bootstrap a structurally similar system — not just the concept, but the architecture. The number also signals that this is a shipped, calibrated system (not aspirational), which makes it worth reverse-engineering. Removing one or the other would help. Having both together makes it a specification extract.</p>
+      <div class="rewrite-block">
+        <div class="rewrite-lbl">Rewrite — stat</div>
+        <div class="rewrite-text">
+          Replace the stat number with an outcome-oriented claim:<br><br>
+          <em>"Structural dimensions read before any response runs"</em> — drop the number, keep the concept. The stat's job is to signal rigor, not disclose cardinality. Alternatively: replace the stat entirely with something that communicates the downstream effect — "Every advisor response is shaped by what the decision structurally is, not just what you wrote."
+        </div>
+      </div>
+      <div class="rewrite-block">
+        <div class="rewrite-lbl">Rewrite — Step 00 body</div>
+        <div class="rewrite-text">
+          Remove the named dimensions. Replace with outcome language:<br><br>
+          <em>"Before any advisor runs, your decision has been read at a structural level — what kind of decision this actually is, not just what you wrote. That read is silent. You don't fill in a form. But it changes everything that follows."</em><br><br>
+          The named dimensions (reversibility, identity stakes, etc.) are category-creation-positive in the abstract — they help the user understand the product. But they appear here in a pipeline description, not in a positioning claim, which makes them a spec sheet rather than a promise.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 2 -->
+  <div class="issue high">
+    <div class="issue-header">
+      <div class="issue-title-wrap">
+        <span class="issue-num">Issue 02</span>
+        <span class="issue-name">Rule engine count plus all three operating modes published verbatim</span>
+      </div>
+      <span class="severity-badge high">High</span>
+    </div>
+    <div class="issue-body">
+      <div class="quote-block">
+        <div class="quote-lbl">Stats section</div>
+        <div class="quote-text">"12 Intervention rules — some decisions get stopped before advice runs"</div>
+      </div>
+      <div class="quote-block">
+        <div class="quote-lbl">Examiner section, es-claim block</div>
+        <div class="quote-text">"Some decisions get stopped entirely — The rule engine can block synthesis, gate it behind one critical question, or mark the Council's output provisional. The mode depends on what the structural analysis finds — not on your framing."</div>
+      </div>
+      <p class="leakage-explain">Together these two sentences describe a deterministic rule engine with 12 rules and three modes: block, gate, provisional. That is an architecture specification, not a positioning claim. A competitor now knows exactly what to build: a pre-synthesis classifier with a three-branch decision tree. The number 12 is particularly damaging — it signals that the rule set has been enumerated and calibrated, and it constrains a competitor's implementation target. The three modes (block/gate/provisional) map directly to R1/R7, R2/R3/R10, and R4/R5/R6/R8/R9/R12 from the internal rule engine — a sharp reader with product intuition could reconstruct most of this taxonomy from the website copy alone.</p>
+      <div class="rewrite-block">
+        <div class="rewrite-lbl">Rewrite — stat</div>
+        <div class="rewrite-text">
+          Remove the count entirely. Replace the label with an outcome description:<br><br>
+          <em>"Some decisions are held before synthesis runs"</em> — the stat number becomes the count of decisions that have been redirected, or is removed entirely and replaced by a more defensible claim.
+        </div>
+      </div>
+      <div class="rewrite-block">
+        <div class="rewrite-lbl">Rewrite — three-mode description</div>
+        <div class="rewrite-text">
+          The Examiner section already contains the stronger version of this claim — use that. The three-mode mechanical description should be replaced with the transformation the user experiences:<br><br>
+          <em>"Not every decision runs all the way through. Sometimes the Examiner finds that a prior question has to be resolved first. Sometimes the framing itself is the problem. In either case, you hear that before the Council's analysis is treated as settled."</em>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 3 -->
+  <div class="issue high">
+    <div class="issue-header">
+      <div class="issue-title-wrap">
+        <span class="issue-num">Issue 03</span>
+        <span class="issue-name">Full pipeline architecture published in sequential numbered order</span>
+      </div>
+      <span class="severity-badge high">High</span>
+    </div>
+    <div class="issue-body">
+      <div class="quote-block">
+        <div class="quote-lbl">"One decision. Five layers." — Steps section</div>
+        <div class="quote-text">"00 — Silent · automatic: Structural Analysis → 01 — Free: The Council → 02 — Free: The Examiner → 03 — Free: Synthesis → 04 — Mirror · Judgment OS: Mirror"</div>
+      </div>
+      <p class="leakage-explain">This is a product architecture diagram rendered as marketing copy. In sequence: pre-processing classification, parallel multi-persona generation, post-persona gating layer, synthesis, persistent memory. The internal naming convention is visible in the step tags ("Silent · automatic" = the ontology tagger; "Free" = Council/Examiner/Synthesis run without paywall; "Mirror · Judgment OS" = the paid layer). The description of Step 02 — "Derived from the structural analysis — not a generic checklist" — explicitly confirms that the Examiner reads the output of Step 00, which describes the integration architecture. A reader with product intuition now knows: build a pre-processing classifier → feed output to six parallel personas → run a second-pass examiner that reads the classifier output → synthesize → store persistently. That is the entire product.</p>
+      <div class="rewrite-block">
+        <div class="rewrite-lbl">Rewrite — frame as experience, not pipeline</div>
+        <div class="rewrite-text">
+          Preserve the five-act structure (it is good UX communication) but rewrite every step description in experience language, not system language:<br><br>
+          <em>Step 00 — "Before you hear from a single advisor, your decision has already been read at a structural level. Not what you wrote — what the decision actually is. Silent. Automatic."</em><br><br>
+          <em>Step 01 — "Six advisors review the decision in parallel, each from a distinct analytical frame. Each one's analysis is shaped by what the structural read found."</em><br><br>
+          <em>Step 02 — "Before synthesis, a separate examination runs. Its job is to find the question you haven't asked yet — and sometimes, to tell you the decision isn't ready."</em><br><br>
+          <em>Step 03 — "A single directional position, integrating all six perspectives. Not a summary of views. A call."</em><br><br>
+          <em>Step 04 — "The part that compounds. Every session adds to a calibrated record of how you specifically think. This is the product."</em><br><br>
+          The "Derived from structural analysis" construction in Step 02 is the most dangerous sentence in this section. It explicitly confirms the examiner reads the classifier output — remove this and replace with the outcome.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 4 -->
+  <div class="issue high">
+    <div class="issue-header">
+      <div class="issue-title-wrap">
+        <span class="issue-num">Issue 04</span>
+        <span class="issue-name">Six internal module names plus their computational mechanisms in the pricing list</span>
+      </div>
+      <span class="severity-badge high">High</span>
+    </div>
+    <div class="issue-body">
+      <div class="quote-block">
+        <div class="quote-lbl">Mirror tier feature list — verbatim</div>
+        <div class="quote-text">"Bias Fingerprint — the exact structural conditions that activate your patterns, not generic labels" · "Confidence Calibration — a running record of where your certainty is reliable and where it consistently overshoots" · "Implicit Rules — the operating principles extracted from how you actually reason, not how you think you do" · "Contradiction Detector — flagged automatically when you violate your own stated principles across decisions" · "Decision Independence Score — how much your calls are driven by your own judgment vs. social pressure"</div>
+      </div>
+      <p class="leakage-explain">The names themselves are brand vocabulary and safe to publish. The mechanism descriptions are not. "Operating principles extracted from how you actually reason" describes a rules-extraction pipeline. "Flagged automatically when you violate your own stated principles across decisions" describes a cross-session contradiction detection system. "Where your certainty is reliable and where it consistently overshoots" describes a pre/post confidence calibration model. "How much your calls are driven by your own judgment vs. social pressure" describes a social influence scoring module. A product team reading this has a Mirror feature specification — six modules, each with its primary computation described in plain English. The module names should stay as brand vocabulary. The mechanism sub-descriptions should be replaced with outcome descriptions.</p>
+      <div class="rewrite-block">
+        <div class="rewrite-lbl">Rewrite — abstract mechanism, keep outcome</div>
+        <div class="rewrite-text">
+          <em>"Bias Fingerprint — how and when your patterns activate, specific to your decision history"</em><br>
+          <em>"Confidence Calibration — the gap between how confident you were and how right you were"</em><br>
+          <em>"Your Implicit Rules — the operating principles your decisions actually reveal"</em><br>
+          <em>"Contradiction Detector — when a decision you just made conflicts with a principle from your record"</em><br>
+          <em>"What Keeps Coming Up — the structural conditions that recur without resolution"</em><br>
+          <em>"Decision Independence Score — how much this decision came from you, not from the room"</em><br><br>
+          Each rewrite preserves what the user needs to understand the value proposition while removing the mechanism description that tells a competitor how to build it.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="rule">
+
+<!-- MEDIUM SEVERITY -->
+<div class="section">
+  <span class="mono">Medium severity · 5 issues</span>
+  <h2 class="display">These expose mechanism details<br>that sharpen a competitor's build.</h2>
+  <p style="color:var(--t3); font-size:15px; line-height:1.88; max-width:620px; margin-top:20px; margin-bottom:36px;">Each of these items in isolation is manageable. In aggregate, particularly alongside the high-severity reveals, they add specificity to the picture a competitor could build from this website alone.</p>
+
+  <!-- Issue 5 -->
+  <div class="issue medium">
+    <div class="issue-header">
+      <div class="issue-title-wrap">
+        <span class="issue-num">Issue 05</span>
+        <span class="issue-name">Bias trigger mechanism exposed via example (conditional activation logic)</span>
+      </div>
+      <span class="severity-badge medium">Medium</span>
+    </div>
+    <div class="issue-body">
+      <div class="quote-block">
+        <div class="quote-lbl">Mirror showcase — Bias Fingerprint section</div>
+        <div class="quote-text">"FOMO activates when a trusted contact endorses a deal before you've had time to form an independent view." · "First number in a negotiation frame tends to anchor your counter-offer range."</div>
+      </div>
+      <p class="leakage-explain">The example is excellent for conversion — it shows the product's precision at a glance. The problem is it reveals the detection architecture. "Activates when [trusted contact] endorses [deal] under [time pressure]" shows that Quorum conditions bias detection on contextual triggers — not just detecting FOMO as a category, but detecting the specific conditions that activate it per decision. A competitor now knows to build conditional bias classification, not categorical bias labeling. This is a meaningful product architecture reveal. The example itself (showing the output) can stay. The trigger-logic framing ("activates when...") should be abstracted.</p>
+      <div class="rewrite-block">
+        <div class="rewrite-lbl">Rewrite — show output, not trigger logic</div>
+        <div class="rewrite-text">
+          Keep the card. Change the framing from trigger-condition to finding:<br><br>
+          <em>"FOMO / Social proof — active in 3 decisions over 4 months"</em><br>
+          <em>"When a trusted contact endorsed a deal before you'd formed a view of your own."</em><br><br>
+          The finding stays specific (this is what makes it convert). The mechanism — "activates when [condition]" — is abstracted to a description of when it occurred, not a description of how the system detects it.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 6 -->
+  <div class="issue medium">
+    <div class="issue-header">
+      <div class="issue-title-wrap">
+        <span class="issue-num">Issue 06</span>
+        <span class="issue-name">Decision Independence Score mechanism — pre/post framework-adoption scoring</span>
+      </div>
+      <span class="severity-badge medium">Medium</span>
+    </div>
+    <div class="issue-body">
+      <div class="quote-block">
+        <div class="quote-lbl">Mirror showcase — Decision Independence Score</div>
+        <div class="quote-text">"Quorum tracks whether you incorporate its frameworks into your own thinking unprompted — before the Council runs. A rising score means your judgment is compounding. A flat score means something isn't landing."</div>
+      </div>
+      <p class="leakage-explain">This sentence describes the scoring mechanism precisely: compare the user's framing before the Council runs against Quorum's frameworks, measure internalization over time. A competitor now has a specific module specification: pre-session framing classifier, framework vocabulary comparison, longitudinal delta tracking. This is a nuanced product insight that is not obvious — it was clearly the result of design iteration. Publishing the mechanism gives it away.</p>
+      <div class="rewrite-block">
+        <div class="rewrite-lbl">Rewrite — outcome only</div>
+        <div class="rewrite-text">
+          <em>"Proof the product is actually working. The score is a direct measure of how much your judgment has compounded — and it moves. A rising score means something has changed in how you decide. A flat score is a signal too. You can see both."</em><br><br>
+          The mechanism (what Quorum is comparing, when it runs, how it scores) is removed. What remains is the value proposition and the user experience — which is everything the prospective user needs to know.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 7 -->
+  <div class="issue medium">
+    <div class="issue-header">
+      <div class="issue-title-wrap">
+        <span class="issue-num">Issue 07</span>
+        <span class="issue-name">Examiner mock uses internal mode language ("Synthesis is held / marked provisional")</span>
+      </div>
+      <span class="severity-badge medium">Medium</span>
+    </div>
+    <div class="issue-body">
+      <div class="quote-block">
+        <div class="quote-lbl">REDIRECT mock card / Examiner section</div>
+        <div class="quote-text">"Synthesis is held. The Council's analysis is marked provisional. A different question is surfaced first." · "Synthesis is blocked. The Council's analysis is marked provisional."</div>
+      </div>
+      <p class="leakage-explain">"Synthesis is held," "marked provisional," and "synthesis is blocked" are internal state descriptions for the REDIRECT and GATE modes of the rule engine. They appear in what reads as UI output but are in fact system state labels. A competitor sees: there is a holding state for synthesis, a provisional state for council output, and these are distinct states. The button label "Reframe the question →" further reveals that REDIRECT specifically triggers a reformulation flow — this is the internal R1/R7 design logic made visible.</p>
+      <div class="rewrite-block">
+        <div class="rewrite-lbl">Rewrite — translate internal states to user experience</div>
+        <div class="rewrite-text">
+          In the mock card:<br>
+          <em>"The Council has reviewed the decision. Before synthesis runs, there's a prior question that has to be answered first."</em><br><br>
+          Remove "Synthesis is held," "marked provisional," and "blocked" entirely. The mode tag "Not ready" is fine — it describes the user experience, not the system state. The button can stay conceptually but the mock is non-interactive anyway — consider removing the button and letting the text carry the moment.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 8 -->
+  <div class="issue medium">
+    <div class="issue-header">
+      <div class="issue-title-wrap">
+        <span class="issue-num">Issue 08</span>
+        <span class="issue-name">Social proof section reveals examiner reasoning pattern and bias trigger</span>
+      </div>
+      <span class="severity-badge medium">Medium</span>
+    </div>
+    <div class="issue-body">
+      <div class="quote-block">
+        <div class="quote-lbl">Social proof card — outcome block</div>
+        <div class="quote-text">"What the Examiner found: The salary decision was structurally premature. The demand forecast — the variable that determined whether fixed raises were an investment or an irreversible cost — was unresolved. Synthesis was blocked."</div>
+      </div>
+      <div class="quote-block">
+        <div class="quote-lbl">Social proof metrics strip</div>
+        <div class="quote-text">"FOMO — Bias surfaced by Mirror — activating specifically under competitive hiring pressure"</div>
+      </div>
+      <p class="leakage-explain">The social proof card is otherwise strong. Two specific phrases create leakage. First: "Synthesis was blocked" — same internal state language as Issue 07. Second: "activating specifically under competitive hiring pressure" — this is the conditional trigger pattern from Issue 05 applied to a real case. Together they confirm the mechanism is operational, not aspirational, and show a competitor what a live output looks like from the trigger-detection system.</p>
+      <div class="rewrite-block">
+        <div class="rewrite-lbl">Rewrite — two targeted changes</div>
+        <div class="rewrite-text">
+          Change "Synthesis was blocked" → <em>"The decision was held."</em><br><br>
+          Change "activating specifically under competitive hiring pressure" → <em>"Flagged by Mirror during this decision"</em> or simply <em>"Bias flagged during decision"</em> with the specific condition removed.<br><br>
+          Everything else in the social proof card should stay — it is one of the strongest sections on the site and converts well. The two phrase changes above remove the mechanism language without weakening the case.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue 9 -->
+  <div class="issue medium">
+    <div class="issue-header">
+      <div class="issue-title-wrap">
+        <span class="issue-num">Issue 09</span>
+        <span class="issue-name">"Not a chatbot" contrast strip — Quorum column describes classification architecture</span>
+      </div>
+      <span class="severity-badge medium">Medium</span>
+    </div>
+    <div class="issue-body">
+      <div class="quote-block">
+        <div class="quote-lbl">Not-a-chatbot comparison — Quorum column</div>
+        <div class="quote-text">"Classifies the structure of your decision before any advisor responds" · "Analysis shaped by what the decision structurally is, not just what you wrote"</div>
+      </div>
+      <p class="leakage-explain">The contrast strip is good positioning. The two items above, however, describe the classification architecture in product terms — "classifies the structure of your decision" tells a competitor to build a classification step before the LLM chain. The second item confirms the classification output is injected into the advisor prompts ("analysis shaped by what the decision structurally is"). These are architectural decisions that were not obvious — now they are. The Any AI Tool column should stay as-is (it's accurate and strong). The Quorum column needs to shift from "what Quorum does structurally" to "what the user experiences as a result."</p>
+      <div class="rewrite-block">
+        <div class="rewrite-lbl">Rewrite — experience over architecture</div>
+        <div class="rewrite-text">
+          Replace:<br>
+          "Classifies the structure of your decision before any advisor responds" → <em>"Reads what the decision actually is before any advisor responds"</em><br><br>
+          "Analysis shaped by what the decision structurally is, not just what you wrote" → <em>"Every advisor already knows what they're dealing with — not just what you typed"</em><br><br>
+          The contrast is preserved. The implication (that Quorum does something intelligent before the response runs) is preserved. The architectural tell (classification step + output injection) is removed.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="rule">
+
+<!-- SAFE/DANGEROUS TABLE -->
+<div class="section">
+  <span class="mono">Framework · Safe vs. dangerous reveals</span>
+  <h2 class="display">What to keep, reword,<br>and remove.</h2>
+  <p style="color:var(--t3); font-size:15px; line-height:1.88; max-width:620px; margin-top:20px; margin-bottom:28px;">Applied across every element of the current copy. This is the reference matrix for any future revision.</p>
+
+  <table class="st-table">
+    <thead>
+      <tr>
+        <th style="width:38%">Element</th>
+        <th style="width:14%">Type</th>
+        <th style="width:14%">Action</th>
+        <th>Rationale</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="item">"Every business process has been systematized. Judgment is the last one."</td>
+        <td><span class="badge-safe">Philosophy</span></td>
+        <td><span class="action-keep">Keep</span></td>
+        <td>Perfect category creation. Inimitable — this is a framing claim, not a mechanism claim.</td>
+      </tr>
+      <tr>
+        <td class="item">"The first session is analysis. The tenth is a mirror. The fiftieth is infrastructure."</td>
+        <td><span class="badge-safe">Philosophy</span></td>
+        <td><span class="action-keep">Keep</span></td>
+        <td>Transformation narrative. Describes the compounding value without revealing how it compounds.</td>
+      </tr>
+      <tr>
+        <td class="item">"AI has made analysis abundant and coherence scarce."</td>
+        <td><span class="badge-safe">Philosophy</span></td>
+        <td><span class="action-keep">Keep</span></td>
+        <td>Macro positioning. Not replicable as a mechanism — it's a cultural observation.</td>
+      </tr>
+      <tr>
+        <td class="item">"The only system that will tell you a decision isn't ready."</td>
+        <td><span class="badge-safe">Philosophy</span></td>
+        <td><span class="action-keep">Keep</span></td>
+        <td>Category claim. The fact that Quorum can stop a decision is the claim. The mechanism by which it decides to stop it is not.</td>
+      </tr>
+      <tr>
+        <td class="item">Six Council persona names + conceptual frames</td>
+        <td><span class="badge-safe">Brand vocab</span></td>
+        <td><span class="action-keep">Keep</span></td>
+        <td>Positioning, not implementation. The names are brand vocabulary. The descriptions of what each persona produces are safe at this level of abstraction.</td>
+      </tr>
+      <tr>
+        <td class="item">Mirror module names (Bias Fingerprint, Calibration, etc.)</td>
+        <td><span class="badge-safe">Brand vocab</span></td>
+        <td><span class="action-keep">Keep names</span></td>
+        <td>The names are brand vocabulary. The mechanism sub-descriptions attached to each name are what must be abstracted — see Issue 04.</td>
+      </tr>
+      <tr>
+        <td class="item">"14 structural dimensions"</td>
+        <td><span class="badge-danger">Mechanism</span></td>
+        <td><span class="action-cut">Remove number</span></td>
+        <td>Discloses ontology cardinality. Competitor now knows to build a 14-dimension classifier.</td>
+      </tr>
+      <tr>
+        <td class="item">"12 Intervention rules"</td>
+        <td><span class="badge-danger">Mechanism</span></td>
+        <td><span class="action-cut">Remove entirely</span></td>
+        <td>Discloses rule engine size. The concept (some decisions are stopped) should stay. The count should not.</td>
+      </tr>
+      <tr>
+        <td class="item">"Reversibility. Identity stakes. Real vs. felt urgency. Prior unresolved dependencies."</td>
+        <td><span class="badge-danger">Mechanism</span></td>
+        <td><span class="action-cut">Remove from pipeline</span></td>
+        <td>Named dimensions from the ontology tagger. Can exist in other sections as experience-language. In the step description, they read as a spec sheet.</td>
+      </tr>
+      <tr>
+        <td class="item">"Block synthesis / gate it / mark it provisional"</td>
+        <td><span class="badge-danger">Mechanism</span></td>
+        <td><span class="action-cut">Remove mode names</span></td>
+        <td>Describes the three internal operating modes of the rule engine.</td>
+      </tr>
+      <tr>
+        <td class="item">"Derived from the structural analysis — not a generic checklist"</td>
+        <td><span class="badge-danger">Mechanism</span></td>
+        <td><span class="action-cut">Remove</span></td>
+        <td>Confirms examiner reads classifier output — describes the integration architecture.</td>
+      </tr>
+      <tr>
+        <td class="item">"Synthesis is held / marked provisional / blocked"</td>
+        <td><span class="badge-danger">Mechanism</span></td>
+        <td><span class="action-reword">Reword</span></td>
+        <td>Internal state labels. Replace with user-experience descriptions ("The decision was held").</td>
+      </tr>
+      <tr>
+        <td class="item">"FOMO activates when a trusted contact endorses a deal under time pressure"</td>
+        <td><span class="badge-border">Borderline</span></td>
+        <td><span class="action-reword">Reword</span></td>
+        <td>Great conversion copy. Shows conditional trigger logic. Abstract to "when it occurred" not "what triggers it."</td>
+      </tr>
+      <tr>
+        <td class="item">"Classifies the structure of your decision before any advisor responds"</td>
+        <td><span class="badge-danger">Mechanism</span></td>
+        <td><span class="action-reword">Reword</span></td>
+        <td>Tells competitor to build a pre-LLM classification step.</td>
+      </tr>
+      <tr>
+        <td class="item">"Tracks whether you incorporate its frameworks unprompted — before the Council runs"</td>
+        <td><span class="badge-danger">Mechanism</span></td>
+        <td><span class="action-reword">Reword</span></td>
+        <td>Pre/post framing comparison logic exposed. Replace with outcome description.</td>
+      </tr>
+      <tr>
+        <td class="item">"Builds a permanent judgment record — gets more accurate about you with every session"</td>
+        <td><span class="badge-safe">Philosophy</span></td>
+        <td><span class="action-keep">Keep</span></td>
+        <td>Describes the value proposition without exposing what is stored or how it is modeled.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<hr class="rule">
+
+<!-- WHAT SHOULD STAY -->
+<div class="section">
+  <span class="mono">What must stay public — category creation assets</span>
+  <h2 class="display">These elements are the moat.<br>Publish them prominently.</h2>
+  <p style="color:var(--t3); font-size:15px; line-height:1.88; max-width:620px; margin-top:20px; margin-bottom:28px;">These are impossible to reverse-engineer because they are framing claims, not mechanism claims. Publishing them does not help a competitor build — it helps Quorum own the category before anyone else arrives.</p>
+  <div class="safe-grid">
+    <div class="safe-card">
+      <span class="safe-label">Category creation</span>
+      <div class="safe-quote">"Every business process has been systematized. Judgment is the last one."</div>
+      <div class="safe-reason">The category statement. No mechanism to copy. Any competitor who says this next is following, not leading.</div>
+    </div>
+    <div class="safe-card">
+      <span class="safe-label">Transformation narrative</span>
+      <div class="safe-quote">"The first session is analysis. The tenth is a mirror. The fiftieth is infrastructure."</div>
+      <div class="safe-reason">Explains compounding value at the experience level. Does not reveal what is stored, how it is modeled, or what the scoring logic is.</div>
+    </div>
+    <div class="safe-card">
+      <span class="safe-label">Macro positioning</span>
+      <div class="safe-quote">"AI has made analysis abundant and coherence scarce. Quorum is not another source of perspective — it is the system that integrates them."</div>
+      <div class="safe-reason">The strongest positioning sentence on the site. Keep exactly as written in the hero.</div>
+    </div>
+    <div class="safe-card">
+      <span class="safe-label">Category claim</span>
+      <div class="safe-quote">"The only system that will tell you a decision isn't ready."</div>
+      <div class="safe-reason">The Examiner's category claim. The fact of what it does, not how. Extremely defensible as a product claim.</div>
+    </div>
+    <div class="safe-card">
+      <span class="safe-label">Council positioning</span>
+      <div class="safe-quote">Six named advisors with distinct cognitive frames.</div>
+      <div class="safe-reason">Brand vocabulary and positioning. Names are the moat — not the implementation. Contrarian, Risk Architect, Pattern Analyst, Stakeholder Mirror, Elder, Competitor are all correct to publish.</div>
+    </div>
+    <div class="safe-card">
+      <span class="safe-label">Value accumulation</span>
+      <div class="safe-quote">"Gets more accurate about you with every session."</div>
+      <div class="safe-reason">Describes the compounding mechanic at the promise level. No scoring logic, no stored dimensions, no module names. Safe.</div>
+    </div>
+  </div>
+</div>
+
+<hr class="rule">
+
+<!-- HOW OTHERS DO IT -->
+<div class="section">
+  <span class="mono">Comparable company framing · Reference</span>
+  <h2 class="display">How category-defining companies<br>describe mechanisms they don't publish.</h2>
+  <p style="color:var(--t3); font-size:15px; line-height:1.88; max-width:620px; margin-top:20px; margin-bottom:8px;">The common pattern: describe capability and outcome. Never describe architecture. The number of dimensions, rules, or scoring axes is never mentioned.</p>
+
+  <div class="comp-grid">
+    <div class="comp-card">
+      <div class="comp-co">Palantir · On Gotham</div>
+      <div class="comp-quote">"Palantir synthesizes information at a scale and speed that no human system can match."</div>
+      <div class="comp-note">The ontology, the tagging logic, the dimension count — never published. Outcome only. The mystique is preserved by what is not said.</div>
+    </div>
+    <div class="comp-card">
+      <div class="comp-co">Stripe · On Radar</div>
+      <div class="comp-quote">"Stripe Radar uses machine learning trained on billions of data points across the Stripe network."</div>
+      <div class="comp-note">Not: "uses a 47-dimension classifier with 12 fraud rules." The capability is stated. The architecture is not. Number of rules: never disclosed.</div>
+    </div>
+    <div class="comp-card">
+      <div class="comp-co">McKinsey · On diagnostics</div>
+      <div class="comp-quote">"Our diagnostic identifies the factors that matter most for your situation."</div>
+      <div class="comp-note">No number of dimensions. No rule count. No mode description. "The factors that matter" is all they say — the rest is proprietary.</div>
+    </div>
+    <div class="comp-card">
+      <div class="comp-co">Bloomberg · On the Terminal</div>
+      <div class="comp-quote">"Everything you need in one place."</div>
+      <div class="comp-note">The data pipeline, the ingestion architecture, the number of data sources — never the copy. The value proposition is what the user gets. Full stop.</div>
+    </div>
+    <div class="comp-card">
+      <div class="comp-co">OpenAI · On ChatGPT Memory</div>
+      <div class="comp-quote">"ChatGPT can now remember things you discuss to make future chats more helpful."</div>
+      <div class="comp-note">One sentence. No description of what is stored, how it is indexed, how it is recalled. The capability is stated. The mechanism is not.</div>
+    </div>
+    <div class="comp-card">
+      <div class="comp-co">Quorum · Recommended register</div>
+      <div class="comp-quote">"Before any advisor responds, your decision has already been read. Not what you wrote — what it actually is."</div>
+      <div class="comp-note">Capability stated. Architecture removed. The mystique — the sense that something real and complex happened before you saw a response — is preserved precisely by what is not said.</div>
+    </div>
+  </div>
+</div>
+
+<hr class="rule">
+
+<!-- PRIORITY ORDER -->
+<div class="section">
+  <span class="mono">Priority rewrite order</span>
+  <h2 class="display">Six changes. In this sequence.</h2>
+  <p style="color:var(--t3); font-size:15px; line-height:1.88; max-width:620px; margin-top:20px; margin-bottom:32px;">Order is by damage exposure, not word count. First two can be done in under an hour. They close the highest-impact leaks immediately.</p>
+
+  <ul class="priority-list">
+    <li>
+      <span class="p-rank">1</span>
+      <div class="p-content">
+        <div class="p-title">Remove the number 14 from all public-facing copy. Replace with concept.</div>
+        <div class="p-detail">Stats section and Step 00 body. Two changes. Ten minutes. Closes the most targeted architectural leak on the site. Replace "14 structural dimensions" with "structural dimensions" or an outcome claim. The concept stays — the cardinality goes.</div>
+      </div>
+    </li>
+    <li>
+      <span class="p-rank">2</span>
+      <div class="p-content">
+        <div class="p-title">Remove the number 12 from the rule count stat. Remove the three-mode description entirely.</div>
+        <div class="p-detail">Stats section (remove number) + Examiner section es-claim block (remove "block / gate / provisional" sentence). The Examiner's power is conveyed by the example and the category claim — the mode taxonomy adds nothing for the user and everything for a competitor.</div>
+      </div>
+    </li>
+    <li>
+      <span class="p-rank">3</span>
+      <div class="p-content">
+        <div class="p-title">Rewrite Step 02 description to remove "Derived from the structural analysis."</div>
+        <div class="p-detail">This single phrase confirms the integration architecture (examiner reads classifier output). Replace with experience language: "The one question that actually matters — sometimes that's the redirect."</div>
+      </div>
+    </li>
+    <li>
+      <span class="p-rank">4</span>
+      <div class="p-content">
+        <div class="p-title">Replace mechanism sub-descriptions in Mirror pricing feature list.</div>
+        <div class="p-detail">Six targeted phrase changes, each replacing a computation description with an outcome description. Use rewrites from Issue 04 above. The module names stay. The "extracted from how you actually reason" language goes.</div>
+      </div>
+    </li>
+    <li>
+      <span class="p-rank">5</span>
+      <div class="p-content">
+        <div class="p-title">Replace "Synthesis is held / blocked / marked provisional" wherever it appears.</div>
+        <div class="p-detail">Appears in the REDIRECT mock, the Examiner section, and the social proof card. Replace every instance with user-experience language: "The decision was held." The finding stays; the internal state label goes.</div>
+      </div>
+    </li>
+    <li>
+      <span class="p-rank">6</span>
+      <div class="p-content">
+        <div class="p-title">Abstract the bias trigger language and the Independence Score mechanism description.</div>
+        <div class="p-detail">Issues 05 and 06. The examples themselves are strong — keep them. Change "activates when..." constructions to "occurred during..." and remove the pre/post-comparison description from the Independence Score section. These are the subtler mechanism reveals but complete the full cleanup.</div>
+      </div>
+    </li>
+  </ul>
+</div>
+
+<hr class="rule">
+
+<div class="section" style="margin-bottom:0;">
+  <span class="mono">Final note</span>
+  <h2 class="display">The goal is not to obscure.<br>It is to abstract at the right altitude.</h2>
+  <div style="max-width: 640px; margin-top: 24px;">
+    <p style="font-size:15px; color:var(--t2); line-height:1.9; margin-bottom:18px;">None of the rewrites above weaken the positioning. In every case, the rewritten version is <em>stronger</em> as a conversion and category-creation instrument — because it describes the transformation, not the mechanism, and the transformation is what the user needs to believe before they sign up.</p>
+    <p style="font-size:15px; color:var(--t2); line-height:1.9; margin-bottom:18px;">The current copy errs toward over-explanation — a common pattern in technically confident founders who want the reader to understand how hard the problem was to solve. That instinct is correct. The execution should shift: let the <em>output</em> carry the evidence of difficulty, not the description of the pipeline.</p>
+    <p style="font-size:15px; color:var(--t1); line-height:1.9;">The website should make the reader feel the inevitability of the product and the precision of the analysis — while making it impossible to reverse-engineer how either is achieved. That gap — between the sense of sophisticated precision and the opacity of how it works — is exactly where premium positioning lives.</p>
+  </div>
+</div>
+
+<div style="margin-top:72px; padding-top:32px; border-top:1px solid var(--b0); display:flex; justify-content:space-between; align-items:center;">
+  <span style="font-family:'Cormorant Garamond',serif; font-size:16px; letter-spacing:0.2em; text-transform:uppercase; color:var(--t5);">Quorum</span>
+  <span style="font-family:'DM Mono',monospace; font-size:10px; letter-spacing:0.12em; color:var(--t5);">Internal · May 2026</span>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quorum Mirror — Full Audit: Priority Matrix + Sprint Plan</title>
+<style>
+  :root {
+    --gold: #C9A96E;
+    --gold-dim: rgba(201,168,76,0.35);
+    --bg: #0f0f0f;
+    --bg-card: #1a1a1a;
+    --bg-card-alt: #222;
+    --border: rgba(255,255,255,0.08);
+    --border-mid: rgba(255,255,255,0.13);
+    --t1: #f0ede8;
+    --t2: #c8c4bc;
+    --t3: #8a8680;
+    --t4: #5a5652;
+    --red: #e05050;
+    --amber: #e8a030;
+    --blue: #4a9ede;
+    --teal: #2db88a;
+    --grey: #888;
+    --coral: #e06050;
+    --purple: #9b8fd4;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono: 'SF Mono', 'Fira Code', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--t2); font-family: var(--font); font-size: 13px; line-height: 1.5; padding: 40px 32px 80px; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 400; color: var(--t1); margin-bottom: 4px; }
+  h2 { font-size: 15px; font-weight: 600; color: var(--t1); margin: 48px 0 6px; letter-spacing: 0.03em; }
+  .sub { font-size: 12px; color: var(--t3); margin-bottom: 20px; }
+
+  /* ── Filter bar ── */
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+  .fb { padding: 5px 14px; font-size: 12px; border-radius: 5px; cursor: pointer;
+        border: 1px solid var(--border-mid); background: transparent; color: var(--t3);
+        font-family: var(--font); transition: all 0.15s; }
+  .fb:hover { color: var(--t1); border-color: var(--gold-dim); }
+  .fb.on { background: rgba(201,168,76,0.1); color: var(--gold); border-color: var(--gold-dim); }
+
+  /* ── Legend ── */
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; font-size: 11px; color: var(--t3); }
+  .ldot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+
+  /* ── Priority Matrix table ── */
+  .pm { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .pmh { display: grid; grid-template-columns: 28px 1fr 60px 78px 96px 38px; gap: 0 12px;
+         padding: 8px 16px 8px 14px; background: var(--bg-card-alt);
+         font-size: 10px; font-weight: 600; color: var(--t4); letter-spacing: 0.08em; text-transform: uppercase;
+         border-bottom: 1px solid var(--border); }
+  .pmr { display: grid; grid-template-columns: 28px 1fr 60px 78px 96px 38px; gap: 0 12px;
+         align-items: start; padding: 11px 16px 11px 11px;
+         border-bottom: 1px solid var(--border); border-left: 3px solid transparent;
+         transition: background 0.1s; }
+  .pmr:last-child { border-bottom: none; }
+  .pmr:hover { background: rgba(255,255,255,0.03); }
+  .pmr.gone { display: none; }
+  .pmr.urg { border-left-color: var(--coral); }
+  .pmr.stk { border-left-color: var(--teal); }
+  .pmr.nav { border-left-color: var(--amber); }
+  .pmr.pol { border-left-color: var(--grey); }
+  .pn { font-size: 11px; color: var(--t3); margin-top: 3px; line-height: 1.45; }
+  .nn { font-size: 11px; color: var(--t4); font-weight: 600; padding-top: 1px; }
+  .bx { display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 3px; font-weight: 600; white-space: nowrap; }
+  .b3  { background: rgba(155,143,212,0.15); color: var(--purple); }
+  .b5  { background: rgba(45,184,138,0.12); color: var(--teal); }
+  .bb  { background: rgba(255,255,255,0.06); color: var(--t3); }
+  .bp0 { background: rgba(224,80,80,0.15); color: var(--red); }
+  .bp1 { background: rgba(232,160,48,0.15); color: var(--amber); }
+  .bp2 { background: rgba(74,158,222,0.15); color: var(--blue); }
+  .bp3 { background: rgba(255,255,255,0.06); color: var(--t3); }
+  .col-c { font-size: 12px; color: var(--t2); line-height: 1.45; }
+  .col-m { font-size: 12px; color: var(--t3); }
+
+  /* ── Dynamic ordering section ── */
+  .info-block { background: var(--bg-card); border: 1px solid var(--border-mid); border-radius: 10px; padding: 20px 22px; margin: 20px 0; }
+  .info-block h3 { font-size: 13px; font-weight: 600; color: var(--t1); margin-bottom: 10px; }
+  .info-block p { font-size: 13px; color: var(--t2); line-height: 1.7; margin-bottom: 10px; }
+  .info-block p:last-child { margin-bottom: 0; }
+  .verdict { border-left: 3px solid var(--gold); padding-left: 14px; margin: 14px 0; }
+  .verdict p { color: var(--t1); }
+
+  /* ── Sprint plan ── */
+  .sg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 800px) { .sg { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 540px) { .sg { grid-template-columns: 1fr; } }
+  .sc { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+  .sh { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .snum { font-size: 10px; font-weight: 600; color: var(--t4); letter-spacing: 0.1em; text-transform: uppercase; }
+  .stitle { font-size: 14px; font-weight: 500; color: var(--t1); margin-top: 2px; }
+  .sdesc { font-size: 12px; color: var(--t3); line-height: 1.55; margin-bottom: 12px; }
+  .dur { font-size: 11px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 4px; padding: 3px 9px; color: var(--t4); white-space: nowrap; flex-shrink: 0; }
+  .sitems { list-style: none; padding: 0; margin: 0 0 12px; }
+  .sitems li { display: flex; gap: 8px; font-size: 12px; color: var(--t3); padding: 4px 0; border-bottom: 1px solid var(--border); align-items: flex-start; line-height: 1.4; }
+  .sitems li:last-child { border-bottom: none; padding-bottom: 0; }
+  .item-n { font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid var(--border-mid); border-radius: 3px; padding: 1px 5px; flex-shrink: 0; color: var(--t4); font-weight: 600; margin-top: 1px; font-family: var(--mono); }
+  .db-row { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--t4); padding-top: 10px; border-top: 1px solid var(--border); }
+  .db-tag { background: rgba(232,160,48,0.12); color: var(--amber); font-size: 10px; padding: 2px 7px; border-radius: 3px; font-weight: 600; }
+  .no-db { background: rgba(255,255,255,0.04); color: var(--t4); font-size: 10px; padding: 2px 7px; border-radius: 3px; }
+  .dep { font-size: 10px; color: var(--t4); margin-top: 6px; }
+  .dep span { color: var(--blue); }
+
+  /* Sprint accent bars */
+  .sc.m1 { border-top: 2px solid var(--gold); }
+  .sc.m2 { border-top: 2px solid var(--amber); }
+  .sc.m3 { border-top: 2px solid var(--purple); }
+  .sc.m4 { border-top: 2px solid var(--teal); }
+  .sc.m5 { border-top: 2px solid var(--blue); }
+  .sc.m6 { border-top: 2px solid var(--coral); }
+
+  hr.divider { border: none; border-top: 1px solid var(--border); margin: 48px 0 0; }
+</style>
+</head>
+<body>
+
+<h1>Quorum Mirror — Product Audit: Complete Priority Matrix + Sprint Plan</h1>
+<p style="font-size:12px;color:var(--t3);margin-top:4px;">From audit session · June 5, 2026 · 21 recommendations across 6 sprints</p>
+
+<!-- ══════════════════════════════════════════════════════ PRIORITY MATRIX -->
+
+<h2>Section 4 — Complete Priority Matrix</h2>
+<p class="sub">All 21 recommendations. Filter by priority. Left border = impact category.</p>
+
+<div class="filters">
+  <button class="fb on" onclick="filter(this,'all')">All (21)</button>
+  <button class="fb" onclick="filter(this,'p0')">P0 — critical (5)</button>
+  <button class="fb" onclick="filter(this,'p1')">P1 — high (8)</button>
+  <button class="fb" onclick="filter(this,'p2')">P2 — medium (6)</button>
+  <button class="fb" onclick="filter(this,'p3')">P3 — ceiling (2)</button>
+</div>
+
+<div class="legend">
+  <span><span class="ldot" style="background:var(--coral)"></span>Adoption / unlock moment</span>
+  <span><span class="ldot" style="background:var(--teal)"></span>Stickiness / return visits</span>
+  <span><span class="ldot" style="background:var(--amber)"></span>Navigation / structure</span>
+  <span><span class="ldot" style="background:var(--grey)"></span>Polish / mobile</span>
+</div>
+
+<div class="pm">
+  <div class="pmh"><span>#</span><span>Recommendation</span><span>Who</span><span>Effort</span><span>Category</span><span>Pri</span></div>
+
+  <!-- P0 -->
+  <div class="pmr urg" data-p="p0">
+    <span class="nn">1</span>
+    <div><div class="col-c">Mirror Summary card — scorecard snapshot + one next action above the fold</div>
+    <div class="pn">New MirrorSummaryCard.tsx + api/mirror/summary route. Independence score, confirmed patterns, open loops, + actionPlan from SRI. Above-fold anchor for every visit at every user stage.</div></div>
+    <span><span class="bx bb">Both</span></span><span class="col-m">6h</span><span class="col-m">Adoption + stickiness</span><span><span class="bx bp0">P0</span></span>
+  </div>
+
+  <div class="pmr stk" data-p="p0">
+    <span class="nn">2</span>
+    <div><div class="col-c">"Since last visit" delta line in Summary card</div>
+    <div class="pn">+1 col last_mirror_viewed_at on user_preferences. Per-module changed_since flag returned by summary route. "Since June 1 — 1 new contradiction · +4 pts independence · 2 loops overdue."</div></div>
+    <span><span class="bx bb">Both</span></span><span class="col-m">4h + 1 col</span><span class="col-m">Stickiness</span><span><span class="bx bp0">P0</span></span>
+  </div>
+
+  <div class="pmr nav" data-p="p0">
+    <span class="nn">3</span>
+    <div><div class="col-c">Sticky section nav with scroll-to anchors</div>
+    <div class="pn">New MirrorNav.tsx. 7 jump targets (Fingerprint · Independence · Rules · Patterns · Contradictions · Calibration · Timeline). IntersectionObserver active-section highlight. Horizontal-scroll pill strip on mobile.</div></div>
+    <span><span class="bx bb">Both</span></span><span class="col-m">4h</span><span class="col-m">Navigation</span><span><span class="bx bp0">P0</span></span>
+  </div>
+
+  <div class="pmr urg" data-p="p0">
+    <span class="nn">4</span>
+    <div><div class="col-c">Monthly Judgment Review surfaces to position 3 when open loops &gt; 0</div>
+    <div class="pn">Conditional render order in UnlockedView. Reads open_loops count from existing alerts route — no new API call. Most actionable section cannot be at position 10 for a 50-session user.</div></div>
+    <span><span class="bx bb">Both</span></span><span class="col-m">2h</span><span class="col-m">Actionable surfacing</span><span><span class="bx bp0">P0</span></span>
+  </div>
+
+  <div class="pmr urg" data-p="p0">
+    <span class="nn">5</span>
+    <div><div class="col-c">Reframe ThresholdGates as milestone countdowns with personalised teaser</div>
+    <div class="pn">DecisionRules.tsx ThresholdGate + ContradictionDetector.tsx milestone 0. Forward-looking copy + bias-name personalisation. "At 8 decisions, your implicit logic surfaces — [BiasLabel] will likely feature." Converts the lock-within-lock into forward momentum.</div></div>
+    <span><span class="bx b3">3rd user</span></span><span class="col-m">3h</span><span class="col-m">Unlock moment</span><span><span class="bx bp0">P0</span></span>
+  </div>
+
+  <!-- P1 -->
+  <div class="pmr urg" data-p="p1">
+    <span class="nn">6</span>
+    <div><div class="col-c">"Welcome to Mirror" one-time orientation micro-card</div>
+    <div class="pn">Inline JSX in UnlockedView, gated by localStorage quorum_mirror_welcomed. Shows on first Mirror open only. Sets expectations: what's live now, what builds over time. Prevents dissonance between "Mirror unlocked" and "everything is thin."</div></div>
+    <span><span class="bx b3">3rd user</span></span><span class="col-m">2h</span><span class="col-m">First-visit experience</span><span><span class="bx bp1">P1</span></span>
+  </div>
+
+  <div class="pmr nav" data-p="p1">
+    <span class="nn">7</span>
+    <div><div class="col-c">examinerQuote surfaced inside Summary card</div>
+    <div class="pn">User's own words from Examiner — the most personal touchpoint on the page. Currently buried inside IndependenceScore component at position 4. Move to Summary card (position 1). Costs 1h, earns the user's recognition.</div></div>
+    <span><span class="bx b3">3rd user</span></span><span class="col-m">1h</span><span class="col-m">Personalisation</span><span><span class="bx bp1">P1</span></span>
+  </div>
+
+  <div class="pmr urg" data-p="p1">
+    <span class="nn">8</span>
+    <div><div class="col-c">"Your latest session moved your X by N pts" in Summary card</div>
+    <div class="pn">Diff most recent session score vs prior average using existing SRI data. Closes the session → Mirror feedback loop. User sees the consequence of their completed decision immediately on Mirror open.</div></div>
+    <span><span class="bx b3">3rd user</span></span><span class="col-m">3h</span><span class="col-m">Session → Mirror loop</span><span><span class="bx bp1">P1</span></span>
+  </div>
+
+  <div class="pmr urg" data-p="p1">
+    <span class="nn">9</span>
+    <div><div class="col-c">Decision Timeline to position 2 for users with &lt; 10 sessions</div>
+    <div class="pn">Conditional render order in UnlockedView based on sessionCount. The Timeline is the most familiar, grounding module for early users. Currently at position 11. No backend change needed.</div></div>
+    <span><span class="bx b3">3rd user</span></span><span class="col-m">1h</span><span class="col-m">Early-user anchoring</span><span><span class="bx bp1">P1</span></span>
+  </div>
+
+  <div class="pmr nav" data-p="p1">
+    <span class="nn">10</span>
+    <div><div class="col-c">Section type visual indicator — urgent vs archival left-border colour</div>
+    <div class="pn">Coral left-border on Decisions Still Open + Monthly Judgment Review. Muted grey on Decision Timeline + Benchmark. No new logic — pure CSS applied to existing section wrappers. Users instantly categorise "action vs reference."</div></div>
+    <span><span class="bx bb">Both</span></span><span class="col-m">1h</span><span class="col-m">Visual hierarchy</span><span><span class="bx bp1">P1</span></span>
+  </div>
+
+  <div class="pmr nav" data-p="p1">
+    <span class="nn">11</span>
+    <div><div class="col-c">Section descriptions collapse after first visit</div>
+    <div class="pn">localStorage per module (quorum_mirror_desc_{section}). Small "?" re-expand icon on section header. "How the confidence you entered a decision with compares..." appearing on every visit is noise for a 50-session user.</div></div>
+    <span><span class="bx bb">Both</span></span><span class="col-m">2h</span><span class="col-m">Returning-user polish</span><span><span class="bx bp1">P1</span></span>
+  </div>
+
+  <div class="pmr stk" data-p="p1">
+    <span class="nn">12</span>
+    <div><div class="col-c">"New" badge on recently-confirmed BiasFingerprint tiles (≤ 14 days)</div>
+    <div class="pn">+1 col first_confirmed_at on bias_library. PatternTile.tsx gets a small gold "New" badge when first_confirmed_at is within 14 days. Every Mirror visit has a clear scan target for returners.</div></div>
+    <span><span class="bx b5">50th user</span></span><span class="col-m">3h + 1 col</span><span class="col-m">Stickiness / freshness</span><span><span class="bx bp1">P1</span></span>
+  </div>
+
+  <div class="pmr stk" data-p="p1">
+    <span class="nn">13</span>
+    <div><div class="col-c">"↑ increasing" recency tag on PatternStore cards</div>
+    <div class="pn">Compute recent_fire_count (last 10 sessions) vs total fire_count in patterns route. PatternSurfaceCard shows "↑ increasing" tag when recent rate &gt; 50%. Distinguishes live patterns from stable background ones the user has seen 40 times.</div></div>
+    <span><span class="bx b5">50th user</span></span><span class="col-m">2h</span><span class="col-m">Stickiness / freshness</span><span><span class="bx bp1">P1</span></span>
+  </div>
+
+  <!-- P2 -->
+  <div class="pmr stk" data-p="p2">
+    <span class="nn">14</span>
+    <div><div class="col-c">"Latest" session visual highlight in Session Reliability Index</div>
+    <div class="pn">Subtle gold left-border + small "latest" label on the most recent SRI row. Post-session Mirror visits need an immediate anchor. Currently all rows render identically regardless of recency.</div></div>
+    <span><span class="bx b5">50th user</span></span><span class="col-m">1h</span><span class="col-m">Post-session context</span><span><span class="bx bp2">P2</span></span>
+  </div>
+
+  <div class="pmr stk" data-p="p2">
+    <span class="nn">15</span>
+    <div><div class="col-c">Contradiction Detector: dismissed vs active count in section header</div>
+    <div class="pn">"N dismissed all-time · M currently active" counter in section header. Power users who have dismissed 8 contradictions need context on their resolution history, not just the 2 live cards. Simple query addition to the contradictions route.</div></div>
+    <span><span class="bx b5">50th user</span></span><span class="col-m">2h</span><span class="col-m">Power user context</span><span><span class="bx bp2">P2</span></span>
+  </div>
+
+  <div class="pmr nav" data-p="p2">
+    <span class="nn">16</span>
+    <div><div class="col-c">Collapse-state memory per section (localStorage)</div>
+    <div class="pn">quorum_mirror_collapsed_{section} keys. All sections expanded by default. Persists user's layout choice across visits. A 50-session user who has internalised their Independence Score shouldn't have to scroll past 300px of data they already know.</div></div>
+    <span><span class="bx b5">50th user</span></span><span class="col-m">2h</span><span class="col-m">Page ownership</span><span><span class="bx bp2">P2</span></span>
+  </div>
+
+  <div class="pmr pol" data-p="p2">
+    <span class="nn">17</span>
+    <div><div class="col-c">Staggered loading / smooth section fade-in on page assembly</div>
+    <div class="pn">Sections fade in as each API call resolves rather than skeleton-flashing in cascading sequence. 8–10 parallel API calls currently make the page feel unstable as it assembles. CSS opacity transition, no structural change needed.</div></div>
+    <span><span class="bx bb">Both</span></span><span class="col-m">4h</span><span class="col-m">Page feel / polish</span><span><span class="bx bp2">P2</span></span>
+  </div>
+
+  <div class="pmr pol" data-p="p2">
+    <span class="nn">18</span>
+    <div><div class="col-c">Mobile experience — responsive sticky nav + section navigation</div>
+    <div class="pn">MirrorNav as horizontal-scroll pill strip on mobile (max-width 600px). Increase section touch targets. HNI-on-the-go use case: completing a decision on mobile and checking Mirror immediately. Currently 4,000–5,000px of vertical scroll with no nav.</div></div>
+    <span><span class="bx bb">Both</span></span><span class="col-m">1.5 wks</span><span class="col-m">Mobile experience</span><span><span class="bx bp2">P2</span></span>
+  </div>
+
+  <div class="pmr stk" data-p="p2">
+    <span class="nn">19</span>
+    <div><div class="col-c">Dynamic Attention Zone — 1–3 compact action cards, fixed slot between Summary and main modules</div>
+    <div class="pn">New AttentionZone.tsx. Fixed position (always at the top of the module stack, never moves). Content sourced dynamically from any module: new contradiction, overdue loop, newly-confirmed pattern, significant score movement. Absent when nothing urgent. See dynamic ordering rationale below.</div></div>
+    <span><span class="bx bb">Both</span></span><span class="col-m">1 wk</span><span class="col-m">Smart surfacing</span><span><span class="bx bp2">P2</span></span>
+  </div>
+
+  <!-- P3 -->
+  <div class="pmr stk" data-p="p3">
+    <span class="nn">20</span>
+    <div><div class="col-c">Decision-context-aware soft module prominence (post-session weighting)</div>
+    <div class="pn">Reads latest session rule_engine_result. If R4 (Regret Asymmetry) fired, Confidence Calibration gets a gold pulse-border on load + a badge on its nav label. No hard page reorder — soft visual emphasis only. The module stays in its position; it just glows.</div></div>
+    <span><span class="bx bb">Both</span></span><span class="col-m">1 wk</span><span class="col-m">Contextual relevance</span><span><span class="bx bp3">P3</span></span>
+  </div>
+
+  <div class="pmr stk" data-p="p3">
+    <span class="nn">21</span>
+    <div><div class="col-c">Cross-module "Mirror Insight" synthesis callout — one observation per visit</div>
+    <div class="pn">lib/mirror-intelligence.ts. One synthesised cross-module observation per visit: e.g. "Your Overconfidence bias is most active in decisions where your Independence Score peaks — that's your highest-exposure condition." Deterministic where possible, LLM for narrative. The insight no other tool can produce.</div></div>
+    <span><span class="bx bb">Both</span></span><span class="col-m">1 day</span><span class="col-m">Differentiated insight</span><span><span class="bx bp3">P3</span></span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ DYNAMIC ORDERING -->
+
+<h2>On dynamic card ordering</h2>
+<p class="sub">Answer to question 2 — should Mirror sections reorder dynamically based on what changed and what suits the decision-maker?</p>
+
+<div class="info-block">
+  <h3>Recommendation: Not full dynamic reordering. An Attention Zone + stable body instead.</h3>
+
+  <div class="verdict">
+    <p>Full page reordering is the wrong answer for a judgment infrastructure product. Here is why, and what to do instead.</p>
+  </div>
+
+  <p><strong>Why not full dynamic reorder:</strong> Users with 50 sessions have built spatial memory of Mirror. They know Contradiction Detector is below Patterns, which is below Independence Score. Destroying that muscle memory on each visit trades short-term "freshness" for long-term disorientation. More importantly, predictability = trustworthiness for an HNI decision tool. A page that rearranges itself reads as a social feed — entertainment logic, not judgment infrastructure logic. The sticky nav (item #3) already gives the user "jump to what I care about" without disrupting the layout they know.</p>
+
+  <p><strong>What dynamic ordering should look like — the Attention Zone:</strong> Between the Summary Card (#1) and the Bias Fingerprint (first main module), insert a fixed-position "Attention Zone" slot. This slot always lives at the top of the module stack. Its content is fully dynamic: 1–3 compact two-line action cards sourced from any module. Selection priority: (1) new contradictions since last visit, (2) overdue open loops, (3) newly-confirmed bias pattern, (4) significant Independence Score movement, (5) avoidance alerts. Each card links down to the relevant module. When nothing is urgent or new, the zone is absent — no empty box, just the main modules starting immediately after the Summary Card.</p>
+
+  <p>This gives you: always-visible urgent actions in a known slot (the Attention Zone), a stable page layout the user navigates by memory (the section stack), and a fast way to jump to anything (the sticky nav). These three together replace what full dynamic reordering was trying to accomplish — without the cognitive cost.</p>
+
+  <p><strong>What decision-context-aware relevance should look like:</strong> After a session completes with a specific rule signal (R4 Regret Asymmetry, R5 False Urgency, R1 REDIRECT), the relevant Mirror module gets soft visual prominence: a gold pulse-border on load and a dot badge on its sticky nav label. The module stays in its position — it just signals "this is especially relevant to your latest decision." The Attention Zone also gets a contextual card for it. This is item #20 in the matrix. It is "what is best suited to the decision-maker" answered correctly — not as a layout change, but as a relevance signal on top of a stable structure.</p>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ SPRINT PLAN -->
+
+<hr class="divider">
+<h2 style="margin-top:36px">6-Sprint Scope Plan</h2>
+<p class="sub">~10–11 weeks sequential. M2 + M3 can run in parallel (no shared files) — reduces to ~8 weeks. Dependencies noted per sprint.</p>
+
+<div class="sg">
+
+  <!-- M1 -->
+  <div class="sc m1">
+    <div class="sh">
+      <div>
+        <div class="snum">Sprint M1</div>
+        <div class="stitle">The living digest</div>
+      </div>
+      <span class="dur">~2 weeks</span>
+    </div>
+    <div class="sdesc">Every Mirror visit opens with a clear "what's new / what to do" above the fold. The anchor that all subsequent sprints plug into.</div>
+    <ul class="sitems">
+      <li><span class="item-n">#1</span>Mirror Summary card (scorecard snapshot + next action)</li>
+      <li><span class="item-n">#2</span>"Since last visit" delta line</li>
+      <li><span class="item-n">#7</span>examinerQuote in Summary card</li>
+      <li><span class="item-n">#8</span>"Latest session moved your X" signal</li>
+    </ul>
+    <div class="db-row">
+      <span class="db-tag">+1 col</span>
+      <span>last_mirror_viewed_at on user_preferences</span>
+    </div>
+    <div class="dep">New: MirrorSummaryCard.tsx · api/mirror/summary/route.ts<br>Modified: app/mirror/page.tsx (UnlockedView)</div>
+  </div>
+
+  <!-- M2 -->
+  <div class="sc m2">
+    <div class="sh">
+      <div>
+        <div class="snum">Sprint M2</div>
+        <div class="stitle">Navigation &amp; urgency architecture</div>
+      </div>
+      <span class="dur">~1.5 weeks</span>
+    </div>
+    <div class="sdesc">The skeleton the page scales into — sticky nav, smarter conditional ordering, visual weight by section type. Can run in parallel with M3.</div>
+    <ul class="sitems">
+      <li><span class="item-n">#3</span>Sticky section nav (7 jump targets)</li>
+      <li><span class="item-n">#4</span>Monthly Judgment Review to top when loops &gt; 0</li>
+      <li><span class="item-n">#9</span>Decision Timeline to top for &lt; 10 sessions</li>
+      <li><span class="item-n">#10</span>Section type visual indicator</li>
+      <li><span class="item-n">#11</span>Section descriptions collapse after first visit</li>
+      <li><span class="item-n">#16</span>Collapse-state memory per section</li>
+    </ul>
+    <div class="db-row">
+      <span class="no-db">No DB changes</span>
+    </div>
+    <div class="dep">New: MirrorNav.tsx<br>Modified: app/mirror/page.tsx (ordering logic + CSS)</div>
+  </div>
+
+  <!-- M3 -->
+  <div class="sc m3">
+    <div class="sh">
+      <div>
+        <div class="snum">Sprint M3</div>
+        <div class="stitle">The unlock moment</div>
+      </div>
+      <span class="dur">~1 week</span>
+    </div>
+    <div class="sdesc">Make session 3 feel like a genuine reveal, not a set of locked gates inside an unlocked page. Can run in parallel with M2.</div>
+    <ul class="sitems">
+      <li><span class="item-n">#5</span>Reframe ThresholdGates as milestone countdowns</li>
+      <li><span class="item-n">#6</span>"Welcome to Mirror" one-time orientation card</li>
+    </ul>
+    <div class="db-row">
+      <span class="no-db">No DB changes</span>
+    </div>
+    <div class="dep">Modified: DecisionRules.tsx · ContradictionDetector.tsx · BiasFingerprint.tsx<br>New: inline welcome JSX in page.tsx</div>
+  </div>
+
+  <!-- M4 -->
+  <div class="sc m4">
+    <div class="sh">
+      <div>
+        <div class="snum">Sprint M4</div>
+        <div class="stitle">Freshness signals</div>
+      </div>
+      <span class="dur">~2 weeks</span>
+    </div>
+    <div class="sdesc">Distinguish new content from old at module level. Returning users scan for what changed rather than reading the full page. Depends on M1 (last_mirror_viewed_at for freshness dating).</div>
+    <ul class="sitems">
+      <li><span class="item-n">#12</span>"New" badge on recently-confirmed bias tiles</li>
+      <li><span class="item-n">#13</span>"↑ increasing" tag on PatternStore cards</li>
+      <li><span class="item-n">#14</span>"Latest" session highlight in SRI</li>
+      <li><span class="item-n">#15</span>Contradiction Detector dismissed/active ratio</li>
+      <li><span class="item-n">#17</span>Staggered loading / smooth page assembly</li>
+    </ul>
+    <div class="db-row">
+      <span class="db-tag">+1 col</span>
+      <span>first_confirmed_at on bias_library</span>
+    </div>
+    <div class="dep">Modified: PatternTile.tsx · PatternSurfaceCard.tsx · SessionReliabilityIndex.tsx · ContradictionDetector.tsx · mirror/fingerprint/route.ts<br><span>Depends on M1</span></div>
+  </div>
+
+  <!-- M5 -->
+  <div class="sc m5">
+    <div class="sh">
+      <div>
+        <div class="snum">Sprint M5</div>
+        <div class="stitle">Dynamic Attention Zone + mobile</div>
+      </div>
+      <span class="dur">~2.5 weeks</span>
+    </div>
+    <div class="sdesc">Smart surfacing without disrupting the stable module layout — the Attention Zone answers the dynamic ordering question. Mobile brings Mirror to the HNI post-decision moment.</div>
+    <ul class="sitems">
+      <li><span class="item-n">#18</span>Mobile: responsive nav + section navigation</li>
+      <li><span class="item-n">#19</span>Dynamic Attention Zone (1–3 action cards)</li>
+    </ul>
+    <div class="db-row">
+      <span class="no-db">No DB changes</span>
+    </div>
+    <div class="dep">New: AttentionZone.tsx<br>Modified: MirrorNav.tsx (mobile) · page.tsx (AttentionZone slot)<br><span>Depends on M1, M2</span></div>
+  </div>
+
+  <!-- M6 -->
+  <div class="sc m6">
+    <div class="sh">
+      <div>
+        <div class="snum">Sprint M6</div>
+        <div class="stitle">Synthesis &amp; context intelligence</div>
+      </div>
+      <span class="dur">~1.5 weeks</span>
+    </div>
+    <div class="sdesc">The highest-ceiling features — cross-module synthesis and decision-context-aware relevance signalling. The insight no competitor can match.</div>
+    <ul class="sitems">
+      <li><span class="item-n">#20</span>Decision-context-aware soft module prominence</li>
+      <li><span class="item-n">#21</span>Cross-module "Mirror Insight" synthesis callout</li>
+    </ul>
+    <div class="db-row">
+      <span class="no-db">No DB changes</span>
+    </div>
+    <div class="dep">New: lib/mirror-intelligence.ts · MirrorInsightCard.tsx · api/mirror/intelligence/route.ts<br><span>Depends on M1, M4</span></div>
+  </div>
+
+</div>
+
+<div style="margin-top:32px;padding:18px 20px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;">
+  <p style="font-size:12px;color:var(--t3);line-height:1.7;margin:0"><strong style="color:var(--t2)">Parallelisation:</strong> M2 + M3 share no files and can run simultaneously (~1 week saved). Optimal path: M1 → (M2 ∥ M3) → M4 → M5 → M6 = approximately <strong style="color:var(--gold)">8 weeks total</strong>. DB migrations: 2 total across all 6 sprints (last_mirror_viewed_at in M1, first_confirmed_at in M4). No new env vars required. No schema breaking changes.</p>
+</div>
+
+<script>
+function filter(btn, p) {
+  document.querySelectorAll('.pmr').forEach(r => {
+    r.classList.toggle('gone', p !== 'all' && r.dataset.p !== p);
+  });
+  document.querySelectorAll('.fb').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+}
+</script>
+</body>
+</html>

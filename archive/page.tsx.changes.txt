@@ -1,0 +1,15 @@
+File: app/page.tsx
+Change 1 — new import (line 14):
+import CalibrationRevealCard from '@/components/CalibrationRevealCard'
+
+Change 2 — new render block (after Chunk 4a PatternSurfaceCard):
+          {/* ── Chunk 4b — Calibration Reveal Card ────────── */}
+          {/* Shows avg delta + pattern label for unlocked users */}
+          {/* who have ≥3 logged outcomes. Gate is inside component. */}
+          {mirrorUnlocked && (
+            <CalibrationRevealCard
+              authToken={authToken}
+              mirrorUnlocked={mirrorUnlocked}
+            />
+          )}
+
