@@ -1,0 +1,149 @@
+2026-08-06T07:22:19.450116231Z [inf]     ▲ Next.js 15.2.8
+2026-08-06T07:22:19.450119031Z [inf]     - Local:        http://localhost:8080
+2026-08-06T07:22:19.450121831Z [inf]     - Network:      http://0.0.0.0:8080
+2026-08-06T07:22:19.450125941Z [inf]  
+2026-08-06T07:22:19.450128771Z [inf]   ✓ Starting...
+2026-08-06T07:22:19.511145232Z [inf]  Starting Container
+2026-08-06T07:22:19.522825973Z [err]   ⚠ "next start" does not work with "output: standalone" configuration. Use "node .next/standalone/server.js" instead.
+2026-08-06T07:22:19.541906971Z [inf]   ✓ Ready in 259ms
+2026-08-06T07:24:40.299435552Z [inf]  [AIClient] createCompletion → anthropic-elite (claude-sonnet-4-6) (2000 max tokens) [tiered]
+2026-08-06T07:24:40.299441341Z [err]  (node:15) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-08-06T07:24:40.299445451Z [err]  (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-08-06T07:24:40.299449291Z [inf]  [StructuralMatch] Ontology not complete for session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd — client should retry
+2026-08-06T07:24:44.995390588Z [inf]  [StructuralMatch] Ontology not complete for session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd — client should retry
+2026-08-06T07:24:52.796493613Z [inf]  [StructuralMatch] Ontology not complete for session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd — client should retry
+2026-08-06T07:25:00.379767608Z [inf]  [StructuralMatch] Ontology not complete for session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd — client should retry
+2026-08-06T07:25:02.278820971Z [inf]  [Ontology] Session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd | type: governance | mode: OPEN | rules: none | flags: R6 | identity: 3 | regret: 3 | upstream: 3
+2026-08-06T07:25:04.930119963Z [inf]  [StructuralMatch] Excluded 1 same-lineage session(s) from candidates
+2026-08-06T07:25:04.930122443Z [inf]  [StructuralMatch] Scoring session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd against 25 past sessions
+2026-08-06T07:25:06.270813902Z [inf]  [StructuralMatch] Wrote 20 rows to structural_scores
+2026-08-06T07:25:06.270816622Z [inf]  [ExaminerMetric] session=4f031cdb-a606-4ac9-8c8c-cde788ba3fdd mode=OPEN
+2026-08-06T07:25:06.270885301Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-06T07:25:06.270890311Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-06T07:25:06.270893521Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-06T07:25:06.270898401Z [inf]  [AIClient] createCompletion → mistral-cloud (mistral-small-latest) (80 max tokens) [tiered]
+2026-08-06T07:25:06.270901341Z [inf]  [AIClient] createCompletion → mistral-cloud (mistral-small-latest) (80 max tokens) [tiered]
+2026-08-06T07:25:06.270931900Z [inf]  [AIClient] createCompletion → mistral-cloud (mistral-small-latest) (80 max tokens) [tiered]
+2026-08-06T07:25:06.510384196Z [inf]  [StructuralMatch] Wrote 5 rows to structural_scores
+2026-08-06T07:25:06.510389156Z [inf]  [StructuralMatch] Wrote 25 graph edge(s)
+2026-08-06T07:25:06.510392806Z [inf]  [AIClient] createCompletion → anthropic-elite (claude-sonnet-4-6) (200 max tokens) [tiered]
+2026-08-06T07:25:06.510395746Z [inf]  [AIClient] createCompletion → anthropic-elite (claude-sonnet-4-6) (200 max tokens) [tiered]
+2026-08-06T07:25:09.498019803Z [inf]  [StructuralMatch] Excluded 1 same-lineage session(s) from candidates
+2026-08-06T07:25:09.498022453Z [inf]  [StructuralMatch] Scoring session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd against 25 past sessions
+2026-08-06T07:25:09.764054231Z [inf]  [Examiner GET] SB-2 v2.0 | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd | mode: OPEN | questions: E0,S0,C0 | s0: true (6w) | profile: false | fears: false
+2026-08-06T07:25:10.030300997Z [inf]  [StructuralMatch] Wrote 20 rows to structural_scores
+2026-08-06T07:25:10.289375730Z [inf]  [StructuralMatch] Wrote 5 rows to structural_scores
+2026-08-06T07:25:10.479398694Z [inf]  [StructuralMatch] Wrote 25 graph edge(s)
+2026-08-06T07:25:10.479404954Z [inf]  [AIClient] createCompletion → anthropic-elite (claude-sonnet-4-6) (200 max tokens) [tiered]
+2026-08-06T07:25:10.479408214Z [inf]  [AIClient] createCompletion → anthropic-elite (claude-sonnet-4-6) (200 max tokens) [tiered]
+2026-08-06T07:25:10.788174826Z [inf]  [StructuralMatch] Done — 2 matches, threshold_met: true, sessions_scored: 25
+2026-08-06T07:25:15.064320868Z [inf]  [StructuralMatch] Done — 2 matches, threshold_met: true, sessions_scored: 25
+2026-08-06T07:25:17.592314505Z [inf]  [AIClient] createCompletion → anthropic-elite (claude-sonnet-4-6) (600 max tokens) [tiered]
+2026-08-06T07:26:18.126466340Z [inf]  [IndependenceScore] b8130c0f Q3: raw=5/35 norm=14 words=22 fired=[answered_not_skipped]
+2026-08-06T07:26:18.126475160Z [inf]  [IndependenceScore] b8130c0f: session_score=24 (avg=14 bonus=10)
+2026-08-06T07:26:18.126480870Z [inf]  [IndependenceScore] f9d7d9db Q1: raw=5/35 norm=14 words=20 fired=[answered_not_skipped]
+2026-08-06T07:26:18.126486040Z [inf]  [IndependenceScore] f9d7d9db Q3: raw=5/35 norm=14 words=12 fired=[answered_not_skipped]
+2026-08-06T07:26:18.126491350Z [inf]  [IndependenceScore] f9d7d9db: session_score=14 (avg=14 bonus=0)
+2026-08-06T07:26:18.126493450Z [inf]  [Examiner POST] Contradictions triggered for session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:18.126496410Z [inf]  [IndependenceScore] 13682718: no responses — excluded
+2026-08-06T07:26:18.126498990Z [inf]  [IndependenceScore] 7ea1531e: no responses — excluded
+2026-08-06T07:26:18.126502540Z [inf]  [IndependenceScore] f7ba5d53 Q1: raw=5/35 norm=14 words=28 fired=[answered_not_skipped]
+2026-08-06T07:26:18.126504320Z [inf]  [IndependenceScore] dce39b88 Q3: raw=5/35 norm=14 words=19 fired=[answered_not_skipped]
+2026-08-06T07:26:18.126508950Z [inf]  [IndependenceScore] dce39b88 Q1: raw=5/35 norm=14 words=29 fired=[answered_not_skipped]
+2026-08-06T07:26:18.126510200Z [inf]  [IndependenceScore] f7ba5d53 Q2: raw=5/35 norm=14 words=10 fired=[answered_not_skipped]
+2026-08-06T07:26:18.126513500Z [inf]  [IndependenceScore] dce39b88 Q2: raw=5/35 norm=14 words=35 fired=[answered_not_skipped]
+2026-08-06T07:26:18.126515050Z [inf]  [IndependenceScore] f7ba5d53 Q3: raw=15/35 norm=43 words=28 fired=[stakeholder_surfacing, answered_not_skipped]
+2026-08-06T07:26:18.126517919Z [inf]  [IndependenceScore] dce39b88: session_score=24 (avg=14 bonus=10)
+2026-08-06T07:26:18.126522089Z [inf]  [IndependenceScore] b8130c0f Q1: raw=5/35 norm=14 words=45 fired=[answered_not_skipped]
+2026-08-06T07:26:18.126526449Z [inf]  [IndependenceScore] b8130c0f Q2: raw=5/35 norm=14 words=11 fired=[answered_not_skipped]
+2026-08-06T07:26:18.127833507Z [inf]  [IndependenceScore] f7ba5d53: session_score=34 (avg=24 bonus=10)
+2026-08-06T07:26:18.127840297Z [inf]  [BiasScore] 0 user pushback message(s) for session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:18.127845427Z [inf]  [IndependenceScore] fd5c44c3: no responses — excluded
+2026-08-06T07:26:18.127850027Z [inf]  [BiasScore] Scoring from decision_text only for session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd — no examiner or pushback data yet
+2026-08-06T07:26:18.127854077Z [inf]  [IndependenceScore] c5163086: no responses — excluded
+2026-08-06T07:26:18.127857647Z [inf]  [IndependenceScore] ade37bc2: no responses — excluded
+2026-08-06T07:26:18.127858467Z [inf]  [AIClient] createCompletion → anthropic-elite (claude-sonnet-4-6) (4000 max tokens) [tiered]
+2026-08-06T07:26:18.127864127Z [inf]  [IndependenceScore] 6fd80237: no responses — excluded
+2026-08-06T07:26:18.127869687Z [inf]  [IndependenceScore] bccff36e: no responses — excluded
+2026-08-06T07:26:18.127872277Z [inf]  [IndependenceScore] 471278b8: no responses — excluded
+2026-08-06T07:26:18.127874117Z [inf]  [IndependenceScore] 8983baa5: no responses — excluded
+2026-08-06T07:26:18.127877607Z [inf]  [IndependenceScore] 4f031cdb: no responses — excluded
+2026-08-06T07:26:18.127880057Z [inf]  [IndependenceScore] c6bd4448: no responses — excluded
+2026-08-06T07:26:18.127886167Z [inf]  [IndependenceScore] 3e958c29: final=26 delta=2 baseline=24
+2026-08-06T07:26:18.127887707Z [inf]  [IndependenceScore] 5ec391d3: no responses — excluded
+2026-08-06T07:26:18.127888277Z [inf]  [IndependenceScore] c9351a56 Q1: raw=10/35 norm=29 words=71 fired=[response_depth, answered_not_skipped]
+2026-08-06T07:26:18.127893247Z [inf]  [BiasScore] Scoring session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd (identity: user_id)
+2026-08-06T07:26:18.127896277Z [inf]  [IndependenceScore] 728c23f1: no responses — excluded
+2026-08-06T07:26:18.127898967Z [inf]  [IndependenceScore] c9351a56 Q2: raw=5/35 norm=14 words=15 fired=[answered_not_skipped]
+2026-08-06T07:26:18.127900317Z [inf]  [Examiner POST] Independence score triggered for session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:18.127906147Z [inf]  [IndependenceScore] 3d70ae0b: no responses — excluded
+2026-08-06T07:26:18.127909928Z [inf]  [IndependenceScore] c9351a56 Q3: raw=5/35 norm=14 words=17 fired=[answered_not_skipped]
+2026-08-06T07:26:18.127919017Z [inf]  [IndependenceScore] f13eee2a: no responses — excluded
+2026-08-06T07:26:18.127919337Z [inf]  [IndependenceScore] c9351a56: session_score=29 (avg=19 bonus=10)
+2026-08-06T07:26:18.127927157Z [inf]  [IndependenceScore] 70177825: no responses — excluded
+2026-08-06T07:26:18.127931917Z [inf]  [IndependenceScore] 42334dfb: no responses — excluded
+2026-08-06T07:26:18.127937807Z [inf]  [IndependenceScore] bddee8fd: no responses — excluded
+2026-08-06T07:26:18.127944007Z [inf]  [IndependenceScore] 1dafb19a: no responses — excluded
+2026-08-06T07:26:18.127945207Z [inf]  [IndependenceScore] bde779fa: no responses — excluded
+2026-08-06T07:26:18.127950587Z [inf]  [IndependenceScore] ebff4934: no responses — excluded
+2026-08-06T07:26:18.127954697Z [inf]  [IndependenceScore] 84676922: no responses — excluded
+2026-08-06T07:26:19.872343428Z [inf]  [Persona] Continuity block injected for stakeholder_mirror | parent bccff36e | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:19.872348187Z [inf]  [Persona] Mistral-family prompt extension applied for stakeholder_mirror | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:19.872351797Z [inf]  [Persona] Council context injected for stakeholder_mirror (initial) | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:19.872356017Z [inf]  [Persona] Bias alert injected for stakeholder_mirror | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:19.872359707Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-06T07:26:19.963588165Z [inf]  [Persona] Continuity block injected for elder | parent bccff36e | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:19.963592385Z [inf]  [Persona] Mistral-family prompt extension applied for elder | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:19.963595775Z [inf]  [Persona] Council context injected for elder (initial) | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:19.963598645Z [inf]  [Persona] Bias alert injected for elder | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:19.963601565Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-06T07:26:20.515976035Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-06T07:26:20.516005734Z [inf]  [Persona] Continuity block injected for risk_architect | parent bccff36e | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:20.516022934Z [inf]  [Persona] Mistral-family prompt extension applied for risk_architect | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:20.516038754Z [inf]  [Persona] Council context injected for risk_architect (initial) | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:20.516045924Z [inf]  [Persona] Bias alert injected for risk_architect | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:20.778029195Z [inf]  [Persona] Continuity block injected for competitor | parent bccff36e | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:20.778032115Z [inf]  [Persona] Mistral-family prompt extension applied for competitor | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:20.778035045Z [inf]  [Persona] Council context injected for competitor (initial) | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:20.778037805Z [inf]  [Persona] Bias alert injected for competitor | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:20.778041825Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-06T07:26:20.796891120Z [inf]  [Persona] Continuity block injected for pattern_analyst | parent bccff36e | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:20.796897810Z [inf]  [Persona] Mistral-family prompt extension applied for pattern_analyst | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:20.796901590Z [inf]  [Persona] Council context injected for pattern_analyst (initial) | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:20.796905520Z [inf]  [Persona] Bias alert injected for pattern_analyst | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:20.796908600Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-06T07:26:21.052580210Z [inf]  [Persona] Continuity block injected for contrarian | parent bccff36e | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:21.052585410Z [inf]  [Persona] Mistral-family prompt extension applied for contrarian | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:21.052590050Z [inf]  [Persona] Council context injected for contrarian (initial) | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:21.052594960Z [inf]  [Persona] Bias alert injected for contrarian | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:26:21.052598980Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-06T07:26:21.188119318Z [err]  [MistralLimiter] queue backed up: 5 call(s) waiting (5 elite) — Mistral account ceiling is 0.83 req/s / 50000 tokens/min. This is expected under real concurrent load; if it's persistent, the account plan likely needs a higher limit.
+2026-08-06T07:26:23.575143451Z [err]  [StructuralEchoAudit] session=4f031cdb-a606-4ac9-8c8c-cde788ba3fdd persona=stakeholder_mirror cited=false | stop_reason=stop
+2026-08-06T07:26:24.507478095Z [err]  [StructuralEchoAudit] session=4f031cdb-a606-4ac9-8c8c-cde788ba3fdd persona=elder cited=false | stop_reason=stop
+2026-08-06T07:26:26.753148688Z [err]  [StructuralEchoAudit] session=4f031cdb-a606-4ac9-8c8c-cde788ba3fdd persona=risk_architect cited=false | stop_reason=stop
+2026-08-06T07:26:56.772332586Z [inf]  [BiasScore] Scored 15 parameters. Detected: exit_optionality_mispricing, complexity_opacity
+2026-08-06T07:26:56.772346545Z [inf]  [BiasScore] Upserted 2 bias rows
+2026-08-06T07:26:56.772352025Z [inf]  [Examiner POST] Bias score triggered for session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:05.891548584Z [err]      at v (.next/server/chunks/7738.js:1:1616)
+2026-08-06T07:27:05.891607023Z [err]  [Persona] Route error: Error: [MistralLimiter] "streamMistral" waited 45s for a Mistral rate-limit slot and was dropped (cap: 45s). The shared Mistral account (0.83 req/s, 50000 tokens/min) is saturated — try again shortly.
+2026-08-06T07:27:07.894239989Z [err]  [Persona] Route error: Error: [MistralLimiter] "streamMistral" waited 47s for a Mistral rate-limit slot and was dropped (cap: 45s). The shared Mistral account (0.83 req/s, 50000 tokens/min) is saturated — try again shortly.
+2026-08-06T07:27:07.894243509Z [err]      at v (.next/server/chunks/7738.js:1:1616)
+2026-08-06T07:27:15.480574810Z [inf]  [Persona] Continuity block injected for pattern_analyst | parent bccff36e | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:15.480577920Z [inf]  [Persona] Mistral-family prompt extension applied for pattern_analyst | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:15.480580550Z [inf]  [Persona] Council context injected for pattern_analyst (initial) | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:15.480583070Z [inf]  [Persona] Bias alert injected for pattern_analyst | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:15.480585810Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-06T07:27:16.299661600Z [inf]  [Persona] Continuity block injected for contrarian | parent bccff36e | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:16.299666440Z [inf]  [Persona] Mistral-family prompt extension applied for contrarian | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:16.299670080Z [inf]  [Persona] Council context injected for contrarian (initial) | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:16.299673030Z [inf]  [Persona] Bias alert injected for contrarian | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:16.299675870Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-06T07:27:23.816707630Z [err]  [StructuralEchoAudit] session=4f031cdb-a606-4ac9-8c8c-cde788ba3fdd persona=pattern_analyst cited=false | stop_reason=stop
+2026-08-06T07:27:24.272943958Z [err]  [StructuralEchoAudit] session=4f031cdb-a606-4ac9-8c8c-cde788ba3fdd persona=contrarian cited=false | stop_reason=stop
+2026-08-06T07:27:44.320242033Z [inf]  [Persona] Longitudinal bias block injected for synthesis | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:44.320246093Z [inf]  [Persona] Graph context injected for synthesis | 6 connection(s) | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:44.320250943Z [inf]  [Persona] Council weighting directive injected for synthesis | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:44.320255453Z [inf]  [Persona] Continuity synthesis directive injected | parent bccff36e | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:44.320259063Z [inf]  [Persona] Council context injected for synthesis (synthesis) | session 4f031cdb-a606-4ac9-8c8c-cde788ba3fdd
+2026-08-06T07:27:44.320262653Z [inf]  [AIClient] createStream → anthropic-elite (claude-sonnet-4-6) (3200 max tokens) [tiered]
+2026-08-06T07:28:14.552257333Z [inf]  [AIClient] createCompletion → anthropic-elite (claude-sonnet-4-6) (80 max tokens) [tiered]
