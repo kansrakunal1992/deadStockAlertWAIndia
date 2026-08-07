@@ -1,1309 +1,944 @@
-const express = require('express');
-const whatsappHandler = require('./api/whatsapp');
-const metaClient = require('./lib/metaClient');
-const bodyParser = require('body-parser'); // for raw body
-try { require('dotenv').config(); } catch (_) {}
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const cron = require('node-cron');
-const { runDailySummary }         = require('./dailySummary');
-const { runTrialEndingReminders } = require('./trialEndingSummary');
-const { runCollectionsNudge }   = require('./crons/collectionsNudge');
-const {
-  // existing
-  getAllProducts,
-  getProductPrice,
-  upsertProduct,
-  updateProductPrice,
-  getProductsNeedingPriceUpdate,
-  sendPriceUpdateReminders,
-  // dashboard helpers (present in your codebase per whatsapp.js imports)
-  // NOTE: these are used to aggregate across shops for dashboard views.
-  getSalesDataForPeriod,
-  getInventorySummary,
-  getLowStockProducts,
-  getExpiringProducts,
-  getTopSellingProductsForPeriod,
-  getReorderSuggestions,
-  getAllShopIDs,
-  getCurrentInventory,
-  getShopDetails,
-  recordPaymentEvent,
-  markAuthUserPaid
-} = require('./database');
+/**
+ * server.js — Quorum Website
+ * ─────────────────────────────────────────────────────────────────────
+ * Minimal Express server for the website Railway project.
+ *
+ * Responsibilities:
+ *   1. Serve index.html and static assets from the same directory
+ *   2. Handle POST /api/waitlist — proxy form submissions to Supabase
+ *      using server-side credentials (never exposed in HTML)
+ *   3. Serve /privacy, /cookies, /terms, /security as the same page
+ *      stub until S3 builds proper legal pages
+ *   4. Serve /kunal as a short, shareable URL for the founder's
+ *      digital business card (card-kunal.html), including/excluding
+ *      the Founding Member teaser per FOUNDING_MEMBER_ENABLED.
+ *      /abhilash redirects to / — Abhilash is no longer with Quorum;
+ *      card-abhilash.html and abhilash.vcf have been removed.
+ *   5. Serve /founding-member — the Founding Member trust/conversion
+ *      page — or redirect it to /kunal when the cohort is closed
+ *   6. Serve /journey — "The Record", the four-decision founder
+ *      journey (Track 2 asset). Always on — not gated by
+ *      FOUNDING_MEMBER_ENABLED, since it's proof-of-value content
+ *      independent of whether the cohort itself is open.
+ *   7. Serve /decision-library — the standalone Decision Library
+ *      (breadth layer): 20 decision slots across five categories,
+ *      independent of /journey. Also always on, same reasoning.
+ *   8. (Sprint DS-1) card-kunal.html's Live Decision Session CTA (₹299,
+ *      guest checkout) pays and books entirely client-side against the
+ *      app's own API (Razorpay popup, then /api/decision-session/*  —
+ *      see app.quorumvault.org). This server's only involvement is
+ *      injecting APP_URL into the page at render time (see
+ *      renderCardPage) so that JS knows which origin to call — nothing
+ *      payment-related touches this Express server or its Supabase
+ *      client at all.
+ *
+ * Required Railway environment variables (set in website project):
+ *   SUPABASE_URL         — https://your-project.supabase.co
+ *   SUPABASE_SERVICE_KEY — service role key (bypasses RLS, server-only)
+ *   PORT                 — injected automatically by Railway
+ *
+ * Optional:
+ *   FOUNDING_MEMBER_ENABLED — "true" (default) or "false". Set to
+ *     "false" to close the Founding Member cohort: removes the teaser
+ *     from /kunal, and /founding-member redirects to /kunal. No code
+ *     change needed — just the Railway variable.
+ *   APP_URL — already existed (Privacy Center links); now also used to
+ *     point card-kunal.html's Decision Session payment calls at the
+ *     right app domain. Defaults to https://app.quorumvault.org.
+ *
+ * Start command: node server.js
+ */
 
-const crypto = require('crypto');          // NEW: HMAC for webhook signature
+import express    from 'express'
+import { createClient } from '@supabase/supabase-js'
+import path       from 'path'
+import fs         from 'fs'
+import { fileURLToPath } from 'url'
 
-const app = express();
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const app       = express()
+const PORT      = process.env.PORT ?? 3000
 
-// Request logging middleware
+/* ── Founding Member cohort toggle ────────────────────────────────── */
+// Defaults to OPEN (true) when unset, so nothing changes unless you
+// deliberately set FOUNDING_MEMBER_ENABLED=false in Railway → website
+// project → Variables (no code change or redeploy of app.quorumvault.org
+// needed). When false:
+//   - /kunal renders without the "Interested in becoming a
+//     Founding Member?" teaser — cards revert to their original state.
+//   - /founding-member redirects to /kunal rather than showing a live
+//     invite with nowhere real for it to have come from.
+// This only controls visibility on the website. It does not affect the
+// app's own seat-cap enforcement (lib/founding.ts, Mirror gate), which
+// is the real source of truth for whether a seat can actually be sold.
+const FOUNDING_MEMBER_ENABLED =
+  String(process.env.FOUNDING_MEMBER_ENABLED ?? 'true').trim().toLowerCase() !== 'false'
 
-// ==== Paid-confirm idempotency (event-scoped, persisted) =====================
-// TTL can be tuned via env; default 6h
-const PAID_CONFIRM_TTL_MS = Number(process.env.PAID_CONFIRM_TTL_MS ?? (6 * 60 * 60 * 1000));
-const paidConfirmTrackerPath = path.join('/tmp', 'paid_confirm_tracker.json');
-let paidTracker = {};
-try {
-  if (fs.existsSync(paidConfirmTrackerPath)) {
-    paidTracker = JSON.parse(fs.readFileSync(paidConfirmTrackerPath, 'utf8'));
-  }
-} catch { /* noop */ }
-function savePaidTracker() {
+/* ── Startup checks ───────────────────────────────────────────────── */
+const REQUIRED_ENV = ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY']
+const missing = REQUIRED_ENV.filter(k => !process.env[k])
+if (missing.length) {
+  console.error(`[Startup] Missing required environment variables: ${missing.join(', ')}`)
+  console.error('[Startup] Set these in the Railway website project environment settings.')
+  process.exit(1)
+}
+console.log(`[Startup] Founding Member cohort: ${FOUNDING_MEMBER_ENABLED ? 'OPEN' : 'CLOSED'}`)
+
+/* ── Supabase client (service role — server-side only) ────────────── */
+function getSupabase() {
+  return createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_KEY,
+    { auth: { persistSession: false } }
+  )
+}
+
+/* ── Middleware ───────────────────────────────────────────────────── */
+app.use(express.json({ limit: '512kb' }))
+
+/* ── Card rendering (respects FOUNDING_MEMBER_ENABLED) ────────────── */
+// The teaser block in card-kunal.html is wrapped in
+// <!-- FOUNDING_TEASER:START/END --> markers. When the cohort is
+// closed we strip everything between them so the card renders exactly
+// as it did before the Founding Member feature existed — no partial
+// or broken-looking box, no dead link.
+const FOUNDING_TEASER_BLOCK_RX =
+  /\r?\n[ \t]*<!-- FOUNDING_TEASER:START[\s\S]*?FOUNDING_TEASER:END -->\r?\n?/
+
+// Same marker convention, generalized to two swappable variants — used
+// in journey.html, which references /founding-member in a couple of
+// places (nav back-link, secondary CTA link) that need to look correct
+// whether the cohort is open or closed, not just avoid a broken link.
+const FOUNDING_OPEN_BLOCK_RX =
+  /\r?\n?[ \t]*<!-- FOUNDING_OPEN:START[\s\S]*?FOUNDING_OPEN:END -->\r?\n?/g
+const FOUNDING_CLOSED_BLOCK_RX =
+  /\r?\n?[ \t]*<!-- FOUNDING_CLOSED:START[\s\S]*?FOUNDING_CLOSED:END -->\r?\n?/g
+
+function renderCardPage(filename, res) {
+  let html
   try {
-    fs.writeFileSync(paidConfirmTrackerPath, JSON.stringify(paidTracker, null, 2));
-  } catch { /* noop */ }
-}
-// Structure:
-// paidTracker[shopId] = { events: { [eventId]: { at: <ts>, status: 'processing'|'completed' } } }
-function _ensureShopRec(shopId) {
-  const rec = paidTracker[shopId] || {};
-  rec.events = rec.events || {};
-  paidTracker[shopId] = rec;
-  return rec;
-}
-function claimPaidConfirm(shopId, eventId) {
-  // First claimant for (shopId,eventId) within TTL proceeds; others are duplicates.
-  if (!shopId || !eventId) return true; // allow if no eventId fallback available
-  const rec = _ensureShopRec(shopId);
-  const ev = rec.events[eventId];
-  if (ev && (Date.now() - (ev.at || 0)) < PAID_CONFIRM_TTL_MS) {
-    return false; // already claimed/recently processed
+    html = fs.readFileSync(path.join(__dirname, filename), 'utf8')
+  } catch {
+    return res.status(404).send('Not found')
   }
-  rec.events[eventId] = { at: Date.now(), status: 'processing' };
-  savePaidTracker();
-  return true;
-}
-function markPaidConfirmCompleted(shopId, eventId) {
-  if (!shopId || !eventId) return;
-  const rec = _ensureShopRec(shopId);
-  if (rec.events[eventId]) {
-    rec.events[eventId].status = 'completed';
-    savePaidTracker();
+  if (!FOUNDING_MEMBER_ENABLED) {
+    html = html.replace(FOUNDING_TEASER_BLOCK_RX, '')
   }
-}
-function releasePaidConfirmClaim(shopId, eventId) {
-  if (!shopId || !eventId) return;
-  const rec = _ensureShopRec(shopId);
-  if (rec.events[eventId]) {
-    delete rec.events[eventId];
-    savePaidTracker();
-  }
-}
-
-app.use((req, res, next) => {
-  const start = Date.now();
-  const requestId = `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  
-  // Add request ID to the request object for tracking
-  req.requestId = requestId;
-  
-  console.log(`[${requestId}] ${req.method} ${req.url} - ${req.ip}`);
-  
-  // Log when the response is sent
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    console.log(`[${requestId}] Response sent: ${res.statusCode} (${duration}ms)`);
-  });
-  
-  next();
-});
-// --- Resolve webhook path robustly (treat literal "" as empty and fallback) ---
-const _rawWebhookPath = process.env.PAID_WEBHOOK_PATH;
-let PAID_WEBHOOK_PATH_RESOLVED = (_rawWebhookPath || '/api/payment-webhook').trim();
-if (PAID_WEBHOOK_PATH_RESOLVED === '""' || PAID_WEBHOOK_PATH_RESOLVED === '') {
-  PAID_WEBHOOK_PATH_RESOLVED = '/api/payment-webhook';
+  // Sprint DS-1: card-kunal.html's Decision Session payment JS needs to
+  // know which origin to call for /api/decision-session/*  (the app lives
+  // on a different domain from this website). Reuses the same APP_URL env
+  // var already used elsewhere in this file for Privacy Center links —
+  // one source of truth for "where the app is", no new env var.
+  html = html.split('%%APP_URL%%').join(APP_URL)
+  res.type('html').send(html)
 }
 
-// =============================================================================
-// ==== Razorpay Payment Webhook (white-label, secure HMAC verification)  ======
-
-// =============================================================================
-// Mount RAW body handler for this route so we can verify signature on bytes
-app.post(
-  PAID_WEBHOOK_PATH_RESOLVED,
-  bodyParser.raw({ type: '*/*' }), // raw body ONLY for this route
-  async (req, res) => {
-    const requestId = req.requestId;
-    try {
-      const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
-      if (!webhookSecret) {
-        console.error(`[${requestId}] Missing RAZORPAY_WEBHOOK_SECRET`);
-        return res.sendStatus(500);
-      }
-
-      // Signature header name used by Razorpay (case-insensitive)
-      const signatureHeader =
-        req.get('X-Razorpay-Signature') || req.get('x-razorpay-signature');
-      if (!signatureHeader) {
-        console.warn(`[${requestId}] Razorpay webhook missing signature header`);
-        return res.sendStatus(400);
-      }
-
-      // Ensure we have a Buffer for HMAC (guard against prior JSON parsing)
-      const rawBody = Buffer.isBuffer(req.body)
-        ? req.body
-        : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
-
-      // Razorpay uses HMAC-SHA256 for webhook signatures
-      const computed = crypto.createHmac('sha256', webhookSecret)
-        .update(rawBody)
-        .digest('hex');
-      if (computed !== signatureHeader) {
-        console.warn(`[${requestId}] Razorpay webhook signature mismatch`);
-        return res.sendStatus(403);
-      }
-
-      console.log(
-        `[${requestId}] Razorpay webhook: path=${PAID_WEBHOOK_PATH_RESOLVED} signature OK`
-      );
-
-      // ---- ACK EARLY to stop Razorpay retries (process async) ----
-      // Razorpay treats non-2xx or >5s as failure and retries for ~24h. Early 200 prevents duplicates.
-      // We continue processing below in setImmediate().
-      res.status(200).json({ ok: true });
-      // ----------------------------------------------------------------
-
-      setImmediate(async () => {
-        let payload;
-        try {
-          payload = JSON.parse(rawBody.toString('utf8'));
-        } catch {
-          const qs = require('querystring');
-          payload = qs.parse(rawBody.toString('utf8'));
-        }
-
-        // ==== Razorpay payload mapping ====
-        const entity = payload?.payload?.payment?.entity || {};
-        const status = String(entity.status || '').toLowerCase();
-        const notes = entity.notes || {};
-                
-        // Razorpay's unique event ID (recommended for idempotency)
-         const razorEventId =
-           req.get('x-razorpay-event-id') ||
-           req.get('X-Razorpay-Event-Id') ||
-           payload?.event ||
-           // fallback if header missing
-           crypto.createHash('sha256').update(rawBody).digest('hex'); // last resort: body hash
-
-        const buyerPhone = String(entity.contact || '').trim(); // payer-entered phone
-
-        // Canonicalize shopId (digits only; strip +91/91/leading zeros)
-        const canon = s => {
-          const d = String(s || '').replace(/\D+/g, '');
-          return d.startsWith('91') && d.length >= 12 ? d.slice(2) : d.replace(/^0+/, '');
-        };
-        const rawNotesShopId = String(notes.shopId || '').trim();
-        const resolvedCanon = canon(rawNotesShopId) || canon(buyerPhone);
-
-        console.log(
-          `[${requestId}] Razorpay webhook raw: notes.shopId="${rawNotesShopId}" ` +
-          `contact="${buyerPhone}" → resolved canon=${resolvedCanon}`
-        );
-
-        const shopId = resolvedCanon;
-        if (!shopId) {
-          console.warn(`[${requestId}] Razorpay webhook: missing shopId/contact`);
-          return; // already 200-ACKed; just stop processing
-        }
-
-        // Build E.164 address for Meta Graph API: +91XXXXXXXXXX (no whatsapp: prefix)
-        const toE164 = (canon10) => {
-          const d = String(canon10 || '').replace(/\D+/g, '');
-          const c = d.startsWith('91') && d.length >= 12 ? d.slice(2) : d.replace(/^0+/, '');
-          return `+91${c}`;
-        };
-        const fromWhatsApp = toE164(shopId); // Meta format: +91XXXXXXXXXX                                
-        console.log(`[${requestId}] WhatsApp paid confirm target=${fromWhatsApp}`, {
-        shopId, status, eventId: razorEventId
-        });
-            // ---- Idempotency Claim: allow exactly one first processing per event ----
-            const claimed = claimPaidConfirm(shopId, razorEventId);
-            if (!claimed) {
-              console.log(
-                `[${requestId}] [paid-confirm] suppressed duplicate for shop=${shopId} event=${razorEventId}`
-              );
-              return;
-            }
-
-        // record event (audit)
-        try {
-          await recordPaymentEvent({
-            shopId,
-            // Razorpay sends amount in paise
-            amount:
-              (typeof entity.amount === 'number'
-                ? entity.amount
-                : Number(entity.amount || 0)) / 100,
-            status,
-            gateway: 'razorpay',
-            payload
-          });
-        } catch (e) {
-          console.warn(
-            `[${requestId}] recordPaymentEvent (razorpay) failed: ${e?.message}`
-          );
-        }
-
-        // Mark paid on successful statuses
-        if (
-          status === 'captured' ||
-          status === 'authorized' ||
-          status === 'success' ||
-          status === 'successful' ||
-          status === 'credit'
-        ) {
-          const r = await markAuthUserPaid(shopId);
-          console.log(`[${requestId}] markAuthUserPaid(${shopId}) ->`, r);
-          if (!r?.success) {
-            console.error(
-              `[${requestId}] markAuthUserPaid failed: ${r?.error}`
-            );
-            // We already ACKed; just stop processing here
-            return;
-          }
-                                            
-          // Non-blocking WhatsApp confirmation (send now; mark completion AFTER success)
-             const gotLock = true; // paidTracker handles idempotency
-             if (!gotLock) {
-               console.log(`[${requestId}] [paid-confirm] skipped due to lock`, { shopId });
-               return;
-             }
-             try {
-            const wa = require('./api/whatsapp');
-            if (wa && typeof wa.sendWhatsAppPaidConfirmation === 'function') {                          
-            await wa.sendWhatsAppPaidConfirmation(fromWhatsApp);
-              console.log(
-                `[${requestId}] WhatsApp paid confirm sent to ${fromWhatsApp}`
-              );
-              markPaidConfirmCompleted(shopId, razorEventId);
-            } else {
-              // Fallback: send confirmation directly via metaClient
-              try {
-                await metaClient.sendTextMessage(
-                  fromWhatsApp,
-                  '\u2705 Your Saamagrii.AI Paid Plan is now active. Enjoy full access!'
-                );
-                console.log(`[${requestId}] Meta fallback: paid confirm sent to ${fromWhatsApp}`);
-                markPaidConfirmCompleted(shopId, razorEventId);
-              } catch (metaErr) {
-                console.warn(`[${requestId}] Meta fallback paid confirm failed: ${metaErr?.message}`);
-                releasePaidConfirmClaim(shopId, razorEventId);
-              }
-            }
-          } catch (e) {
-            console.warn(
-              `[${requestId}] WhatsApp paid confirm (razorpay) failed: ${e?.message}`
-            );                                             
-          // Release the claim so the next delivery or manual retry can process
-          releasePaidConfirmClaim(shopId, razorEventId);
-          } finally {
-           }
-        } else {
-          console.log(
-            `[${requestId}] Razorpay webhook received non-capture status: ${status}`
-          );         
-      // For non-success statuses, release claim to allow later 'captured' event to send confirm
-      releasePaidConfirmClaim(shopId, razorEventId);
-        }
-
-        // already ACKed — just finish the async handler
-        return;
-      }); // <-- end setImmediate callback
-
-      // Outer try: we already ACKed; simply return.
-      return;
-    } catch (err) {
-      // Outer catch: we already ACKed; log and return.
-      console.error(`[${requestId}] Razorpay webhook error:`, err.message);
-      return;
-    }
-  }
-);
-
-
-const tempDir = path.join(__dirname, 'temp');
-
-// PDF serving route
-app.get('/invoice/:fileName', (req, res) => {
+// journey.html always renders (never redirects — see route below), but
+// its two /founding-member references need to match reality: point to
+// the live page when the cohort is open, or degrade to a plain "back
+// to Quorum" link and no pricing mention when it's closed. Same
+// find-file-strip-block approach as renderCardPage, just keeping
+// whichever variant applies instead of only ever removing one.
+function renderJourneyPage(res) {
+  let html
   try {
-    const fileName = req.params.fileName;
-    
-    // Security check: ensure fileName is safe
-    if (!fileName || fileName.includes('..') || fileName.includes('/') || !fileName.endsWith('.pdf')) {
-      console.error(`[PDF Server] Invalid filename: ${fileName}`);
-      return res.status(400).send('Invalid filename');
-    }
-    
-    // Try multiple possible paths
-    const possiblePaths = [
-      path.join('/tmp', 'invoices', fileName),  // Production path
-      path.join(__dirname, 'temp', 'invoices', fileName),  // Development path
-      path.join(__dirname, 'temp', fileName),  // Legacy path
-    ];
-    
-    let filePath = null;
-    for (const possiblePath of possiblePaths) {
-      if (fs.existsSync(possiblePath)) {
-        filePath = possiblePath;
-        break;
-      }
-    }
-    
-    if (!filePath) {
-      console.error(`[PDF Server] File not found. Tried paths:`, possiblePaths);
-      return res.status(404).send('Invoice not found');
-    }
-    
-    console.log(`[PDF Server] Serving file: ${filePath}`);
-    
-    // Get file stats for logging
-    const stats = fs.statSync(filePath);
-    console.log(`[PDF Server] File size: ${stats.size} bytes, created: ${stats.birthtime}`);
-    
-    // Send the file
-    res.sendFile(filePath, {
-      headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="${fileName}"`,
-        'Cache-Control': 'public, max-age=3600' // Cache for 1 hour
-      }
-    });
-    
-  } catch (error) {
-    console.error(`[PDF Server] Error:`, error.message);
-    res.status(500).send('Error serving invoice');
+    html = fs.readFileSync(path.join(__dirname, 'journey.html'), 'utf8')
+  } catch {
+    return res.status(404).send('Not found')
   }
-});
+  html = html.replace(
+    FOUNDING_MEMBER_ENABLED ? FOUNDING_CLOSED_BLOCK_RX : FOUNDING_OPEN_BLOCK_RX,
+    ''
+  )
+  res.type('html').send(html)
+}
 
-// Middleware for parsing JSON and URL-encoded bodies
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Direct hits on the raw filename (e.g. someone bookmarked
+// /card-kunal.html, or it's guessed from this source file) are
+// redirected to the canonical short URL below — otherwise Express's
+// static file server would serve the raw, unprocessed file and the
+// toggle above would have no effect on that path.
+app.get('/card-kunal.html', (_req, res) => res.redirect(301, '/kunal'))
 
-// Meta Cloud API sends standard JSON.
-// Webhook ownership verified once via GET challenge handshake (see handler below).
+// card-abhilash.html no longer exists — Abhilash is no longer with
+// Quorum. Any old bookmark or shared link for his card/URL lands on
+// the homepage rather than 404ing.
+app.get(['/card-abhilash.html', '/abhilash'], (_req, res) => res.redirect(301, '/'))
 
-// Health check endpoint with detailed system information
-app.get('/health', (req, res) => {
-  const healthCheck = {
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: process.env.NODE_ENV || 'development',
-    version: process.env.npm_package_version || '1.0.0',
-    memory: process.memoryUsage(),
-    checks: {
-      database: 'unknown',
-      products: 'unknown',
-      meta: 'unknown'
-    }
-  };
-  
-  // Check database connection
-  const { testConnection, getAllProducts } = require('./database');
-  testConnection()
-    .then(isConnected => {
-      healthCheck.checks.database = isConnected ? 'ok' : 'error';
-    })
-    .catch(() => {
-      healthCheck.checks.database = 'error';
-    })
-    .finally(() => {
-      // Check products table
-      getAllProducts()
-        .then(products => {
-          healthCheck.checks.products = 'ok';
-          healthCheck.productsCount = products.length;
-        })
-        .catch(() => {
-          healthCheck.checks.products = 'error';
-        })
-        .finally(() => {
-          // Check Meta Graph API reachability
-          const axios = require('axios');
-          const META_TOKEN    = process.env.META_ACCESS_TOKEN;
-          const META_PHONE_ID = process.env.META_PHONE_NUMBER_ID;
-          const META_VER      = process.env.META_API_VERSION || 'v20.0';
-          if (!META_TOKEN || !META_PHONE_ID) {
-            healthCheck.checks.meta = 'not_configured';
-            return res.status(200).json(healthCheck);
-          }
-          axios.get(
-            `https://graph.facebook.com/${META_VER}/${META_PHONE_ID}`,
-            { headers: { Authorization: `Bearer ${META_TOKEN}` }, timeout: 5000 }
-          )
-            .then(() => {
-              healthCheck.checks.meta = 'ok';
-              res.status(200).json(healthCheck);
-            })
-            .catch(() => {
-              healthCheck.checks.meta = 'error';
-              res.status(200).json(healthCheck);
-            });
-        });
-    });
-});
+app.get('/founding-member.html', (_req, res) => res.redirect(301, '/founding-member'))
+app.get('/journey.html', (_req, res) => res.redirect(301, '/journey'))
+app.get('/decision-library.html', (_req, res) => res.redirect(301, '/decision-library'))
 
-// Metrics endpoint for monitoring
-app.get('/metrics', (req, res) => {
-  const metrics = {
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    cpu: process.cpuUsage(),
-    activeRequests: app.get('activeConnections') || 0,
-    environment: process.env.NODE_ENV || 'development'
-  };
-  
-  res.status(200).json(metrics);
-});
+// Serve index.html and any public assets (images, fonts, etc.)
+app.use(express.static(__dirname, {
+  index: 'index.html',
+  etag: true,
+  maxAge: '1h',
+}))
 
-// Webhook verification endpoint
-app.get('/api/whatsapp', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-  
-  if (mode && token) {
-    if (mode === 'subscribe' && token === (process.env.META_VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOKEN)) {
-      console.log(`[${req.requestId}] WEBHOOK_VERIFIED`);
-      res.status(200).send(challenge);
-    } else {
-      console.warn(`[${req.requestId}] Webhook verification failed: invalid token`);
-      res.sendStatus(403);
-    }
-  } else {
-    console.warn(`[${req.requestId}] Webhook verification failed: missing parameters`);
-    res.sendStatus(400);
-  }
-});
+/* ── POST /api/waitlist ───────────────────────────────────────────── */
+const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-// Daily summary endpoint (for manual testing)
-app.post('/api/daily-summary', async (req, res) => {
-  const requestId = req.requestId;
-  
+app.post('/api/waitlist', async (req, res) => {
   try {
-    console.log(`[${requestId}] Manual daily summary triggered`);
-    
-    // Send immediate response
-    res.status(202).json({
-      status: 'processing',
-      message: 'Daily summary job started',
-      timestamp: new Date().toISOString()
-    });
-    
-    // Run the daily summary in the background
-    runDailySummary()
-      .then(results => {
-        const successCount = results.filter(r => r.success).length;
-        const failureCount = results.filter(r => !r.success).length;
-        
-        console.log(`[${requestId}] Daily summary completed: ${successCount} successful, ${failureCount} failed`);
+    const {
+      interest_type,
+      decision_summary,
+      name,
+      email,
+      whatsapp,
+      additional_context,
+    } = req.body ?? {}
+
+    /* Validate required fields */
+    if (!interest_type?.trim()) {
+      return res.status(400).json({ error: 'interest_type is required' })
+    }
+    if (!name?.trim()) {
+      return res.status(400).json({ error: 'name is required' })
+    }
+    if (!email?.trim() || !EMAIL_RX.test(email.trim())) {
+      return res.status(400).json({ error: 'A valid email address is required' })
+    }
+
+    /* Insert into Supabase */
+    const supabase = getSupabase()
+    const { error } = await supabase
+      .from('session_requests')
+      .insert({
+        interest_type:      interest_type.trim(),
+        decision_summary:   decision_summary?.trim()     ?? null,
+        name:               name.trim(),
+        email:              email.trim().toLowerCase(),
+        whatsapp:           whatsapp?.trim()             ?? null,
+        additional_context: additional_context?.trim()   ?? null,
       })
-      .catch(error => {
-        console.error(`[${requestId}] Daily summary failed:`, error.message);
-      });
-  } catch (error) {
-    console.error(`[${requestId}] Error triggering daily summary:`, error.message);
-    res.status(500).json({
-      status: 'error',
-      message: 'Failed to start daily summary',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
 
-// Product management endpoints
-
-// Get all products
-app.get('/api/products', async (req, res) => {
-  const requestId = req.requestId;
-  
-  try {
-    console.log(`[${requestId}] Getting all products`);
-    
-    const products = await getAllProducts();
-    
-    res.status(200).json({
-      success: true,
-      count: products.length,
-      products: products,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error(`[${requestId}] Error getting products:`, error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get products',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
-
-// Get products needing price update
-app.get('/api/products/needing-update', async (req, res) => {
-  const requestId = req.requestId;
-  
-  try {
-    console.log(`[${requestId}] Getting products needing price update`);
-           
-    // ===== [PATCH:PRICES-SHOP-SCOPE-SERVER-001] BEGIN =====
-        // Optional shop scoping via ?shopId=whatsapp:+91XXXXXXXXXX or +91XXXXXXXXXX or 10-digit
-        const rawShopId = (req.query.shopId ?? '').toString().trim();
-        const canon = s => {
-          const d = String(s ?? '').replace(/\D+/g, '');
-          return d.startsWith('91') && d.length >= 12 ? d.slice(2) : d;
-        };
-        const shopId = rawShopId ? `+91${canon(rawShopId)}` : null;
-        const products = await getProductsNeedingPriceUpdate(shopId);
-        // ===== [PATCH:PRICES-SHOP-SCOPE-SERVER-001] END =====
-    
-    res.status(200).json({
-      success: true,
-      count: products.length,
-      products: products,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error(`[${requestId}] Error getting products needing update:`, error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get products needing update',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
-
-
-// Get single product by name
-app.get('/api/products/:name', async (req, res) => {
-  const requestId = req.requestId;
-  const productName = decodeURIComponent(req.params.name);
-  
-  try {
-    console.log(`[${requestId}] Getting product: ${productName}`);
-    
-    const productInfo = await getProductPrice(productName);
-    
-    if (productInfo.success) {
-      res.status(200).json({
-        success: true,
-        product: {
-          name: productName,
-          price: productInfo.price,
-          unit: productInfo.unit,
-          category: productInfo.category,
-          hsnCode: productInfo.hsnCode
-        },
-        timestamp: new Date().toISOString()
-      });
-    } else {
-      res.status(404).json({
-        success: false,
-        error: 'Product not found',
-        message: `Product '${productName}' not found in database`
-      });
+    if (error) {
+      console.error('[Waitlist] Supabase error:', error.message)
+      return res.status(500).json({ error: 'Failed to save request. Please try again.' })
     }
-  } catch (error) {
-    console.error(`[${requestId}] Error getting product:`, error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get product',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
 
-// Create or update product
-app.post('/api/products', async (req, res) => {
-  const requestId = req.requestId;
-  
+    return res.status(200).json({ ok: true })
+
+  } catch (err) {
+    console.error('[Waitlist] Unexpected error:', err)
+    return res.status(500).json({ error: 'Server error. Please try again.' })
+  }
+})
+
+/* ── /kunal visit counter (social proof) ──────────────────────────────
+ * Backed by a single-row Supabase table (kunal_card_visits) + a
+ * Postgres function (increment_kunal_visits) that increments it
+ * atomically — see supabase-visit-counter.sql for the one-time setup
+ * to run in the Supabase SQL editor. Seeded at 301.
+ *
+ * GET  /api/kunal/visit — read-only, doesn't increment. Used on repeat
+ *      views within the same browser session (see sessionStorage guard
+ *      in card-kunal.html) so refreshing doesn't inflate the count.
+ * POST /api/kunal/visit — increments by 1, returns the new count. Called
+ *      once per browser session on first load.
+ */
+app.get('/api/kunal/visit', async (_req, res) => {
   try {
-    console.log(`[${requestId}] Creating/updating product`);
-    
-    const { name, price, unit, category, hsnCode } = req.body;
-    
-    // Validate required fields
-    if (!name || price === undefined) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields',
-        message: 'Product name and price are required'
-      });
-    }
-    
-    const result = await upsertProduct({
-      name: name.trim(),
-      price: Number(price),
-      unit: unit || 'pieces',
-      category: category || 'General',
-      hsnCode: hsnCode || ''
-    });
-    
-    if (result.success) {
-      res.status(result.action === 'created' ? 201 : 200).json({
-        success: true,
-        action: result.action,
-        productId: result.id,
-        message: `Product ${result.action} successfully`,
-        timestamp: new Date().toISOString()
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        error: result.error,
-        message: 'Failed to create/update product'
-      });
-    }
-  } catch (error) {
-    console.error(`[${requestId}] Error creating/updating product:`, error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to create/update product',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
+    const supabase = getSupabase()
+    const { data, error } = await supabase
+      .from('kunal_card_visits')
+      .select('count')
+      .eq('id', 1)
+      .single()
+    if (error) throw error
+    return res.status(200).json({ count: data.count })
+  } catch (err) {
+    console.error('[Visits] Read error:', err.message)
+    return res.status(500).json({ error: 'Failed to read visit count' })
   }
-});
+})
 
-// Update product price
-app.put('/api/products/:id/price', async (req, res) => {
-  const requestId = req.requestId;
-  const productId = req.params.id;
-  
+app.post('/api/kunal/visit', async (_req, res) => {
   try {
-    console.log(`[${requestId}] Updating product price: ${productId}`);
-    
-    const { price } = req.body;
-    
-    if (price === undefined) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing price field',
-        message: 'Price is required'
-      });
-    }
-    
-    const result = await updateProductPrice(productId, Number(price));
-    
-    if (result.success) {
-      res.status(200).json({
-        success: true,
-        message: 'Product price updated successfully',
-        timestamp: new Date().toISOString()
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        error: result.error,
-        message: 'Failed to update product price'
-      });
-    }
-  } catch (error) {
-    console.error(`[${requestId}] Error updating product price:`, error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update product price',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
+    const supabase = getSupabase()
+    const { data, error } = await supabase.rpc('increment_kunal_visits')
+    if (error) throw error
+    return res.status(200).json({ count: data })
+  } catch (err) {
+    console.error('[Visits] Increment error:', err.message)
+    return res.status(500).json({ error: 'Failed to increment visit count' })
   }
-});
+})
 
-// Trigger price update reminders
-app.post('/api/price-reminders', async (req, res) => {
-  const requestId = req.requestId;
-  
-  try {
-    console.log(`[${requestId}] Manual trigger for price update reminders`);
-    
-    // Send immediate response
-    res.status(202).json({
-      status: 'processing',
-      message: 'Price update reminders job started',
-      timestamp: new Date().toISOString()
-    });
-    
-    // Run the reminders in the background        
-    // ===== [PATCH:PRICES-REMINDER-SERVER-003] BEGIN =====
-        const rawShopId = (req.query.shopId ?? req.body?.shopId ?? '').toString().trim();
-        const canon = s => {
-          const d = String(s ?? '').replace(/\D+/g, '');
-          return d.startsWith('91') && d.length >= 12 ? d.slice(2) : d;
-        };
-        const shopId = rawShopId ? `+91${canon(rawShopId)}` : null;
-        // If your DB layer supports a scoped variant, prefer it; else fall back to global.
-        const runner = typeof sendPriceUpdateReminders === 'function'
-          ? (shopId ? () => sendPriceUpdateReminders(shopId) : () => sendPriceUpdateReminders())
-          : async () => {
-              // Minimal fallback: no-op or log if function missing.
-              console.warn('[price-reminders] sendPriceUpdateReminders() not available');
-            };
-        runner()
-        // ===== [PATCH:PRICES-REMINDER-SERVER-003] END =====
 
-      .then(results => {
-        const successCount = results.filter(r => r.success).length;
-        const failureCount = results.filter(r => !r.success).length;
-        
-        console.log(`[${requestId}] Price update reminders completed: ${successCount} sent, ${failureCount} failed`);
-      })
-      .catch(error => {
-        console.error(`[${requestId}] Price update reminders failed:`, error.message);
-      });
-  } catch (error) {
-    console.error(`[${requestId}] Error triggering price update reminders:`, error.message);
-    res.status(500).json({
-      status: 'error',
-      message: 'Failed to start price update reminders',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
+/* ── Shared legal page shell ──────────────────────────────────────── */
+// APP_URL: where the Quorum app lives (for links to Privacy Center etc.)
+const APP_URL = process.env.APP_URL ?? 'https://app.quorumvault.org'
 
-// WhatsApp webhook endpoint
-app.post('/api/whatsapp', whatsappHandler);
+const LEGAL_SHELL = (title, bodyHtml) => `<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${title} — Quorum</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet" />
 
-// Static files (if needed)
-app.use(express.static(path.join(__dirname, 'public')));
+  <!-- Meta Pixel Code -->
+  <script>
+  !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+  n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+  n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+  t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,
+  document,'script','https://connect.facebook.net/en_US/fbevents.js');
+  fbq('init', '1015465961468881');
+  fbq('track', 'PageView');
+  </script>
+  <noscript><img height="1" width="1" style="display:none"
+    src="https://www.facebook.com/tr?id=1015465961468881&ev=PageView&noscript=1"
+  /></noscript>
+  <!-- End Meta Pixel Code -->
 
-// =========================
-// Dashboard filters support
-// =========================
-// Helper: normalize shop meta and match query filters
-function normalizeShopMeta(details) {
-  // Adjust these keys if your Airtable uses different names
-  const state   = (details.state   || details.State   || details.fields?.State   || '').trim();
-  const city    = (details.city    || details.City    || details.fields?.City    || '').trim();
-  const segment = (details.segment || details.Segment || details.fields?.Segment || '').trim();
-  const shopId  = (details.shopId  || details.ShopId  || details.fields?.ShopId  || details.id || '').toString();
-  const shopName= (details.shopName|| details['Shop Name'] || details.fields?.['Shop Name'] || '').trim();
-  return { state, city, segment, shopId, shopName };
-}
-function matchesFilter(meta, q) {
-  if (q.state   && meta.state.toLowerCase()   !== String(q.state).toLowerCase()) return false;
-  if (q.city    && meta.city.toLowerCase()    !== String(q.city).toLowerCase()) return false;
-  if (q.segment && meta.segment.toLowerCase() !== String(q.segment).toLowerCase()) return false;
-  if (q.shopId  && meta.shopId.toString()     !== String(q.shopId)) return false;
-  return true;
-}
-async function shopMetaMap(shopIds) {
-  const map = new Map();
-  for (const id of shopIds) {
+  <style>
+    :root {
+      --gold: #c9a84c; --gold-hi: #e2c46e; --gold-dim: rgba(201,168,76,0.25);
+    }
+    [data-theme="dark"] {
+      --bg: #010204; --bg2: #04060f; --card: #080d1b; --card2: #0b1020;
+      --b0: #0d1628; --b1: #182340; --b2: #243658;
+      --t0: #ffffff; --t1: #edf2ff; --t2: #c8d6f0; --t3: #8fa8cc;
+      --t4: #506484; --t5: #263d5e;
+      --gold: #c9a84c;
+    }
+    [data-theme="light"] {
+      --bg: #f4f1eb; --bg2: #ede9e0; --card: #ffffff; --card2: #f8f6f1;
+      --b0: #c8cdd8; --b1: #aab2c2; --b2: #8896b0;
+      --t0: #060d1c; --t1: #0e1a30; --t2: #1e2e48; --t3: #3a4f70;
+      --t4: #667a9e; --t5: #a0b0c8;
+      --gold: #9a7020;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 16px; }
+    body {
+      font-family: 'DM Sans', system-ui, sans-serif;
+      background: var(--bg); color: var(--t2);
+      min-height: 100vh; line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--gold); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Nav ── */
+    .legal-nav {
+      position: sticky; top: 0; z-index: 100;
+      background: var(--bg2); border-bottom: 1px solid var(--b0);
+      padding: 14px 32px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .legal-nav-logo {
+      font-family: 'DM Mono', monospace; font-size: 13px;
+      letter-spacing: 0.12em; color: var(--t1); text-decoration: none;
+    }
+    .legal-nav-logo span { color: var(--gold); }
+    .legal-nav-back {
+      font-family: 'DM Mono', monospace; font-size: 11px;
+      letter-spacing: 0.08em; color: var(--t4); text-decoration: none;
+    }
+    .legal-nav-back:hover { color: var(--t2); text-decoration: none; }
+    .theme-toggle {
+      background: none; border: 1px solid var(--b1);
+      color: var(--t4); font-size: 11px; padding: 5px 10px;
+      border-radius: 6px; cursor: pointer; font-family: 'DM Mono', monospace;
+      letter-spacing: 0.06em;
+    }
+
+    /* ── Page container ── */
+    .legal-wrap { max-width: 720px; margin: 0 auto; padding: 48px 24px 96px; }
+
+    /* ── Header ── */
+    .legal-eyebrow {
+      font-family: 'DM Mono', monospace; font-size: 10px;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--t4); margin-bottom: 12px;
+    }
+    .legal-title {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: clamp(28px, 4vw, 42px); font-weight: 400;
+      letter-spacing: -0.02em; color: var(--t0); line-height: 1.15;
+      margin-bottom: 12px;
+    }
+    .legal-meta {
+      font-family: 'DM Mono', monospace; font-size: 11px;
+      color: var(--t4); letter-spacing: 0.06em; margin-bottom: 32px;
+    }
+    hr.legal-rule { border: none; border-top: 1px solid var(--b0); margin-bottom: 40px; }
+
+    /* ── Lead paragraph ── */
+    .legal-lead {
+      font-size: 15px; color: var(--t2); line-height: 1.85;
+      border-left: 2px solid var(--gold-dim); padding-left: 18px;
+      margin-bottom: 40px;
+    }
+
+    /* ── Sections ── */
+    .legal-section { margin-bottom: 40px; }
+    .legal-section h2 {
+      font-size: 13px; font-weight: 600; color: var(--t1);
+      letter-spacing: 0.01em; margin-bottom: 14px;
+      padding-bottom: 8px; border-bottom: 1px solid var(--b0);
+    }
+    .legal-section p { font-size: 14px; color: var(--t3); line-height: 1.85; margin-bottom: 10px; }
+    .legal-section ul { padding-left: 18px; margin-bottom: 10px; }
+    .legal-section li { font-size: 14px; color: var(--t3); line-height: 1.8; margin-bottom: 6px; }
+
+    /* ── Table (2-col key/value) ── */
+    .legal-table { border: 1px solid var(--b0); border-radius: 10px; overflow: hidden; margin: 8px 0 12px; width: 100%; }
+    .legal-table-row { display: grid; grid-template-columns: 180px 1fr; border-top: 1px solid var(--b0); }
+    .legal-table-row:first-child { border-top: none; }
+    .legal-table-row:nth-child(odd)  { background: var(--card); }
+    .legal-table-row:nth-child(even) { background: var(--card2); }
+    .legal-table-key {
+      padding: 11px 14px; font-size: 12px; font-weight: 600;
+      color: var(--t2); border-right: 1px solid var(--b0);
+    }
+    .legal-table-val {
+      padding: 11px 14px; font-size: 13px; color: var(--t3); line-height: 1.6;
+    }
+
+    /* ── Highlight box (used in Terms AI disclaimer) ── */
+    .legal-highlight {
+      background: var(--card); border: 1px solid var(--gold-dim);
+      border-left: 3px solid var(--gold); border-radius: 10px;
+      padding: 14px 18px; font-size: 13.5px; color: var(--t2);
+      line-height: 1.75; margin-bottom: 12px;
+    }
+
+    /* ── Security check/cross rows ── */
+    .security-row {
+      display: flex; gap: 14px; align-items: flex-start;
+      background: var(--card); border: 1px solid var(--b0);
+      border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;
+    }
+    .security-check {
+      flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%;
+      background: rgba(74,222,128,0.12); border: 1px solid rgba(74,222,128,0.3);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; color: #4ade80; margin-top: 2px;
+    }
+    .security-cross {
+      flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%;
+      background: rgba(100,100,100,0.1); border: 1px solid var(--b1);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; color: var(--t4); margin-top: 2px;
+    }
+    .security-row-content h3 { font-size: 13px; font-weight: 600; color: var(--t1); margin-bottom: 3px; }
+    .security-row-content p  { font-size: 13px; color: var(--t3); line-height: 1.65; margin: 0; }
+
+    /* ── Cookie registry cards ── */
+    .cookie-card {
+      background: var(--card); border: 1px solid var(--b0);
+      border-radius: 10px; overflow: hidden; margin-bottom: 10px;
+    }
+    .cookie-card-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; background: var(--card2);
+      border-bottom: 1px solid var(--b0); gap: 12px; flex-wrap: wrap;
+    }
+    .cookie-card-key {
+      font-family: 'DM Mono', monospace; font-size: 11.5px;
+      color: var(--t0); letter-spacing: 0.04em;
+    }
+    .cookie-badge {
+      padding: 3px 9px; border-radius: 100px; font-size: 10.5px;
+      font-family: 'DM Mono', monospace; color: var(--t3);
+      white-space: nowrap;
+    }
+    .badge-necessary { background: rgba(46,102,68,0.18); border: 1px solid rgba(46,102,68,0.4); }
+    .badge-auth      { background: rgba(26,82,168,0.15); border: 1px solid rgba(26,82,168,0.35); }
+    .badge-functional{ background: rgba(201,168,76,0.12); border: 1px solid rgba(201,168,76,0.3); }
+    .cookie-card-body { padding: 10px 14px; }
+    .cookie-card-purpose { font-size: 13px; color: var(--t3); line-height: 1.65; margin-bottom: 5px; }
+    .cookie-card-duration {
+      font-family: 'DM Mono', monospace; font-size: 11px;
+      color: var(--t4); letter-spacing: 0.04em;
+    }
+
+    /* ── Footer ── */
+    .legal-footer {
+      border-top: 1px solid var(--b0); padding: 18px 32px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 12px; background: var(--card);
+    }
+    .legal-footer-links { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .legal-footer-links a { font-size: 11.5px; color: var(--t4); }
+    .legal-footer-links span { color: var(--b1); font-size: 11px; }
+    .legal-footer-copy { font-size: 11px; color: var(--t4); font-family: 'DM Mono', monospace; }
+
+    @media (max-width: 600px) {
+      .legal-nav { padding: 12px 16px; }
+      .legal-wrap { padding: 32px 16px 64px; }
+      .legal-table-row { grid-template-columns: 140px 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <script>
     try {
-      const d = await getShopDetails(id);
-      if (d?.success && d.shopDetails) {
-        map.set(id, normalizeShopMeta({ ...d.shopDetails, shopId: id }));
-      } else {
-        map.set(id, normalizeShopMeta({ shopId: id })); // minimal
-      }
-    } catch {
-      map.set(id, normalizeShopMeta({ shopId: id }));
-    }
-  }
-  return map;
-}
-// Endpoint to fetch distinct filter options
-app.get('/api/dashboard/filters', async (req, res) => {
-  try {
-    const shopIds = await getAllShopIDs();
-    const metas = await shopMetaMap(shopIds);
-    const states  = new Set(), cities = new Set(), segments = new Set();
-    for (const m of metas.values()) {
-      if (m.state)   states.add(m.state);
-      if (m.city)    cities.add(m.city);
-      if (m.segment) segments.add(m.segment);
-    }
-    res.json({ states: [...states].sort(), cities: [...cities].sort(), segments: [...segments].sort(), shopCount: shopIds.length });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+      var t = localStorage.getItem('quorum_theme');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch(e) {}
+  </script>
 
+  <nav class="legal-nav">
+    <a href="/" class="legal-nav-logo">QUORUM<span>.</span></a>
+    <div style="display:flex;align-items:center;gap:14px;">
+      <a href="/" class="legal-nav-back">← quorumvault.org</a>
+      <button class="theme-toggle" onclick="
+        var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        try { localStorage.setItem('quorum_theme', next); } catch(e) {}
+        this.textContent = next === 'dark' ? 'Light' : 'Dark';
+      ">Light</button>
+    </div>
+  </nav>
 
+  <div class="legal-wrap">
+    ${bodyHtml}
+  </div>
 
-// =========================
-// Dashboards (JSON APIs)
-// =========================
-// These endpoints power dashboard.html/js in /public.
-// Front-end calls:
-//  - /api/dashboard/summary?period=today|week|month
-//  - /api/dashboard/top-products?period=today|week|month&limit=10
-//  - /api/dashboard/low-stock?limit=50
-//  - /api/dashboard/expiring?days=30
-//  - /api/dashboard/reorder
-//  - /api/dashboard/prices/stale?page=1
+  <footer class="legal-footer">
+    <div class="legal-footer-links">
+      <a href="/privacy">Privacy Policy</a>
+      <span>·</span><a href="/cookies">Cookie Policy</a>
+      <span>·</span><a href="/terms">Terms</a>
+      <span>·</span><a href="/security">Security &amp; Trust</a>
+    </div>
+    <span class="legal-footer-copy">© 2026 Quorum</span>
+  </footer>
+</body>
+</html>`
 
-function periodWindow(period) {
-  const now = new Date();
-  const p = String(period || 'month').toLowerCase();
-  if (p === 'today' || p === 'day') {
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-    return { start, end, label: 'today' };
-  }
-  if (p.includes('week')) {
-    const start = new Date(now); start.setDate(now.getDate() - 7);
-    return { start, end: now, label: 'week' };
-  }
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  return { start, end: now, label: 'month' };
-}
-const toNum = (x) => (Number.isFinite(Number(x)) ? Number(x) : 0);
+/* ── Privacy Policy ──────────────────────────────────────────────── */
+app.get('/privacy', (_req, res) => res.send(LEGAL_SHELL('Privacy Policy', `
+  <p class="legal-eyebrow">Legal</p>
+  <h1 class="legal-title">Privacy Policy</h1>
+  <p class="legal-meta">Effective 5 June 2026 · Version 1.0</p>
+  <hr class="legal-rule" />
 
-async function aggregateSales(periodKey, q = {}) {
-  const { start, end } = periodWindow(periodKey);
-  const shopIds = await getAllShopIDs(); // from your DB layer
-  const meta = await shopMetaMap(shopIds);
-  let totalItems = 0, totalValue = 0;
-  const topMap = new Map(); // name -> { quantity, unit }
-  const CONC = 5; // mild concurrency to respect Airtable limits
+  <p class="legal-lead">
+    Quorum is a private decision intelligence tool. We take the confidentiality of your
+    decisions seriously. This policy explains exactly what data we collect, why we collect
+    it, how it is protected, and what rights you have over it.
+  </p>
 
-  for (let i = 0; i < shopIds.length; i += CONC) {
-    const batch = shopIds.slice(i, i + CONC);
-    await Promise.all(batch.map(async (shopId) => {                     
-    const m = meta.get(shopId) ?? normalizeShopMeta({ shopId });
-    if (!matchesFilter(m, q)) return;
-      const data = await getSalesDataForPeriod(shopId, start, end);
-      totalItems += toNum(data.totalItems);
-      totalValue += toNum(data.totalValue);
-      for (const p of (data.topProducts || [])) {
-        const prev = topMap.get(p.name) || { quantity: 0, unit: p.unit };
-        prev.quantity += toNum(p.quantity);
-        prev.unit = p.unit || prev.unit;
-        topMap.set(p.name, prev);
-      }
-    }));
-    // tiny pause to be gentle with Airtable API limits
-    await new Promise(r => setTimeout(r, 250));
-  }
-  const top = Array.from(topMap.entries())
-    .map(([name, v]) => ({ name, quantity: v.quantity, unit: v.unit }))
-    .sort((a,b) => b.quantity - a.quantity)
-    .slice(0, 10);
-  return { totalItems, totalValue, top };
-}
+  <div class="legal-section">
+    <h2>1. Data we collect</h2>
+    <div class="legal-table">
+      <div class="legal-table-row"><div class="legal-table-key">Account data</div><div class="legal-table-val">Your email address, collected when you sign in via magic link.</div></div>
+      <div class="legal-table-row"><div class="legal-table-key">Decision data</div><div class="legal-table-val">The decision text you submit and any register-mode answers you provide before Council analysis.</div></div>
+      <div class="legal-table-row"><div class="legal-table-key">Analysis data</div><div class="legal-table-val">AI-generated responses from persona analysis, synthesis, and the Examiner diagnostic, stored so you can return to a session.</div></div>
+      <div class="legal-table-row"><div class="legal-table-key">Behavioural data</div><div class="legal-table-val">Bias scores, calibration records, decision patterns, and independence metrics derived from your decisions over time. This compounds into your decision profile in the Mirror module.</div></div>
+      <div class="legal-table-row"><div class="legal-table-key">Technical data</div><div class="legal-table-val">An anonymous device identifier (gated behind functional cookie consent), session identifiers, and server-side request logs including IP address and user agent.</div></div>
+      <div class="legal-table-row"><div class="legal-table-key">Website enquiry</div><div class="legal-table-val">If you request early access via this website, your name, email, WhatsApp number, and the decision context you provide.</div></div>
+    </div>
+  </div>
 
-// KPI summary (network-wide)
-app.get('/api/dashboard/summary', async (req, res) => {
-  try {     
-    const { period = 'month', state, city, segment, shopId } = req.query;
-    const agg = await aggregateSales(period, { state, city, segment, shopId });
-    res.json({ period, ...agg });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+  <div class="legal-section">
+    <h2>2. Legal basis for processing</h2>
+    <div class="legal-table">
+      <div class="legal-table-row"><div class="legal-table-key">Contract</div><div class="legal-table-val">Creating and delivering a Council session, linking sessions to your account, and providing subscribed features.</div></div>
+      <div class="legal-table-row"><div class="legal-table-key">Legitimate interests</div><div class="legal-table-val">Maintaining anonymous session access, improving reliability and product quality, and detecting abuse.</div></div>
+      <div class="legal-table-row"><div class="legal-table-key">Consent</div><div class="legal-table-val">Functional cookies (device ID, session history). You may withdraw at any time via the Privacy Center in the app.</div></div>
+    </div>
+  </div>
 
-// Top products (network-wide)
-app.get('/api/dashboard/top-products', async (req, res) => {
-  try {
-    const { period = 'month', state, city, segment, shopId } = req.query;
-    const limit = Math.max(1, Number(req.query.limit || 10));
-    const agg = await aggregateSales(period, { state, city, segment, shopId });
-    res.json({ period, items: agg.top.slice(0, limit) });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+  <div class="legal-section">
+    <h2>3. AI processing</h2>
+    <p>When you submit a decision for Council analysis, your decision text is transmitted to an AI processing service to generate the analysis. The AI provider processes your data solely to generate the response and does not use your submissions to train its models.</p>
+    <p>Analysis generated by AI is for informational and reflective purposes only. It does not constitute legal, financial, medical, or investment advice.</p>
+  </div>
 
-// Low stock (network-wide, dedup by product name)
-app.get('/api/dashboard/low-stock', async (req, res) => {
-  try {
-    const limit = Math.max(1, Number(req.query.limit || 50));
-    const shopIds = await getAllShopIDs();        
-    const { state, city, segment, shopId } = req.query;
-    const meta = await shopMetaMap(shopIds);
-    const items = [];        
-    for (const sid of shopIds) {
-          const m = meta.get(sid) ?? normalizeShopMeta({ shopId: sid });
-          if (!matchesFilter(m, { state, city, segment, shopId })) continue;
-          const low = await getLowStockProducts(sid, 5);
-      for (const p of low) {
-        items.push({
-          name: p.name || p.fields?.Product,
-          quantity: toNum(p.quantity ?? p.fields?.Quantity),
-          unit: p.unit || p.fields?.Units || 'pieces',                    
-          shopId: sid,
-          state: m.state, city: m.city, segment: m.segment
-        });
-      }
-    }
-    // Deduplicate by name (pick strictest qty)
-    const pick = new Map();
-    for (const r of items) {
-      const k = String(r.name).toLowerCase();
-      const prev = pick.get(k);
-      if (!prev || r.quantity < prev.quantity) pick.set(k, r);
-    }
-    res.json({ items: Array.from(pick.values()).slice(0, limit) });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+  <div class="legal-section">
+    <h2>4. Third-party processors</h2>
+    <div class="legal-table">
+      <div class="legal-table-row"><div class="legal-table-key">Supabase</div><div class="legal-table-val">Database and authentication. Hosted in the United States. See supabase.com/privacy.</div></div>
+      <div class="legal-table-row"><div class="legal-table-key">Railway</div><div class="legal-table-val">Application hosting. Hosted in the United States. See railway.app/legal/privacy.</div></div>
+      <div class="legal-table-row"><div class="legal-table-key">AI service</div><div class="legal-table-val">Generates Council analysis from your decision text. Hosted in the United States.</div></div>
+      <div class="legal-table-row"><div class="legal-table-key">Google Fonts</div><div class="legal-table-val">Loads typefaces. No personal data transmitted beyond standard browser request metadata.</div></div>
+    </div>
+  </div>
 
-// Expiring (network-wide)
-app.get('/api/dashboard/expiring', async (req, res) => {
-  try {
-    const days = Math.max(0, Number(req.query.days || 30));
-    const shopIds = await getAllShopIDs();        
-    const { state, city, segment, shopId } = req.query;
-    const meta = await shopMetaMap(shopIds);
-    const items = [];        
-    for (const sid of shopIds) {
-          const m = meta.get(sid) || normalizeShopMeta({ shopId: sid });
-          if (!matchesFilter(m, { state, city, segment, shopId })) continue;
-          const exp = await getExpiringProducts(sid, days);
-    for (const p of exp) {
-        items.push({
-          name: p.name,
-          quantity: toNum(p.quantity),
-          expiryDate: p.expiryDate,                    
-          displayDate: p.expiryDate,
-          shopId: sid,
-          state: m.state, city: m.city, segment: m.segment
-        });
-      }
-    }
-    res.json({ items });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+  <div class="legal-section">
+    <h2>5. Data retention</h2>
+    <div class="legal-table">
+      <div class="legal-table-row"><div class="legal-table-key">Authenticated sessions</div><div class="legal-table-val">Retained until you delete your account or request erasure.</div></div>
+      <div class="legal-table-row"><div class="legal-table-key">Anonymous sessions</div><div class="legal-table-val">Retained for 90 days if not linked to an account.</div></div>
+      <div class="legal-table-row"><div class="legal-table-key">Bias &amp; behavioural profiles</div><div class="legal-table-val">Retained while your account is active. Deleted on account erasure.</div></div>
+      <div class="legal-table-row"><div class="legal-table-key">Server logs</div><div class="legal-table-val">Standard infrastructure logs retained for up to 30 days.</div></div>
+    </div>
+  </div>
 
-// Reorder suggestions (30d velocity, lead=3, safety=2)
-app.get('/api/dashboard/reorder', async (req, res) => {
-  try {
-    const shopIds = await getAllShopIDs();        
-    const { state, city, segment, shopId } = req.query;
-    const meta = await shopMetaMap(shopIds);
-    const items = [];        
-    for (const sid of shopIds) {
-          const m = meta.get(sid) || normalizeShopMeta({ shopId: sid });
-          if (!matchesFilter(m, { state, city, segment, shopId })) continue;
-          const { success, suggestions } =
-            await getReorderSuggestions(sid, { days: 30, leadTimeDays: 3, safetyDays: 2 });
-      if (!success) continue;
-      for (const s of suggestions) {
-        items.push({
-          name: s.name,
-          unit: s.unit,
-          currentQty: toNum(s.currentQty),
-          dailyRate: toNum(s.dailyRate),
-          reorderQty: toNum(s.reorderQty),                    
-          shopId: sid,
-          state: m.state, city: m.city, segment: m.segment
-        });
-      }
-    }
-    items.sort((a,b) => (b.reorderQty - a.reorderQty) || (b.dailyRate - a.dailyRate));
-    res.json({ items: items.slice(0, 100) });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+  <div class="legal-section">
+    <h2>6. Data security</h2>
+    <p>Decision text and analysis stored in the database is encrypted at rest using AES-256-GCM field-level encryption. All data in transit is protected by HTTPS/TLS. Authentication uses passwordless magic links — no passwords are stored. Row-level security is enforced in the database so each user's data is scoped to their account.</p>
+    <p>For a full account of our security measures, see the <a href="/security">Security &amp; Trust</a> page.</p>
+  </div>
 
-// Stale prices (global backlog, paged)
-app.get('/api/dashboard/prices/stale', async (req, res) => {
-  try {
-    const page = Math.max(1, Number(req.query.page || 1));
-    const PAGE_SIZE = 50;        
-    // ===== [PATCH:PRICES-SHOP-SCOPE-SERVER-002] BEGIN =====
-        // Optional filters: shopId query to scope the stale list
-        const rawShopId = (req.query.shopId ?? '').toString().trim();
-        const canon = s => {
-          const d = String(s ?? '').replace(/\D+/g, '');
-          return d.startsWith('91') && d.length >= 12 ? d.slice(2) : d;
-        };
-        const shopId = rawShopId ? `+91${canon(rawShopId)}` : null;
-        const list = await getProductsNeedingPriceUpdate(shopId);
-        // ===== [PATCH:PRICES-SHOP-SCOPE-SERVER-002] END =====
-    const start = (page - 1) * PAGE_SIZE;
-    const slice = list.slice(start, start + PAGE_SIZE).map(it => ({
-      name: it.name,
-      currentPrice: toNum(it.currentPrice),
-      unit: it.unit || 'pieces',
-      lastUpdated: it.lastUpdated
-    }));
-    res.json({ page, total: list.length, items: slice });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+  <div class="legal-section">
+    <h2>7. Your rights</h2>
+    <p>Under GDPR and the Digital Personal Data Protection Act 2023 (DPDP), you have the right to access, export, correct, erase, and restrict processing of your data. You may also withdraw consent and lodge a complaint with your supervisory authority.</p>
+    <p>To exercise these rights, use the <a href="${APP_URL}/settings/privacy" target="_blank" rel="noopener">Privacy Center</a> in app Settings. We aim to respond within 30 days.</p>
+  </div>
 
-// Add this endpoint to your server.js file
-app.post('/api/enroll', async (req, res) => {
-  const requestId = req.requestId;
-  
-  try {
-    console.log(`[${requestId}] Processing enrollment form submission`);
-    
-    const { mobile, shopName, state, country } = req.body;
-    
-    // Validate required fields
-    if (!mobile || !shopName || !state || !country) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields',
-        message: 'All fields are required'
-      });
-    }
-    
-    // Create record in Airtable
-    const Airtable = require('airtable');
-    const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(process.env.AIRTABLE_BASE_ID);
-    const tableName = 'Enrollments'; // Change this to your actual table name
-    
-    const record = await base(tableName).create([
-      {
-        "fields": {
-          "Mobile": mobile,
-          "Shop Name": shopName,
-          "State": state,
-          "Country": country,
-          "Submission Date": new Date().toISOString()
-        }
-      }
-    ]);
-    
-    console.log(`[${requestId}] Enrollment record created with ID: ${record[0].getId()}`);
-    
-    res.status(201).json({
-      success: true,
-      message: 'Enrollment submitted successfully',
-      recordId: record[0].getId(),
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error(`[${requestId}] Error processing enrollment:`, error.message);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to submit enrollment',
-      message: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-});
+  <div class="legal-section">
+    <h2>8. Cookies and local storage</h2>
+    <p>Quorum uses browser local storage (not traditional HTTP cookies) to persist preferences on your device. For a full list of every key stored, its purpose, and how to manage it, see the <a href="/cookies">Cookie Policy</a>.</p>
+  </div>
 
-// 404 handler
-app.use((req, res) => {
-  console.warn(`[${req.requestId}] 404 Not Found: ${req.method} ${req.url}`);
-  res.status(404).json({
-    error: 'Not Found',
-    message: `Route ${req.method} ${req.url} not found`
-  });
-});
+  <div class="legal-section">
+    <h2>9. Children</h2>
+    <p>Quorum is intended for professionals making significant decisions. We do not knowingly collect data from anyone under 18.</p>
+  </div>
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  const requestId = req.requestId || 'unknown';
-  
-  console.error(`[${requestId}] Unhandled error:`, err);
-  
-  // Don't leak error details in production
-  const isDevelopment = process.env.NODE_ENV === 'development';
-  
-  res.status(err.status || 500).json({
-    error: 'Internal Server Error',
-    message: isDevelopment ? err.message : 'Something went wrong',
-    requestId: requestId
-  });
-});
+  <div class="legal-section">
+    <h2>10. Changes &amp; contact</h2>
+    <p>Material changes will be posted here with an updated effective date. To raise a privacy concern or exercise your rights, use the <a href="${APP_URL}/settings/privacy" target="_blank" rel="noopener">Privacy Center</a> in the app.</p>
+  </div>
+`)))
 
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  
-  // In production, you might want to use a monitoring service here
-  if (process.env.NODE_ENV === 'production') {
-    // Example: Send to monitoring service
-    // monitoringService.captureException(reason);
-  }
-});
+/* ── Terms of Service ─────────────────────────────────────────────── */
+app.get('/terms', (_req, res) => res.send(LEGAL_SHELL('Terms of Service', `
+  <p class="legal-eyebrow">Legal</p>
+  <h1 class="legal-title">Terms of Service</h1>
+  <p class="legal-meta">Effective 5 June 2026 · Version 1.0</p>
+  <hr class="legal-rule" />
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-  
-  // In production, you might want to use a monitoring service here
-  if (process.env.NODE_ENV === 'production') {
-    // Example: Send to monitoring service
-    // monitoringService.captureException(error);
-  }
-  
-  // Exit with error
-  process.exit(1);
-});
+  <p class="legal-lead">By using Quorum, you agree to these terms. Please read them carefully —
+    in particular the AI disclaimer in Section 4 and the limitation of liability in Section 9.</p>
 
-// Graceful shutdown handling
-const gracefulShutdown = (signal) => {
-  console.log(`Received ${signal}, starting graceful shutdown...`);
-  
-  // Close the server
-  server.close(() => {
-    console.log('Server closed, exiting process');
-    process.exit(0);
-  });
-  
-  // Force exit after timeout
-  setTimeout(() => {
-    console.error('Forced exit after timeout');
-    process.exit(1);
-  }, 10000);
-};
+  <div class="legal-section">
+    <h2>1. What Quorum is</h2>
+    <p>Quorum is a private decision intelligence platform that uses AI to simulate a structured advisory council for high-stakes personal and professional decisions. Access is via the web application at app.quorumvault.org.</p>
+  </div>
 
-// Listen for shutdown signals
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  <div class="legal-section">
+    <h2>2. Your account</h2>
+    <p>Authentication uses passwordless magic links sent to your email. You are responsible for maintaining access to that email account and for all activity under your Quorum account. You must provide accurate information and must not share access with others.</p>
+  </div>
 
-// Schedule daily summary at 11 PM every day (Asia/Kolkata timezone)
-// ─────────────────────────────────────────────────────────────────────────────
-// [ADOPTION-STAGE-8] Trial ending reminder — runs daily at 5:00 PM IST
-// Finds trials expiring within next 24 hours, sends personalized Stage 8 message.
-// Message includes: real entry count, bill count, top udhaar entry by name.
-// ─────────────────────────────────────────────────────────────────────────────
-cron.schedule('30 17 * * *', () => {
-  // 17:30 IST = 5:30 PM IST (timezone: Asia/Kolkata set below)
-  console.log('[trial-end-cron] Running trial ending reminder job at 5:30 PM IST');
+  <div class="legal-section">
+    <h2>3. Your data — you own it</h2>
+    <p>You retain full ownership of the decisions you submit and the outputs generated in response. We do not claim any intellectual property rights over your decision content or the AI-generated analysis of it.</p>
+    <p>We do not sell your data, share it with advertisers, or use it for any purpose other than providing Quorum to you. See the <a href="/privacy">Privacy Policy</a> for details.</p>
+  </div>
 
-  runTrialEndingReminders()
-    .then(results => {
-      const ok  = results.filter(r => r.success).length;
-      const err = results.filter(r => !r.success).length;
-      console.log(`[trial-end-cron] Completed: ${ok} sent, ${err} failed`);
-    })
-    .catch(error => {
-      console.error('[trial-end-cron] Failed:', error.message);
-    });
-}, {
-  scheduled: true,
-  timezone: 'Asia/Kolkata'
-});
+  <div class="legal-section">
+    <h2>4. AI analysis — not professional advice</h2>
+    <div class="legal-highlight">
+      Analysis generated by Quorum is produced by an AI system and is provided for informational
+      and reflective purposes only. It does not constitute legal, financial, medical, investment,
+      psychological, or any other form of professional advice. You should always apply your own
+      judgment and, where appropriate, consult a qualified professional before making significant
+      decisions. Quorum accepts no liability for decisions made in reliance on its analysis.
+    </div>
+    <p>AI analysis may contain errors or omissions. The quality of analysis depends on the context you provide.</p>
+  </div>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Daily summary — runs at 11:00 PM IST
-// ─────────────────────────────────────────────────────────────────────────────
-cron.schedule('0 23 * * *', () => {
-  console.log('Running scheduled daily summary job at 11 PM');
-  
-  runDailySummary()
-    .then(results => {
-      const successCount = results.filter(r => r.success).length;
-      const failureCount = results.filter(r => !r.success).length;
-      
-      console.log(`Scheduled daily summary completed: ${successCount} successful, ${failureCount} failed`);
-    })
-    .catch(error => {
-      console.error('Scheduled daily summary failed:', error.message);
-    });
-}, {
-  scheduled: true,
-  timezone: "Asia/Kolkata"
-});
+  <div class="legal-section">
+    <h2>5. Acceptable use</h2>
+    <p>You may use Quorum for personal, professional, and business decision-making. You may not:</p>
+    <ul>
+      <li>Use Quorum for any unlawful purpose or in violation of any applicable law</li>
+      <li>Submit content that is defamatory, threatening, or infringes third-party rights</li>
+      <li>Attempt to reverse-engineer, scrape, or extract data from the platform at scale</li>
+      <li>Resell or sublicense access to Quorum without a written agreement with us</li>
+      <li>Use the service in a way that interferes with other users or our infrastructure</li>
+    </ul>
+  </div>
 
-// Collections nudge -- 2:00 PM IST daily
-cron.schedule('0 14 * * *', () => {
-  console.log('[collections-cron] Running overdue collections nudge');
-  runCollectionsNudge()
-    .then(r => console.log('[collections-cron] Done: ' + r.filter(x => x.sent).length + ' nudges sent'))
-    .catch(e => console.error('[collections-cron] Failed:', e.message));
-}, { scheduled: true, timezone: 'Asia/Kolkata' });
+  <div class="legal-section">
+    <h2>6. Subscriptions and payment</h2>
+    <p>Certain features require a paid subscription. Subscriptions renew automatically unless cancelled. You may cancel at any time; cancellation takes effect at the end of the current billing period. No refunds are issued for partial periods unless required by applicable law.</p>
+  </div>
 
+  <div class="legal-section">
+    <h2>7. Availability and changes</h2>
+    <p>We aim to provide reliable access to Quorum but do not guarantee uninterrupted availability. We may modify, suspend, or discontinue features at any time, with reasonable notice where practicable.</p>
+  </div>
 
-// Start server
-const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || '0.0.0.0';
+  <div class="legal-section">
+    <h2>8. Intellectual property</h2>
+    <p>Quorum — including the software, design, personas, ontology system, and all product elements — is our proprietary intellectual property. Nothing in these terms grants you any rights to our technology beyond the right to use the service as described here.</p>
+  </div>
 
-const server = app.listen(PORT, HOST, () => {
-  console.log(`✅ Server running on ${HOST}:${PORT}`);
-  console.log(`📊 Health check available at: http://${HOST}:${PORT}/health`);
-  console.log(`📈 Metrics available at: http://${HOST}:${PORT}/metrics`);
-  console.log(`⏰ Daily summary scheduled for 11 PM Asia/Kolkata time`);    
-  console.log('[fast-classifier-gate]', String(process.env.ENABLE_FAST_CLASSIFIER ?? ''));
-  console.log('[fast-classifier-timeout-ms]', Number(process.env.FAST_CLASSIFIER_TIMEOUT_MS ?? 1200));
-  console.log('[use-ai-orchestrator]', String(process.env.USE_AI_ORCHESTRATOR ?? ''));
-});
+  <div class="legal-section">
+    <h2>9. Limitation of liability</h2>
+    <p>To the maximum extent permitted by law, Quorum shall not be liable for any indirect, incidental, special, or consequential damages arising from your use of the service. Our total aggregate liability shall not exceed the greater of (a) the amount you paid us in the prior 12 months or (b) ₹5,000 INR.</p>
+  </div>
 
-// Track active connections
-app.set('activeConnections', 0);
+  <div class="legal-section">
+    <h2>10. Governing law</h2>
+    <p>These terms are governed by the laws of India. Disputes shall be subject to the exclusive jurisdiction of courts in India.</p>
+  </div>
 
-server.on('connection', (socket) => {
-  app.set('activeConnections', app.get('activeConnections') + 1);
-  
-  socket.on('close', () => {
-    app.set('activeConnections', app.get('activeConnections') - 1);
-  });
-});
+  <div class="legal-section">
+    <h2>11. Changes &amp; contact</h2>
+    <p>We may update these terms from time to time. Continued use after changes constitutes acceptance. Questions? Use the <a href="${APP_URL}/settings/privacy" target="_blank" rel="noopener">Privacy Center</a> in the app.</p>
+  </div>
+`)))
 
-// Log when server is shutting down
-process.on('exit', () => {
-  console.log('Server process exiting');
-});
+/* ── Cookie Policy ────────────────────────────────────────────────── */
+app.get('/cookies', (_req, res) => res.send(LEGAL_SHELL('Cookie Policy', `
+  <p class="legal-eyebrow">Legal</p>
+  <h1 class="legal-title">Cookie Policy</h1>
+  <p class="legal-meta">Effective 5 June 2026 · Version 1.0</p>
+  <hr class="legal-rule" />
 
-// Add to server.js - clean up old PDFs daily
-const cleanupOldPDFs = () => {
-  const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days
-  const now = Date.now();
-  let deletedCount = 0;
-  let totalSize = 0;
-  
-  const cleanDirectory = (dir) => {
-    if (!fs.existsSync(dir)) return;
-    
-    fs.readdir(dir, (err, files) => {
-      if (err) return;
-      
-      files.forEach(file => {
-        if (file.endsWith('.pdf')) {
-          const filePath = path.join(dir, file);
-          fs.stat(filePath, (err, stats) => {
-            if (err) return;
-            
-            if (now - stats.mtime.getTime() > maxAge) {
-              fs.unlink(filePath, err => {
-                if (err) {
-                  console.error('Failed to delete old PDF:', err);
-                } else {
-                  deletedCount++;
-                  totalSize += stats.size;
-                  console.log(`[Cleanup] Deleted old PDF: ${file} (${stats.size} bytes)`);
-                }
-              });
-            }
-          });
-        }
-      });
-    });
-  };
-  
-  // Clean both temp directories
-  cleanDirectory(path.join('/tmp', 'invoices'));
-  cleanDirectory(path.join(__dirname, 'temp', 'invoices'));
-  cleanDirectory(path.join(__dirname, 'temp'));
-  
-  if (deletedCount > 0) {
-    console.log(`[Cleanup] Completed: Deleted ${deletedCount} PDFs, freed ${totalSize} bytes`);
-  }
-};
+  <p class="legal-lead">
+    Quorum's own application does not use traditional HTTP cookies. Instead, we use browser
+    <strong>local storage</strong> — a similar technology that stores small pieces of data
+    in your browser. This page lists every key we store, what it contains, and how to manage it.
+    The one exception is the Meta Pixel described under Analytics below, which does set
+    conventional first-party cookies.
+  </p>
 
-// Run daily at 2 AM
-const scheduleCleanup = () => {
-  const now = new Date();
-  const targetTime = new Date(now);
-  targetTime.setHours(2, 0, 0, 0); // 2 AM
-  
-  // If we've passed 2 AM today, schedule for tomorrow
-  if (now > targetTime) {
-    targetTime.setDate(targetTime.getDate() + 1);
-  }
-  
-  const msUntilTarget = targetTime - now;
-  
-  setTimeout(() => {
-    cleanupOldPDFs();
-    // Schedule next cleanup
-    scheduleCleanup();
-  }, msUntilTarget);
-};
+  <div class="legal-section">
+    <h2>Local storage registry</h2>
 
-// Start the scheduler
-scheduleCleanup();
+    <div class="cookie-card">
+      <div class="cookie-card-head">
+        <code class="cookie-card-key">quorum_cookie_consent</code>
+        <span class="cookie-badge badge-necessary">Strictly Necessary</span>
+      </div>
+      <div class="cookie-card-body">
+        <p class="cookie-card-purpose">Records your cookie consent choices (necessary, functional, analytics). Required to respect your preferences across visits.</p>
+        <p class="cookie-card-duration">Duration: Until manually cleared</p>
+      </div>
+    </div>
 
+    <div class="cookie-card">
+      <div class="cookie-card-head">
+        <code class="cookie-card-key">quorum_theme</code>
+        <span class="cookie-badge badge-necessary">Strictly Necessary</span>
+      </div>
+      <div class="cookie-card-body">
+        <p class="cookie-card-purpose">Remembers your light / dark mode preference so the interface loads in your chosen theme without a flash.</p>
+        <p class="cookie-card-duration">Duration: Until manually cleared</p>
+      </div>
+    </div>
 
+    <div class="cookie-card">
+      <div class="cookie-card-head">
+        <code class="cookie-card-key">quorum_user_email</code>
+        <span class="cookie-badge badge-auth">Authentication</span>
+      </div>
+      <div class="cookie-card-body">
+        <p class="cookie-card-purpose">Persists your email address after signing in so the interface can recognise you across page loads without a fresh session check.</p>
+        <p class="cookie-card-duration">Duration: Until you sign out or clear storage</p>
+      </div>
+    </div>
+
+    <div class="cookie-card">
+      <div class="cookie-card-head">
+        <code class="cookie-card-key">quorum_device_id</code>
+        <span class="cookie-badge badge-functional">Functional — consent required</span>
+      </div>
+      <div class="cookie-card-body">
+        <p class="cookie-card-purpose">An anonymous identifier generated on your device. Used to group decision sessions created before you sign in, so history is preserved at sign-up.</p>
+        <p class="cookie-card-duration">Duration: Until manually cleared</p>
+      </div>
+    </div>
+
+    <div class="cookie-card">
+      <div class="cookie-card-head">
+        <code class="cookie-card-key">quorum_session_ids</code>
+        <span class="cookie-badge badge-functional">Functional — consent required</span>
+      </div>
+      <div class="cookie-card-body">
+        <p class="cookie-card-purpose">A local list of decision session IDs created on this device. Allows the home screen to show your recent decisions without a server request.</p>
+        <p class="cookie-card-duration">Duration: Until manually cleared</p>
+      </div>
+    </div>
+
+    <div class="cookie-card">
+      <div class="cookie-card-head">
+        <code class="cookie-card-key">sb-*-auth-token</code>
+        <span class="cookie-badge badge-auth">Authentication</span>
+      </div>
+      <div class="cookie-card-body">
+        <p class="cookie-card-purpose">Supabase authentication session token. Maintains your signed-in state across browser sessions.</p>
+        <p class="cookie-card-duration">Duration: Per Supabase session defaults</p>
+      </div>
+    </div>
+
+    <div class="cookie-card">
+      <div class="cookie-card-head">
+        <code class="cookie-card-key">_fbp / _fbc</code>
+        <span class="cookie-badge badge-functional">Advertising — consent required</span>
+      </div>
+      <div class="cookie-card-body">
+        <p class="cookie-card-purpose">Set by the Meta Pixel (see Analytics below) on our domain. Used by Meta to measure the effectiveness of our ads and to attribute a session back to the ad that led to it.</p>
+        <p class="cookie-card-duration">Duration: Set by Meta; typically up to 90 days</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="legal-section">
+    <h2>Analytics</h2>
+    <p>Quorum uses the Meta Pixel (Meta/Facebook) on our public marketing pages to measure the performance of our Meta ad campaigns — for example, recording a page visit or a completed booking so we know an ad led to it. The Pixel is not used inside the signed-in Quorum application, and no decision content is ever shared with Meta. See <a href="https://www.facebook.com/privacy/policy/" target="_blank" rel="noopener">Meta's Privacy Policy</a> for how Meta itself handles this data. Beyond the Meta Pixel, Quorum does not use any other third-party analytics or cross-site tracking technologies. The analytics toggle in your consent preferences is reserved for potential future use and is off by default.</p>
+  </div>
+
+  <div class="legal-section">
+    <h2>Managing your preferences</h2>
+    <p>You can update your consent choices at any time via the <a href="${APP_URL}/settings/privacy" target="_blank" rel="noopener">Privacy Center</a> in app Settings. Revoking functional consent means new session IDs and device identifiers will no longer be written to your device. Previously created sessions remain accessible via their direct URL.</p>
+  </div>
+`)))
+
+/* ── Security & Trust ─────────────────────────────────────────────── */
+app.get('/security', (_req, res) => res.send(LEGAL_SHELL('Security & Trust', `
+  <p class="legal-eyebrow">Legal</p>
+  <h1 class="legal-title">Security &amp; Trust</h1>
+  <p class="legal-meta">Effective 5 June 2026 · Current state — no aspirational claims</p>
+  <hr class="legal-rule" />
+
+  <p class="legal-lead">
+    This page lists only what is technically implemented today. We do not list
+    aspirational measures or certifications we have not yet completed.
+  </p>
+
+  <div class="legal-section">
+    <h2>What we do today</h2>
+
+    <div class="security-row">
+      <div class="security-check">✓</div>
+      <div class="security-row-content">
+        <h3>AES-256-GCM field encryption at rest</h3>
+        <p>Decision text and AI analysis stored in the database are encrypted at the field level using AES-256-GCM before storage. Encrypted fields are decrypted only at read time within the application.</p>
+      </div>
+    </div>
+
+    <div class="security-row">
+      <div class="security-check">✓</div>
+      <div class="security-row-content">
+        <h3>Passwordless magic link authentication</h3>
+        <p>Quorum uses time-limited magic links sent to your email. No passwords are stored. Authentication is handled via Supabase Auth with PKCE flow.</p>
+      </div>
+    </div>
+
+    <div class="security-row">
+      <div class="security-check">✓</div>
+      <div class="security-row-content">
+        <h3>HTTPS / TLS in transit</h3>
+        <p>All data between your browser and Quorum servers is transmitted over HTTPS with TLS termination enforced at the hosting layer.</p>
+      </div>
+    </div>
+
+    <div class="security-row">
+      <div class="security-check">✓</div>
+      <div class="security-row-content">
+        <h3>Row-level security on the database</h3>
+        <p>Supabase PostgreSQL row-level security policies are enforced across all user-scoped tables. Authenticated users can only read and write their own rows.</p>
+      </div>
+    </div>
+
+    <div class="security-row">
+      <div class="security-check">✓</div>
+      <div class="security-row-content">
+        <h3>US-based hosting infrastructure</h3>
+        <p>The Quorum application runs on Railway (US) and the database is hosted on Supabase (US). No user data is stored in jurisdictions with inadequate data protection standards.</p>
+      </div>
+    </div>
+
+    <div class="security-row">
+      <div class="security-check">✓</div>
+      <div class="security-row-content">
+        <h3>No advertising, no data selling</h3>
+        <p>Quorum does not serve advertising, does not sell user data, and does not share decision content with any third party except the AI processing service used to generate analysis.</p>
+      </div>
+    </div>
+
+    <div class="security-row">
+      <div class="security-check">✓</div>
+      <div class="security-row-content">
+        <h3>AI processing with no training use</h3>
+        <p>Your decision text is processed by an AI service solely to generate your Council analysis. The AI provider does not use your submissions to train its models.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="legal-section">
+    <h2>What we do not yet have</h2>
+    <p>We believe transparency about current limitations is more valuable than unverifiable claims. The following are not yet in place:</p>
+    <div class="cookie-card" style="margin-top:10px;">
+      ${['SOC 2 Type II certification','Independent penetration testing','Multi-factor authentication (MFA)','Automated encryption key rotation','Dedicated security operations centre','Vulnerability disclosure programme'].map(item =>
+        `<div style="display:flex;gap:12px;align-items:center;padding:11px 16px;border-top:1px solid var(--b0);">
+          <div class="security-cross">–</div>
+          <span style="font-size:13px;color:var(--t4);">${item}</span>
+        </div>`
+      ).join('')}
+    </div>
+  </div>
+
+  <div class="legal-section">
+    <h2>Reporting a security concern</h2>
+    <p>If you discover a potential security issue, please report it via the <a href="${APP_URL}/settings/privacy" target="_blank" rel="noopener">Privacy Center</a> in app Settings. We will acknowledge all valid reports within 5 business days and aim to remediate critical issues within 30 days.</p>
+  </div>
+
+  <div class="legal-section">
+    <h2>Your data rights</h2>
+    <p>You can export or delete your data at any time via the <a href="${APP_URL}/settings/privacy" target="_blank" rel="noopener">Privacy Center</a>. For full details see the <a href="/privacy">Privacy Policy</a>.</p>
+  </div>
+`)))
+
+/* ── Digital business card — short, shareable URL ──────────────────── */
+// e.g. quorumvault.org/kunal instead of the raw .html filename. Must be
+// defined before the catch-all fallback below. Rendered dynamically
+// (not sendFile) so the Founding Member teaser can be included or
+// stripped per FOUNDING_MEMBER_ENABLED — see renderCardPage() above.
+app.get('/kunal', (_req, res) => renderCardPage('card-kunal.html', res))
+
+/* ── Founding Member page ─────────────────────────────────────────── */
+// Trust/conversion bridge page linked from the "Interested in becoming
+// a Founding Member?" teaser on /kunal. Never a direct path to
+// payment — the actual purchase happens inside the app (Mirror),
+// gated behind real usage.
+//
+// When the cohort is closed (FOUNDING_MEMBER_ENABLED=false), the cards
+// no longer link here at all — but in case of an old bookmark, shared
+// link, or search result, redirect to /kunal instead of leaving a live
+// "join now" page with no real entry point into it.
+app.get('/founding-member', (_req, res) => {
+  if (!FOUNDING_MEMBER_ENABLED) return res.redirect(302, '/kunal')
+  res.sendFile(path.join(__dirname, 'founding-member.html'), (err) => {
+    if (err) res.status(404).send('Not found')
+  })
+})
+
+/* ── The Record (founder journey) ─────────────────────────────────── */
+// Four-decision founder journey — proof-of-compounding-value content.
+// Linked from within /founding-member (the "Why early matters" section)
+// and loops back there via the final CTA. Intentionally NOT gated by
+// FOUNDING_MEMBER_ENABLED: it stands on its own even if the cohort
+// itself is temporarily closed.
+app.get('/journey', (_req, res) => renderJourneyPage(res))
+
+/* ── Decision Library (breadth layer) ─────────────────────────────── */
+// 20 decision placeholders across five categories — founders,
+// leadership, investing, governance, institutions. Independent from
+// /journey (linked from it, and from index.html's #record section,
+// only via small cross-links). Not gated by FOUNDING_MEMBER_ENABLED,
+// same reasoning as /journey. Plain sendFile — no Founding Member
+// references in this page to template in/out.
+app.get('/decision-library', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'decision-library.html'), (err) => {
+    if (err && !res.headersSent) res.status(404).send('Not found')
+  })
+})
+
+/* ── Fallback → index.html ────────────────────────────────────────── */
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'))
+})
+
+/* ── Start ────────────────────────────────────────────────────────── */
+app.listen(PORT, () => {
+  console.log(`[Quorum Website] Listening on port ${PORT}`)
+})
