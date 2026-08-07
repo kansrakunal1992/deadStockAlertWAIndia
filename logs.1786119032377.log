@@ -1,0 +1,77 @@
+2026-08-07T16:07:37.628069450Z [inf]  [AIClient] createCompletion → mistral-cloud (mistral-small-latest) (2000 max tokens) [tiered]
+2026-08-07T16:07:37.628073200Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:07:37.628075890Z [inf]  [StructuralMatch] Ontology not complete for session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac — client should retry
+2026-08-07T16:07:37.628078640Z [inf]  [Ontology] Session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac | type: allocation | mode: OPEN | rules: none | flags: none | identity: 2 | regret: 3 | upstream: 1
+2026-08-07T16:07:37.628081720Z [inf]  [StructuralMatch] No user identity on session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac — skipping past session retrieval
+2026-08-07T16:07:40.084490856Z [inf]  [StructuralMatch] No user identity on session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac — skipping past session retrieval
+2026-08-07T16:07:41.119909276Z [inf]  [ExaminerMetric] session=5b63b9fb-4472-47f4-abd3-f08a1b57b9ac mode=OPEN
+2026-08-07T16:07:41.119916266Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:07:41.119920985Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:07:41.119924145Z [inf]  [AIClient] createCompletion → mistral-cloud (mistral-small-latest) (80 max tokens) [tiered]
+2026-08-07T16:07:41.119927985Z [inf]  [AIClient] createCompletion → mistral-cloud (mistral-small-latest) (80 max tokens) [tiered]
+2026-08-07T16:07:42.964309013Z [inf]  [Examiner GET] SB-2 v2.0 | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac | mode: OPEN | questions: E0,C0 | s0: false (44w) | profile: false | fears: false
+2026-08-07T16:08:22.925107476Z [inf]  [Examiner POST] Independence score triggered for session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:22.925112886Z [inf]  [Examiner POST] Contradictions triggered for session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:22.925116786Z [inf]  [BiasScore] Scoring session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac (identity: anonymous)
+2026-08-07T16:08:22.925120326Z [inf]  [BiasScore] 0 user pushback message(s) for session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:22.925124676Z [inf]  [BiasScore] Scoring from decision_text only for session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac — no examiner or pushback data yet
+2026-08-07T16:08:22.925128416Z [inf]  [AIClient] createCompletion → mistral-cloud (mistral-small-latest) (4000 max tokens) [tiered]
+2026-08-07T16:08:22.925131446Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:08:27.101195143Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:08:27.101197953Z [inf]  [Persona] Mistral-family prompt extension applied for pattern_analyst | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:27.101201093Z [inf]  [Persona] Council context injected for pattern_analyst (initial) | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:27.101204003Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-07T16:08:27.101207403Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:08:27.101209883Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:08:27.101213113Z [inf]  [Persona] Mistral-family prompt extension applied for contrarian | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:27.101215813Z [inf]  [Persona] Council context injected for contrarian (initial) | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:27.101218563Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-07T16:08:27.101221083Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:08:27.101224363Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:08:27.106609889Z [inf]  [Persona] Mistral-family prompt extension applied for elder | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:27.106615939Z [inf]  [Persona] Council context injected for elder (initial) | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:27.106619359Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:08:27.106623039Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-07T16:08:27.323788521Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:08:27.323799021Z [inf]  [Persona] Mistral-family prompt extension applied for stakeholder_mirror | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:27.323803701Z [inf]  [Persona] Council context injected for stakeholder_mirror (initial) | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:27.323807611Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:08:27.323812411Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-07T16:08:27.356343951Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:08:27.356348421Z [inf]  [Persona] Mistral-family prompt extension applied for risk_architect | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:27.356350991Z [inf]  [Persona] Council context injected for risk_architect (initial) | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:27.356353621Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-07T16:08:27.356356631Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:08:27.419652532Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:08:27.419664131Z [inf]  [Persona] Mistral-family prompt extension applied for competitor | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:27.419670371Z [inf]  [Persona] Council context injected for competitor (initial) | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:08:27.419675861Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-07T16:08:27.419680951Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:08:28.433159588Z [err]  [MistralLimiter] queue backed up: 5 call(s) waiting (0 elite) — Mistral account ceiling is 0.83 req/s / 50000 tokens/min. This is expected under real concurrent load; if it's persistent, the account plan likely needs a higher limit.
+2026-08-07T16:08:31.922921410Z [inf]  [BiasScore] Scored 15 parameters. Detected: overconfidence, attribution_asymmetry, control_illusion, exit_optionality_mispricing, recency_bias, success_compression, loss_aversion_reversal, complexity_opacity
+2026-08-07T16:08:38.704679074Z [inf]  [BiasScore] Upserted 8 bias rows
+2026-08-07T16:08:38.704686214Z [inf]  [Examiner POST] Bias score triggered for session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:09:18.614194646Z [err]  [Persona] Route error: Error: [MistralLimiter] "streamMistral" waited 45s for a Mistral rate-limit slot and was dropped (cap: 45s). The shared Mistral account (0.83 req/s, 50000 tokens/min) is saturated — try again shortly.
+2026-08-07T16:09:18.614198446Z [err]      at v (.next/server/chunks/7738.js:1:1616)
+2026-08-07T16:09:18.614201046Z [err]  [Persona] Route error: Error: [MistralLimiter] "streamMistral" waited 45s for a Mistral rate-limit slot and was dropped (cap: 45s). The shared Mistral account (0.83 req/s, 50000 tokens/min) is saturated — try again shortly.
+2026-08-07T16:09:18.614203416Z [err]      at v (.next/server/chunks/7738.js:1:1616)
+2026-08-07T16:09:18.614205956Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:09:18.614209746Z [inf]  [Persona] Mistral-family prompt extension applied for risk_architect | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:09:18.614211996Z [inf]  [Persona] Council context injected for risk_architect (initial) | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:09:18.614214216Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-07T16:09:18.614217926Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:09:18.614220976Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:09:18.614223486Z [inf]  [Persona] Mistral-family prompt extension applied for competitor | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:09:18.615614720Z [inf]  [Persona] Council context injected for competitor (initial) | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:09:18.615617310Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (2200 max tokens) [tiered]
+2026-08-07T16:09:18.615619610Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:09:38.621849591Z [inf]  [Persona] Council weighting directive injected for synthesis | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:09:39.389098044Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:09:39.389101844Z [inf]  [Persona] Mistral-family prompt extension applied for synthesis | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:09:39.389105213Z [inf]  [Persona] Council context injected for synthesis (synthesis) | session 5b63b9fb-4472-47f4-abd3-f08a1b57b9ac
+2026-08-07T16:09:39.389108963Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:09:39.389111353Z [inf]  [AIClient] createStream → mistral-cloud (mistral-small-latest) (3200 max tokens) [tiered]
+2026-08-07T16:09:42.794848831Z [err]  [SynthesisAudit] session=5b63b9fb-4472-47f4-abd3-f08a1b57b9ac missing mandatory tag(s): tension, action_plan | stop_reason=stop
+2026-08-07T16:09:42.794857211Z [err]  [AIClient] no x-product-tier header on a tiered-routing-eligible request — falling back to free. If this account should be paid, check the Edge/middleware log stream (separate from this one) for '[middleware] tier resolution failed'.
+2026-08-07T16:09:42.794862181Z [inf]  [AIClient] createCompletion → mistral-cloud (mistral-small-latest) (400 max tokens) [tiered]
+2026-08-07T16:09:44.821814703Z [err]  [SynthesisAudit] session=5b63b9fb-4472-47f4-abd3-f08a1b57b9ac action_plan backfilled successfully
