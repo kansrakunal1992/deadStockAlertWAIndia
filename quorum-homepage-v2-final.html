@@ -1,0 +1,4112 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quorum — See what you're actually deciding</title>
+  <meta name="description" content="Before you make an important decision, see what you're actually deciding. Quorum reads your decision before it answers it — what's at stake, what you're missing, what's still unresolved. Free to start." />
+  <meta property="og:title" content="Quorum — See what you're actually deciding" />
+  <meta property="og:description" content="Quorum reads your decision before it answers it — what's really at stake, what you're missing, what's still unresolved. Free to start." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet" />
+
+  <!-- Meta Pixel Code -->
+  <script>
+  !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+  n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+  n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
+  t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,
+  document,'script','https://connect.facebook.net/en_US/fbevents.js');
+  fbq('init', '1015465961468881');
+  fbq('track', 'PageView');
+  </script>
+  <noscript><img height="1" width="1" style="display:none"
+    src="https://www.facebook.com/tr?id=1015465961468881&ev=PageView&noscript=1"
+  /></noscript>
+  <!-- End Meta Pixel Code -->
+
+  <style>
+    /* ══ DESIGN TOKENS ══════════════════════════════════════════ */
+    :root {
+      --radius:    18px;
+      --radius-sm: 10px;
+      --gold:        #c9a84c;
+      --gold-hi:     #e2c46e;
+      --gold-lo:     #a07828;
+      --gold-alpha:  rgba(201,168,76,0.12);
+      --gold-glow:   rgba(201,168,76,0.06);
+      --trans: background 0.38s ease, color 0.38s ease, border-color 0.38s ease;
+    }
+
+    /* DARK */
+    [data-theme="dark"] {
+      --bg:         #010204;
+      --bg2:        #04060f;
+      --card:       #080d1b;
+      --card2:      #0b1020;
+      --inset:      #050912;
+      --b0:         #0d1628;
+      --b1:         #182340;
+      --b2:         #243658;
+      --t0:         #ffffff;
+      --t1:         #edf2ff;
+      --t2:         #c8d6f0;
+      --t3:         #8fa8cc;
+      --t4:         #506484;
+      --t5:         #263d5e;
+      --overlay:    rgba(1,2,4,0.92);
+    }
+
+    /*
+      LIGHT — "Private Bank Stationery"
+      Ground: warm cream (retained). Ink: cold navy.
+      Borders: cool blue-grey steel — NOT warm beige.
+      This is the differentiator from Claude's warm-all-over aesthetic.
+      Feels like Coutts letterhead, not editorial magazine.
+    */
+    [data-theme="light"] {
+      --bg:         #f4f1eb;
+      --bg2:        #ede9e0;
+      --card:       #ffffff;
+      --card2:      #f8f6f1;
+      --inset:      #edeae2;
+      --b0:         #c8cdd8;   /* cool steel — not warm beige */
+      --b1:         #aab2c2;   /* cooler still */
+      --b2:         #8896b0;
+      --t0:         #060d1c;   /* near-black navy, not warm charcoal */
+      --t1:         #0e1a30;
+      --t2:         #1e2e48;
+      --t3:         #3a4f70;
+      --t4:         #667a9e;
+      --t5:         #a0b0c8;
+      --gold:        #9a7020;
+      --gold-hi:     #b88c2a;
+      --gold-lo:     #7a5510;
+      --gold-alpha:  rgba(154,112,32,0.1);
+      --gold-glow:   rgba(154,112,32,0.05);
+      --overlay:    rgba(244,241,235,0.94);
+    }
+
+    /* ══ RESET ══════════════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    a { text-decoration: none; }
+
+    body {
+      font-family: 'DM Sans', system-ui, sans-serif;
+      font-size: 16px;
+      line-height: 1.7;
+      color: var(--t2);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+      transition: var(--trans);
+      overflow-x: hidden;
+    }
+
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='0.025'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 9000;
+    }
+
+    /* ══ TYPE ═══════════════════════════════════════════════════ */
+    .display {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-weight: 300;
+      line-height: 1.06;
+      letter-spacing: -0.025em;
+      color: var(--t0);
+    }
+
+    .eyebrow {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      font-weight: 400;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--gold);
+      display: block;
+    }
+
+    .mono { font-family: 'DM Mono', monospace; }
+
+    /* ══ LAYOUT ═════════════════════════════════════════════════ */
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 0 56px; }
+    .rule { border: none; border-top: 1px solid var(--b0); margin: 0 56px; }
+
+    /* ══ NAV ════════════════════════════════════════════════════ */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 500;
+      height: 70px;
+      display: flex;
+      align-items: center;
+      padding: 0 56px;
+      justify-content: space-between;
+      border-bottom: 1px solid transparent;
+      transition: var(--trans), border-color 0.4s, backdrop-filter 0.4s;
+    }
+
+    nav.stuck {
+      border-color: var(--b0);
+      background: var(--overlay);
+      backdrop-filter: blur(22px);
+      -webkit-backdrop-filter: blur(22px);
+    }
+
+    .logo {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 22px;
+      font-weight: 500;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--t0);
+      transition: color 0.2s;
+    }
+
+    .logo span { color: var(--gold); }
+
+    .nav-links { display: flex; gap: 38px; list-style: none; }
+    .nav-links a { font-size: 13px; color: var(--t4); letter-spacing: 0.01em; transition: color 0.2s; }
+    .nav-links a:hover { color: var(--t1); }
+
+    .nav-right { display: flex; align-items: center; gap: 22px; }
+
+    /* Billing toggle pill (Monthly / Annual) */
+    .billing-toggle {
+      display:         inline-flex;
+      background:      var(--card);
+      border:          1px solid var(--b1);
+      border-radius:   999px;
+      padding:         4px;
+      gap:             2px;
+    }
+    .bt-opt {
+      padding:         8px 20px;
+      border:          none;
+      border-radius:   999px;
+      background:      transparent;
+      color:           var(--t4);
+      font-size:       13px;
+      font-family:     inherit;
+      cursor:          pointer;
+      transition:      all 0.2s;
+      white-space:     nowrap;
+    }
+    .bt-opt.active {
+      background:      var(--gold-alpha);
+      color:           var(--gold);
+      font-weight:     600;
+    }
+
+    /* Theme pill toggle */
+    .toggle {
+      position: relative;
+      width: 52px; height: 26px;
+      border-radius: 13px;
+      background: var(--card);
+      border: 1px solid var(--b1);
+      cursor: pointer;
+      transition: var(--trans);
+      flex-shrink: 0;
+    }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 4px; left: 4px;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--gold);
+      transition: transform 0.28s cubic-bezier(0.34,1.56,0.64,1);
+    }
+
+    [data-theme="light"] .toggle-thumb { transform: translateX(26px); }
+
+    .toggle-label {
+      position: absolute;
+      top: 50%; transform: translateY(-50%);
+      font-size: 10px; line-height: 1;
+      color: var(--t4);
+      user-select: none;
+    }
+
+    .toggle-label.l { left: 6px; opacity: 0; }
+    .toggle-label.r { right: 6px; }
+    [data-theme="light"] .toggle-label.l { opacity: 1; }
+    [data-theme="light"] .toggle-label.r { opacity: 0; }
+
+    .btn-request {
+      font-size: 12.5px;
+      font-weight: 500;
+      padding: 10px 22px;
+      border: 1.5px solid var(--gold);
+      background: transparent;
+      color: var(--gold);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      letter-spacing: 0.06em;
+      transition: background 0.2s, color 0.2s;
+      white-space: nowrap;
+    }
+
+    .btn-request:hover { background: var(--gold); color: var(--bg); }
+
+    /* ══ HERO ═══════════════════════════════════════════════════ */
+    #hero {
+      min-height: 100svh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 140px 56px 110px;
+      max-width: 1200px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    .hero-aura {
+      position: absolute;
+      top: 15%; left: -10%;
+      width: 75vw; height: 65vh;
+      background: radial-gradient(ellipse at 25% 40%, var(--gold-glow) 0%, transparent 60%);
+      pointer-events: none;
+    }
+
+    .h-up { opacity: 0; transform: translateY(18px); animation: up 0.9s cubic-bezier(0.22,1,0.36,1) var(--d,0s) forwards; }
+    @keyframes up { to { opacity:1; transform:none; } }
+
+    .hero-eye   { --d: 0.1s; margin-bottom: 30px; }
+    .hero-hl    { --d: 0.28s; font-size: clamp(60px, 8vw, 112px); max-width: 900px; }
+    .hero-hl em { font-style: italic; color: var(--t3); }
+    .hero-sub   { --d: 0.46s; margin-top: 48px; max-width: 510px; font-size: 17px; line-height: 1.85; color: var(--t3); }
+    .hero-cta   { --d: 0.62s; margin-top: 58px; display:flex; align-items:center; gap:28px; }
+
+    .btn-cta {
+      font-size: 14px;
+      font-weight: 500;
+      padding: 17px 38px;
+      background: var(--gold);
+      color: var(--bg);
+      border: none;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      letter-spacing: 0.05em;
+      display: inline-block;
+      transition: background 0.2s, transform 0.15s;
+    }
+
+    .btn-cta:hover { background: var(--gold-hi); transform: translateY(-2px); }
+
+    .hero-note { font-size: 12px; color: var(--t5); letter-spacing: 0.04em; line-height: 1.7; }
+
+    /* Hero two-column layout */
+    .hero-body {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 48px;
+      width: 100%;
+      max-width: 1100px;
+    }
+    .hero-left  { flex: 1; }
+    .hero-right {
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      padding-bottom: 12px;
+    }
+    .btn-open-quorum {
+      display: inline-flex;
+      align-items: center;
+      padding: 16px 36px;
+      border: 1px solid var(--gold);
+      border-radius: var(--radius-sm);
+      color: var(--gold);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 15px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-decoration: none;
+      background: transparent;
+      transition: background 0.2s, color 0.2s, transform 0.15s;
+      white-space: nowrap;
+    }
+    .btn-open-quorum:hover {
+      background: rgba(201,168,76,0.1);
+      transform: translateY(-2px);
+    }
+    .hero-open-note {
+      font-size: 11px;
+      color: var(--t5);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin: 0;
+    }
+    @media (max-width: 760px) {
+      .hero-body  { flex-direction: column; align-items: flex-start; gap: 36px; }
+      .hero-left  { width: 100%; }
+      .hero-right { align-items: flex-start; }
+    }
+
+    /* CTA that lives directly under the hero video (Video 1). Hidden by
+       default; shown only once #heroVideoWrap has loaded, via the sync
+       script below (near the other video init calls). If the video
+       never loads, this block stays hidden and the original hero-right
+       CTA is what shows — today's layout, unchanged. */
+    .hero-video-cta {
+      display: none;
+      align-items: center;
+      gap: 16px;
+      margin-top: 24px;
+    }
+    .hero-video-cta.show { display: flex; }
+    @media (max-width: 760px) {
+      .hero-video-cta { flex-direction: column; align-items: flex-start; gap: 10px; }
+    }
+
+    /* Hero intro video — hidden by default, shown only once the file
+       loads successfully. Falls back to nothing (current text-only
+       hero) if /videos/quorum-intro.mp4 hasn't been uploaded yet.
+       Sits inside .hero-left (between headline and hero-sub), so it
+       scales with that column rather than the full hero width. */
+    .hero-video-wrap {
+      display: none;
+      width: 100%;
+      margin: 40px 0 0;
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--b1);
+      background: var(--card);
+      box-shadow: 0 30px 80px -30px rgba(0,0,0,0.5);
+    }
+    .hero-video-wrap.ready { display: block; }
+    .hero-video-wrap video {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      background: var(--inset);
+    }
+    @media (max-width: 760px) {
+      .hero-video-wrap { margin-top: 28px; }
+    }
+
+    /* Research/explainer video — Video 2, placed after "The Engine"
+       section. Same load/404 fallback pattern as the hero video. Sized
+       with fluid width + max-width rather than a breakpoint override,
+       so it scales cleanly at every screen size with no extra media
+       query needed (avoids re-introducing the earlier cascade-order
+       bug — see the relocated RESPONSIVE block near the end of this
+       stylesheet). Not
+       autoplayed: this is a deliberate ~90s watch with voiceover, not
+       ambient background motion, so it waits for a tap and isn't
+       muted by default. */
+    .research-video-wrap {
+      display: none;
+      width: 100%;
+      max-width: 800px;
+      margin: 0 auto;
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--b1);
+      background: var(--card);
+      box-shadow: 0 30px 80px -30px rgba(0,0,0,0.5);
+    }
+    .research-video-wrap.ready { display: block; }
+    .research-video-wrap video {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      background: var(--inset);
+    }
+
+    /* CTA directly below the research video (Video 2). New — there was
+       no CTA here before. Hidden by default; the adjacent-sibling
+       selector shows it only once .research-video-wrap picks up the
+       .ready class (video loaded successfully). No video, no CTA. */
+    .research-video-cta {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      width: 100%;
+      max-width: 800px;
+      margin: 28px auto 0;
+    }
+    .research-video-wrap.ready + .research-video-cta { display: flex; }
+    @media (max-width: 760px) {
+      .research-video-cta { flex-direction: column; gap: 10px; }
+    }
+
+    /* Explainer video — Video 3, placed inside "How Quorum Works" (#how),
+       right below the section headline and above the 5-step breakdown.
+       Same load/404 fallback + lazy pattern as the research video. */
+    .explainer-video-wrap {
+      display: none;
+      width: 100%;
+      max-width: 960px;
+      margin: 0 0 24px;
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--b1);
+      background: var(--card);
+      box-shadow: 0 30px 80px -30px rgba(0,0,0,0.5);
+    }
+    .explainer-video-wrap.ready { display: block; }
+    .explainer-video-wrap video {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      background: var(--inset);
+    }
+
+    /* CTA directly below the explainer video (Video 3). New — there was
+       no CTA here before. Hidden by default; the adjacent-sibling
+       selector shows it only once .explainer-video-wrap picks up the
+       .ready class (video loaded successfully). No video, no CTA. */
+    .explainer-video-cta {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      width: 100%;
+      max-width: 960px;
+      margin: 0 0 56px;
+    }
+    .explainer-video-wrap.ready + .explainer-video-cta { display: flex; }
+    @media (max-width: 760px) {
+      .explainer-video-cta { flex-direction: column; gap: 10px; margin-bottom: 40px; }
+    }
+
+    /* ══ TWO-COL ════════════════════════════════════════════════ */
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 96px; align-items: start; }
+
+    /* ══ SECTION RHYTHM ═════════════════════════════════════════ */
+    .s { padding: 168px 0; }
+    .sh { margin-bottom: 80px; }
+    .sh .eyebrow { margin-bottom: 18px; }
+
+    /* ══ THE RECORD — homepage section, id="record". Gives both the
+       connected founder journey and the standalone Decision Library
+       their own discoverable section + nav entry, rather than a
+       single inline link buried in Mirror. ═══════════════════════ */
+    .rec-layout { display: grid; grid-template-columns: 0.85fr 1.15fr; gap: 56px; align-items: stretch; margin-top: 48px; }
+    .rec-journey { border: 1px solid var(--b0); border-radius: 20px; padding: 40px 36px; background: var(--card); display: flex; flex-direction: column; }
+    .rec-tag { display: block; font-family: 'DM Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); margin-bottom: 16px; }
+    .rec-journey-title { font-family: 'Cormorant Garamond', Georgia, serif; font-style: italic; font-weight: 400; font-size: 24px; color: var(--t1); line-height: 1.35; margin-bottom: 14px; }
+    .rec-journey-desc { font-size: 14px; color: var(--t4); line-height: 1.8; margin-bottom: 28px; flex: 1; }
+    .rec-journey-cta { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; font-family: 'DM Mono', monospace; font-size: 12.5px; letter-spacing: 0.04em; color: var(--gold); border-bottom: 1px solid var(--gold-lo); padding-bottom: 4px; transition: color 0.2s, border-color 0.2s; }
+    .rec-journey-cta:hover { color: var(--gold-hi); border-color: var(--gold-hi); }
+    .rec-journey-cta svg { transition: transform 0.2s; }
+    .rec-journey-cta:hover svg { transform: translateX(3px); }
+
+    @media (max-width: 980px) {
+      .rec-layout { grid-template-columns: 1fr; gap: 32px; }
+    }
+    @media (max-width: 600px) {
+      .rec-journey { padding: 30px 26px; }
+    }
+
+    /* ══ PROSE ══════════════════════════════════════════════════ */
+    .prose p { font-size: 16px; line-height: 1.9; color: var(--t2); margin-bottom: 22px; }
+    .prose p:last-child { margin-bottom: 0; }
+    .prose .hi { color: var(--t1); font-size: 15.5px; }
+
+    /* ══ STATS ══════════════════════════════════════════════════ */
+    .stats { display: grid; grid-template-columns: repeat(3,1fr); margin-top: 52px; padding-top: 44px; border-top: 1px solid var(--b0); }
+    .stat { padding-right: 20px; }
+    .stat-n { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 54px; font-weight: 300; color: var(--t0); line-height: 1; letter-spacing: -0.03em; }
+    .stat-l { font-size: 12px; color: var(--t4); margin-top: 9px; line-height: 1.55; }
+
+    /* ══ COUNCIL (PRISME) ═══════════════════════════════════════ */
+    .council-top { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 52px; }
+    .prisme-mark { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 13px; font-weight: 300; letter-spacing: 0.38em; color: var(--t4); text-transform: uppercase; margin-bottom: 6px; }
+    .advisor-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; }
+
+    .ac {
+      border: 1px solid var(--b0);
+      border-radius: var(--radius);
+      padding: 30px 22px 26px;
+      background: var(--card);
+      transition: border-color 0.3s, transform 0.3s;
+      cursor: default;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .ac::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--gold-alpha), transparent); opacity: 0; transition: opacity 0.3s; }
+    .ac:hover { border-color: var(--b1); transform: translateY(-5px); }
+    .ac:hover::before { opacity: 1; }
+
+    .ac-letter { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 34px; font-weight: 300; color: var(--gold); margin-bottom: 18px; line-height: 1; }
+    .ac-name { font-size: 12px; font-weight: 500; color: var(--t0); margin-bottom: 4px; letter-spacing: 0.02em; }
+    .ac-lens {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--gold-lo);
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    [data-theme="light"] .ac-lens { color: var(--gold); }
+    .ac-desc { font-size: 11.5px; color: var(--t4); line-height: 1.65; }
+
+    /* ══ MOMENTS ════════════════════════════════════════════════ */
+    .moments-intro { display: grid; grid-template-columns: 1fr 1.7fr; gap: 80px; align-items: end; margin-bottom: 58px; }
+
+    .mc { border: 1px solid var(--b0); border-radius: 22px; padding: 52px 56px; background: var(--card); margin-bottom: 18px; position: relative; overflow: hidden; }
+    .mc::after { content: ''; position: absolute; inset: 0 0 auto 0; height: 1px; background: linear-gradient(90deg, transparent 8%, var(--gold-alpha) 40%, var(--gold-alpha) 60%, transparent 92%); }
+    .mc-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: start; }
+    .mc-num { font-family: 'DM Mono', monospace; font-size: 10.5px; color: var(--t5); letter-spacing: 0.16em; margin-bottom: 22px; }
+    .mc-title { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 36px; font-weight: 400; color: var(--t0); line-height: 1.12; letter-spacing: -0.01em; margin-bottom: 20px; }
+    .mc-body { font-size: 15px; color: var(--t3); line-height: 1.9; }
+
+    .demo { border: 1px solid var(--b1); border-radius: var(--radius); overflow: hidden; background: var(--card2); }
+    .demo-hd { padding: 13px 20px; border-bottom: 1px solid var(--b0); display: flex; align-items: center; justify-content: space-between; }
+    .demo-tag { font-family: 'DM Mono', monospace; font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; }
+    .demo-tag.tn { color: #d4914c; }
+    .demo-tag.ct { color: var(--t5); }
+    .demo-body { display: grid; grid-template-columns: 1fr 1fr; }
+    .demo-col { padding: 24px 22px 28px; }
+    .demo-col + .demo-col { border-left: 1px solid var(--b0); }
+    .demo-lbl { font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--t5); margin-bottom: 12px; }
+    .demo-txt { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 17px; font-style: italic; color: var(--t1); line-height: 1.6; }
+
+    .fp { border: 1px solid var(--b0); border-radius: var(--radius-sm); padding: 22px 24px; background: var(--card2); margin-bottom: 12px; }
+    .fp.dim { opacity: 0.42; }
+    .fp-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .fp-lbl { font-size: 10.5px; font-weight: 500; color: var(--gold); letter-spacing: 0.08em; text-transform: uppercase; }
+    .fp-ct  { font-family: 'DM Mono', monospace; font-size: 9.5px; color: var(--t5); }
+    .fp-txt { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 18px; font-style: italic; color: var(--t1); line-height: 1.55; }
+
+    .ind-row { display: flex; align-items: center; gap: 14px; padding: 13px 0; border-bottom: 1px solid var(--b0); }
+    .ind-row:last-of-type { border-bottom: none; }
+    .ind-lbl { font-family: 'DM Mono', monospace; font-size: 10.5px; color: var(--t5); width: 72px; flex-shrink: 0; }
+    .ind-track { flex: 1; height: 3px; background: var(--b0); border-radius: 2px; overflow: hidden; }
+    .ind-fill { height: 100%; border-radius: 2px; background: linear-gradient(90deg, rgba(201,168,76,0.3), var(--gold)); }
+    [data-theme="light"] .ind-fill { background: linear-gradient(90deg, rgba(154,112,32,0.25), var(--gold)); }
+    .ind-val { font-family: 'DM Mono', monospace; font-size: 13px; color: var(--t0); width: 28px; text-align: right; }
+    .ind-note { margin-top: 22px; font-size: 13px; color: var(--t4); line-height: 1.65; }
+    .ind-note strong { color: var(--gold); font-weight: 400; }
+
+    /* ══ HOW ════════════════════════════════════════════════════ */
+    .steps { display: grid; grid-template-columns: repeat(5,1fr); border: 1px solid var(--b0); border-radius: 22px; overflow: hidden; }
+    .step { padding: 48px 36px; border-right: 1px solid var(--b0); background: var(--card); }
+    .step:last-child { border-right: none; }
+    .step-n { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 58px; font-weight: 300; color: var(--b1); line-height: 1; margin-bottom: 28px; }
+    .step-tag { font-family: 'DM Mono', monospace; font-size: 9.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); margin-bottom: 10px; }
+    .step-name { font-size: 14px; font-weight: 500; color: var(--t0); margin-bottom: 10px; letter-spacing: 0.02em; }
+    .step-desc { font-size: 13px; color: var(--t4); line-height: 1.78; }
+
+    /* ══ PRICING ════════════════════════════════════════════════ */
+    .pg { display: grid; grid-template-columns: repeat(3,1fr); gap: 28px; }
+    .pc { border: 1px solid var(--b0); border-radius: 22px; padding: 42px 36px; background: var(--card); display: flex; flex-direction: column; position: relative; }
+    .pc.feat { border-color: rgba(201,168,76,0.55); background: linear-gradient(165deg, var(--gold-alpha) 0%, var(--card) 55%); }
+    [data-theme="light"] .pc.feat { border-color: rgba(154,112,32,0.5); }
+    .pc-badge { position: absolute; top: -13px; left: 32px; font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--bg); background: var(--gold); padding: 5px 14px; border-radius: 20px; }
+    [data-theme="light"] .pc-badge { color: #fff; }
+    .pc-tier { font-family: 'DM Mono', monospace; font-size: 9.5px; letter-spacing: 0.17em; text-transform: uppercase; color: var(--t5); margin-bottom: 22px; }
+    .pc-price { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 54px; font-weight: 300; color: var(--t0); line-height: 1; margin-bottom: 6px; letter-spacing: -0.02em; }
+    .pc-price sub { font-size: 22px; vertical-align: baseline; color: var(--t4); }
+    .pc-cadence { font-size: 12px; color: var(--t5); margin-bottom: 34px; }
+    .pc-list { list-style: none; flex: 1; margin-bottom: 38px; }
+    .pc-list li { font-size: 13.5px; color: var(--t3); padding: 10px 0; border-bottom: 1px solid var(--b0); display: flex; gap: 10px; line-height: 1.55; }
+    .pc-list li::before { content: '—'; color: var(--gold); font-family: 'DM Mono', monospace; font-size: 11px; flex-shrink: 0; margin-top: 2px; }
+    .pc-btn { font-size: 13px; font-weight: 500; padding: 15px 24px; border-radius: var(--radius-sm); cursor: pointer; letter-spacing: 0.04em; text-align: center; display: block; transition: background 0.2s, color 0.2s, border-color 0.2s; }
+    .pc-btn.g { background: var(--gold); color: var(--bg); border: 1.5px solid var(--gold); }
+    .pc-btn.g:hover { background: var(--gold-hi); border-color: var(--gold-hi); }
+    .pc-btn.o { background: transparent; color: var(--t3); border: 1.5px solid var(--b1); }
+    .pc-btn.o:hover { border-color: var(--t4); color: var(--t0); }
+
+    /* ══ FOOTER ═════════════════════════════════════════════════ */
+    /* footer styles moved to S1 consent/footer block above */
+
+
+
+    /* ══ REVEAL ═════════════════════════════════════════════════ */
+    .r { opacity: 0; transform: translateY(26px); transition: opacity 0.85s cubic-bezier(0.22,1,0.36,1), transform 0.85s cubic-bezier(0.22,1,0.36,1); }
+    .r.in { opacity: 1; transform: none; }
+    .d1 { transition-delay: 0.08s; }
+    .d2 { transition-delay: 0.18s; }
+    .d3 { transition-delay: 0.3s; }
+
+    /* ══════════════════════════════════════════════════════════
+       SESSION REQUEST MODAL
+    ══════════════════════════════════════════════════════════ */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 2000;
+      background: rgba(1,2,8,0.78);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.32s ease;
+    }
+
+    [data-theme="light"] .modal-overlay { background: rgba(30,40,60,0.55); }
+
+    .modal-overlay.open {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    .modal-inner {
+      position: relative;
+      width: 100%;
+      max-width: 580px;
+      transform: translateY(24px) scale(0.97);
+      transition: transform 0.38s cubic-bezier(0.22,1,0.36,1);
+    }
+
+    .modal-overlay.open .modal-inner { transform: none; }
+
+    .modal-box {
+      background: var(--bg2);
+      border: 1px solid var(--b1);
+      border-radius: 24px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      padding: 52px 52px 48px;
+    }
+
+    [data-theme="light"] .modal-box { background: var(--card); }
+
+    .modal-close {
+      position: absolute;
+      top: 0; right: -50px;
+      width: 34px; height: 34px;
+      border-radius: 50%;
+      border: 1px solid var(--b1);
+      background: transparent;
+      color: var(--t4);
+      font-size: 16px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: border-color 0.2s, color 0.2s;
+      z-index: 10;
+    }
+
+    @media (max-width: 720px) {
+      .modal-close { right: 14px; top: 14px; }
+      .modal-box   { padding-top: 56px; }
+    }
+
+    .modal-close:hover { border-color: var(--t3); color: var(--t1); }
+
+    /* Progress bar */
+    .modal-progress {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 40px;
+    }
+
+    .mp-dot {
+      height: 2px;
+      flex: 1;
+      border-radius: 2px;
+      background: var(--b1);
+      transition: background 0.4s;
+    }
+
+    .mp-dot.done { background: var(--gold); }
+    .mp-dot.active { background: var(--gold-hi); }
+
+    /* Step panels */
+    .modal-step { display: none; }
+    .modal-step.active { display: block; }
+
+    .modal-eyebrow {
+      font-family: 'DM Mono', monospace;
+      font-size: 9.5px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 16px;
+    }
+
+    .modal-title {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 34px;
+      font-weight: 300;
+      color: var(--t0);
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      margin-bottom: 10px;
+    }
+
+    .modal-sub {
+      font-size: 14px;
+      color: var(--t4);
+      line-height: 1.8;
+      margin-bottom: 36px;
+    }
+
+    /* Interest type selection */
+    .interest-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+
+    .interest-opt {
+      border: 1.5px solid var(--b1);
+      border-radius: var(--radius);
+      padding: 22px 20px;
+      cursor: pointer;
+      transition: border-color 0.22s, background 0.22s;
+      background: var(--card);
+      text-align: left;
+    }
+
+    [data-theme="light"] .interest-opt { background: var(--bg2); }
+
+    .interest-opt:hover { border-color: var(--gold); }
+    .interest-opt.sel { border-color: var(--gold); background: var(--gold-alpha); }
+
+    .io-label { font-size: 13px; font-weight: 500; color: var(--t0); margin-bottom: 6px; letter-spacing: 0.01em; }
+    .io-price { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--gold); margin-bottom: 8px; }
+    .io-desc { font-size: 12px; color: var(--t4); line-height: 1.65; }
+
+    /* Form fields */
+    .field { margin-bottom: 20px; }
+
+    .field label {
+      display: block;
+      font-family: 'DM Mono', monospace;
+      font-size: 9.5px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--t5);
+      margin-bottom: 10px;
+    }
+
+    .field input, .field textarea {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--b1);
+      border-radius: var(--radius-sm);
+      padding: 14px 18px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 15px;
+      color: var(--t1);
+      transition: border-color 0.2s;
+      outline: none;
+      resize: none;
+    }
+
+    [data-theme="light"] .field input, [data-theme="light"] .field textarea {
+      background: var(--bg2);
+    }
+
+    .field input:focus, .field textarea:focus { border-color: var(--gold); }
+
+    .field input::placeholder, .field textarea::placeholder { color: var(--t5); }
+
+    .field textarea { min-height: 130px; line-height: 1.75; }
+
+    /* Qualification box — shows after decision input */
+    .qual-box {
+      border: 1px solid var(--b1);
+      border-radius: var(--radius-sm);
+      background: var(--inset);
+      padding: 20px 22px;
+      margin-top: 16px;
+      display: none;
+    }
+
+    .qual-box.show { display: block; }
+
+    .qual-tag { font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); margin-bottom: 10px; }
+
+    .qual-text { font-size: 13px; color: var(--t3); line-height: 1.8; }
+
+    .qual-warning {
+      border-color: rgba(201,168,76,0.4);
+      background: var(--gold-alpha);
+    }
+
+    .qual-warning .qual-text { color: var(--t2); }
+
+    /* Row of two fields */
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+    /* Scarcity note */
+    .scarcity-note {
+      font-size: 12px;
+      color: var(--t5);
+      line-height: 1.7;
+      margin-top: 14px;
+      padding: 14px 18px;
+      border: 1px solid var(--b0);
+      border-radius: var(--radius-sm);
+      background: var(--card);
+    }
+
+    .scarcity-note strong { color: var(--t3); font-weight: 500; }
+
+    /* Modal actions */
+    .modal-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 32px; }
+
+    .btn-back {
+      font-size: 13px;
+      color: var(--t5);
+      background: none;
+      border: none;
+      cursor: pointer;
+      transition: color 0.2s;
+      padding: 0;
+    }
+
+    .btn-back:hover { color: var(--t3); }
+
+    .btn-next {
+      font-size: 13px;
+      font-weight: 500;
+      padding: 14px 32px;
+      background: var(--gold);
+      color: #06090e;
+      border: none;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      transition: background 0.2s, transform 0.15s;
+    }
+
+    .btn-next:hover { background: var(--gold-hi); transform: translateY(-1px); }
+    .btn-next:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    /* Decision-length hint — live feedback under the Step 2 textarea */
+    .decision-hint {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.03em;
+      color: var(--t5);
+      margin-top: 8px;
+      transition: color 0.2s;
+    }
+    .decision-hint.met { color: var(--gold); }
+
+    /* Inline "book directly" CTA — shown once decision text clears the threshold */
+    .decision-book-cta {
+      display: none;
+      margin-top: 16px;
+      padding: 18px 20px;
+      border: 1px solid var(--b1);
+      border-radius: var(--radius-sm);
+      background: var(--card);
+    }
+    .decision-book-cta.show { display: block; }
+    .dbc-label { font-size: 12.5px; color: var(--t3); line-height: 1.6; margin-bottom: 12px; }
+    .dbc-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .dbc-btn {
+      flex: 1 1 auto;
+      min-width: 170px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 12.5px;
+      font-weight: 500;
+      padding: 12px 14px;
+      background: transparent;
+      color: var(--t2);
+      border: 1px solid var(--b1);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      text-align: center;
+      transition: border-color 0.2s, color 0.2s, background 0.2s;
+    }
+    .dbc-btn:hover { border-color: var(--gold); color: var(--gold-hi); background: var(--gold-alpha); }
+
+    /* ══ BOOKING MODAL ══════════════════════════════════════════ */
+    .booking-modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 2100;
+      background: rgba(1,2,8,0.9);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+    [data-theme="light"] .booking-modal-overlay { background: rgba(30,40,60,0.6); }
+    .booking-modal-overlay.open { opacity: 1; pointer-events: all; }
+    .booking-modal-inner {
+      position: relative;
+      width: 100%;
+      max-width: 480px;
+      transform: translateY(16px) scale(0.97);
+      transition: transform 0.36s cubic-bezier(0.22,1,0.36,1);
+    }
+    .booking-modal-overlay.open .booking-modal-inner { transform: none; }
+    .booking-modal-box {
+      width: 100%;
+      height: min(680px, 78dvh);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      border: 1px solid var(--b1);
+      background: #fff;
+    }
+    .booking-modal-box iframe { display: block; width: 100%; height: 100%; border: 0; }
+    .booking-modal-close {
+      position: absolute;
+      top: -44px; right: 0;
+      width: 34px; height: 34px;
+      border-radius: 50%;
+      border: 1px solid var(--b1);
+      background: var(--card);
+      color: var(--t3);
+      font-size: 16px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .booking-modal-fallback {
+      display: block;
+      text-align: center;
+      font-family: 'DM Mono', monospace;
+      font-size: 10.5px;
+      letter-spacing: 0.05em;
+      color: var(--t4);
+      margin-top: 10px;
+    }
+
+    /* Success state */
+    .modal-success {
+      text-align: center;
+      padding: 20px 0 10px;
+    }
+
+    .success-icon {
+      width: 64px; height: 64px;
+      border-radius: 50%;
+      border: 1.5px solid var(--gold);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 32px;
+      font-size: 24px;
+    }
+
+    .success-title { font-family: 'Cormorant Garamond', Georgia, serif; font-size: 38px; font-weight: 300; color: var(--t0); line-height: 1.1; margin-bottom: 16px; }
+
+    .success-body { font-size: 15px; color: var(--t3); line-height: 1.85; max-width: 380px; margin: 0 auto 36px; }
+
+    .success-close { font-size: 13px; color: var(--t4); background: none; border: none; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; transition: color 0.2s; }
+    .success-close:hover { color: var(--t1); }
+
+    /* Loading state */
+    .loading-dots {
+      display: inline-flex;
+      gap: 4px;
+      vertical-align: middle;
+    }
+
+    .loading-dots span {
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--gold);
+      animation: blink 1.2s infinite;
+    }
+
+    .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes blink { 0%,80%,100% { opacity:0.2 } 40% { opacity:1 } }
+
+
+    /* ══ ENGINE SECTION ═════════════════════════════════════════ */
+    .engine-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+      margin-top: 62px;
+    }
+
+    .eg-card {
+      border: 1px solid var(--b0);
+      border-radius: var(--radius);
+      padding: 38px 32px;
+      background: var(--card);
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s;
+    }
+
+    .eg-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gold-alpha), transparent);
+    }
+
+    .eg-card:hover { border-color: var(--b2); }
+
+    .eg-num {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--t5);
+      margin-bottom: 22px;
+    }
+
+    .eg-title {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 26px;
+      font-weight: 400;
+      color: var(--t0);
+      line-height: 1.2;
+      margin-bottom: 16px;
+      letter-spacing: -0.01em;
+    }
+
+    .eg-body {
+      font-size: 14px;
+      color: var(--t3);
+      line-height: 1.85;
+    }
+
+    /* REDIRECT mock card */
+    .redirect-mock {
+      margin-top: 56px;
+      border: 1px solid rgba(201,168,76,0.35);
+      border-radius: var(--radius);
+      background: linear-gradient(145deg, var(--gold-alpha) 0%, var(--card) 60%);
+      overflow: hidden;
+    }
+
+    [data-theme="light"] .redirect-mock {
+      border-color: rgba(154,112,32,0.3);
+    }
+
+    .rm-hd {
+      padding: 14px 28px;
+      border-bottom: 1px solid var(--b0);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .rm-tag {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--gold);
+    }
+
+    .rm-mode {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--t5);
+      background: var(--b0);
+      padding: 4px 10px;
+      border-radius: 20px;
+    }
+
+    .rm-body {
+      padding: 28px 28px 32px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 40px;
+      align-items: center;
+    }
+
+    .rm-text {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 19px;
+      font-style: italic;
+      color: var(--t1);
+      line-height: 1.6;
+    }
+
+    .rm-note {
+      font-size: 12px;
+      color: var(--t4);
+      line-height: 1.7;
+      margin-top: 12px;
+    }
+
+    .rm-btn {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--gold);
+      border: 1px solid rgba(201,168,76,0.4);
+      background: transparent;
+      border-radius: var(--radius-sm);
+      padding: 12px 22px;
+      cursor: default;
+      white-space: nowrap;
+    }
+
+    /* Not-a-chatbot contrast strip */
+    .not-chatbot {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      border: 1px solid var(--b0);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-top: 56px;
+    }
+
+    .nc-col {
+      padding: 36px 38px;
+      background: var(--card);
+    }
+
+    .nc-col + .nc-col {
+      border-left: 1px solid var(--b0);
+      background: var(--card2);
+    }
+
+    .nc-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      margin-bottom: 22px;
+      display: block;
+    }
+
+    .nc-label.dim { color: var(--t5); }
+    .nc-label.bright { color: var(--gold); }
+
+    .nc-item {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 11px 0;
+      border-bottom: 1px solid var(--b0);
+      font-size: 14px;
+      color: var(--t3);
+      line-height: 1.6;
+    }
+
+    .nc-item:last-child { border-bottom: none; }
+
+    .nc-item .mk {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      margin-top: 2px;
+      flex-shrink: 0;
+    }
+
+    .mk.x { color: var(--t5); }
+    .mk.c { color: var(--gold); }
+
+    /* calibration wow moment */
+    .calib-chart {
+      border: 1px solid var(--b0);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--card2);
+    }
+
+    .cc-hd {
+      padding: 14px 22px;
+      border-bottom: 1px solid var(--b0);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .cc-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 22px;
+      border-bottom: 1px solid var(--b0);
+    }
+
+    .cc-row:last-child { border-bottom: none; }
+
+    .cc-dim {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: var(--t4);
+      width: 110px;
+      flex-shrink: 0;
+      line-height: 1.4;
+    }
+
+    .cc-bars {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .cc-bar-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .cc-bar-lbl {
+      font-family: 'DM Mono', monospace;
+      font-size: 8.5px;
+      color: var(--t5);
+      width: 60px;
+      flex-shrink: 0;
+    }
+
+    .cc-bar-track {
+      flex: 1;
+      height: 5px;
+      background: var(--b0);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .cc-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+    }
+
+    .fill-pre  { background: var(--gold); opacity: 0.9; }
+    .fill-post { background: rgba(201,168,76,0.35); }
+    [data-theme="light"] .fill-post { background: rgba(154,112,32,0.25); }
+
+    .cc-delta {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      width: 32px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .delta-neg { color: #d4914c; }
+    .delta-pos { color: #6db88e; }
+    .delta-zero { color: var(--t5); }
+
+    .cc-insight {
+      padding: 16px 22px;
+      background: var(--gold-alpha);
+      font-size: 13px;
+      color: var(--t2);
+      line-height: 1.7;
+      border-top: 1px solid var(--b0);
+    }
+
+    [data-theme="light"] .cc-insight { color: var(--t1); }
+
+    /* sprint badge — removed, replaced below */
+
+    /* calibration teaser / locked state */
+    .mc-locked {
+      opacity: 0.82;
+    }
+
+    .calib-activates {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 28px;
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--t5);
+    }
+
+    .ca-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--gold);
+      opacity: 0.45;
+      flex-shrink: 0;
+      animation: pulse-dot 2.4s ease-in-out infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 0.25; transform: scale(1); }
+      50%       { opacity: 0.7;  transform: scale(1.25); }
+    }
+
+    .calib-locked-wrap {
+      position: relative;
+    }
+
+    .calib-blur {
+      filter: blur(3.5px);
+      opacity: 0.38;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    .calib-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(ellipse at 50% 50%, var(--card) 0%, transparent 70%);
+    }
+
+    .calib-lock-inner {
+      text-align: center;
+      padding: 20px;
+    }
+
+    .calib-lock-icon {
+      font-size: 28px;
+      color: var(--gold);
+      opacity: 0.55;
+      margin-bottom: 14px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .calib-lock-msg {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 17px;
+      font-style: italic;
+      color: var(--t3);
+      line-height: 1.65;
+    }
+
+    /* ══ DECISION EXAMPLES ══════════════════════════════════════ */
+    .dec-examples {
+      margin-bottom: 58px;
+    }
+
+    .dec-ex-intro {
+      margin-bottom: 32px;
+    }
+
+    .dec-ex-intro p {
+      font-size: 15px;
+      color: var(--t3);
+      line-height: 1.85;
+      max-width: 620px;
+    }
+
+    .dec-ex-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border: 1px solid var(--b0);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .dec-col {
+      padding: 36px 38px;
+      background: var(--card);
+    }
+
+    .dec-col + .dec-col {
+      border-left: 1px solid var(--b0);
+      background: var(--card2);
+    }
+
+    .dec-col-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      margin-bottom: 24px;
+      display: block;
+    }
+
+    .dec-col-label.yes { color: var(--gold); }
+    .dec-col-label.no  { color: var(--t5); }
+
+    .dec-item {
+      padding: 20px 0;
+      border-bottom: 1px solid var(--b0);
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .dec-item:last-child { border-bottom: none; }
+
+    .dec-mk {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      margin-top: 3px;
+      flex-shrink: 0;
+    }
+    .dec-mk.y { color: var(--gold); }
+    .dec-mk.n { color: var(--t5); }
+
+    .dec-item-body {}
+
+    .dec-item-title {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--t1);
+      line-height: 1.4;
+      margin-bottom: 3px;
+    }
+
+    .dec-item-note {
+      font-size: 12px;
+      color: var(--t4);
+      line-height: 1.55;
+    }
+
+    /* ══ FEATURE TILES ══════════════════════════════════════════ */
+    .feature-tiles {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      margin-top: 72px;
+      margin-bottom: 4px;
+    }
+
+    .ft {
+      border: 1px solid var(--b0);
+      border-radius: var(--radius);
+      padding: 28px 28px 26px;
+      background: var(--card);
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s;
+    }
+
+    .ft::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gold-alpha), transparent);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .ft:hover { border-color: var(--b2); }
+    .ft:hover::before { opacity: 1; }
+
+    .ft-icon {
+      font-size: 20px;
+      margin-bottom: 14px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .ft-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    .ft-title {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--t0);
+      margin-bottom: 8px;
+      line-height: 1.35;
+    }
+
+    .ft-body {
+      font-size: 12.5px;
+      color: var(--t4);
+      line-height: 1.75;
+    }
+
+    /* ══ AT A GLANCE STRIP ══════════════════════════════════════ */
+    .glance-label {
+      display: block;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--t4);
+      margin-bottom: 20px;
+    }
+    .glance-strip {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      border: 1px solid var(--b0);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+    .glance-step {
+      display: flex;
+      flex-direction: column;
+      padding: 22px 18px;
+      border-right: 1px solid var(--b0);
+      background: var(--card);
+    }
+    .glance-step:last-child { border-right: none; }
+    .glance-n {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 26px;
+      font-weight: 300;
+      color: var(--gold);
+      line-height: 1;
+      margin-bottom: 10px;
+    }
+    .glance-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--t0);
+      letter-spacing: 0.01em;
+      margin-bottom: 6px;
+    }
+    .glance-desc {
+      font-size: 12.5px;
+      color: var(--t4);
+      line-height: 1.6;
+    }
+    @media (max-width: 860px) {
+      .glance-strip { grid-template-columns: 1fr; }
+      .glance-step { border-right: none; border-bottom: 1px solid var(--b0); }
+      .glance-step:last-child { border-bottom: none; }
+    }
+
+    /* ══ FAQ ════════════════════════════════════════════════════ */
+    .faq-list { max-width: 720px; }
+    .faq-item {
+      border-bottom: 1px solid var(--b0);
+    }
+    .faq-item summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 20px 2px;
+      cursor: pointer;
+      font-size: 15.5px;
+      font-weight: 500;
+      color: var(--t0);
+      list-style: none;
+    }
+    .faq-item summary::-webkit-details-marker { display: none; }
+    .faq-item summary::after {
+      content: '+';
+      font-size: 20px;
+      font-weight: 300;
+      color: var(--t4);
+      flex-shrink: 0;
+      transition: transform 0.2s ease;
+    }
+    .faq-item[open] summary::after { transform: rotate(45deg); }
+    .faq-item p {
+      margin: 0 0 24px;
+      font-size: 14px;
+      color: var(--t3);
+      line-height: 1.8;
+      max-width: 640px;
+    }
+
+    /* ══ MACRO MOMENT ═══════════════════════════════════════════ */
+    .macro-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+      margin-top: 64px;
+    }
+
+    .macro-card {
+      border: 1px solid var(--b0);
+      border-radius: var(--radius);
+      padding: 42px 34px;
+      background: var(--card);
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s;
+    }
+
+    .macro-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gold-alpha), transparent);
+    }
+
+    .macro-card:hover { border-color: var(--b2); }
+
+    .macro-n {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--t5);
+      margin-bottom: 22px;
+    }
+
+    .macro-title {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 28px;
+      font-weight: 400;
+      color: var(--t0);
+      line-height: 1.15;
+      margin-bottom: 16px;
+      letter-spacing: -0.01em;
+    }
+
+    .macro-body {
+      font-size: 14px;
+      color: var(--t3);
+      line-height: 1.88;
+    }
+
+    /* ══ MACRO VISUAL — the 2022 vs 2026 split ═════════════════════
+       One sourced photograph, split at its existing centre seam into
+       two panels, colour-graded toward the site's own navy/gold
+       tokens (not left as a raw stock render) so it reads as an
+       in-brand diagram rather than an inserted photo. Labels are real
+       DOM text (not baked into the image) so they stay crisp and
+       theme-aware. */
+    .macro-visual {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      margin-top: 56px;
+      border: 1px solid rgba(201,168,76,0.28);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: rgba(201,168,76,0.28);
+      position: relative;
+    }
+
+    [data-theme="light"] .macro-visual { border-color: rgba(154,112,32,0.26); background: rgba(154,112,32,0.26); }
+
+    .macro-visual::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent 8%, rgba(201,168,76,0.55) 42%, rgba(201,168,76,0.55) 58%, transparent 92%);
+      z-index: 3;
+    }
+
+    .mv-panel {
+      position: relative;
+      overflow: hidden;
+      background: var(--bg2);
+      aspect-ratio: 3 / 4;
+    }
+
+    .mv-panel img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .mv-tag {
+      position: absolute;
+      top: 22px;
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      padding: 7px 14px;
+      border-radius: 999px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      z-index: 2;
+      white-space: nowrap;
+    }
+
+    .mv-tag-l { left: 22px; color: var(--t3); background: rgba(1,2,4,0.5); border: 1px solid rgba(255,255,255,0.14); }
+    .mv-tag-r { right: 22px; color: var(--gold-hi); background: rgba(1,2,4,0.5); border: 1px solid rgba(201,168,76,0.4); }
+
+    .mv-caption {
+      text-align: center;
+      margin-top: 20px;
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      color: var(--t5);
+    }
+
+    /* ══ JUDGMENT GAP ════════════════════════════════════════════ */
+    .gap-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1px solid var(--b0);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+    .gap-table th, .gap-table td {
+      padding: 14px 18px;
+      text-align: left;
+      border-bottom: 1px solid var(--b0);
+      font-size: 14px;
+    }
+    .gap-table th {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--t4);
+      font-weight: 500;
+      background: var(--card);
+    }
+    .gap-table td { color: var(--t3); }
+    .gap-table td.gap-fn { color: var(--t0); font-weight: 500; }
+    .gap-table tr:last-child td { border-bottom: none; }
+    .gap-table tr.gap-highlight td { color: var(--gold); font-weight: 500; }
+
+    .jg-callout {
+      margin-top: 48px;
+      padding: 32px 40px;
+      border: 1px solid rgba(201,168,76,0.3);
+      border-radius: var(--radius);
+      background: var(--gold-alpha);
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 22px;
+      font-style: italic;
+      color: var(--t1);
+      line-height: 1.55;
+      letter-spacing: -0.01em;
+    }
+
+    [data-theme="light"] .jg-callout { border-color: rgba(154,112,32,0.25); }
+
+    /* ══ SDR SECONDARY CTA — "talk it through first" ══════════════ */
+    .sdr-cta-wrap {
+      margin-top: 28px;
+      padding-top: 24px;
+      border-top: 1px solid var(--b0);
+      display: flex;
+      align-items: baseline;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .sdr-cta-text {
+      font-size: 14px;
+      color: var(--t4);
+      line-height: 1.6;
+    }
+    .sdr-cta-link {
+      font-family: 'DM Sans', system-ui, sans-serif;
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--gold);
+      border-bottom: 1px solid var(--gold-lo);
+      padding-bottom: 1px;
+      transition: var(--trans);
+      white-space: nowrap;
+    }
+    .sdr-cta-link:hover {
+      color: var(--gold-hi);
+      border-bottom-color: var(--gold-hi);
+    }
+    @media (max-width: 720px) {
+      .sdr-cta-wrap { flex-direction: column; align-items: flex-start; gap: 8px; }
+    }
+
+    /* ══ PRICING SUB-LABELS + SCARCITY ═══════════════════════════ */
+    .pc-tier-sub {
+      font-family: 'DM Sans', sans-serif;
+      font-size: 11.5px;
+      color: var(--t4);
+      letter-spacing: 0.01em;
+      text-transform: none;
+      font-weight: 400;
+      margin-top: 6px;
+      margin-bottom: 22px;
+      display: block;
+      line-height: 1.5;
+    }
+
+    .pc-scarcity {
+      font-family: 'DM Mono', monospace;
+      font-size: 9.5px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--t5);
+      margin-top: 18px;
+      text-align: center;
+      line-height: 1.7;
+      padding-top: 16px;
+      border-top: 1px solid var(--b0);
+    }
+
+    @media (max-width: 980px) {
+      .macro-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ══ EXAMINER STANDALONE ═════════════════════════════════════ */
+    .examiner-standalone {
+      margin-top: 72px;
+      padding: 72px 64px;
+      border: 1px solid rgba(201,168,76,0.3);
+      border-radius: 24px;
+      background: linear-gradient(150deg, var(--gold-alpha) 0%, var(--card) 65%);
+      position: relative;
+      overflow: hidden;
+    }
+
+    [data-theme="light"] .examiner-standalone {
+      border-color: rgba(154,112,32,0.28);
+      background: linear-gradient(150deg, rgba(154,112,32,0.07) 0%, var(--card) 65%);
+    }
+
+    .examiner-standalone::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent 8%, rgba(201,168,76,0.55) 42%, rgba(201,168,76,0.55) 58%, transparent 92%);
+    }
+
+    [data-theme="light"] .examiner-standalone::before {
+      background: linear-gradient(90deg, transparent 8%, rgba(154,112,32,0.4) 42%, rgba(154,112,32,0.4) 58%, transparent 92%);
+    }
+
+    .es-header {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 80px;
+      align-items: start;
+      margin-bottom: 52px;
+    }
+
+    .es-eyebrow {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 20px;
+      display: block;
+    }
+
+    .es-headline {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: clamp(30px, 3.2vw, 46px);
+      font-weight: 300;
+      color: var(--t0);
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      margin-bottom: 0;
+    }
+
+    .es-body {
+      font-size: 15px;
+      color: var(--t3);
+      line-height: 1.88;
+      padding-top: 8px;
+    }
+
+    .es-body p { margin-bottom: 18px; }
+    .es-body p:last-child { margin-bottom: 0; }
+
+    .es-output {
+      border: 1px solid var(--b1);
+      border-radius: var(--radius);
+      background: var(--inset);
+      overflow: hidden;
+    }
+
+    [data-theme="light"] .es-output { background: var(--bg2); }
+
+    .es-output-hd {
+      padding: 13px 26px;
+      border-bottom: 1px solid var(--b0);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .es-output-tag {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--gold);
+    }
+
+    .es-output-mode {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--t5);
+      background: var(--b0);
+      padding: 4px 12px;
+      border-radius: 20px;
+    }
+
+    .es-output-body { padding: 32px 26px 28px; }
+
+    .es-output-text {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 20px;
+      font-style: italic;
+      color: var(--t1);
+      line-height: 1.62;
+      margin-bottom: 16px;
+    }
+
+    .es-output-note {
+      font-size: 12px;
+      color: var(--t4);
+      line-height: 1.72;
+    }
+
+    .es-claim {
+      margin-top: 40px;
+      padding-top: 32px;
+      border-top: 1px solid var(--b0);
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 32px;
+    }
+
+    .es-claim-item {
+      font-size: 13px;
+      color: var(--t4);
+      line-height: 1.7;
+    }
+
+    .es-claim-item strong {
+      display: block;
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--gold);
+      font-weight: 400;
+      margin-bottom: 8px;
+    }
+
+    @media (max-width: 980px) {
+      .examiner-standalone { padding: 44px 28px; }
+      .es-header { grid-template-columns: 1fr; gap: 28px; }
+      .es-claim { grid-template-columns: 1fr; gap: 20px; }
+    }
+
+    /* ══ WHO IT'S FOR ════════════════════════════════════════════ */
+    .who-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 56px;
+    }
+
+    .who-card {
+      border: 1px solid var(--b0);
+      border-radius: var(--radius);
+      padding: 46px 42px;
+      background: var(--card);
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s;
+    }
+
+    .who-card.primary {
+      border-color: rgba(201,168,76,0.38);
+      background: linear-gradient(150deg, var(--gold-alpha) 0%, var(--card) 58%);
+    }
+
+    [data-theme="light"] .who-card.primary {
+      border-color: rgba(154,112,32,0.3);
+      background: linear-gradient(150deg, rgba(154,112,32,0.07) 0%, var(--card) 58%);
+    }
+
+    .who-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gold-alpha), transparent);
+    }
+
+    .who-type {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 18px;
+      display: block;
+    }
+
+    .who-title {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 30px;
+      font-weight: 300;
+      color: var(--t0);
+      line-height: 1.15;
+      letter-spacing: -0.01em;
+      margin-bottom: 14px;
+    }
+
+    .who-desc {
+      font-size: 14px;
+      color: var(--t3);
+      line-height: 1.85;
+      margin-bottom: 28px;
+    }
+
+    .who-examples {
+      list-style: none;
+      border-top: 1px solid var(--b0);
+      padding-top: 20px;
+    }
+
+    .who-examples li {
+      font-size: 13px;
+      color: var(--t4);
+      padding: 9px 0;
+      border-bottom: 1px solid var(--b0);
+      display: flex;
+      gap: 10px;
+      line-height: 1.58;
+    }
+
+    .who-examples li:last-child { border-bottom: none; }
+
+    .who-examples li::before {
+      content: '—';
+      color: var(--gold);
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    @media (max-width: 980px) {
+      .who-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ══ BEFORE / AFTER THE RECORD ═════════════════════════════════ */
+    .wq-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 56px;
+    }
+
+    .wq-card {
+      border: 1px solid var(--b0);
+      border-radius: var(--radius);
+      padding: 38px 36px;
+      background: var(--card);
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s;
+    }
+
+    .wq-card:hover { border-color: var(--b2); }
+
+    .wq-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gold-alpha), transparent);
+    }
+
+    .wq-role {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--t4);
+      margin-bottom: 26px;
+    }
+
+    .wq-row { padding-left: 18px; border-left: 2px solid var(--b1); }
+    .wq-row + .wq-row { margin-top: 26px; }
+    .wq-row.wq-after { border-left-color: var(--gold); }
+
+    .wq-tag {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--t5);
+      display: block;
+      margin-bottom: 10px;
+    }
+
+    .wq-row.wq-after .wq-tag { color: var(--gold); }
+
+    .wq-row p {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 18px;
+      font-style: italic;
+      color: var(--t3);
+      line-height: 1.55;
+    }
+
+    .wq-row.wq-after p { color: var(--t1); }
+    [data-theme="light"] .wq-row.wq-after p { color: var(--t0); }
+
+    .wq-note {
+      margin-top: 28px;
+      font-size: 11px;
+      color: var(--t5);
+      font-family: 'DM Mono', monospace;
+      letter-spacing: 0.02em;
+    }
+
+    @media (max-width: 980px) {
+      .wq-grid { grid-template-columns: 1fr; }
+      .wq-card { padding: 32px 26px; }
+    }
+
+    /* ══ MOBILE NAV BUTTON — compact version shown on mobile ════ */
+    .btn-request-mobile {
+      display: none;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 8px 14px;
+      border: 1.5px solid var(--gold);
+      background: transparent;
+      color: var(--gold);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+      transition: background 0.2s, color 0.2s;
+    }
+    .btn-request-mobile:hover { background: var(--gold); color: var(--bg); }
+    @media (max-width: 980px) { .btn-request-mobile { display: inline-flex; } }
+
+    /* ══ SOCIAL PROOF ════════════════════════════════════════════ */
+    .social-proof-card {
+      border: 1px solid var(--b1);
+      border-radius: 24px;
+      padding: 56px 64px;
+      background: var(--card);
+      position: relative;
+      overflow: hidden;
+      margin-top: 0;
+    }
+
+    [data-theme="light"] .social-proof-card { background: var(--bg2); }
+
+    .social-proof-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent 5%, var(--gold-alpha) 40%, var(--gold-alpha) 60%, transparent 95%);
+    }
+
+    .sp-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 40px;
+      margin-bottom: 40px;
+    }
+
+    @media (max-width: 680px) { .sp-top { flex-direction: column; gap: 20px; } }
+
+    .sp-tag {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 20px;
+      display: block;
+    }
+
+    .sp-body {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 22px;
+      font-style: italic;
+      color: var(--t1);
+      line-height: 1.65;
+      max-width: 600px;
+    }
+
+    [data-theme="light"] .sp-body { color: var(--t0); }
+
+    .sp-source {
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .sp-source-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--t2);
+      margin-bottom: 4px;
+    }
+
+    .sp-source-meta {
+      font-family: 'DM Mono', monospace;
+      font-size: 9.5px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--t5);
+      line-height: 1.7;
+    }
+
+    .sp-metrics {
+      display: flex;
+      gap: 0;
+      border-top: 1px solid var(--b0);
+      padding-top: 32px;
+      margin-top: 8px;
+    }
+
+    .sp-metric {
+      flex: 1;
+      padding: 0 32px 0 0;
+      border-right: 1px solid var(--b0);
+      margin-right: 32px;
+    }
+
+    .sp-metric:last-child {
+      border-right: none;
+      margin-right: 0;
+      padding-right: 0;
+    }
+
+    /* Placed after the base rule above on purpose — the shared "RESPONSIVE
+       additions" media query earlier in this file also touched .sp-metric,
+       but since @media doesn't add specificity, this later unconditional
+       base rule was silently winning on every screen size, leaving a
+       stray vertical divider stacked full-height on mobile even though
+       .sp-metrics correctly switched to a column layout. Redeclaring the
+       override here, after the base rule, fixes the cascade. */
+    @media (max-width: 480px) {
+      .sp-metric {
+        border-right: none;
+        border-bottom: 1px solid var(--b0);
+        margin-right: 0;
+        padding-right: 0;
+        padding-bottom: 14px;
+      }
+      .sp-metric:last-child { border-bottom: none; padding-bottom: 0; }
+    }
+
+    .sp-metric-val {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 38px;
+      font-weight: 300;
+      color: var(--gold);
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+
+    .sp-metric-label {
+      font-size: 12px;
+      color: var(--t4);
+      line-height: 1.65;
+    }
+
+    .sp-outcome {
+      margin-top: 28px;
+      padding: 20px 24px;
+      border: 1px solid var(--b0);
+      border-radius: var(--radius);
+      background: var(--inset);
+      font-size: 13.5px;
+      color: var(--t3);
+      line-height: 1.8;
+    }
+
+    [data-theme="light"] .sp-outcome { background: var(--bg); border-color: var(--b1); }
+
+    .sp-outcome strong { color: var(--t1); font-weight: 500; }
+
+    /* ══ COOKIE CONSENT BANNER ══════════════════════════════════ */
+    .cookie-banner {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      z-index: 9000;
+      background: var(--bg2);
+      border-top: 1px solid var(--b1);
+      padding: 18px 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      transform: translateY(100%);
+      transition: transform 0.4s cubic-bezier(0.22,1,0.36,1);
+      box-shadow: 0 -8px 48px rgba(0,0,0,0.45);
+    }
+    .cookie-banner.visible { transform: translateY(0); }
+    [data-theme="light"] .cookie-banner {
+      background: var(--card);
+      box-shadow: 0 -8px 48px rgba(0,0,0,0.12);
+    }
+    .cookie-banner-text { flex: 1; min-width: 0; }
+    .cookie-banner-title {
+      font-size: 13px; font-weight: 500; color: var(--t0);
+      margin-bottom: 5px; letter-spacing: 0.01em;
+    }
+    .cookie-banner-body {
+      font-size: 12px; color: var(--t4);
+      line-height: 1.65; max-width: 560px;
+    }
+    .cookie-banner-body a { color: var(--gold); text-decoration: none; }
+    .cookie-banner-body a:hover { color: var(--gold-hi); }
+    .cookie-banner-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+    .cbtn {
+      font-size: 12px; font-weight: 500;
+      padding: 10px 18px; border-radius: var(--radius-sm);
+      cursor: pointer; letter-spacing: 0.03em;
+      border: 1.5px solid; transition: all 0.2s; white-space: nowrap;
+    }
+    .cbtn-accept { background: var(--gold); color: #06090e; border-color: var(--gold); }
+    .cbtn-accept:hover { background: var(--gold-hi); border-color: var(--gold-hi); }
+    .cbtn-reject { background: transparent; color: var(--t3); border-color: var(--b1); }
+    .cbtn-reject:hover { border-color: var(--t4); color: var(--t0); }
+    .cbtn-manage {
+      background: transparent; color: var(--t5);
+      border-color: transparent; padding-left: 10px; padding-right: 10px;
+    }
+    .cbtn-manage:hover { color: var(--t3); }
+
+    /* ══ COOKIE PREFERENCES MODAL ════════════════════════════════ */
+    .cprefs-overlay {
+      position: fixed; inset: 0; z-index: 9100;
+      background: rgba(1,2,8,0.72);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.28s ease;
+    }
+    .cprefs-overlay.open { opacity: 1; pointer-events: all; }
+    [data-theme="light"] .cprefs-overlay { background: rgba(30,40,60,0.5); }
+    .cprefs-box {
+      background: var(--bg2); border: 1px solid var(--b1);
+      border-radius: 20px; width: 100%; max-width: 480px;
+      padding: 38px 38px 32px;
+      transform: translateY(20px) scale(0.98);
+      transition: transform 0.34s cubic-bezier(0.22,1,0.36,1);
+    }
+    .cprefs-overlay.open .cprefs-box { transform: none; }
+    [data-theme="light"] .cprefs-box { background: var(--card); }
+    .cprefs-head {
+      display: flex; align-items: center;
+      justify-content: space-between; margin-bottom: 26px;
+    }
+    .cprefs-title {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 24px; font-weight: 400; color: var(--t0);
+    }
+    .cprefs-x {
+      background: none; border: none; color: var(--t5);
+      font-size: 16px; cursor: pointer; padding: 4px;
+      line-height: 1; transition: color 0.2s;
+    }
+    .cprefs-x:hover { color: var(--t2); }
+    .ccat { padding: 16px 0; border-bottom: 1px solid var(--b0); }
+    .ccat:last-of-type { border-bottom: none; padding-bottom: 0; }
+    .ccat-head {
+      display: flex; align-items: center;
+      justify-content: space-between; margin-bottom: 7px;
+    }
+    .ccat-name { font-size: 13px; font-weight: 500; color: var(--t1); }
+    .ccat-desc { font-size: 12px; color: var(--t4); line-height: 1.7; }
+    .ccat-badge {
+      font-family: 'DM Mono', monospace; font-size: 9px;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--t5); padding: 3px 8px;
+      border: 1px solid var(--b0); border-radius: 4px;
+    }
+    /* Toggle switch */
+    .ctoggle { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+    .ctoggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .ctoggle-sl {
+      position: absolute; inset: 0;
+      background: var(--b1); border-radius: 22px;
+      cursor: pointer; transition: background 0.22s;
+    }
+    .ctoggle-sl::before {
+      content: ''; position: absolute;
+      width: 16px; height: 16px; left: 3px; top: 3px;
+      background: var(--t4); border-radius: 50%;
+      transition: transform 0.22s, background 0.22s;
+    }
+    .ctoggle input:checked + .ctoggle-sl { background: var(--gold); }
+    .ctoggle input:checked + .ctoggle-sl::before { transform: translateX(18px); background: #06090e; }
+    .cprefs-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
+
+    /* ══ FOOTER LINKS ════════════════════════════════════════════ */
+    footer {
+      padding: 58px 56px;
+      border-top: 1px solid var(--b0);
+      display: flex; align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap; gap: 20px;
+    }
+    .footer-logo {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-size: 18px; font-weight: 500;
+      letter-spacing: 0.22em; text-transform: uppercase;
+      color: var(--t4);
+    }
+    .footer-links { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+    .footer-link {
+      font-size: 11.5px; color: var(--t4);
+      text-decoration: none; letter-spacing: 0.03em;
+      transition: color 0.2s; white-space: nowrap;
+    }
+    .footer-link:hover { color: var(--t1); }
+    .footer-copy { font-size: 12px; color: var(--t4); letter-spacing: 0.04em; white-space: nowrap; }
+
+    /* ══ CONSENT CHECKBOX (Step 3 modal) ═════════════════════════ */
+    .consent-wrap { margin: 18px 0 8px; }
+    .consent-lbl { display: flex; gap: 11px; align-items: flex-start; cursor: pointer; }
+    .consent-lbl input[type="checkbox"] {
+      width: 15px; height: 15px; margin-top: 3px;
+      flex-shrink: 0; accent-color: var(--gold); cursor: pointer;
+    }
+    .consent-txt { font-size: 12px; color: var(--t4); line-height: 1.72; }
+    .consent-txt a { color: var(--gold); text-decoration: none; }
+    .consent-txt a:hover { color: var(--gold-hi); }
+
+    /* ══ RESPONSIVE ══════════════════════════════════════════════ */
+    @media (max-width: 980px) {
+      footer { padding: 40px 20px; flex-direction: column; align-items: flex-start; gap: 16px; }
+      .footer-links { gap: 14px; }
+      .cookie-banner { padding: 18px 20px; flex-direction: column; align-items: flex-start; gap: 14px; }
+      .cookie-banner-actions { width: 100%; }
+    }
+    @media (max-width: 480px) {
+      footer { padding: 32px 16px; }
+      .footer-links { gap: 10px; }
+      .footer-link { font-size: 11px; }
+      .cookie-banner { padding: 16px 16px; }
+      .cookie-banner-actions { flex-wrap: wrap; gap: 8px; }
+      .cprefs-box { padding: 28px 20px 24px; }
+    }
+
+    /* ══ RESPONSIVE (relocated to end of stylesheet on purpose — these
+       media-query overrides were previously defined earlier in the
+       file, before several components' own unconditional base rules.
+       Since @media doesn't add specificity, a later unconditional rule
+       for the same property silently wins over an earlier media-query
+       rule regardless of viewport width — several mobile overrides
+       (padding, font-size, gap, border-radius on .macro-card, .who-card,
+       .examiner-standalone, .es-header, .es-claim, .jg-callout, etc.)
+       were being silently discarded on real phones. Moving this whole
+       block to the end of the stylesheet guarantees it always wins. ══ */
+    /* ══ RESPONSIVE additions ════════════════════════════════════ */
+    @media (max-width: 980px) {
+      .engine-grid { grid-template-columns: 1fr; }
+      .not-chatbot { grid-template-columns: 1fr; }
+      .nc-col + .nc-col { border-left: none; border-top: 1px solid var(--b0); }
+      .rm-body { grid-template-columns: 1fr; gap: 20px; }
+      .dec-ex-grid { grid-template-columns: 1fr; }
+      .dec-col + .dec-col { border-left: none; border-top: 1px solid var(--b0); }
+      .feature-tiles { grid-template-columns: 1fr; }
+    }
+
+    /* ══ RESPONSIVE — TABLET + MOBILE ═══════════════════════════ */
+    @media (max-width: 980px) {
+      nav           { padding: 0 20px; height: 58px; }
+      .wrap         { padding: 0 20px; }
+      .rule         { margin: 0 20px; }
+      #hero         { padding: 110px 20px 80px; }
+      .nav-links    { display: none; }
+
+      /* hide button text on tablet, show icon-only CTA */
+      .btn-request  { display: none; }
+
+      .two, .mc-inner, .moments-intro { grid-template-columns: 1fr; gap: 32px; }
+      .advisor-grid { grid-template-columns: repeat(2, 1fr); }
+      .steps        { grid-template-columns: 1fr 1fr; grid-template-columns: 1fr !important; border-radius: 16px; }
+      .step         { border-right: none !important; border-bottom: 1px solid var(--b0); }
+      .step:last-child { border-bottom: none; }
+      .pg           { grid-template-columns: 1fr; }
+      footer        { text-align: center; }
+      .demo-body    { grid-template-columns: 1fr; }
+      .demo-col + .demo-col { border-left: none; border-top: 1px solid var(--b0); }
+      .modal-box    { padding: 32px 20px 28px; margin: 16px; width: calc(100% - 32px); max-width: none; border-radius: 18px; }
+      .interest-grid { grid-template-columns: 1fr; }
+      .field-row    { grid-template-columns: 1fr; }
+
+      /* macro + new sections */
+      .macro-grid   { grid-template-columns: 1fr; }
+      .macro-visual { grid-template-columns: 1fr; margin-top: 40px; }
+      .mv-panel     { aspect-ratio: 16 / 10; }
+      .who-grid     { grid-template-columns: 1fr; }
+      .es-header    { grid-template-columns: 1fr; gap: 24px; }
+      .es-claim     { grid-template-columns: 1fr; gap: 18px; }
+      .examiner-standalone { padding: 40px 24px; }
+      .council-top  { flex-direction: column; align-items: flex-start; gap: 16px; }
+      .council-top > div:last-child { text-align: left; max-width: 100%; }
+
+      /* calib chart */
+      .cc-row       { flex-wrap: wrap; gap: 8px; padding: 14px 16px; }
+      .cc-dim       { width: 100%; font-size: 11px; }
+      .cc-bars      { width: 100%; flex: none; }
+      .cc-delta     { margin-left: auto; }
+
+      /* section rhythm */
+      .s            { padding: 80px 0; }
+      .sh           { margin-bottom: 44px; }
+      .jg-callout   { padding: 24px 22px; font-size: 18px; }
+    }
+
+    /* ══ MOBILE ONLY (≤ 480px) ═══════════════════════════════════ */
+    @media (max-width: 480px) {
+      nav           { padding: 0 16px; }
+      .wrap         { padding: 0 16px; }
+      .rule         { margin: 0 16px; }
+      #hero         { padding: 100px 16px 72px; }
+
+      .hero-hl      { font-size: clamp(44px, 11vw, 68px) !important; }
+      .hero-sub     { font-size: 15px; margin-top: 28px; }
+
+      .advisor-grid { grid-template-columns: 1fr; }
+      .pg           { grid-template-columns: 1fr; }
+
+      .examiner-standalone { padding: 32px 18px; border-radius: 16px; }
+      .es-headline  { font-size: 26px !important; }
+      .es-output-text { font-size: 17px; }
+      .es-output-body { padding: 22px 18px 18px; }
+
+      .who-card     { padding: 32px 22px; }
+      .macro-card   { padding: 32px 22px; }
+      .mv-panel     { aspect-ratio: 4 / 3; }
+      .mv-tag       { font-size: 9px; padding: 6px 11px; top: 14px; }
+      .mv-tag-l     { left: 14px; }
+      .mv-tag-r     { right: 14px; }
+
+      /* Steps: fully vertical, readable */
+      .steps        { border-radius: 14px; }
+      .step         { padding: 28px 20px !important; }
+
+      .pc           { padding: 32px 22px; }
+      .pg           { gap: 16px; }
+
+      .s            { padding: 64px 0; }
+
+      .social-proof-card { padding: 32px 22px; }
+      .sp-body      { font-size: 15px; }
+      .sp-metrics   { flex-direction: column; gap: 14px; }
+
+      .modal-box    { padding: 28px 16px 24px; }
+      .interest-grid { gap: 10px; }
+    }
+
+  </style>
+</head>
+<body>
+
+<!-- ══ NAV ═════════════════════════════════════════════ -->
+<nav id="nav">
+  <a href="#" class="logo">Quoru<span>m</span></a>
+
+  <ul class="nav-links">
+    <li><a href="#how">How it works</a></li>
+    <li><a href="#proof">Proof</a></li>
+    <li><a href="#moments">Mirror</a></li>
+    <li><a href="#record">The Record</a></li>
+    <li><a href="#pricing">Access</a></li>
+    <li><a href="#faq">FAQ</a></li>
+  </ul>
+
+  <div class="nav-right">
+    <button class="btn-request-mobile" id="openModalMobile" onclick="document.getElementById('sessionModal').classList.add('open')">Get access →</button>
+    <button class="toggle" id="themeBtn" aria-label="Toggle light/dark mode">
+      <div class="toggle-thumb"></div>
+      <span class="toggle-label l">☀</span>
+      <span class="toggle-label r">☾</span>
+    </button>
+    <button class="btn-request" id="openModal">Get access</button>
+  </div>
+</nav>
+
+<!-- ══ HERO ═══════════════════════════════════════════════════════ -->
+<section id="hero">
+  <div class="hero-aura"></div>
+  <div class="hero-body">
+    <div class="hero-left">
+      <span class="eyebrow h-up hero-eye">For the decision you can't quite see straight</span>
+      <h1 class="display hero-hl h-up">
+        Before you make an important decision,<br />see what you're <em>actually deciding.</em>
+      </h1>
+
+      <!-- Intro video — placeholder. Upload the final MP4 on Railway at
+           /videos/quorum-intro.mp4 (and, optionally, captions at
+           /videos/quorum-intro.vtt) in the same directory as server.js.
+           Until a file exists at that path, the wrapper stays display:none
+           and the hero looks exactly as it does today — no broken player,
+           no layout shift. Controls are on by default (video is muted for
+           autoplay, not silent by design) so anyone can unmute or scrub. -->
+      <div class="hero-video-wrap" id="heroVideoWrap">
+        <video
+          id="heroVideo"
+          autoplay
+          muted
+          loop
+          playsinline
+          controls
+          preload="metadata"
+          poster="/videos/quorum-intro-poster.jpg"
+        >
+          <source src="/videos/quorum-intro.mp4" type="video/mp4" />
+          <track kind="captions" src="/videos/quorum-intro.vtt" srclang="en" label="English" default />
+        </video>
+      </div>
+
+      <!-- CTA shown directly under the hero video once it's loaded (see
+           hero-video-cta sync script near the other video scripts below).
+           Hidden by default — if the video never loads, this stays hidden
+           and the original hero-right CTA (unchanged) is what's visible,
+           exactly as before this change. -->
+      <div class="hero-video-cta" id="heroVideoCta">
+        <a href="https://app.quorumvault.org?utm_source=website&utm_medium=cta&utm_campaign=sprint1_reposition&utm_content=hero_video" target="_blank" class="btn-open-quorum">
+          Bring one real decision
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left:8px"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+        </a>
+        <p class="hero-open-note">Free · Bring one real decision</p>
+      </div>
+
+      <p class="hero-sub h-up">
+        Quorum reads your decision before it answers it — what's really at stake, what you're missing, what's still unresolved. Bring one, and see what it finds.
+      </p>
+    </div>
+    <div class="hero-right h-up" id="heroRightCta">
+      <a href="https://app.quorumvault.org?utm_source=website&utm_medium=cta&utm_campaign=sprint1_reposition&utm_content=hero_fallback" target="_blank" class="btn-open-quorum">
+        Bring one real decision
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left:8px"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+      </a>
+      <p class="hero-open-note">Free · Bring one real decision</p>
+    </div>
+  </div>
+</section>
+
+<hr class="rule" />
+
+<!-- ══ THE PROBLEM ════════════════════════════════════════ -->
+<div class="wrap">
+  <div class="s">
+    <div class="two">
+      <div class="r">
+        <span class="eyebrow" style="margin-bottom:20px">The problem</span>
+        <h2 class="display" style="font-size: clamp(38px,3.8vw,56px);">Hard decisions aren't hard because you lack information. They're hard because too much matters at once — and you're too close to see it clearly.</h2>
+      </div>
+      <div class="r d1">
+        <div class="prose">
+          <p>High-stakes decisions now arrive surrounded by AI-generated analysis, advisor opinions, and other people's conviction. You have more inputs than ever — and less clarity about which of them actually matter.</p>
+          <p class="hi">Quorum reads the decision before it answers it — and tells you what you're actually deciding.</p>
+        </div>
+        <div class="stats">
+          <div class="stat">
+            <div class="stat-n" style="font-size:28px;font-family:'DM Mono',monospace;letter-spacing:0.04em;">Silent</div>
+            <div class="stat-l">Your decision is read before any advisor responds. Inferred from what you wrote — you're not asked to name it.</div>
+          </div>
+          <div class="stat">
+            <div class="stat-n" style="font-size:28px;font-family:'DM Mono',monospace;letter-spacing:0.04em;">Held</div>
+            <div class="stat-l">Some decisions don't proceed yet. You hear that before advice runs — and why.</div>
+          </div>
+          <div class="stat">
+            <div class="stat-n">∞</div>
+            <div class="stat-l">Quorum gets more accurate about you with every session</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- ══ SOCIAL PROOF ════════════════════════════════════════════════ -->
+<div class="wrap" id="proof">
+  <div class="s" style="padding-top: 100px; padding-bottom: 100px;">
+    <div class="r" style="max-width: 560px; margin-bottom: 56px;">
+      <span class="eyebrow" style="margin-bottom: 18px; display: block;">From the decision record</span>
+      <h2 class="display" style="font-size: clamp(34px,3.4vw,50px); line-height: 1.08;">What Quorum actually surfaces — and what happens next.</h2>
+    </div>
+
+    <div class="social-proof-card r d1">
+      <div class="sp-top">
+        <div>
+          <span class="sp-tag">Decision record · Consulting · Delhi NCR</span>
+          <p class="sp-body">"We were ready to raise salaries across the board to retain talent for a scaling phase. Quorum held the decision. The Examiner flagged that we hadn't resolved whether the demand curve we were scaling for was seasonal or structural. Six weeks later, we had our answer — and a variable compensation model that aligned with firm performance instead of a fixed cost we couldn't reverse."</p>
+        </div>
+        <div class="sp-source">
+          <div class="sp-source-name">Founder</div>
+          <div class="sp-source-meta">Consulting firm<br />Delhi NCR<br />Anonymised</div>
+        </div>
+      </div>
+
+      <div class="sp-metrics">
+        <div class="sp-metric">
+          <div class="sp-metric-val">6 wks</div>
+          <div class="sp-metric-label">Decision deferred — prior structural question flagged unresolved by Examiner</div>
+        </div>
+        <div class="sp-metric">
+          <div class="sp-metric-val">6 → 8</div>
+          <div class="sp-metric-label">Confidence score: initial vs. post-resolution — after the real question was answered</div>
+        </div>
+        <div class="sp-metric">
+          <div class="sp-metric-val">FOMO</div>
+          <div class="sp-metric-label">Bias flagged by Mirror during this decision</div>
+        </div>
+      </div>
+
+      <div class="sp-outcome">
+        <strong>What the Examiner found:</strong> The demand forecast — the number that would decide whether fixed raises were safe or an irreversible cost — was unresolved. The decision held. Six weeks later, with that resolved, the outcome was variable compensation tied to performance. The fixed raise was never made.
+      </div>
+    </div>
+
+    <div class="social-proof-card r d2" style="margin-top:28px;">
+      <div class="sp-top">
+        <div>
+          <span class="sp-tag">Decision record · Career transition</span>
+          <p class="sp-body">"I've already worked 25 years in conventional roles — now I feel I need to explore what I've been deferring all along."</p>
+        </div>
+        <div class="sp-source">
+          <div class="sp-source-name">Senior professional</div>
+          <div class="sp-source-meta">25 yrs corporate career<br />Exploring coaching &amp; wellness work<br />Anonymised</div>
+        </div>
+      </div>
+
+      <div class="sp-metrics">
+        <div class="sp-metric">
+          <div class="sp-metric-val">40–75%</div>
+          <div class="sp-metric-label">Income-replacement range advisors named as the threshold for an exit to be structurally sound</div>
+        </div>
+        <div class="sp-metric">
+          <div class="sp-metric-val">60 / 90d</div>
+          <div class="sp-metric-label">Two time-boxed tests set before revisiting the decision — client re-engagement, then a scaling experiment</div>
+        </div>
+        <div class="sp-metric">
+          <div class="sp-metric-val">9–12 mo</div>
+          <div class="sp-metric-label">Estimated runway before an unvalidated exit forces a return to lower-paid work</div>
+        </div>
+      </div>
+
+      <div class="sp-outcome">
+        <strong>What the Council found:</strong> Leaving wasn't in question — she was certain. Whether her coaching, yoga, and sound-healing work could replace a salary was. The call: wait, but not passively — name a revenue threshold, run two time-boxed tests. "Should I quit?" became a short list of things that needed to be true first.
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- ══ RESEARCH VIDEO — "why it's built this way" ═════════════════ -->
+<!-- Video 2 (research explainer), per video strategy doc: placed right
+     after "The Engine" section, on existing homepage traffic rather
+     than gated behind the Science page. Upload the final MP4 on
+     Railway at /videos/quorum-research.mp4 (same directory as
+     server.js), plus optionally /videos/quorum-research-poster.jpg
+     and /videos/quorum-research.vtt. Until the file exists at that
+     path, this whole block stays display:none — page defaults to
+     today's layout with nothing missing or broken. -->
+<div class="wrap" id="research-video">
+  <div class="s" style="padding-top: 100px; padding-bottom: 100px;">
+    <div class="r" style="max-width: 560px; margin-bottom: 40px;">
+      <span class="eyebrow" style="margin-bottom: 18px; display: block;">Why it's built this way</span>
+      <h2 class="display" style="font-size: clamp(34px,3.4vw,50px); line-height: 1.08;">Why it's built this way.</h2>
+    </div>
+
+    <div class="research-video-wrap" id="researchVideoWrap">
+      <!-- No <source> here on purpose — see initLazyVideo() below. It gets
+           injected only once this section scrolls near the viewport, so
+           nothing downloads on page load, and preload="none" means even
+           then it's just headers, not the file itself, until someone
+           presses play. Meaningful on 3G/4G where the eager hero video
+           already uses up the connection's budget. -->
+      <video
+        id="researchVideo"
+        controls
+        playsinline
+        preload="none"
+        poster="/videos/quorum-research-poster.jpg"
+      >
+        <track kind="captions" src="/videos/quorum-research.vtt" srclang="en" label="English" default />
+      </video>
+    </div>
+
+    <!-- New CTA — shown only once the research video above has loaded
+         (see .research-video-cta CSS). No video, no CTA; nothing changes
+         from today's layout if the file isn't uploaded yet. -->
+    <div class="research-video-cta">
+      <a href="https://app.quorumvault.org?utm_source=website&utm_medium=cta&utm_campaign=sprint1_reposition&utm_content=research_video" target="_blank" class="btn-open-quorum">
+        Open Quorum
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left:8px"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+      </a>
+      <p class="hero-open-note">Free · Bring one real decision</p>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- ══ THE MIRROR ═════════════════════════════════════════════════ -->
+<div class="wrap" id="moments">
+  <div class="s">
+    <div class="moments-intro r">
+      <div>
+        <span class="eyebrow" style="margin-bottom:18px">Mirror · The record that builds</span>
+        <h2 class="display" style="font-size: clamp(40px,4.5vw,62px);">The first decision helps today. Over time, Quorum starts to know how you decide.</h2>
+      </div>
+      <p style="font-size:16px; color:var(--t3); line-height:1.9; padding-top:8px;">Not reports. Not summaries. Specific observations about how you decide — the kind of feedback no one around you is positioned to give.</p>
+    </div>
+
+    <!-- 01 Contradiction -->
+    <div class="mc r">
+      <div class="mc-inner">
+        <div>
+          <p class="mc-num">01 — Contradiction Detector</p>
+          <h3 class="mc-title">"You said you'd<br />never do X.<br />Then you did."</h3>
+          <p class="mc-body">Quorum tracks the principles behind your decisions — and flags it when a later one breaks them.</p>
+        </div>
+        <div class="demo">
+          <div class="demo-hd">
+            <span class="demo-tag tn">Tension · Urgency</span>
+            <span class="demo-tag ct">2 sessions apart</span>
+          </div>
+          <div class="demo-body">
+            <div class="demo-col">
+              <div class="demo-lbl">What you said</div>
+              <div class="demo-txt">"I prioritise my child being cared for by a parent over career considerations."</div>
+            </div>
+            <div class="demo-col">
+              <div class="demo-lbl">What you did</div>
+              <div class="demo-txt">"I want to retire at 45 with full FIRE — it's an urgency."</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 02 Fingerprint -->
+    <div class="mc r">
+      <div class="mc-inner">
+        <div>
+          <p class="mc-num">02 — Bias Fingerprint</p>
+          <h3 class="mc-title">The specific moments<br />where your patterns<br />take over.</h3>
+          <p class="mc-body">Not a generic label — the exact moments in your own record where a pattern shows up, precise enough to catch next time.</p>
+        </div>
+        <div>
+          <div class="fp">
+            <div class="fp-top">
+              <span class="fp-lbl">FOMO / Social proof</span>
+              <span class="fp-ct">3 decisions · 4 months</span>
+            </div>
+            <div class="fp-txt">"In the three sessions where it fired, a trusted contact had already endorsed the deal before a view of your own had formed."</div>
+          </div>
+          <div class="fp dim">
+            <div class="fp-top">
+              <span class="fp-lbl">Anchoring</span>
+              <span class="fp-ct">2 decisions · forming</span>
+            </div>
+            <div class="fp-txt">"Surfaces in negotiation-framing decisions — where the initial number in play shapes the range of your response."</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 03 Independence -->
+    <div class="mc r">
+      <div class="mc-inner">
+        <div>
+          <p class="mc-num">03 — Decision Independence Score</p>
+          <h3 class="mc-title">How much of a decision<br />came from you —<br />not the room.</h3>
+          <p class="mc-body">A rising score means your own judgment is taking hold. A flat one is a signal too — you see both.</p>
+        </div>
+        <div>
+          <div class="ind-row">
+            <span class="ind-lbl">Session 1</span>
+            <div class="ind-track"><div class="ind-fill" style="width:42%"></div></div>
+            <span class="ind-val">42</span>
+          </div>
+          <div class="ind-row">
+            <span class="ind-lbl">Session 4</span>
+            <div class="ind-track"><div class="ind-fill" style="width:58%"></div></div>
+            <span class="ind-val">58</span>
+          </div>
+          <div class="ind-row">
+            <span class="ind-lbl">Session 8</span>
+            <div class="ind-track"><div class="ind-fill" style="width:74%"></div></div>
+            <span class="ind-val">74</span>
+          </div>
+          <div class="ind-row">
+            <span class="ind-lbl">Session 12</span>
+            <div class="ind-track"><div class="ind-fill" style="width:89%"></div></div>
+            <span class="ind-val">89</span>
+          </div>
+          <p class="ind-note"><strong>↗ +47 points</strong> across 12 sessions. Quorum's frameworks are showing up in your framing before the Council even runs.</p>
+        </div>
+      </div>
+    </div>
+    <!-- 04 Calibration — live state (Sprint 15a) -->
+    <div class="mc r">
+      <div class="mc-inner">
+        <div>
+          <p class="mc-num">04 — Confidence Calibration</p>
+          <h3 class="mc-title">How well your confidence<br />has matched<br />what actually<br />happened.</h3>
+          <p class="mc-body">Every session starts with one question: how confident are you? Months later, Quorum asks again — knowing what happened. Over time, it shows you where that confidence holds.</p>
+          <div class="calib-activates">
+            <span class="ca-dot"></span>
+            Builds as your decision record grows
+          </div>
+        </div>
+        <div>
+          <div class="calib-chart">
+            <div class="cc-hd">
+              <span class="demo-tag" style="color:var(--gold); font-family:'DM Mono',monospace; font-size:9px; letter-spacing:0.12em; text-transform:uppercase;">Calibration profile</span>
+              <span class="demo-tag ct" style="font-family:'DM Mono',monospace; font-size:9px; color:var(--t5); letter-spacing:0.1em; text-transform:uppercase;">— decisions · — outcomes</span>
+            </div>
+            <div class="cc-row">
+              <div class="cc-dim">Identity-heavy decisions</div>
+              <div class="cc-bars">
+                <div class="cc-bar-row">
+                  <span class="cc-bar-lbl">Before</span>
+                  <div class="cc-bar-track"><div class="cc-bar-fill fill-pre" style="width:82%"></div></div>
+                </div>
+                <div class="cc-bar-row">
+                  <span class="cc-bar-lbl">After</span>
+                  <div class="cc-bar-track"><div class="cc-bar-fill fill-post" style="width:56%"></div></div>
+                </div>
+              </div>
+              <span class="cc-delta delta-neg">−3.2</span>
+            </div>
+            <div class="cc-row">
+              <div class="cc-dim">Financial decisions</div>
+              <div class="cc-bars">
+                <div class="cc-bar-row">
+                  <span class="cc-bar-lbl">Before</span>
+                  <div class="cc-bar-track"><div class="cc-bar-fill fill-pre" style="width:71%"></div></div>
+                </div>
+                <div class="cc-bar-row">
+                  <span class="cc-bar-lbl">After</span>
+                  <div class="cc-bar-track"><div class="cc-bar-fill fill-post" style="width:68%"></div></div>
+                </div>
+              </div>
+              <span class="cc-delta delta-zero">−0.4</span>
+            </div>
+            <div class="cc-row">
+              <div class="cc-dim">Decisions under pressure</div>
+              <div class="cc-bars">
+                <div class="cc-bar-row">
+                  <span class="cc-bar-lbl">Before</span>
+                  <div class="cc-bar-track"><div class="cc-bar-fill fill-pre" style="width:88%"></div></div>
+                </div>
+                <div class="cc-bar-row">
+                  <span class="cc-bar-lbl">After</span>
+                  <div class="cc-bar-track"><div class="cc-bar-fill fill-post" style="width:52%"></div></div>
+                </div>
+              </div>
+              <span class="cc-delta delta-neg">−3.8</span>
+            </div>
+            <div class="cc-insight">
+              <strong style="color:var(--gold); font-weight:400;">Finding:</strong> Your confidence is well-calibrated on financial decisions. When identity or pressure is involved, you consistently overestimate certainty by 3–4 points.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- ══ THE RECORD — homepage discovery point for both the connected
+     founder journey and the standalone Decision Library. Library
+     cards open PDFs in the same inline modal used on /journey; the
+     Journey card links out to the full page. ═════════════════════ -->
+<div class="wrap" id="record">
+  <div class="s">
+    <div class="sh r">
+      <span class="eyebrow">Proof, not a pitch</span>
+      <h2 class="display" style="font-size: clamp(28px,3.2vw,40px);">See a real record.</h2>
+    </div>
+    <p class="r d1" style="font-size:16px; color:var(--t2); line-height:1.9; max-width:640px; margin-bottom:8px;">Follow one founder's connected record, or browse real decisions across founders, executives, investors, boards, and institutions.</p>
+
+    <div class="rec-layout r d2">
+      <div class="rec-journey">
+        <span class="rec-tag">The Journey</span>
+        <h3 class="rec-journey-title">Four decisions. One person. A pattern that started noticing itself.</h3>
+        <p class="rec-journey-desc">The same founder's record, in order — unedited, and structurally linked in ways nobody set out to design.</p>
+        <a href="/journey?ref=index_record" class="rec-journey-cta">
+          Read the full record
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </a>
+      </div>
+
+      <div class="rec-journey">
+        <span class="rec-tag">Decision Library</span>
+        <h3 class="rec-journey-title">Twenty decisions. Five kinds of high-stakes call.</h3>
+        <p class="rec-journey-desc">Founders, executives, investors, boards, institutions — real briefs, browsable by category, growing as new sessions happen.</p>
+        <a href="/decision-library?ref=index_record" class="rec-journey-cta">
+          Browse the Decision Library
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- ══ DECISION FIT ═══════════════════════════════════════════════ -->
+<div class="wrap" id="fit">
+  <div class="s">
+    <div class="r" style="max-width:640px; margin-bottom:44px;">
+      <span class="eyebrow" style="margin-bottom:20px">Decision fit</span>
+      <h2 class="display" style="font-size: clamp(38px,3.8vw,56px);">Quorum is built for decisions like these.</h2>
+      <p style="font-size:16px; color:var(--t3); line-height:1.85; margin-top:16px; max-width:560px;">Where the outcome matters, and there's no obviously right answer.</p>
+    </div>
+
+    <div class="dec-examples r d1">
+      <div class="dec-ex-grid">
+        <div class="dec-col">
+          <span class="dec-col-label yes">Bring this →</span>
+
+          <div class="dec-item">
+            <span class="dec-mk y">—</span>
+            <div class="dec-item-body">
+              <div class="dec-item-title">Exit and liquidity decisions</div>
+              <div class="dec-item-note">Selling equity, accepting an acquisition offer, secondary sale timing.</div>
+            </div>
+          </div>
+
+          <div class="dec-item">
+            <span class="dec-mk y">—</span>
+            <div class="dec-item-body">
+              <div class="dec-item-title">Capital allocation and investment decisions</div>
+              <div class="dec-item-note">Deploying from a family office, investing in a new venture, taking on debt.</div>
+            </div>
+          </div>
+
+          <div class="dec-item">
+            <span class="dec-mk y">—</span>
+            <div class="dec-item-body">
+              <div class="dec-item-title">Succession and ownership structure</div>
+              <div class="dec-item-note">Passing control, bringing in external management, restructuring family stakes.</div>
+            </div>
+          </div>
+
+          <div class="dec-item">
+            <span class="dec-mk y">—</span>
+            <div class="dec-item-body">
+              <div class="dec-item-title">Key people decisions</div>
+              <div class="dec-item-note">Bringing on a co-founder, separating from a founding partner, a critical leadership hire.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dec-col">
+          <span class="dec-col-label no">Not this →</span>
+
+          <div class="dec-item">
+            <span class="dec-mk n">—</span>
+            <div class="dec-item-body">
+              <div class="dec-item-title">Operational and tactical minutiae</div>
+              <div class="dec-item-note">Vendor choices, feature names, which agency to hire — reversible in a few hours. Wrong tool for it.</div>
+            </div>
+          </div>
+
+          <div class="dec-item">
+            <span class="dec-mk n">—</span>
+            <div class="dec-item-body">
+              <div class="dec-item-title">Decisions with a clear right answer you already know</div>
+              <div class="dec-item-note">Quorum will tell you that — more honestly than the people around you.</div>
+            </div>
+          </div>
+
+          <div class="dec-item">
+            <span class="dec-mk n">—</span>
+            <div class="dec-item-body">
+              <div class="dec-item-title">Pure information deficits</div>
+              <div class="dec-item-note">"I don't know enough about X" is a research problem, not a decision problem.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ADDITIONAL LIVE FEATURES ──────────────────────────── -->
+    <div class="feature-tiles r d1">
+
+      <div class="ft">
+        <div class="ft-icon">◎</div>
+        <span class="ft-label">Mirror · Behavioral alerts</span>
+        <div class="ft-title">Patterns flagged before you notice them</div>
+        <div class="ft-body">Quorum notices on its own — a decision you keep reopening, urgency that doesn't match your timeline, a gap between what you said and what you did. Not a report — an alert.</div>
+      </div>
+
+      <div class="ft">
+        <div class="ft-icon">↗</div>
+        <span class="ft-label">Decision Brief · Private record</span>
+        <div class="ft-title">Every decision record, exportable</div>
+        <div class="ft-body">Every session closes with a PDF brief — every advisor's view, the final call. Share it with a board or co-founder, or keep it private.</div>
+      </div>
+
+      <div class="ft">
+        <div class="ft-icon">⊙</div>
+        <span class="ft-label">Mirror · Decision record timeline</span>
+        <div class="ft-title">Your full judgment history, structured and searchable</div>
+        <div class="ft-body">A private, searchable ledger of how you've been deciding — not a journal, a record that gets more accurate with every session.</div>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- ══ HOW IT WORKS ═══════════════════════════════════════════════ -->
+<div class="wrap" id="how">
+  <div class="s">
+    <div class="sh r">
+      <span class="eyebrow">The process</span>
+      <h2 class="display" style="font-size: clamp(42px,5vw,68px); margin-top:16px; max-width:420px;">How it works.</h2>
+    </div>
+
+    <!-- Explainer video — Video 3. Upload the final MP4 on Railway at
+         /videos/quorum-explainer.mp4 (same directory as server.js), plus
+         optionally /videos/quorum-explainer-poster.jpg and
+         /videos/quorum-explainer.vtt. This section sits well below the
+         fold, so it loads lazily (see initLazyVideo below) and stays
+         display:none — no layout shift, nothing broken — until the file
+         actually exists at that path. -->
+    <div class="explainer-video-wrap" id="explainerVideoWrap">
+      <video
+        id="explainerVideo"
+        controls
+        playsinline
+        preload="none"
+        poster="/videos/quorum-explainer-poster.jpg"
+      >
+        <track kind="captions" src="/videos/quorum-explainer.vtt" srclang="en" label="English" default />
+      </video>
+    </div>
+
+    <!-- New CTA — shown only once the explainer video above has loaded
+         (see .explainer-video-cta CSS). No video, no CTA; nothing changes
+         from today's layout if the file isn't uploaded yet. -->
+    <div class="explainer-video-cta">
+      <a href="https://app.quorumvault.org?utm_source=website&utm_medium=cta&utm_campaign=sprint1_reposition&utm_content=explainer_video" target="_blank" class="btn-open-quorum">
+        Open Quorum
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left:8px"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+      </a>
+      <p class="hero-open-note">Free · Bring one real decision</p>
+    </div>
+
+    <div class="steps r d1">
+      <div class="step">
+        <div class="step-n">00</div>
+        <div class="step-tag">Silent · automatic</div>
+        <div class="step-name">Structural Analysis</div>
+        <div class="step-desc">Before any advisor responds, your decision is read — what kind of decision this actually is, not just what you wrote. Silent. Automatic. Everything that follows is shaped by what this finds.</div>
+      </div>
+      <div class="step">
+        <div class="step-n">01</div>
+        <div class="step-tag">Free</div>
+        <div class="step-name">The Council</div>
+        <div class="step-desc">Six advisors respond, each from a different angle: Contrarian, Risk Architect, Pattern Analyst, Stakeholder Mirror, Elder, Competitor.</div>
+      </div>
+      <div class="step">
+        <div class="step-n">02</div>
+        <div class="step-tag">Free</div>
+        <div class="step-name">The Examiner</div>
+        <div class="step-desc">The one question that actually matters for this decision. Not derived from a template — from what the structural read found in what you brought. Sometimes the answer is a redirect: the decision isn’t ready to be made yet.</div>
+      </div>
+      <div class="step">
+        <div class="step-n">03</div>
+        <div class="step-tag">Free</div>
+        <div class="step-name">Synthesis</div>
+        <div class="step-desc">A directional call, integrating all six views. Not a summary — a position. You can see exactly what shaped it.</div>
+      </div>
+      <div class="step">
+        <div class="step-n">04</div>
+        <div class="step-tag">Mirror · Judgment OS</div>
+        <div class="step-name">Mirror</div>
+        <div class="step-desc">The part that compounds. Every decision you bring builds a clearer picture of how you think — where your confidence is reliable, and where it isn't.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- ══ PRICING ═════════════════════════════════════════ -->
+<div class="wrap" id="pricing">
+  <div class="s">
+    <div class="sh r">
+      <span class="eyebrow">Access</span>
+      <h2 class="display" style="font-size: clamp(42px,5vw,68px); margin-top:16px; max-width:440px;">Simple<br />pricing.</h2>
+      <p style="margin-top:20px; font-size:16px; color:var(--t3); max-width:420px; line-height:1.85;">The core session is free. Elite adds the record that compounds. Private is your own infrastructure, for teams. Most people start by bringing one real decision to the free tier — that's the whole point.</p>
+    </div>
+    <div>
+      <!-- Billing toggle pill -->
+      <div style="display:flex; justify-content:center; margin-bottom:28px;">
+        <div class="billing-toggle" id="billingToggle">
+          <button class="bt-opt" id="btMonthly" onclick="setBilling('monthly')">Monthly</button>
+          <button class="bt-opt active" id="btAnnual" onclick="setBilling('annual')">Annual &middot; 2 months free</button>
+        </div>
+      </div>
+      <div class="pg">
+        <div class="pc r d1">
+          <div class="pc-tier">Free · always</div>
+          <div class="pc-price">₹0</div>
+          <div class="pc-cadence">Start your decision record here</div>
+          <ul class="pc-list">
+            <li>Every decision read before it's answered — automatically, before anything responds</li>
+            <li>Challenged from six different angles</li>
+            <li>One key question surfaced, if something's still unresolved</li>
+            <li>A clear, directional view — not just a summary</li>
+            <li>A first look at Mirror after your third decision</li>
+          </ul>
+          <a href="https://app.quorumvault.org?utm_source=website&utm_medium=cta&utm_campaign=sprint1_reposition&utm_content=pricing_foundation" target="_blank" class="pc-btn o">Open Quorum →</a>
+        </div>
+        <div class="pc feat r d2">
+          <div class="pc-badge" id="eliteBadge">Best value</div>
+          <div class="pc-tier">Elite</div>
+          <div class="pc-tier-sub">Includes Mirror — the part that compounds</div>
+          <div class="pc-price" id="elitePrice"><sub>₹</sub>29,999</div>
+          <div class="pc-cadence" id="eliteCadence">/year · 2 months free</div>
+          <ul class="pc-list">
+            <li>Where and when your patterns tend to take over</li>
+            <li>How well your confidence has matched what actually happened</li>
+            <li>The unwritten rules your own decisions reveal</li>
+            <li>A flag when a new decision conflicts with something you said before</li>
+            <li>The patterns that keep resurfacing, unresolved</li>
+            <li>How much of a decision came from you, not the room</li>
+            <li>A reliability score for every session, with a clear next step</li>
+            <li>How your decisions compare, structurally, to others'</li>
+            <li>Bring in context from a note or a past ChatGPT/Claude conversation — you review and approve everything before it's saved; the raw file itself isn't kept</li>
+            <li>Every new Mirror feature, as it ships</li>
+          </ul>
+          <a href="https://app.quorumvault.org?utm_source=website&utm_medium=cta&utm_campaign=sprint1_reposition&utm_content=pricing_elite" target="_blank" class="pc-btn g">Get Elite →</a>
+        </div>
+        <div class="pc r d3">
+          <div class="pc-tier">Private</div>
+          <div class="pc-tier-sub">Your own infrastructure. Your choice of model.</div>
+          <div class="pc-price"><sub>₹</sub>9,999</div>
+          <div class="pc-cadence">/user/mo · starting price, scoped to your org</div>
+          <ul class="pc-list">
+            <li>Runs entirely inside your own infrastructure — nothing leaves it</li>
+            <li>Choose your self-hosted model family: Qwen or Mistral</li>
+            <li>Everything in Elite, deployed at organizational scale</li>
+            <li>Aggregate views never surface a group smaller than 20 people, enforced at the database level — no one's individual pattern can be isolated inside a portfolio-wide view</li>
+            <li>Pricing scoped to your organization's size and needs</li>
+          </ul>
+          <button class="pc-btn o" onclick="openModal('private')">Talk to us about Private →</button>
+          <div class="pc-scarcity">Reviewed individually<br/>Scoped to your organization</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- ══ FAQ ═════════════════════════════════════════════════════════ -->
+<div class="wrap" id="faq">
+  <div class="s">
+    <div class="r" style="max-width:640px; margin-bottom:36px;">
+      <span class="eyebrow" style="margin-bottom:20px">Frequently asked</span>
+      <h2 class="display" style="font-size: clamp(38px,3.8vw,56px);">Questions worth answering directly.</h2>
+    </div>
+    <div class="faq-list r d1">
+      <details class="faq-item">
+        <summary>Is Quorum just a chatbot?</summary>
+        <p>No. Before any advisor responds, your decision is read at a structural level — what kind of decision this is, not just what you typed. A chatbot routes your text straight to a model; Quorum doesn't.</p>
+      </details>
+      <details class="faq-item">
+        <summary>How private is my data?</summary>
+        <p>Your raw inputs are encrypted at the field level. You can export or delete your full data on request at any time. Nothing about your decisions is used in a case study or shared externally without your explicit, opt-in consent.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can I share a decision with someone?</summary>
+        <p>If you choose to — export a private PDF brief for a board or co-founder, or share a link to just the verdict. Both are entirely optional; nothing is shared unless you decide to.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Who is Quorum actually built for?</summary>
+        <p>Founders, CXOs, and family office principals — people making decisions where being wrong is expensive. It isn't built for everyday, low-stakes choices.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What does it cost?</summary>
+        <p>The Council — the core six-advisor session — is free. Elite adds Mirror, which compounds insight across your decisions over time, for ₹2,999/mo or ₹29,999/yr. Private is a custom enterprise deployment, starting at ₹9,999/user/month — priced once we understand your organization's needs.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What's the difference between the Council and Mirror?</summary>
+        <p>The Council is the six-advisor session you get on any single decision. Mirror is the layer underneath it that compounds across sessions — your bias fingerprint, calibration over time, recurring patterns, how you compare to your peers, a reliability score for every session you bring — and unlocks once you have enough decision history for it to be meaningful.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can I bring in context from outside Quorum?</summary>
+        <p>Yes. On Elite, you can paste a background note or upload a ChatGPT or Claude conversation export, and it's distilled into individual facts — goals, constraints, patterns — that you review and approve before anything is saved. The raw file itself is discarded once the insights are extracted; only what you approve feeds the Council.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What AI models power Quorum?</summary>
+        <p>Quorum uses different models for different plans, matched to what each plan is for. Free runs on GPT-5-mini end-to-end — strong reasoning at a cost that keeps the free tier sustainable for everyone. Elite pairs GPT-5-mini for fast reasoning with Claude Sonnet for Quorum's deepest analysis — Council Synthesis, Mirror, and long-term pattern-reading. Private runs entirely inside your own infrastructure, on either self-hosted Qwen or self-hosted Mistral, whichever you choose.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Why doesn't every plan use the same model?</summary>
+        <p>Because each plan optimizes for a different goal. Free is built to be accessible to everyone while staying sustainable. Elite is built for the highest-quality personal decision intelligence. Private is built for complete ownership and enterprise deployment. The model each plan runs on follows from that goal — it isn't the goal itself; Quorum's judgment quality is what you're actually buying.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can I cancel Elite or Private anytime?</summary>
+        <p>Elite is a straightforward self-serve monthly or annual subscription — cancel whenever you like, no lock-in. Private is a custom enterprise arrangement, so changes or cancellation go through your account contact rather than a self-service button.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Does Quorum give financial or legal advice?</summary>
+        <p>No. Quorum is a decision intelligence tool, not a licensed financial or legal advisor. The final call — and any financial or legal decision — is always yours; consult a qualified professional for those specifically.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What happens to my data if I stop using Quorum?</summary>
+        <p>You can export everything tied to your account or request full deletion at any time from account settings.</p>
+      </details>
+      <details class="faq-item">
+        <summary>How does the Council actually decide what each advisor says?</summary>
+        <p>Your decision is first tagged structurally — the kind of decision it is, what it structurally resembles from your own history — and each of the six advisors responds from that read, not from a single generic model pass.</p>
+      </details>
+      <details class="faq-item">
+        <summary>If I push back on one advisor, do the others find out?</summary>
+        <p>Yes, automatically. A challenge is treated as new information for the whole council, not a private exchange with one advisor — so it reaches all six. Each advisor still reassesses it independently through its own lens and may keep, strengthen, weaken, or reverse its position; sharing the information never means they share a conclusion. The Council synthesizes once, after every advisor has had a chance to weigh in.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can I use Quorum on my phone?</summary>
+        <p>Yes — it's a web app you can install to your home screen directly from your browser. No app-store download needed.</p>
+      </details>
+    </div>
+  </div>
+</div>
+
+<hr class="rule" />
+
+<!-- ══ CONTACT ════════════════════════════════════════════════════ -->
+<div class="wrap" id="contact">
+  <div class="s" style="text-align:center;">
+    <span class="eyebrow r" style="margin-bottom:22px; display:block;">Bring one real decision</span>
+    <h2 class="display r d1" style="font-size: clamp(48px,6.5vw,96px); margin-bottom:32px; max-width:720px; margin-left:auto; margin-right:auto;">Important decisions deserve<br />more than another opinion.</h2>
+    <p class="r d2" style="font-size:17px; color:var(--t3); max-width:500px; margin:0 auto 56px; line-height:1.9;">Bring one real decision. Not a hypothetical — something where being wrong costs you something.</p>
+    <div class="r d3" style="display:flex; gap:18px; justify-content:center; flex-wrap:wrap; align-items:center;">
+      <a href="https://app.quorumvault.org?utm_source=website&utm_medium=cta&utm_campaign=sprint1_reposition&utm_content=final_cta" target="_blank" class="btn-cta">Open Quorum →</a>
+      <button class="btn-request" onclick="openModal()">Get access</button>
+    </div>
+    <p class="r d3" style="margin-top:22px; font-size:14px; color:var(--t4);">Not sure if your situation fits? <a href="https://quorumgtm-production.up.railway.app/?source=website" target="_blank" rel="noopener" style="color:var(--gold);">Talk it through first →</a></p>
+  </div>
+</div>
+
+<!-- ══ FOOTER ═════════════════════════════════════════════════════ -->
+<footer>
+  <span class="footer-logo">Quorum</span>
+  <div class="footer-links" aria-label="Legal" role="navigation">
+    <a href="/privacy"  class="footer-link">Privacy Policy</a>
+    <a href="/cookies"  class="footer-link">Cookie Policy</a>
+    <a href="/terms"    class="footer-link">Terms</a>
+    <a href="/security" class="footer-link">Security &amp; Trust</a>
+  </div>
+  <span class="footer-copy">© 2026 Quorum</span>
+</footer>
+
+
+<!-- ══════════════════════════════════════════════════════════════
+     SESSION REQUEST MODAL
+══════════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="sessionModal" role="dialog" aria-modal="true" aria-label="Get access to Quorum">
+  <div class="modal-inner">
+    <button class="modal-close" id="closeModal" aria-label="Close">✕</button>
+    <div class="modal-box" id="modalBox">
+
+    <!-- Progress -->
+    <div class="modal-progress">
+      <div class="mp-dot active" id="dot1"></div>
+      <div class="mp-dot" id="dot2"></div>
+      <div class="mp-dot" id="dot3"></div>
+    </div>
+
+    <!-- STEP 1: What are you looking for? -->
+    <div class="modal-step active" id="step1">
+      <p class="modal-eyebrow">Step 1 of 3</p>
+      <h2 class="modal-title">What brings<br />you here?</h2>
+      <p class="modal-sub">Select the option that fits. You can always change this later.</p>
+
+      <div class="interest-grid">
+        <div class="interest-opt" data-val="private" onclick="selectInterest(this)">
+          <div class="io-price">Starting at ₹9,999/user/mo</div>
+          <div class="io-label">Private — enterprise deployment</div>
+          <div class="io-desc">A custom, self-hosted deployment for your firm — your own infrastructure, your choice of model. Pricing is scoped to your organization's size and needs.</div>
+        </div>
+        <div class="interest-opt" data-val="explore" onclick="selectInterest(this)">
+          <div class="io-price">Free · always</div>
+          <div class="io-label">Just Exploring</div>
+          <div class="io-desc">Open Quorum and bring a real decision. The Council runs free, no commitment.</div>
+        </div>
+        <div class="interest-opt" data-val="other" onclick="selectInterest(this)" style="grid-column: 1 / -1;">
+          <div class="io-price">Let's talk</div>
+          <div class="io-label">Something Else</div>
+          <div class="io-desc">Partnership, enterprise, or a use case that doesn't fit the above.</div>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <span></span>
+        <button class="btn-next" id="step1Next" disabled onclick="goStep(2)">Continue →</button>
+      </div>
+    </div>
+
+    <!-- STEP 2: More detail (qualification) -->
+    <div class="modal-step" id="step2">
+      <p class="modal-eyebrow">Step 2 of 3</p>
+      <h2 class="modal-title">Tell us<br />more.</h2>
+      <p class="modal-sub">We read every request personally. For a Private deployment, tell us about your organization; for anything else, tell us what you're trying to solve.</p>
+
+      <div class="field">
+        <label for="decisionInput">What are you working with?</label>
+        <textarea id="decisionInput" placeholder="E.g. We're a family office with 3 principals evaluating a self-hosted deployment... — or — I'm considering exiting a business I've built for 8 years and want to understand if Quorum is the right fit..." oninput="onDecisionInput(this)"></textarea>
+        <p class="decision-hint" id="decisionHint">Needs at least 80 characters — enough for us (or a live session) to actually work with.</p>
+      </div>
+
+      <!-- Qualification signal — shown after enough text -->
+      <div class="qual-box qual-warning" id="qualBox">
+        <div class="qual-tag">Signal detected</div>
+        <div class="qual-text" id="qualText">This looks like the kind of scenario Quorum is built for — high-stakes, with real structure to it. We'll follow up with next steps.</div>
+      </div>
+
+      <!-- Direct-booking option — only shown once the decision text qualifies -->
+      <div class="decision-book-cta" id="decisionBookCta">
+        <p class="dbc-label">Prefer to talk it through live instead of waiting for a reply? Bring this same decision to a 30-minute session.</p>
+        <div class="dbc-row">
+          <button type="button" class="dbc-btn" onclick="openBookingModal('kunal')">Book 30 min with Kunal →</button>
+        </div>
+      </div>
+
+      <div class="scarcity-note">
+        <strong>We review every request individually.</strong> We read requests in the order they arrive and reach out within 48 hours.
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn-back" onclick="goStep(1)">← Back</button>
+        <button class="btn-next" id="step2Next" disabled onclick="goStep(3)">Continue →</button>
+      </div>
+    </div>
+
+    <!-- STEP 3: Contact details -->
+    <div class="modal-step" id="step3">
+      <p class="modal-eyebrow">Step 3 of 3</p>
+      <h2 class="modal-title">How should<br />we reach you?</h2>
+      <p class="modal-sub">We'll respond directly — no automated emails, no sequences. A person will read your request and reply.</p>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="inputName">Your name</label>
+          <input type="text" id="inputName" placeholder="Full name" oninput="checkStep3()" />
+        </div>
+        <div class="field">
+          <label for="inputEmail">Email</label>
+          <input type="email" id="inputEmail" placeholder="you@domain.com" oninput="checkStep3()" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="inputWhatsapp">WhatsApp (optional)</label>
+        <input type="tel" id="inputWhatsapp" placeholder="+91 98765 43210" />
+      </div>
+
+      <div class="field">
+        <label for="inputContext">Anything else relevant? (optional)</label>
+        <textarea id="inputContext" placeholder="Your background, timeline, or anything that gives us context." style="min-height:80px;"></textarea>
+      </div>
+
+      <!-- S1-02: Consent checkbox — required before submission -->
+      <div class="consent-wrap">
+        <label class="consent-lbl">
+          <input type="checkbox" id="consentCheck" onchange="checkStep3()" />
+          <span class="consent-txt">
+            I agree that Quorum may store my name, email, and decision summary to process this request.
+            I have read and accept the
+            <a href="/terms" target="_blank" rel="noopener">Terms of Service</a>
+            and <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.
+          </span>
+        </label>
+      </div>
+
+      <div id="submitError" style="font-size:13px; color:#e08060; margin-top:8px; display:none;"></div>
+
+      <div class="modal-actions">
+        <button class="btn-back" onclick="goStep(2)">← Back</button>
+        <button class="btn-next" id="step3Next" disabled onclick="submitForm()">Submit request →</button>
+      </div>
+    </div>
+
+    <!-- SUCCESS -->
+    <div class="modal-step" id="stepSuccess">
+      <div class="modal-success">
+        <div class="success-icon">◆</div>
+        <h2 class="success-title">Request<br />received.</h2>
+        <p class="success-body" id="successBody">We'll review your decision and reach out within 48 hours. In the meantime, you can open Quorum and bring the same decision — the Council runs free.</p>
+        <a href="https://app.quorumvault.org?utm_source=website&utm_medium=cta&utm_campaign=sprint1_reposition&utm_content=modal_success" target="_blank" class="btn-cta" style="display:inline-block; margin-bottom:24px;">Open Quorum →</a><br/>
+        <button class="success-close" onclick="closeModal()">Close this window</button>
+      </div>
+    </div>
+
+  </div><!-- /modal-box -->
+  </div><!-- /modal-inner -->
+</div><!-- /modal-overlay -->
+
+<!-- Booking lightbox — populated by openBookingModal() -->
+<div class="booking-modal-overlay" id="bookingModal">
+  <div class="booking-modal-inner">
+    <button class="booking-modal-close" id="bookingModalClose" aria-label="Close">✕</button>
+    <div class="booking-modal-box">
+      <iframe id="bookingIframe" src="" title="Book a 30-minute Decision Session" loading="lazy"></iframe>
+    </div>
+    <a class="booking-modal-fallback" id="bookingFallbackLink" href="#" target="_blank" rel="noopener">Trouble loading? Open booking page directly ↗</a>
+  </div>
+</div>
+
+
+<!-- ══ COOKIE CONSENT BANNER ══════════════════════════════════════════
+     S1-01: shown on first visit, after 900ms, if no consent stored.
+     Slides up from bottom. Three choices, no dark patterns.
+══════════════════════════════════════════════════════════════════════ -->
+<div id="cookieBanner" class="cookie-banner" role="region" aria-label="Cookie consent">
+  <div class="cookie-banner-text">
+    <p class="cookie-banner-title">Your privacy on Quorum</p>
+    <p class="cookie-banner-body">
+      Quorum uses local storage to remember your theme preference and, with your consent,
+      to maintain your session history across visits.
+      No advertising or third-party tracking is used.
+      <a href="/cookies" rel="noopener">Cookie Policy</a>
+    </p>
+  </div>
+  <div class="cookie-banner-actions">
+    <button class="cbtn cbtn-manage"  onclick="openCookiePrefs()">Manage Preferences</button>
+    <button class="cbtn cbtn-reject"  onclick="setCookieConsent('essential')">Reject Non-Essential</button>
+    <button class="cbtn cbtn-accept"  onclick="setCookieConsent('all')">Accept All</button>
+  </div>
+</div>
+
+<!-- ══ COOKIE PREFERENCES MODAL ════════════════════════════════════════
+     S1-05: full category breakdown with toggles.
+══════════════════════════════════════════════════════════════════════ -->
+<div id="cookiePrefsModal" class="cprefs-overlay" role="dialog" aria-modal="true" aria-label="Cookie preferences">
+  <div class="cprefs-box">
+    <div class="cprefs-head">
+      <h2 class="cprefs-title">Cookie Preferences</h2>
+      <button class="cprefs-x" onclick="closeCookiePrefs()" aria-label="Close">✕</button>
+    </div>
+
+    <div class="ccat">
+      <div class="ccat-head">
+        <span class="ccat-name">Strictly Necessary</span>
+        <span class="ccat-badge">Always on</span>
+      </div>
+      <p class="ccat-desc">
+        Required for the website to function. Stores your theme preference
+        (<code>q-theme</code>) and this consent record (<code>quorum_cookie_consent</code>).
+        Cannot be disabled.
+      </p>
+    </div>
+
+    <div class="ccat">
+      <div class="ccat-head">
+        <span class="ccat-name">Functional</span>
+        <label class="ctoggle" aria-label="Toggle functional storage">
+          <input type="checkbox" id="prefFunctional" />
+          <span class="ctoggle-sl"></span>
+        </label>
+      </div>
+      <p class="ccat-desc">
+        Allows the Quorum app to remember your decision history and device across visits.
+        Includes <code>quorum_session_ids</code> and <code>quorum_device_id</code>
+        set by the Quorum application after sign-in.
+      </p>
+    </div>
+
+    <div class="ccat">
+      <div class="ccat-head">
+        <span class="ccat-name">Analytics</span>
+        <span class="ccat-badge">Not in use</span>
+      </div>
+      <p class="ccat-desc">
+        Quorum does not currently use analytics cookies or third-party tracking scripts on this website.
+      </p>
+    </div>
+
+    <div class="ccat">
+      <div class="ccat-head">
+        <span class="ccat-name">Marketing</span>
+        <span class="ccat-badge">Not in use</span>
+      </div>
+      <p class="ccat-desc">
+        No advertising or marketing cookies are used on this website.
+      </p>
+    </div>
+
+    <div class="cprefs-actions">
+      <button class="cbtn cbtn-reject" onclick="savePrefs('essential')">Reject Non-Essential</button>
+      <button class="cbtn cbtn-accept" onclick="savePrefs('custom')">Save Preferences</button>
+    </div>
+  </div>
+</div>
+
+
+<script>
+  /* ── WAITLIST API ────────────────────────────────────────────
+     Form submissions route to the website's own server.js endpoint.
+     No Supabase credentials in client-side code.
+     Credentials live in Railway environment variables (SUPABASE_URL,
+     SUPABASE_SERVICE_KEY) on the website Railway project.
+  ─────────────────────────────────────────────────────────── */
+  async function insertSessionRequest(payload) {
+    const res = await fetch('/api/waitlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.error || `Request failed (${res.status})`)
+    }
+  }
+
+  /* ── THEME ─────────────────────────────────────────────────── */
+  const html  = document.documentElement
+  const btn   = document.getElementById('themeBtn')
+  const saved = localStorage.getItem('q-theme')
+  if (saved) html.setAttribute('data-theme', saved)
+
+  btn.addEventListener('click', () => {
+    const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'
+    html.setAttribute('data-theme', next)
+    localStorage.setItem('q-theme', next)
+  })
+
+  /* ── NAV ───────────────────────────────────────────────────── */
+  const nav = document.getElementById('nav')
+  window.addEventListener('scroll', () => nav.classList.toggle('stuck', scrollY > 48), { passive: true })
+
+  /* ── REVEAL ────────────────────────────────────────────────── */
+  const ro = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); ro.unobserve(e.target) } })
+  }, { threshold: 0.1, rootMargin: '0px 0px -28px 0px' })
+  document.querySelectorAll('.r').forEach(el => ro.observe(el))
+
+  /* ── COUNTER ───────────────────────────────────────────────── */
+  /* stat counter removed — stats are now qualitative signals */
+
+  /* ── MODAL ─────────────────────────────────────────────────── */
+  const modal      = document.getElementById('sessionModal')
+  const bookingModal = document.getElementById('bookingModal')
+  let   currentStep = 1
+  let   selectedInterest = null
+
+  // ── Billing toggle (Monthly / Annual) ──────────────────────────────────────
+  let currentBilling = 'annual'
+  function setBilling(plan) {
+    currentBilling = plan
+    document.getElementById('btMonthly').classList.toggle('active', plan === 'monthly')
+    document.getElementById('btAnnual').classList.toggle('active', plan === 'annual')
+
+    const priceEl   = document.getElementById('elitePrice')
+    const cadenceEl = document.getElementById('eliteCadence')
+    const badgeEl   = document.getElementById('eliteBadge')
+
+    if (plan === 'annual') {
+      priceEl.innerHTML   = '<sub>₹</sub>29,999'
+      cadenceEl.textContent = '/year · 2 months free'
+      badgeEl.textContent   = 'Best value'
+    } else {
+      priceEl.innerHTML   = '<sub>₹</sub>2,999'
+      cadenceEl.textContent = '/month · cancel anytime'
+      badgeEl.textContent   = 'Most used'
+    }
+  }
+
+  function openModal(preset) {
+    currentStep = 1
+    showStep(1)
+    modal.classList.add('open')
+    document.body.style.overflow = 'hidden'
+    if (preset) {
+      // pre-select interest from pricing buttons
+      const opt = document.querySelector(`.interest-opt[data-val="${preset}"]`)
+      if (opt) selectInterest(opt)
+    }
+  }
+
+  function closeModal() {
+    modal.classList.remove('open')
+    document.body.style.overflow = ''
+  }
+
+  document.getElementById('openModal').addEventListener('click', () => openModal())
+  document.getElementById('closeModal').addEventListener('click', closeModal)
+
+  modal.addEventListener('click', e => { if (e.target === modal) closeModal() })
+
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return
+    if (bookingModal.classList.contains('open')) { closeBookingModal(); return }
+    closeModal()
+  })
+
+  function showStep(n) {
+    currentStep = n
+    document.querySelectorAll('.modal-step').forEach(s => s.classList.remove('active'))
+    const target = n === 'success' ? document.getElementById('stepSuccess') : document.getElementById(`step${n}`)
+    if (target) target.classList.add('active')
+
+    // progress dots
+    ;[1,2,3].forEach(i => {
+      const dot = document.getElementById(`dot${i}`)
+      if (!dot) return
+      dot.classList.remove('done','active')
+      if (i < n || n === 'success') dot.classList.add('done')
+      else if (i === n) dot.classList.add('active')
+    })
+
+    if (n !== 'success') document.getElementById('modalBox').scrollTop = 0
+  }
+
+  function goStep(n) {
+    showStep(n)
+  }
+
+  /* Interest selection */
+  function selectInterest(el) {
+    document.querySelectorAll('.interest-opt').forEach(o => o.classList.remove('sel'))
+    el.classList.add('sel')
+    selectedInterest = el.dataset.val
+    document.getElementById('step1Next').disabled = false
+  }
+
+  /* Decision input — qualification signal */
+  const DECISION_THRESHOLD = 80 // chars
+
+  const qualPatterns = [
+    { rx: /exit|sell|acqui/i,    msg: 'Exit decisions are among the most irreversible Quorum handles. The Council will surface what the numbers don\'t — timing, identity, and what comes after.' },
+    { rx: /invest|capital|fund/i, msg: 'Capital allocation decisions benefit most from the Risk Architect and Pattern Analyst. Structural matching to prior capital decisions in your record is often where the real insight sits.' },
+    { rx: /join|leave|resign|career/i, msg: 'Career pivots carry hidden costs that rarely get priced in. The Mirror and Elder advisors tend to surface the ones that matter most.' },
+    { rx: /partner|co-found|hire/i, msg: 'Partnership decisions are where the Stakeholder Mirror advisor does its most important work — the unstated dynamics and incentive misalignments.' },
+    { rx: /start|launch|venture|startup/i, msg: 'New ventures benefit from the Risk Architect\'s irreversibility mapping. The question isn\'t just viability — it\'s what you\'re foreclosing on.' },
+  ]
+
+  const DEFAULT_QUAL = 'This looks like the kind of scenario Quorum is built for — high-stakes, with real structure to it. We\'ll follow up with next steps.'
+
+  function onDecisionInput(el) {
+    const v = el.value.trim()
+    const enough = v.length >= DECISION_THRESHOLD
+    document.getElementById('step2Next').disabled = !enough
+
+    const hint = document.getElementById('decisionHint')
+    if (hint) {
+      const remaining = DECISION_THRESHOLD - v.length
+      hint.textContent = enough
+        ? '✓ Good — you can continue, or book time directly below.'
+        : `Needs at least 80 characters — ${remaining} more to go.`
+      hint.classList.toggle('met', enough)
+    }
+
+    const qualBox = document.getElementById('qualBox')
+    const qualText = document.getElementById('qualText')
+
+    if (enough) {
+      const match = qualPatterns.find(p => p.rx.test(v))
+      qualText.textContent = match ? match.msg : DEFAULT_QUAL
+      qualBox.classList.add('show')
+    } else {
+      qualBox.classList.remove('show')
+    }
+
+    document.getElementById('decisionBookCta').classList.toggle('show', enough)
+  }
+
+  /* ── Direct-booking modal (reads BOOKING_LINKS below) ── */
+  const BOOKING_LINKS = {
+    kunal: {
+      // CONFIG: same working values as BOOKING_PAGE_URL / BOOKING_EMBED_URL
+      // in card-kunal.html — copy them here once confirmed.
+      page:  'https://calendar.app.google/CuUs83WasYR2LTnw8',
+      embed: 'https://calendar.google.com/calendar/appointments/schedules/AcZssZ1QN6X7RJi0QNjgw1s_xTLXGwyXhVImUFD-hPePC17zqw1WwWG9ukKNxGu3V8VUl6fng7JRABl1?gv=true',
+      label: 'Kunal Kansra'
+    }
+  }
+
+  function openBookingModal(founder) {
+    const cfg = BOOKING_LINKS[founder]
+    if (!cfg) return
+    const iframe   = document.getElementById('bookingIframe')
+    const fallback = document.getElementById('bookingFallbackLink')
+    iframe.title  = `Book a 30-minute Decision Session with ${cfg.label}`
+    iframe.src    = cfg.embed
+    fallback.href = cfg.page
+    bookingModal.classList.add('open')
+    document.body.style.overflow = 'hidden'
+  }
+
+  function closeBookingModal() {
+    bookingModal.classList.remove('open')
+    document.getElementById('bookingIframe').src = ''
+    if (!modal.classList.contains('open')) document.body.style.overflow = ''
+  }
+
+  document.getElementById('bookingModalClose').addEventListener('click', closeBookingModal)
+  bookingModal.addEventListener('click', e => { if (e.target === bookingModal) closeBookingModal() })
+
+  /* Step 3 validation — name, valid email, AND consent checkbox all required */
+  function checkStep3() {
+    const name    = document.getElementById('inputName').value.trim()
+    const email   = document.getElementById('inputEmail').value.trim()
+    const consent = document.getElementById('consentCheck')?.checked ?? false
+    const valid   = name.length > 0
+                    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+                    && consent
+    document.getElementById('step3Next').disabled = !valid
+  }
+
+  /* Submit */
+  async function submitForm() {
+    const nextBtn = document.getElementById('step3Next')
+    const errDiv  = document.getElementById('submitError')
+    errDiv.style.display = 'none'
+    nextBtn.disabled = true
+    nextBtn.innerHTML = 'Sending <span class="loading-dots"><span></span><span></span><span></span></span>'
+
+    const payload = {
+      interest_type:     selectedInterest,
+      decision_summary:  document.getElementById('decisionInput').value.trim(),
+      name:              document.getElementById('inputName').value.trim(),
+      email:             document.getElementById('inputEmail').value.trim(),
+      whatsapp:          document.getElementById('inputWhatsapp').value.trim() || null,
+      additional_context: document.getElementById('inputContext').value.trim() || null,
+    }
+
+    try {
+      await insertSessionRequest(payload)
+      // Success messaging based on interest
+      const msgs = {
+        private: 'We\'ll review your deployment request and reach out within 48 hours to scope next steps for a Private deployment.',
+        explore: 'You can open Quorum now and add the decision you described. The structural analysis and Council run free — your record starts from session one.',
+        other:   'We\'ll read your request and respond personally within 48 hours.'
+      }
+      document.getElementById('successBody').textContent = msgs[selectedInterest] || msgs.private
+      showStep('success')
+    } catch (err) {
+      errDiv.textContent = 'Something went wrong. Please try again in a moment.'
+      errDiv.style.display = 'block'
+      nextBtn.disabled = false
+      nextBtn.textContent = 'Submit request →'
+    }
+  }
+
+
+  /* ══════════════════════════════════════════════════════════════
+     CONSENT MANAGEMENT  (S1-01 / S1-05)
+     ─────────────────────────────────────────────────────────────
+     Storage key : 'quorum_cookie_consent'
+     Shape       : { level: 'all'|'essential'|'custom',
+                     prefs: { functional: boolean },
+                     ts: ISO-string, v: 1 }
+
+     'q-theme' (strictly necessary) is always written regardless of
+     consent level — it's a direct user action, not tracking.
+  ══════════════════════════════════════════════════════════════ */
+
+  const CONSENT_KEY = 'quorum_cookie_consent'
+
+  function getConsent() {
+    try { return JSON.parse(localStorage.getItem(CONSENT_KEY) || 'null') }
+    catch { return null }
+  }
+
+  function persistConsent(level, prefs) {
+    try {
+      localStorage.setItem(CONSENT_KEY, JSON.stringify({
+        level,
+        prefs: prefs || { functional: level === 'all' },
+        ts: new Date().toISOString(),
+        v: 1
+      }))
+    } catch {}
+  }
+
+  /* ── Banner actions ─────────────────────────────────────────── */
+  function setCookieConsent(level) {
+    persistConsent(level, { functional: level === 'all' })
+    hideBanner()
+    closeCookiePrefs()
+  }
+
+  function showBanner() {
+    const b = document.getElementById('cookieBanner')
+    if (!b) return
+    b.style.visibility = 'visible'
+    // double rAF ensures transition fires after display change
+    requestAnimationFrame(() => requestAnimationFrame(() => b.classList.add('visible')))
+  }
+
+  function hideBanner() {
+    const b = document.getElementById('cookieBanner')
+    if (!b) return
+    b.classList.remove('visible')
+    setTimeout(() => { b.style.visibility = 'hidden' }, 450)
+  }
+
+  /* ── Preferences modal actions ──────────────────────────────── */
+  function openCookiePrefs() {
+    const consent  = getConsent()
+    const fToggle  = document.getElementById('prefFunctional')
+    if (fToggle) fToggle.checked = consent?.prefs?.functional ?? false
+    const m = document.getElementById('cookiePrefsModal')
+    if (m) m.classList.add('open')
+  }
+
+  function closeCookiePrefs() {
+    const m = document.getElementById('cookiePrefsModal')
+    if (m) m.classList.remove('open')
+  }
+
+  function savePrefs(mode) {
+    if (mode === 'essential') {
+      persistConsent('essential', { functional: false })
+    } else {
+      const functional = document.getElementById('prefFunctional')?.checked ?? false
+      persistConsent('custom', { functional })
+    }
+    closeCookiePrefs()
+    hideBanner()
+  }
+
+  /* Close prefs on backdrop click */
+  document.getElementById('cookiePrefsModal')?.addEventListener('click', function (e) {
+    if (e.target === this) closeCookiePrefs()
+  })
+
+  /* Show banner after 900 ms on first visit */
+  ;(function initConsent() {
+    if (!getConsent()) setTimeout(showBanner, 900)
+  })()
+
+  /* ── Video reveal-on-load / fallback-on-404 ──────────────────────
+     Shared by every optional video on this page (hero intro, research
+     explainer, and any future ones). Each wrap stays display:none
+     until its video actually loads; if the file 404s (not yet
+     uploaded to Railway), the wrap stays hidden and that part of the
+     page defaults to its current, video-free layout — nothing breaks. */
+  function initOptionalVideo(wrapId, videoId) {
+    const wrap  = document.getElementById(wrapId)
+    const video = document.getElementById(videoId)
+    if (!wrap || !video) return
+    video.addEventListener('loadeddata', () => wrap.classList.add('ready'))
+    video.addEventListener('error', () => wrap.classList.remove('ready'), true)
+    // <source> 404s surface here rather than on the video element itself
+    video.querySelectorAll('source').forEach(s => {
+      s.addEventListener('error', () => wrap.classList.remove('ready'))
+    })
+  }
+  initOptionalVideo('heroVideoWrap', 'heroVideo')  // Video 1 — above the fold, needs to be eager
+
+  /* ── Hero CTA reposition (Video 1 only) ───────────────────────────
+     Once the hero video has actually loaded, show the CTA that sits
+     directly below it (#heroVideoCta) and hide the original hero-right
+     CTA (#heroRightCta) so it isn't duplicated. If the video never
+     loads — or errors after loading — #heroRightCta stays visible in
+     its original spot, i.e. today's layout, completely unchanged. A
+     MutationObserver (rather than hooking into the video events above)
+     keeps this decoupled from initOptionalVideo, so it stays correct
+     even if that function's fallback logic changes later. */
+  ;(function () {
+    const wrap = document.getElementById('heroVideoWrap')
+    const videoCta = document.getElementById('heroVideoCta')
+    const rightCta = document.getElementById('heroRightCta')
+    if (!wrap || !videoCta || !rightCta) return
+    const sync = () => {
+      const ready = wrap.classList.contains('ready')
+      videoCta.classList.toggle('show', ready)
+      rightCta.style.display = ready ? 'none' : ''
+    }
+    new MutationObserver(sync).observe(wrap, { attributes: true, attributeFilter: ['class'] })
+    sync()
+  })()
+
+  /* ── Lazy version, for below-the-fold video (Video 2, Video 3) ────
+     On a slow connection the hero video alone already uses up a fair
+     chunk of available bandwidth. This one doesn't even attach a
+     <source> — and so doesn't download a single byte — until the
+     section is about to scroll into view, and even then preload="none"
+     means only headers are fetched (for the 404 check), not the file,
+     until the person actually presses play.
+
+     IMPORTANT: we observe the outer SECTION (sectionId) for viewport
+     proximity, not the inner video wrap (wrapId). The inner wrap is
+     display:none until the video is ready — and an element with no
+     box/size can never be reported as "intersecting" by
+     IntersectionObserver, so watching it directly means activate()
+     never fires and the video never loads. The outer section is a
+     normal, always-rendered block, so it's the correct thing to watch. */
+  function initLazyVideo(sectionId, wrapId, videoId, mp4Src) {
+    const section = document.getElementById(sectionId)
+    const wrap    = document.getElementById(wrapId)
+    const video   = document.getElementById(videoId)
+    if (!section || !wrap || !video) return
+
+    video.addEventListener('loadeddata', () => wrap.classList.add('ready'))
+    video.addEventListener('error', () => wrap.classList.remove('ready'), true)
+
+    function activate() {
+      if (video.dataset.activated) return
+      video.dataset.activated = 'true'
+      const source = document.createElement('source')
+      source.src  = mp4Src
+      source.type = 'video/mp4'
+      source.addEventListener('error', () => wrap.classList.remove('ready'))
+      video.insertBefore(source, video.firstChild)
+      video.load()
+    }
+
+    if ('IntersectionObserver' in window) {
+      const io = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) { activate(); io.disconnect() }
+        })
+      }, { rootMargin: '300px' })  // start the check a bit before it's actually visible
+      io.observe(section)
+    } else {
+      activate()  // very old browsers without IntersectionObserver — just load it
+    }
+  }
+  initLazyVideo('research-video', 'researchVideoWrap', 'researchVideo', '/videos/quorum-research.mp4')
+  initLazyVideo('how', 'explainerVideoWrap', 'explainerVideo', '/videos/quorum-explainer.mp4')
+
+  /* Smooth scroll for anchor links */
+  document.querySelectorAll('a[href^="#"]').forEach(a => {
+    a.addEventListener('click', e => {
+      const el = document.getElementById(a.getAttribute('href').slice(1))
+      if (el) { e.preventDefault(); el.scrollIntoView({ behavior: 'smooth', block: 'start' }) }
+    })
+  })
+
+  /* ── THE RECORD section now links out to /journey and
+     /decision-library directly (see the two .rec-journey cards
+     above) rather than embedding a duplicate grid inline. ── */
+</script>
+
+</body>
+</html>
