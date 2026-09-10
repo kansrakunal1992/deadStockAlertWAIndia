@@ -1,0 +1,47 @@
+stage-0
+RUN npm install && npm run build
+55s
+added 118 packages, and audited 699 packages in 7s
+179 packages are looking for funding
+  run `npm fund` for details
+15 vulnerabilities (2 low, 4 moderate, 7 high, 2 critical)
+To address issues that do not require attention, run:
+  npm audit fix
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+Run `npm audit` for details.
+> quorum@0.1.0 build
+> next build && cp -r public .next/standalone/public && cp -r .next/static .next/standalone/.next/static
+Attention: Next.js now collects completely anonymous telemetry regarding usage.
+This information is used to shape Next.js' roadmap and prioritize features.
+You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+https://nextjs.org/telemetry
+   ▲ Next.js 15.2.8
+   Creating an optimized production build ...
+<w> [webpack.cache.PackFileCacheStrategy] Serializing big strings (102kiB) impacts deserialization performance (consider using Buffer instead and decode when needed)
+<w> [webpack.cache.PackFileCacheStrategy] Serializing big strings (244kiB) impacts deserialization performance (consider using Buffer instead and decode when needed)
+ ⚠ Compiled with warnings
+./node_modules/@supabase/supabase-js/dist/index.mjs
+A Node.js API is used (process.version at line: 27) which is not supported in the Edge Runtime.
+Learn more: https://nextjs.org/docs/api-reference/edge-runtime
+Import trace for requested module:
+./node_modules/@supabase/supabase-js/dist/index.mjs
+./lib/supabase.ts
+ ✓ Compiled successfully
+   Linting and checking validity of types ...
+   We detected TypeScript in your project and reconfigured your tsconfig.json file for you.
+   The following suggested values were added to your tsconfig.json. These values can be changed to fit your project's needs:
+   	- target was set to ES2017 (For top-level `await`. Note: Next.js only polyfills for the esmodules target.)
+Failed to compile.
+./app/api/session/[id]/decide/route.ts:89:35
+Type error: Parameter 'w' implicitly has an 'any' type.
+
+  87 |   const predictionMatched = predicted.length > 0 && (
+  88 |     finalLower.includes(predicted) ||
+> 89 |     predicted.split(/\s+/).filter(w => w.length > 3).some(word => finalLower.includes(word))
+     |                                   ^
+  90 |   )
+  91 |
+  92 |   // ── Pattern callback ──
+Next.js build worker exited with code: 1 and signal: null
+Build Failed: build daemon returned an error < failed to solve: process "/bin/bash -ol pipefail -c npm install && npm run build" did not complete successfully: exit code: 1 >
