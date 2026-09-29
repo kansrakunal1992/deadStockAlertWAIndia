@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Payroll Process — Stage 2: Monthly Inputs | Air India</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#F1EAD7; font-family:'Segoe UI',Arial,sans-serif; padding:20px 24px; min-width:1500px; }
+.page-header { display:flex; align-items:center; gap:14px; margin-bottom:10px; }
+.logo { background:#fff; border-radius:5px; padding:5px 12px; font-size:18px; font-weight:900; color:#B61032; letter-spacing:2px; }
+.logo span { color:#C8A96E; }
+.hdr-text h1 { font-size:10px; color:#B61032; font-weight:700; letter-spacing:3px; text-transform:uppercase; }
+.hdr-text h2 { font-size:16px; color:#1A1A1A; font-weight:700; }
+.hdr-text p  { font-size:8.5px; color:#6B7280; font-style:italic; }
+.slide-badge { background:#B61032; color:#fff; border-radius:4px; padding:5px 12px; font-size:10px; font-weight:700; margin-left:auto; white-space:nowrap; }
+
+.legend { display:flex; gap:18px; padding:7px 14px; background:#fff; border-radius:5px; margin-bottom:12px; align-items:center; flex-wrap:wrap; font-size:9px; }
+.leg { display:flex; align-items:center; gap:5px; color:#333; }
+.dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+.dot.M { background:#CC2B2B; } .dot.S { background:#D97706; } .dot.A { background:#2D7D46; }
+.leg-sep { width:1px; height:20px; background:#E5E7EB; }
+.fly-legend { border:2px solid #1D4ED8; border-radius:4px; padding:2px 8px; color:#1D4ED8; font-weight:700; font-size:9px; }
+.xls-legend { border:2px solid #217346; border-radius:4px; padding:2px 8px; color:#217346; font-weight:700; font-size:9px; }
+
+.sec-block { margin-bottom:10px; }
+.sec-title { font-size:9px; font-weight:700; letter-spacing:2px; text-transform:uppercase;
+  background:#B61032; color:#fff; display:inline-block; padding:3px 10px; border-radius:2px; margin-bottom:7px; }
+.sec-title.fly { background:#1D4ED8; }
+.sec-title.ijp { background:#374151; }
+.sec-title.auto { background:#2D7D46; }
+.sec-title.semi { background:#D97706; }
+.sec-title.fin  { background:#374151; }
+
+.flow-row { display:flex; align-items:flex-start; gap:0; margin-bottom:6px;
+  background:#fff; border-radius:6px; padding:10px 8px; box-shadow:0 1px 3px rgba(0,0,0,0.07); }
+.node { display:flex; flex-direction:column; align-items:center; flex-shrink:0; }
+.anode { width:96px; }
+.icon-wrap { position:relative; display:inline-flex; }
+.person-ring { width:50px; height:50px; border-radius:50%; border:2.5px solid #B61032; background:#FFF0F0; display:flex; align-items:center; justify-content:center; }
+.person-ring.fly  { border-color:#1D4ED8; background:#EEF2FF; }
+.person-ring.grn  { border-color:#2D7D46; background:#F0FDF4; }
+.person-ring.amb  { border-color:#D97706; background:#FFFBEB; }
+.person-ring.gry  { border-color:#6B7280; background:#F9FAFB; }
+.person-ring.fin  { border-color:#374151; background:#F9FAFB; }
+.inr-badge { position:absolute; bottom:-3px; right:-3px; background:#B61032; color:#fff; border-radius:50%;
+  width:18px; height:18px; font-size:9px; font-weight:700; border:2px solid #fff;
+  display:flex; align-items:center; justify-content:center; }
+.fly-badge { position:absolute; top:-3px; right:-3px; background:#1D4ED8; color:#fff; border-radius:50%;
+  width:15px; height:15px; font-size:7px; border:1.5px solid #fff; display:flex; align-items:center; justify-content:center; }
+.xls-badge { position:absolute; bottom:-3px; left:-3px; background:#217346; color:#fff; border-radius:3px;
+  padding:1px 3px; font-size:6px; font-weight:700; border:1.5px solid #fff; }
+
+.aname { font-size:8.5px; font-weight:700; color:#1A1A1A; text-align:center; margin-top:4px; max-width:92px; line-height:1.2; }
+.asub  { font-size:7px; color:#6B7280; text-align:center; max-width:92px; line-height:1.2; margin-top:1px; }
+.adesc { font-size:7px; color:#374151; text-align:center; max-width:92px; line-height:1.25; margin-top:3px;
+  font-style:italic; background:#F9F6EF; border-radius:3px; padding:2px 4px; }
+.tags { display:flex; flex-direction:column; gap:2px; margin-top:4px; width:92px; }
+.tag  { font-size:6px; padding:2px 5px; border-radius:10px; color:#fff; text-align:center; line-height:1.3; }
+.tag.M { background:#CC2B2B; } .tag.S { background:#D97706; } .tag.A { background:#2D7D46; } .tag.F { background:#1D4ED8; }
+.comp-pct { font-size:6px; color:#6B7280; background:#F3F4F6; border-radius:8px; padding:1px 4px; margin-top:2px; text-align:center; line-height:1.3; }
+.risk-band { font-size:6px; font-weight:700; padding:2px 6px; border-radius:3px; color:#fff; margin-top:4px; text-align:center; width:90px; }
+.risk-band.H { background:#7F1D1D; } .risk-band.MH { background:#92400E; } .risk-band.M { background:#B45309; } .risk-band.L { background:#14532D; }
+
+.snode { width:94px; }
+.sbox { border-radius:6px; padding:7px 5px; font-size:8px; font-weight:700; text-align:center; color:#fff;
+  width:86px; min-height:46px; display:flex; flex-direction:column; align-items:center; justify-content:center; line-height:1.4; }
+.sbox small { font-size:6.5px; font-weight:400; opacity:.85; margin-top:2px; display:block; }
+.sbox.SF  { background:#0070D2; } .sbox.SFEC{ background:#005CB8; } .sbox.CAE { background:#1D4ED8; }
+.sbox.PS  { background:#B61032; } .sbox.FIN { background:#374151; } .sbox.BNK { background:#1F2937; }
+.sbox.PLX { background:#059669; } .sbox.HPY { background:#B45309; }
+.sname { font-size:7px; color:#555; text-align:center; margin-top:3px; max-width:86px; line-height:1.2; }
+
+.arr { display:flex; flex-direction:column; align-items:center; min-width:40px; flex:1; max-width:86px; padding-top:20px; }
+.arr.n { max-width:54px; min-width:28px; }
+.arr.w { max-width:110px; }
+.aline { height:2.5px; width:100%; }
+.aline.M { background:#CC2B2B; }
+.aline.S { background:repeating-linear-gradient(90deg,#D97706 0 7px,transparent 7px 12px); height:2px; }
+.aline.A { background:#2D7D46; }
+.atip  { font-size:10px; margin-top:-2px; line-height:1; }
+.atip.M { color:#CC2B2B; } .atip.S { color:#D97706; } .atip.A { color:#2D7D46; }
+.albl  { font-size:6px; color:#888; text-align:center; margin-top:2px; max-width:84px; line-height:1.25; }
+
+/* Draft register section */
+.draft-wrap { background:#fff; border:2px solid #D97706; border-radius:6px; padding:12px 14px; margin-top:8px; }
+.draft-title { font-size:9px; font-weight:700; letter-spacing:2px; text-transform:uppercase;
+  background:#D97706; color:#fff; display:inline-block; padding:3px 10px; border-radius:2px; margin-bottom:10px; }
+.draft-flow { display:flex; align-items:flex-start; gap:0; flex-wrap:nowrap; }
+.draft-node { display:flex; flex-direction:column; align-items:center; flex-shrink:0; width:110px; }
+.draft-box { border-radius:6px; padding:8px 5px; font-size:7.5px; font-weight:700; text-align:center; color:#fff;
+  width:100px; min-height:52px; display:flex; flex-direction:column; align-items:center; justify-content:center; line-height:1.4; }
+.draft-box.PS  { background:#B61032; }
+.draft-box.S   { background:#D97706; }
+.draft-box.A   { background:#2D7D46; }
+.draft-box.BNK { background:#1F2937; }
+.draft-box.FIN { background:#374151; }
+.draft-box.EMP { background:#2D7D46; }
+.draft-box small { font-size:6px; font-weight:400; opacity:.9; margin-top:2px; display:block; }
+.draft-label { font-size:6.5px; color:#555; text-align:center; margin-top:3px; max-width:100px; line-height:1.3; font-style:italic; }
+.draft-arr { display:flex; flex-direction:column; align-items:center; min-width:36px; flex:1; max-width:80px; padding-top:22px; }
+.draft-arr.n { max-width:50px; min-width:28px; }
+
+.page-footer { margin-top:12px; text-align:center; font-size:7px; color:#9CA3AF;
+  border-top:1px solid #DDD8CE; padding-top:8px; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <div class="logo">AIR INDIA <span>⌒</span></div>
+  <div class="hdr-text">
+    <h1>Lens 03 · Payroll Process · Slide 2 of 3</h1>
+    <h2>Payroll Process — Stage 2: Monthly Inputs (All Staff + IJP)</h2>
+    <p>21 input categories · ~101 active pay components (55% of 184 total) · 17 manual / 2 semi / 2 auto · Flow: Source → Preparer → Payroll HRSS → PeopleStrong → Draft Validation × 2 → Final → Bank → Employee → Finance/JV</p>
+  </div>
+  <div class="slide-badge">SLIDE 6B / STAGE 2</div>
+</div>
+
+<div class="legend">
+  <div class="leg"><div class="dot A"></div> Automated (system-to-system)</div>
+  <div class="leg"><div class="dot M"></div> Manual (Excel / Email)</div>
+  <div class="leg"><div class="dot S"></div> Semi-Automated</div>
+  <div class="leg-sep"></div>
+  <div class="leg fly-legend">✈ Flying-specific</div>
+  <div class="leg-sep"></div>
+  <div class="leg xls-legend">XLS Excel-based input</div>
+  <div class="leg-sep"></div>
+  <span style="color:#888;font-size:9px;">Finance / JV Posting is last step after employee salary disbursement · Exception: Advance &amp; Forex go directly via Finance Module (no PS) · Draft register validation (×2) applies to all PS rows — see bottom section</span>
+</div>
+
+<!-- ─── IJP ROW ─────────────────────────────────────────────────────── -->
+<div class="sec-block">
+<div class="sec-title ijp">INTERNAL JOB POSTING (IJP) — CTC REVISIONS &amp; RELOCATION · 3 COMPONENTS · 1.6% OF 184</div>
+<div class="flow-row">
+  <div style="display:flex; flex-direction:column; gap:5px; flex-shrink:0;">
+    <div class="node anode">
+      <div class="icon-wrap">
+        <div class="person-ring amb"><svg width="36" height="40" viewBox="0 0 36 40"><circle cx="18" cy="12" r="9" fill="#D97706"/><path d="M1 40 C1 27 35 27 35 40" fill="#D97706"/></svg></div>
+        <div class="xls-badge">XLS</div>
+      </div>
+      <div class="aname">C&amp;B Team</div><div class="asub">Comp &amp; Benefits</div>
+      <div class="tags"><div class="tag M">IJP-1: CTC Revisions (↑ or ↓) · 2 comps</div></div>
+      <div class="comp-pct">1.1% of 184 active components</div>
+    </div>
+    <div class="node anode">
+      <div class="icon-wrap">
+        <div class="person-ring"><svg width="36" height="40" viewBox="0 0 36 40"><circle cx="18" cy="12" r="9" fill="#B61032"/><path d="M1 40 C1 27 35 27 35 40" fill="#B61032"/></svg></div>
+        <div class="xls-badge">XLS</div>
+      </div>
+      <div class="aname">HRBP</div><div class="asub">HR Business Partner</div>
+      <div class="tags"><div class="tag M">IJP-2: Relocation Benefits · 1 comp</div></div>
+      <div class="comp-pct">0.5% of 184 active components</div>
+    </div>
+  </div>
+  <div class="arr"><div class="aline M"></div><div class="atip M">▶</div><div class="albl">Excel file → email to Payroll HRSS</div></div>
+  <div class="node anode">
+    <div class="icon-wrap"><div class="person-ring"><svg width="36" height="40" viewBox="0 0 36 40"><circle cx="18" cy="12" r="9" fill="#B61032"/><path d="M1 40 C1 27 35 27 35 40" fill="#B61032"/></svg></div><div class="inr-badge">₹</div></div>
+    <div class="aname">Payroll HRSS</div><div class="asub">Air India Team</div>
+    <div class="adesc">Validates &amp; uploads to PS</div>
+    <div class="risk-band M">⚠ RISK: MEDIUM · comp revision errors = arrear exposure</div>
+  </div>
+  <div class="arr"><div class="aline M"></div><div class="atip M">▶</div><div class="albl">Manual entry / Excel upload to PS</div></div>
+  <div class="node snode" style="width:100px;"><div class="sbox PS" style="width:92px;">PeopleStrong<br><small>Payroll Engine</small></div><div class="sname">→ Draft validation loop (see below)</div></div>
+</div>
+</div>
+
+<!-- ─── M1 + M7: AUTOMATED ────────────────────────────────────────── -->
+<div class="sec-block">
+<div class="sec-title auto">M1 + M7 — FIXED SALARY &amp; RETIRALS (FULLY AUTOMATED) · 28 COMPONENTS · 15.2% OF 184</div>
+<div class="flow-row">
+  <div class="node snode">
+    <div class="sbox SFEC">SuccessFactors<br><small>EC (Employee Central)</small></div>
+    <div class="sname">Source of truth for all comp &amp; employee data — automated sync</div>
+  </div>
+  <div class="arr"><div class="aline A"></div><div class="atip A">▶</div><div class="albl">Automated SF EC → PS integration — zero manual touch</div></div>
+  <div class="node anode">
+    <div class="icon-wrap"><div class="person-ring grn"><svg width="36" height="40" viewBox="0 0 36 40"><circle cx="18" cy="12" r="9" fill="#2D7D46"/><path d="M1 40 C1 27 35 27 35 40" fill="#2D7D46"/></svg></div></div>
+    <div class="aname">System</div><div class="asub">Automated trigger</div>
+    <div class="tags">
+      <div class="tag A">M1: Fixed Salary — Basic, HRA, Spl Allowance + 21 sub-comps · 24 comps</div>
+      <div class="tag A">M7: Retirals — PF, Gratuity, NPS, LWF · 4 comps</div>
+    </div>
+    <div class="comp-pct">28 comps = 15.2% of 184</div>
+    <div class="risk-band L">✓ RISK: LOW · automated, auditable SF trail</div>
+  </div>
+  <div class="arr"><div class="aline A"></div><div class="atip A">▶</div><div class="albl">Direct system feed — auditable SF EC log</div></div>
+  <div class="node snode" style="width:100px;"><div class="sbox PS" style="width:92px;">PeopleStrong<br><small>Payroll Engine</small></div><div class="sname">→ Draft validation loop (see below)</div></div>
+</div>
+</div>
+
+<!-- ─── M2: FBP SEMI-AUTO ──────────────────────────────────────────── -->
+<div class="sec-block">
+<div class="sec-title semi">M2 — FBP &amp; CAR LEASE (SEMI-AUTOMATED) · 19 COMPONENTS · 10.3% OF 184</div>
+<div class="flow-row">
+  <div class="node snode"><div class="sbox PS" style="background:#6D28D9;">PeopleStrong<br><small>FBP Module</small></div><div class="sname">Employee FBP elections — system captured</div></div>
+  <div class="arr"><div class="aline S"></div><div class="atip S">▶</div><div class="albl">System-driven for most; Car Lease &amp; monthly upgrade overrides via Excel</div></div>
+  <div class="node anode">
+    <div class="icon-wrap">
+      <div class="person-ring amb"><svg width="36" height="40" viewBox="0 0 36 40"><circle cx="18" cy="12" r="9" fill="#D97706"/><path d="M1 40 C1 27 35 27 35 40" fill="#D97706"/></svg></div>
+      <div class="xls-badge">XLS</div>
+    </div>
+    <div class="aname">Payroll HRSS</div><div class="asub">Air India Team</div>
+    <div class="tags"><div class="tag S">M2: FBP — HRA, LTA, Medical, Car Lease + 15 sub-comps · 19 comps</div></div>
+    <div class="comp-pct">19 comps = 10.3% of 184</div>
+    <div class="adesc">Manual override for Car Lease &amp; upgrade components; rest system-driven</div>
+    <div class="risk-band L">✓ RISK: LOW-MED · semi-auto; Car Lease Excel = residual risk</div>
+  </div>
+  <div class="arr"><div class="aline S"></div><div class="atip S">▶</div><div class="albl">Semi-auto feed to PS; Car Lease override via Excel upload</div></div>
+  <div class="node snode" style="width:100px;"><div class="sbox PS" style="width:92px;">PeopleStrong<br><small>Payroll Engine</small></div><div class="sname">→ Draft validation loop (see below)</div></div>
+</div>
+</div>
+
+<!-- ─── M4+M5+M13+M19: HRBP MANUAL ───────────────────────────────── -->
+<div class="sec-block">
+<div class="sec-title">M4, M5, M13, M19 — HRBP-DRIVEN ALLOWANCES (MANUAL) · 25 COMPONENTS · 13.6% OF 184</div>
+<div class="flow-row">
+  <div class="node anode">
+    <div class="icon-wrap">
+      <div class="person-ring"><svg width="36" height="40" viewBox="0 0 36 40"><circle cx="18" cy="12" r="9" fill="#B61032"/><path d="M1 40 C1 27 35 27 35 40" fill="#B61032"/></svg></div>
+      <div class="xls-badge">XLS</div>
+    </div>
+    <div class="aname">HRBP</div><div class="asub">HR Business Partner</div>
+    <div class="tags">
+      <div class="tag M">M4: Recurring Allowances — 12 types (Transport, Medical, etc.) · 12 comps</div>
+      <div class="tag S">M5: One-time Allowances — 8 types (Attendance-linked portal upload) · 8 comps</div>
+      <div class="tag M">M13: Global Mobility — expat allowances, forex top-up · 3 comps</div>
+      <div class="tag M">M19: Salary Hold / Unhold — case-specific freeze · 2 comps</div>
+    </div>
+    <div class="comp-pct">25 comps = 13.6% of 184</div>
+    <div class="risk-band M">⚠ RISK: MEDIUM · 12 allowance types, no audit trail</div>
+  </div>
+  <div class="arr"><div class="aline M"></div><div class="atip M">▶</div><div class="albl">Excel files via email to Payroll HRSS — no system capture</div></div>
+  <div class="node anode">
+    <div class="icon-wrap"><div class="person-ring"><svg width="36" height="40" viewBox="0 0 36 40"><circle cx="18" cy="12" r="9" fill="#B61032"/><path d="M1 40 C1 27 35 27 35 40" fill="#B61032"/></svg></div><div class="inr-badge">₹</div></div>
+    <div class="aname">Payroll HRSS</div><div class="asub">Air India Team</div>
+    <div class="adesc">Validates each Excel; uploads 12+ allowance types individually to PS</div>
+  </div>
+  <div class="arr"><div class="aline M"></div><div class="atip M">▶</div><div class="albl">Manual Excel upload to PS</div></div>
+  <div class="node snode" style="width:100px;"><div class="sbox PS" style="width:92px;">PeopleStrong<br><small>Payroll Engine</small></div><div class="sname">→ Draft validation loop (see below)</div></div>
+</div>
+</div>
+
+<!-- ─── M3+M8+M21: BUSINESS TEAMS ─────────────────────────────────── -->
+<div class="sec-block">
+<div class="sec-title">M3, M8, M21 — BUSINESS TEAM INPUTS (MANUAL) · 17 COMPONENTS · 9.2% OF 184</div>
+<div class="flow-row">
+  <div class="node anode">
+    <div class="icon-wrap">
+      <div class="person-ring gry"><svg width="36" height="40" viewBox="0 0 36 40"><circle cx="18" cy="12" r="9" fill="#6B7280"/><path d="M1 40 C1 27 35 27 35 40" fill="#6B7280"/></svg></div>
+      <div class="xls-badge">XLS</div>
+    </div>
+    <div class="aname">Business SPOCs</div><div class="asub">Dept / Function</div>
+    <div class="tags">
+      <div class="tag M">M3: OT, LOP, LOPR, Night Diff, Break Allowance · 5 comps</div>
+      <div class="tag M">M8: Adhoc Recoveries — 11 types (loan, advance, damage) · 11 comps</div>
+      <div class="tag M">M21: Happay Card Loads (petty cash) · 1 comp</div>
+    </div>
+    <div class="comp-pct">17 comps = 9.2% of 184</div>
+    <div class="risk-band H">🔴 RISK: HIGH · Adhoc Recoveries — 11 comps, multi-source, no audit trail · leakage &amp; recovery errors</div>
+  </div>
+  <div class="arr"><div class="aline M"></div><div class="atip M">▶</div><div class="albl">Excel via email to Payroll HRSS — scattered sources, no central log</div></div>
+  <div class="node anode">
+    <div class="icon-wrap"><div class="person-ring"><svg width="36" height="40" viewBox="0 0 36 40"><circle cx="18" cy="12" r="9" fill="#B61032"/><path d="M1 40 C1 27 35 27 35 40" fill="#B61032"/></svg></div><div class="inr-badge">₹</div></div>
+    <div class="aname">Payroll HRSS</div><div class="asub">Air India Team</div>
+    <div class="adesc">Verifies attendance inputs; validates recovery amounts; Happay loaded separately</div>
+  </div>
+  <div class="arr"><div class="aline M"></div><div class="atip M">▶</div><div class="albl">Upload to PS; Happay triggered separately</div></div>
+  <div style="display:flex; flex-direction:column; gap:4px; flex-shrink:0;">
+    <div class="node snode" style="width:100px;"><div class="sbox PS" style="width:92px;">PeopleStrong<br><small>Payroll Engine</small></div></div>
+    <div class="node snode" style="width:100px;margin-top:2px;"><div class="sbox HPY" style="width:92px;">Happay<br><small>Prepaid Card</small></div></div>
+  </div>
+  <div style="padding-top:20px; font-size:6.5px; color:#888; max-width:80px; margin-left:4px;">→ Draft validation loop (see below)</div>
+</div>
+</div>
+
+<!-- ─── M6+M10+M11+M15+M16+M17+M18: HRSS-MANAGED ─────────────────── -->
+<div class="sec-block">
+<div class="sec-title">M6, M10, M11, M15, M16, M17, M18 — HRSS-MANAGED DEDUCTIONS &amp; BENEFITS · 24 COMPONENTS · 13% OF 184</div>
+<div class="flow-row">
+  <div style="display:flex; flex-direction:column; gap:5px; flex-shrink:0;">
+    <div class="node anode" style="width:90px;">
+      <div class="icon-wrap">
+        <div class="person-ring" style="width:44px;height:44px;"><svg width="30" height="34" viewBox="0 0 30 34"><circle cx="15" cy="10" r="8" fill="#B61032"/><path d="M1 34 C1 23 29 23 29 34" fill="#B61032"/></svg></div>
+        <div class="xls-badge">XLS</div>
+      </div>
+      <div class="aname" style="font-size:7.5px;">Payroll HRSS</div>
+      <div class="tags">
+        <div class="tag M" style="font-size:5.5px;">M6: Statutory Tagging · 2 comps</div>
+        <div class="tag M" style="font-size:5.5px;">M10: Pluxee Top-up (Meal+Fuel) · 2 comps</div>
+        <div class="tag M" style="font-size:5.5px;">M11: Car Lease EMIs (pre-tax) · 2 comps</div>
+      </div>
+    </div>
+    <div class="node anode" style="width:90px;">
+      <div class="icon-wrap">
+        <div class="person-ring amb" style="width:44px;height:44px;"><svg width="30" height="34" viewBox="0 0 30 34"><circle cx="15" cy="10" r="8" fill="#D97706"/><path d="M1 34 C1 23 29 23 29 34" fill="#D97706"/></svg></div>
+        <div class="xls-badge">XLS</div>
+      </div>
+      <div class="aname" style="font-size:7.5px;">C&amp;B / Legal / 3rd Party</div>
+      <div class="tags">
+        <div class="tag M" style="font-size:5.5px;">M15: ESOP Tax (C&amp;B) · 2 comps</div>
+        <div class="tag M" style="font-size:5.5px;">M16: 3rd Party (LIC/Co-op/Trust) · 12 comps</div>
+        <div class="tag M" style="font-size:5.5px;">M17: Legal Deductions (Alimony) · 3 comps</div>
+        <div class="tag M" style="font-size:5.5px;">M18: Benevolent Fund (WIP) · 1 comp</div>
+      </div>
+    </div>
+  </div>
+  <div class="arr"><div class="aline M"></div><div class="atip M">▶</div><div class="albl">Each team sends Excel to Payroll HRSS for consolidation</div></div>
+  <div class="node anode">
+    <div class="icon-wrap"><div class="person-ring"><svg width="36" height="40" viewBox="0 0 36 40"><circle cx="18" cy="12" r="9" fill="#B61032"/><path d="M1 40 C1 27 35 27 35 40" fill="#B61032"/></svg></div><div class="inr-badge">₹</div></div>
+    <div class="aname">Payroll HRSS</div><div class="asub">Air India Team</div>
+    <div class="adesc">Consolidates 7 input streams; uploads to PS &amp; Pluxee separately</div>
+    <div class="comp-pct">24 comps = 13% of 184</div>
+    <div class="risk-band MH">🔴 RISK: MED-HIGH · 3rd Party (12 comps) — legacy employees, external stakeholders, no system trail</div>
+  </div>
+  <div class="arr"><div class="aline M"></div><div class="atip M">▶</div><div class="albl">Manual upload to PS; Pluxee top-up manually triggered</div></div>
+  <div style="display:flex; flex-direction:column; gap:4px; flex-shrink:0;">
+    <div class="node snode" style="width:100px;"><div class="sbox PS" style="width:92px;">PeopleStrong<br><small>Payroll Engine</small></div></div>
+    <div class="node snode" style="width:100px;margin-top:2px;"><div class="sbox PLX" style="width:92px;">Pluxee<br><small>Meal + Fuel Card</small></div></div>
+  </div>
+  <div style="padding-top:20px; font-size:6.5px; color:#888; max-width:80px; margin-left:4px;">→ Draft validation loop (see below)</div>
+</div>
+</div>
+
+<!-- ─── M9+M14: FINANCE MODULE DIRECT ────────────────────────────── -->
+<div class="sec-block">
+<div class="sec-title fin">M9 + M14 — ADVANCE PAYMENTS &amp; FOREX (DIRECT VIA FINANCE MODULE — NO PS) · 6 COMPONENTS · 3.3% OF 184</div>
+<div class="flow-row">
+  <div class="node anode">
+    <div class="icon-wrap">
+      <div class="person-ring fin"><svg width="36" height="40" viewBox="0 0 36 40"><circle cx="18" cy="12" r="9" fill="#374151"/><path d="M1 40 C1 27 35 27 35 40" fill="#374151"/></svg></div>
+      <div class="xls-badge">XLS</div>
+    </div>
+    <div class="aname">Finance Team</div><div class="asub">Advances &amp; Forex</div>
+    <div class="tags">
+      <div class="tag M">M9: Advance Payments — salary advance, emergency advance · 3 comps</div>
+      <div class="tag M">M14: Forex Advance — flying crew layover forex · 3 comps</div>
+    </div>
+    <div class="comp-pct">6 comps = 3.3% of 184</div>
+    <div class="risk-band M">⚠ RISK: MEDIUM · bypasses PS; reconciliation risk if Finance module not synced to payroll</div>
+  </div>
+  <div class="arr"><div class="aline M"></div><div class="atip M">▶</div><div class="albl">Excel processed directly in Finance Module — bypasses PeopleStrong</div></div>
+  <div class="node snode" style="width:105px;"><div class="sbox FIN" style="width:96px;">Finance<br><small>Module (SAP/Oracle)</small></div><div class="sname">Advance &amp; forex directly disbursed from Finance</div></div>
+  <div class="arr n"><div class="aline A"></div><div class="atip A">▶</div></div>
+  <div class="node snode"><div class="sbox BNK">Bank<br><small>NEFT/SFTP</small></div></div>
+  <div class="arr n"><div class="aline A"></div><div class="atip A">▶</div></div>
+  <div class="node anode" style="width:80px;"><div class="icon-wrap"><div class="person-ring grn" style="width:46px;height:46px;"><svg width="32" height="36" viewBox="0 0 32 36"><circle cx="16" cy="11" r="8" fill="#2D7D46"/><path d="M1 36 C1 25 31 25 31 36" fill="#2D7D46"/></svg></div></div><div class="aname" style="font-size:8px;">Employee</div></div>
+  <div class="arr n"><div class="aline A"></div><div class="atip A">▶</div><div class="albl">JV — Finance internal</div></div>
+  <div class="node snode"><div class="sbox FIN">Finance<br><small>JV Posting</small></div></div>
+</div>
+</div>
+
+<!-- ─── M12+M20: FLYING ALLOWANCES ────────────────────────────────── -->
+<div class="sec-block">
+<div class="sec-title fly">✈ M12 + M20 — FLYING ALLOWANCES &amp; INTL LAYOVER (FLYING STAFF ONLY) · 19 COMPONENTS · 10.3% OF 184</div>
+<div class="flow-row" style="border-left:3px solid #1D4ED8;">
+  <div class="node snode">
+    <div class="sbox CAE">CAE<br><small>Crew Ops System</small></div>
+    <div class="sname">Flying hours, roster &amp; duty data — source of truth</div>
+  </div>
+  <div class="arr"><div class="aline M"></div><div class="atip M">▶</div><div class="albl">Raw export — no direct PS feed; manual data massaging required</div></div>
+  <div class="node anode">
+    <div class="icon-wrap">
+      <div class="person-ring fly"><svg width="36" height="40" viewBox="0 0 36 40"><circle cx="18" cy="12" r="9" fill="#1D4ED8"/><path d="M1 40 C1 27 35 27 35 40" fill="#1D4ED8"/></svg></div>
+      <div class="fly-badge">✈</div>
+      <div class="xls-badge">XLS</div>
+    </div>
+    <div class="aname">CC Ops &amp; Flight Ops</div><div class="asub">Business SPOC</div>
+    <div class="tags">
+      <div class="tag F">M20: Flying Allowances — Flt Pay, Night Duty, Layover, Haz, Ded, Misc · 13 comps</div>
+      <div class="tag F">M12: Intl Layover — PERDU, DSA, Sector, Dep, Arr + hotel · 6 comps</div>
+    </div>
+    <div class="comp-pct">19 comps = 10.3% of 184 · Pilots + Cabin Crew segment</div>
+    <div class="risk-band H">🔴 RISK: HIGH · Pilots &amp; CC — high salary, CAE→Excel chain, 19 comps, no direct PS feed · HIGHEST LEAKAGE RISK in Stage 2</div>
+  </div>
+  <div class="arr"><div class="aline M"></div><div class="atip M">▶</div><div class="albl">Excel via email to Payroll HRSS — no audit trail</div></div>
+  <div class="node anode">
+    <div class="icon-wrap"><div class="person-ring"><svg width="36" height="40" viewBox="0 0 36 40"><circle cx="18" cy="12" r="9" fill="#B61032"/><path d="M1 40 C1 27 35 27 35 40" fill="#B61032"/></svg></div><div class="inr-badge">₹</div></div>
+    <div class="aname">Payroll HRSS</div><div class="asub">Air India Team</div>
+    <div class="adesc">Validates flying allowance inputs; uploads to PS</div>
+  </div>
+  <div class="arr"><div class="aline M"></div><div class="atip M">▶</div><div class="albl">Manual Excel upload to PS</div></div>
+  <div class="node snode" style="width:100px;"><div class="sbox PS" style="width:92px;">PeopleStrong<br><small>Payroll Engine</small></div><div class="sname">→ Draft validation loop (see below)</div></div>
+</div>
+</div>
+
+<!-- ─── DRAFT REGISTER VALIDATION + DISBURSEMENT ─────────────────── -->
+<div class="draft-wrap">
+<div class="draft-title">⚙ PAYROLL ENGINE RUN &amp; DISBURSEMENT — APPLIES TO ALL INPUT ROWS ABOVE (EXCEPT FINANCE MODULE DIRECT)</div>
+<div class="draft-flow">
+
+  <!-- PS Run 1 -->
+  <div class="draft-node">
+    <div class="draft-box PS">PeopleStrong<br><small>Payroll Run 1<br>(Draft Register)</small></div>
+    <div class="draft-label">All inputs consolidated; PS runs draft payroll cycle</div>
+  </div>
+  <div class="draft-arr">
+    <div class="aline S"></div><div class="atip S">▶</div>
+    <div class="albl">Draft Register sent by PS to AI Payroll HRSS team — Excel email · Semi-Auto</div>
+  </div>
+
+  <!-- Draft 1 Validation: AI Payroll HRSS -->
+  <div class="draft-node" style="width:120px;">
+    <div class="icon-wrap" style="position:relative;">
+      <div class="person-ring" style="width:48px;height:48px;border-color:#D97706;background:#FFFBEB;"><svg width="34" height="38" viewBox="0 0 34 38"><circle cx="17" cy="11" r="8.5" fill="#D97706"/><path d="M1 38 C1 26 33 26 33 38" fill="#D97706"/></svg></div>
+      <div class="inr-badge" style="background:#D97706;">₹</div>
+      <div class="xls-badge" style="background:#D97706;">XLS</div>
+    </div>
+    <div class="aname" style="font-size:7.5px;">AI Payroll HRSS</div>
+    <div class="asub">Draft Register Validation 1</div>
+    <div class="draft-label" style="background:#FFFBEB; border:1px solid #D97706; border-radius:3px; padding:3px 5px; margin-top:3px; color:#92400E;">Reviews draft register · flags errors / discrepancies · sends correction list back to PS — MANUAL via Excel email</div>
+  </div>
+  <div class="draft-arr">
+    <div class="aline S"></div><div class="atip S">▶</div>
+    <div class="albl">Corrections sent back to PS — Excel email · Semi-Auto</div>
+  </div>
+
+  <!-- PS Run 2 -->
+  <div class="draft-node">
+    <div class="draft-box PS">PeopleStrong<br><small>Payroll Run 2<br>(Draft Register)</small></div>
+    <div class="draft-label">PS incorporates corrections; runs second draft cycle</div>
+  </div>
+  <div class="draft-arr">
+    <div class="aline S"></div><div class="atip S">▶</div>
+    <div class="albl">Draft Register 2 sent to AI Payroll HRSS — Excel email · Semi-Auto</div>
+  </div>
+
+  <!-- Draft 2 Validation: AI Payroll HRSS -->
+  <div class="draft-node" style="width:120px;">
+    <div class="icon-wrap" style="position:relative;">
+      <div class="person-ring" style="width:48px;height:48px;border-color:#D97706;background:#FFFBEB;"><svg width="34" height="38" viewBox="0 0 34 38"><circle cx="17" cy="11" r="8.5" fill="#D97706"/><path d="M1 38 C1 26 33 26 33 38" fill="#D97706"/></svg></div>
+      <div class="inr-badge" style="background:#D97706;">₹</div>
+      <div class="xls-badge" style="background:#D97706;">XLS</div>
+    </div>
+    <div class="aname" style="font-size:7.5px;">AI Payroll HRSS</div>
+    <div class="asub">Draft Register Validation 2</div>
+    <div class="draft-label" style="background:#FFFBEB; border:1px solid #D97706; border-radius:3px; padding:3px 5px; margin-top:3px; color:#92400E;">Final validation · sign-off on register · approves for final payroll processing — MANUAL via Excel email</div>
+  </div>
+  <div class="draft-arr">
+    <div class="aline A"></div><div class="atip A">▶</div>
+    <div class="albl">Sign-off → Final processing instruction to PS</div>
+  </div>
+
+  <!-- Final PS Processing -->
+  <div class="draft-node">
+    <div class="draft-box A">PeopleStrong<br><small>Final Payroll<br>Processing</small></div>
+    <div class="draft-label">Finalised payroll run; bank file generated</div>
+  </div>
+  <div class="draft-arr">
+    <div class="aline S"></div><div class="atip S">▶</div>
+    <div class="albl">Bank File — Semi-Auto (PS generates, manual sign-off before release)</div>
+  </div>
+
+  <!-- Bank File / SFTP -->
+  <div class="draft-node">
+    <div class="draft-box BNK">Bank File<br><small>NEFT / SFTP<br>Transfer</small></div>
+    <div class="draft-label">SFTP-based file transfer to bank — semi-auto, manual trigger</div>
+  </div>
+  <div class="draft-arr n">
+    <div class="aline A"></div><div class="atip A">▶</div>
+    <div class="albl">Bank processes NEFT — automated</div>
+  </div>
+
+  <!-- Employee -->
+  <div class="draft-node" style="width:88px;">
+    <div class="icon-wrap">
+      <div class="person-ring grn" style="width:46px;height:46px;"><svg width="32" height="36" viewBox="0 0 32 36"><circle cx="16" cy="11" r="8" fill="#2D7D46"/><path d="M1 36 C1 25 31 25 31 36" fill="#2D7D46"/></svg></div>
+    </div>
+    <div class="aname" style="font-size:8px;">Employee</div>
+    <div class="asub">Salary credited</div>
+  </div>
+  <div class="draft-arr n">
+    <div class="aline A"></div><div class="atip A">▶</div>
+    <div class="albl">Post-disbursement JV</div>
+  </div>
+
+  <!-- Finance JV -->
+  <div class="draft-node" style="width:88px;">
+    <div class="draft-box FIN">Finance<br><small>JV Posting</small></div>
+    <div class="draft-label">Accounting entry; GL reconciliation</div>
+  </div>
+
+</div>
+<div style="margin-top:8px; font-size:7px; color:#92400E; background:#FFFBEB; border-radius:3px; padding:5px 10px; line-height:1.6;">
+  <strong>Draft Register Loop Note:</strong> Both Draft 1 and Draft 2 validation runs are currently <strong>manual</strong> — PS sends Excel register via email to AI Payroll HRSS team; HRSS reviews and sends corrections back via email. No system-based validation tool exists. This is a <strong>HIGH AUTOMATION OPPORTUNITY</strong> — affects all components across all 3 stages. · Bank File generation (PS → Bank SFTP) is <strong>semi-automated</strong>: PS generates the file but manual approval/release is required before SFTP transfer.
+</div>
+</div>
+
+<!-- Key notes -->
+<div style="background:#fff; border-left:4px solid #0070D2; border-radius:4px; padding:8px 14px; font-size:8px; color:#1A1A1A; line-height:1.6; margin-top:8px;">
+  <strong>Stage 2 Key Notes (Component View):</strong>
+  &nbsp;·&nbsp; <span style="color:#2D7D46;font-weight:700;">Automated (M1+M7):</span> 28 comps (15.2%) — SF EC → PS, zero manual touch; lowest risk.
+  &nbsp;·&nbsp; <span style="color:#D97706;font-weight:700;">Semi-auto (M2 FBP):</span> 19 comps (10.3%) — system-driven with Car Lease Excel override residual.
+  &nbsp;·&nbsp; <span style="color:#CC2B2B;font-weight:700;">Manual — highest risk:</span> Flying Allowances M12+M20 (19 comps, 10.3%) — Pilots &amp; Cabin Crew, high salary, CAE→Excel chain, no direct PS feed = HIGHEST LEAKAGE RISK.
+  &nbsp;·&nbsp; <span style="color:#7F1D1D;font-weight:700;">3rd Party Deductions M16</span> (12 comps) — legacy employee contracts, external stakeholders (LIC, Co-op, Trust), no system trail = HIGH AUDIT RISK.
+  &nbsp;·&nbsp; <span style="color:#D97706;font-weight:700;">Draft Register Validation (×2):</span> common to all PS rows; currently fully manual Excel email loop — affects all 184 active components.
+</div>
+
+<div class="page-footer">Air India · People Operations · Project AutoPilot · Confidential &nbsp;|&nbsp; Slide 6B of 3 — Stage 2: Monthly Inputs · Screenshot and paste into PPTX Slide 6B</div>
+</body>
+</html>
